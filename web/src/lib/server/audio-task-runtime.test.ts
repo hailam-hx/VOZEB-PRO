@@ -24,7 +24,7 @@ vi.mock("@/lib/server/reference-asset-store", () => ({ writePersistentMediaDataU
 
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 import { GenerationSubmissionUncertainError } from "./generation-submission-error";
-import { createAudioTaskUpstreamStep } from "./audio-task-runtime";
+import { createAudioTaskUpstreamStep, persistAudioTaskResult } from "./audio-task-runtime";
 import type { AudioTask } from "./audio-task-store";
 import { emptyAdvancedConfig, protocolModelConfig, registeredChannelProtocolDefinitions } from "@/lib/channel-protocol-registry";
 
@@ -46,7 +46,7 @@ describe("audio task runtime submission safety", () => {
             state = { ...state, ...patch };
             return state;
         });
-        mocks.writeMedia.mockResolvedValue({ token: "fixture-audio", url: "/api/reference-assets/fixture-audio.wav" });
+        mocks.writeMedia.mockResolvedValue({ token: "fixture-audio.wav" });
         mocks.register.mockResolvedValue(undefined);
     });
 
@@ -96,6 +96,12 @@ describe("audio task runtime submission safety", () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(mocks.writeMedia).not.toHaveBeenCalled();
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
+    });
+
+    it("persists inline audio with a stable relative asset URL", async () => {
+        await persistAudioTaskResult(state, "http://127.0.0.1:3000", "data:audio/wav;base64,UklGRg==");
+
+        expect(state).toMatchObject({ status: "success", result: { url: "/api/reference-assets/fixture-audio.wav", mimeType: "audio/wav" } });
     });
 
     it.each(AUDIO_PROTOCOLS)("receives an audio response from the $id protocol over a local TCP interface", async (definition) => {
