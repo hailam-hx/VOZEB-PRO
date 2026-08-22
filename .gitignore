@@ -23,6 +23,7 @@ data/
 .codex/
 .trellis/
 .agents/
+.worktrees/
 skills-lock.json
 docs/assets/
 VOZEB-PRO-审计报告.md
