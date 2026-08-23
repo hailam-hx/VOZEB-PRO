@@ -25,6 +25,8 @@ describe("top-up repository", () => {
 
         const [sql, params] = query.mock.calls[0] || [];
         expect(String(sql)).toContain("INSERT INTO top_up_orders");
+        expect(String(sql)).not.toContain("provider_event_id");
+        expect(String(sql)).not.toContain("order_snapshot_fingerprint");
         expect(String(sql)).toContain("$10::numeric");
         expect(String(sql)).toContain("$17::numeric");
         expect(params).toContain("10");

@@ -4,6 +4,17 @@ import { POSTGRESQL_TOP_UP_SCHEMA_SQL } from "./schema-top-ups";
 import { POSTGRESQL_SCHEMA_SQL } from "./schema";
 
 describe("top-up commerce schema", () => {
+    it("keeps webhook identity on settled payments rather than fresh orders", () => {
+        const orders = tableDefinition("top_up_orders");
+        const payments = tableDefinition("top_up_payments");
+
+        expect(orders).not.toContain("provider_event_id");
+        expect(orders).not.toContain("order_snapshot_fingerprint");
+        expect(payments).toContain("provider_event_id text NOT NULL");
+        expect(payments).toContain("order_snapshot_fingerprint text NOT NULL");
+        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("CREATE UNIQUE INDEX IF NOT EXISTS top_up_payments_provider_event_idx ON top_up_payments (provider, provider_event_id)");
+    });
+
     it("stores exact authoritative snapshots and separate payment, grant, refund, and recovery states", () => {
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS top_up_presets");
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("nominal_native_amount numeric(30, 12)");
@@ -75,3 +86,11 @@ describe("top-up commerce schema", () => {
         expect(POSTGRESQL_SCHEMA_SQL).toContain("difference_direction text NOT NULL");
     });
 });
+
+function tableDefinition(table: string) {
+    const start = POSTGRESQL_TOP_UP_SCHEMA_SQL.indexOf(`CREATE TABLE IF NOT EXISTS ${table} (`);
+    const end = POSTGRESQL_TOP_UP_SCHEMA_SQL.indexOf("\n);", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return POSTGRESQL_TOP_UP_SCHEMA_SQL.slice(start, end);
+}

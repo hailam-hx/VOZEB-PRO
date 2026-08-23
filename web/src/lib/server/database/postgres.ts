@@ -98,6 +98,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "top_up_orders_status_created_idx",
     "top_up_orders_provider_payment_idx",
     "top_up_payments_order_idx",
+    "top_up_payments_provider_event_idx",
     "top_up_payments_provider_trade_idx",
     "top_up_payments_provider_payment_idx",
     "top_up_payments_crypto_transaction_idx",

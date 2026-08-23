@@ -92,8 +92,6 @@ CREATE TABLE IF NOT EXISTS top_up_orders (
     payment_kind text NOT NULL,
     payment_amount jsonb NOT NULL,
     provider text NOT NULL,
-    provider_event_id text NOT NULL,
-    order_snapshot_fingerprint text NOT NULL,
     provider_order_id text,
     provider_payment_id text,
     promotion_campaign_id text,
@@ -126,6 +124,8 @@ CREATE TABLE IF NOT EXISTS top_up_payments (
     order_id text NOT NULL REFERENCES top_up_orders(id) ON DELETE RESTRICT,
     user_id text NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     provider text NOT NULL,
+    provider_event_id text NOT NULL,
+    order_snapshot_fingerprint text NOT NULL,
     status text NOT NULL,
     payment_kind text NOT NULL,
     fiat_currency text,
@@ -152,6 +152,7 @@ CREATE TABLE IF NOT EXISTS top_up_payments (
 );
 
 CREATE INDEX IF NOT EXISTS top_up_payments_order_idx ON top_up_payments (order_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS top_up_payments_provider_event_idx ON top_up_payments (provider, provider_event_id);
 CREATE UNIQUE INDEX IF NOT EXISTS top_up_payments_provider_trade_idx ON top_up_payments (provider, provider_trade_id) WHERE provider_trade_id IS NOT NULL AND provider_trade_id <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS top_up_payments_provider_payment_idx ON top_up_payments (provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL AND provider_payment_id <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS top_up_payments_crypto_transaction_idx ON top_up_payments (crypto_asset, crypto_network, crypto_tx_hash) WHERE payment_kind = 'crypto' AND crypto_tx_hash IS NOT NULL AND crypto_tx_hash <> '';

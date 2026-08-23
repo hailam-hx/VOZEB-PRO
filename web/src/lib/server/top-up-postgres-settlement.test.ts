@@ -6,16 +6,12 @@ const mocks = vi.hoisted(() => ({
     existingPayment: {} as Record<string, unknown>,
     userUpdate: vi.fn(),
     redeemCoupon: vi.fn(),
+    query: vi.fn(),
 }));
 
 vi.mock("@/lib/server/database", () => ({
     withPostgresTransaction: vi.fn(async (handler) => handler({
-        query: vi.fn(async (sql: string) => {
-            if (sql.includes("INSERT INTO top_up_payment_events")) return { rows: [{ id: "event-row" }], rowCount: 1 };
-            if (sql.includes("INSERT INTO top_up_payments")) return { rows: [], rowCount: 0 };
-            if (sql.includes("FROM top_up_payments")) return { rows: [mocks.existingPayment], rowCount: 1 };
-            return { rows: [{ id: "order-one" }], rowCount: 1 };
-        }),
+        query: mocks.query,
     })),
     createPostgresRepositories: vi.fn(() => ({
         topUps: { getOrderById: vi.fn(async () => mocks.order), redeemCouponForOrder: mocks.redeemCoupon },
@@ -45,11 +41,33 @@ const settlement = {
 describe("PostgreSQL top-up payment identity ownership", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.query.mockImplementation(async (sql: string) => {
+            if (sql.includes("INSERT INTO top_up_payment_events")) return { rows: [{ id: "event-row" }], rowCount: 1 };
+            if (sql.includes("INSERT INTO top_up_payments")) return { rows: [], rowCount: 0 };
+            if (sql.includes("FROM top_up_payments")) return { rows: [mocks.existingPayment], rowCount: 1 };
+            return { rows: [{ id: "order-one" }], rowCount: 1 };
+        });
         mocks.order = { ...order };
         mocks.existingPayment = {
             id: "top-up-payment:stripe:payment-one", order_id: "order-two", user_id: "user-two", provider: "stripe", provider_event_id: "evt-two", status: "succeeded", payment_kind: "fiat",
             order_snapshot_fingerprint: orderFingerprint(), fiat_currency: "VND", amount_minor: "250000", minor_unit_exponent: 0, provider_trade_id: null, provider_payment_id: "payment-one",
         };
+    });
+
+    it("supplies both required webhook identity fields when inserting a settled payment", async () => {
+        mocks.query.mockImplementation(async (sql: string) => {
+            if (sql.includes("INSERT INTO top_up_payment_events")) return { rows: [{ id: "event-row" }], rowCount: 1 };
+            if (sql.includes("INSERT INTO top_up_payments")) return { rows: [{ id: "top-up-payment:stripe:payment-one" }], rowCount: 1 };
+            return { rows: [{ id: "order-one" }], rowCount: 1 };
+        });
+        mocks.userUpdate.mockResolvedValue({ id: "user-one" });
+        mocks.redeemCoupon.mockResolvedValue(true);
+
+        await expect(new PostgresTopUpPaymentStore().settle(settlement)).resolves.toBe("applied");
+
+        const paymentCall = mocks.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO top_up_payments"));
+        expect(String(paymentCall?.[0])).toContain("provider_event_id, order_snapshot_fingerprint");
+        expect(paymentCall?.[1]).toEqual(expect.arrayContaining(["evt-one", orderFingerprint()]));
     });
 
     it("rejects one provider payment identity claimed by a different order before wallet grant", async () => {
