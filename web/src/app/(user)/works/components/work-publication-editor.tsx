@@ -2,9 +2,11 @@
 
 import { App, Button, Checkbox, Form, Input, Modal, Segmented, Select, Tag } from "antd";
 import { Check, Film, Image as ImageIcon, LoaderCircle } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatBytes } from "@/lib/image-utils";
+import { workCategoryMessageKeys } from "@/i18n/display-keys";
 import {
     createWorkPublication,
     getWorkPublication,
@@ -20,7 +22,7 @@ import {
     type WorkPublicationSourceType,
     type WorkPublicationVisibility,
 } from "@/services/api/work-publications";
-import { SOURCE_TYPE_LABELS, VISIBILITY_LABELS, WORK_CATEGORY_OPTIONS } from "../work-publication-values";
+import { WORK_CATEGORY_OPTIONS } from "../work-publication-values";
 
 type EditorValues = {
     sourceType: WorkPublicationSourceType;
@@ -53,6 +55,9 @@ export function WorkPublicationEditor({
     onCancel: () => void;
     onSaved: (work: WorkPublication) => void;
 }) {
+    const t = useTranslations("media.worksPage.editor");
+    const tWorks = useTranslations("media.worksPage");
+    const tPublic = useTranslations("home");
     const { message } = App.useApp();
     const [form] = Form.useForm<EditorValues>();
     const sourceType = Form.useWatch("sourceType", form) || "media";
@@ -94,13 +99,13 @@ export function WorkPublicationEditor({
                         loading: false,
                     },
                 }));
-            } catch (error) {
+            } catch {
                 if (sourceListRequestIds.current[nextType] !== requestId) return;
                 setSourceLists((current) => ({ ...current, [nextType]: { ...current[nextType], loaded: true, loading: false } }));
-                message.error(error instanceof Error ? error.message : "来源列表加载失败");
+                message.error(t("errors.sourceListFailed"));
             }
         },
-        [message],
+        [message, t],
     );
 
     useEffect(() => {
@@ -142,8 +147,8 @@ export function WorkPublicationEditor({
                 setCoverKey(currentAssets.find((asset) => asset.role === "cover")?.storageKey || "");
                 if (!work?.currentVersion?.title) form.setFieldValue("title", detail.title);
                 if (!work?.currentVersion?.publicPrompt?.trim() && detail.suggestedPrompt) form.setFieldValue("publicPrompt", detail.suggestedPrompt);
-            } catch (error) {
-                if (active) message.error(error instanceof Error ? error.message : "发布信息加载失败");
+            } catch {
+                if (active) message.error(t("errors.loadFailed"));
             } finally {
                 if (active) setLoading(false);
             }
@@ -155,18 +160,18 @@ export function WorkPublicationEditor({
             sourceListRequestIds.current.drama += 1;
             sourceDetailRequestId.current += 1;
         };
-    }, [form, initialSource?.sourceId, initialSource?.sourceType, loadSourcePage, message, open, workId]);
+    }, [form, initialSource?.sourceId, initialSource?.sourceType, loadSourcePage, message, open, t, workId]);
 
     const sourceList = sourceLists[sourceType];
 
     const sourceOptions = useMemo(() => {
         const options = sourceList.items.map((item) => ({
             value: item.id,
-            label: `${item.title}${item.kind ? ` · ${SOURCE_TYPE_LABELS.media}${item.kind === "image" ? "图片" : "视频"}` : ""}`,
+            label: `${item.title}${item.kind ? ` · ${tWorks("sources.media")} ${tWorks(`mediaTypes.${item.kind}`)}` : ""}`,
         }));
         if (source?.sourceType === sourceType && !options.some((item) => item.value === source.sourceId)) options.unshift({ value: source.sourceId, label: source.title });
         return options;
-    }, [source, sourceList.items, sourceType]);
+    }, [source, sourceList.items, sourceType, tWorks]);
 
     const selectSource = async (nextType: WorkPublicationSourceType, sourceId: string) => {
         const requestId = ++sourceDetailRequestId.current;
@@ -185,16 +190,16 @@ export function WorkPublicationEditor({
             setCoverKey(detail.candidates.find((candidate) => candidate.mediaType === "image")?.storageKey || "");
             if (!form.getFieldValue("title")) form.setFieldValue("title", detail.title);
             if (!form.getFieldValue("publicPrompt")?.trim() && detail.suggestedPrompt) form.setFieldValue("publicPrompt", detail.suggestedPrompt);
-        } catch (error) {
+        } catch {
             if (sourceDetailRequestId.current !== requestId) return;
-            message.error(error instanceof Error ? error.message : "来源加载失败");
+            message.error(t("errors.sourceFailed"));
         } finally {
             if (sourceDetailRequestId.current === requestId) setSourceLoading(false);
         }
     };
 
     const save = async (values: EditorValues) => {
-        if (!source || !selectedKeys.length) return message.warning("请至少选择一个作品媒体");
+        if (!source || !selectedKeys.length) return message.warning(t("selectMediaRequired"));
         setSaving(true);
         try {
             const input: WorkPublicationDraftInput = {
@@ -210,10 +215,10 @@ export function WorkPublicationEditor({
                 assetStorageKeys: selectedKeys,
             };
             const work = workId ? await updateWorkPublication(workId, input) : await createWorkPublication(input);
-            message.success(workId ? "作品草稿已保存" : "作品草稿已创建");
+            message.success(workId ? t("draftSaved") : t("draftCreated"));
             onSaved(work);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "作品保存失败");
+        } catch {
+            message.error(t("errors.saveFailed"));
         } finally {
             setSaving(false);
         }
@@ -221,11 +226,11 @@ export function WorkPublicationEditor({
 
     return (
         <Modal
-            title={workId ? "编辑发布版本" : "发布新作品"}
+            title={workId ? t("editVersion") : t("publishNew")}
             open={open}
             width={900}
-            okText="保存草稿"
-            cancelText="取消"
+            okText={t("saveDraft")}
+            cancelText={tWorks("cancel")}
             confirmLoading={saving}
             okButtonProps={{ disabled: loading || sourceLoading || !source || !selectedKeys.length }}
             mask={{ closable: !saving }}
@@ -237,20 +242,20 @@ export function WorkPublicationEditor({
             {loading ? (
                 <div className="grid min-h-72 place-items-center text-sm text-stone-500 dark:text-stone-400">
                     <span className="flex items-center gap-2">
-                        <LoaderCircle className="size-4 animate-spin" /> 正在加载发布信息
+                        <LoaderCircle className="size-4 animate-spin" /> {t("loading")}
                     </span>
                 </div>
             ) : (
                 <Form form={form} layout="vertical" requiredMark={false} onFinish={(values) => void save(values)}>
                     <div className="max-h-[min(70dvh,760px)] min-w-0 space-y-4 overflow-y-auto pr-1">
                         <section className="rounded-lg border border-stone-200 p-3 sm:p-4 dark:border-stone-800">
-                            <div className="mb-3 text-sm font-semibold text-stone-950 dark:text-stone-100">选择发布来源</div>
+                            <div className="mb-3 text-sm font-semibold text-stone-950 dark:text-stone-100">{t("selectSource")}</div>
                             <div className="grid gap-x-4 sm:grid-cols-[220px_minmax(0,1fr)]">
-                                <Form.Item label="来源类型" name="sourceType" rules={[{ required: true }]}>
+                                <Form.Item label={t("sourceType")} name="sourceType" rules={[{ required: true }]}>
                                     <Segmented
                                         block
                                         disabled={Boolean(workId)}
-                                        options={Object.entries(SOURCE_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
+                                        options={["media", "canvas", "drama"].map((value) => ({ value, label: tWorks(`sources.${value}`) }))}
                                         onChange={(value) => {
                                             const nextType = value as WorkPublicationSourceType;
                                             sourceDetailRequestId.current += 1;
@@ -263,15 +268,15 @@ export function WorkPublicationEditor({
                                         }}
                                     />
                                 </Form.Item>
-                                <Form.Item label="具体来源" name="sourceId" rules={[{ required: true, message: "请选择发布来源" }]}>
+                                <Form.Item label={t("specificSource")} name="sourceId" rules={[{ required: true, message: t("sourceRequired") }]}>
                                     <Select
                                         key={sourceType}
                                         showSearch
                                         disabled={Boolean(workId)}
                                         filterOption={false}
                                         loading={sourceLoading || sourceList.loading}
-                                        notFoundContent={sourceList.loading ? "正在加载" : "暂无可发布来源"}
-                                        placeholder="选择本人素材或项目"
+                                        notFoundContent={sourceList.loading ? t("loadingShort") : t("noSources")}
+                                        placeholder={t("sourcePlaceholder")}
                                         options={sourceOptions}
                                         onOpenChange={(nextOpen) => {
                                             if (nextOpen && !sourceList.loaded && !sourceList.loading) void loadSourcePage(sourceType);
@@ -291,8 +296,8 @@ export function WorkPublicationEditor({
                         <section className="rounded-lg border border-stone-200 p-3 sm:p-4 dark:border-stone-800">
                             <div className="flex items-center justify-between gap-3">
                                 <div>
-                                    <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">作品媒体</div>
-                                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">已选 {selectedKeys.length} 项，图片可设为分享封面</div>
+                                    <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">{t("workMedia")}</div>
+                                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">{t("selectedMedia", { count: selectedKeys.length })}</div>
                                 </div>
                                 {sourceLoading ? <LoaderCircle className="size-4 animate-spin text-stone-400" /> : null}
                             </div>
@@ -312,7 +317,7 @@ export function WorkPublicationEditor({
                                                     <Checkbox
                                                         className="!absolute !left-2 !top-2 !m-0 [&_.ant-checkbox-inner]:!size-5 [&_.ant-checkbox-inner]:!border-white/90 [&_.ant-checkbox-inner]:!bg-white/95 [&_.ant-checkbox-checked_.ant-checkbox-inner]:!border-stone-950 [&_.ant-checkbox-checked_.ant-checkbox-inner]:!bg-stone-950 dark:[&_.ant-checkbox-inner]:!border-stone-700 dark:[&_.ant-checkbox-inner]:!bg-stone-900 dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:!border-white dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:!bg-white dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:after:!border-stone-950"
                                                         checked={selected}
-                                                        aria-label={`选择 ${candidate.originalName}`}
+                                                        aria-label={t("selectNamed", { name: candidate.originalName })}
                                                         onChange={(event) => setSelectedKeys((keys) => (event.target.checked ? [...new Set([...keys, candidate.storageKey])] : keys.filter((key) => key !== candidate.storageKey)))}
                                                     />
                                                     <Tag className="!absolute !bottom-1.5 !right-1.5 !m-0 !border-0 !bg-black/65 !text-[10px] !text-white">
@@ -326,7 +331,7 @@ export function WorkPublicationEditor({
                                                     </div>
                                                     {candidate.mediaType === "image" ? (
                                                         <Button type={cover ? "primary" : "text"} size="small" className="!mt-1.5 !h-7 !w-full" icon={cover ? <Check className="size-3.5" /> : undefined} onClick={() => setCoverKey(candidate.storageKey)}>
-                                                            {cover ? "当前封面" : "设为封面"}
+                                                            {cover ? t("currentCover") : t("setCover")}
                                                         </Button>
                                                     ) : null}
                                                 </div>
@@ -335,48 +340,46 @@ export function WorkPublicationEditor({
                                     })}
                                 </div>
                             ) : (
-                                <div className="mt-3 grid min-h-24 place-items-center rounded-md border border-dashed border-stone-300 px-3 text-center text-sm text-stone-500 dark:border-stone-700 dark:text-stone-400">选择来源后加载可发布媒体</div>
+                                <div className="mt-3 grid min-h-24 place-items-center rounded-md border border-dashed border-stone-300 px-3 text-center text-sm text-stone-500 dark:border-stone-700 dark:text-stone-400">{t("selectSourceForMedia")}</div>
                             )}
                         </section>
 
                         <section className="rounded-lg border border-stone-200 p-3 sm:p-4 dark:border-stone-800">
                             <div className="grid gap-x-4 sm:grid-cols-2">
-                                <Form.Item label="作品标题" name="title" rules={[{ required: true, message: "请输入作品标题" }, { max: 100 }]}>
-                                    <Input placeholder="清楚说明作品内容" maxLength={100} />
+                                <Form.Item label={t("workTitle")} name="title" rules={[{ required: true, message: t("titleRequired") }, { max: 100 }]}>
+                                    <Input placeholder={t("titlePlaceholder")} maxLength={100} />
                                 </Form.Item>
-                                <Form.Item label="分类" name="category" rules={[{ required: true }]}>
-                                    <Select options={WORK_CATEGORY_OPTIONS} />
+                                <Form.Item label={t("category")} name="category" rules={[{ required: true }]}>
+                                    <Select options={WORK_CATEGORY_OPTIONS.map((item) => ({ value: item.value, label: tPublic(workCategoryMessageKeys[item.value]) }))} />
                                 </Form.Item>
                             </div>
-                            <Form.Item label="作品说明" name="description" rules={[{ max: 2000 }]}>
-                                <Input.TextArea rows={4} maxLength={2000} showCount placeholder="说明创作主题、内容和适合的观看方式" />
+                            <Form.Item label={t("description")} name="description" rules={[{ max: 2000 }]}>
+                                <Input.TextArea rows={4} maxLength={2000} showCount placeholder={t("descriptionPlaceholder")} />
                             </Form.Item>
-                            <Form.Item label="作品提示词" name="publicPrompt" rules={[{ required: true, whitespace: true, message: "请填写作品提示词" }, { max: 8000 }]} extra="选择来源后会自动读取项目中可见的创作提示词；你可以在发布前继续修改。">
-                                <Input.TextArea rows={5} maxLength={8000} showCount placeholder="填写观众可查看、复制和用于做同款的提示词" />
+                            <Form.Item label={t("publicPrompt")} name="publicPrompt" rules={[{ required: true, whitespace: true, message: t("promptRequired") }, { max: 8000 }]} extra={t("promptExtra")}>
+                                <Input.TextArea rows={5} maxLength={8000} showCount placeholder={t("promptPlaceholder")} />
                             </Form.Item>
-                            <Form.Item label="标签" name="tags">
-                                <Select mode="tags" maxCount={10} maxTagCount="responsive" tokenSeparators={[",", "，"]} placeholder="输入标签后回车，最多 10 个" />
+                            <Form.Item label={t("tags")} name="tags">
+                                <Select mode="tags" maxCount={10} maxTagCount="responsive" tokenSeparators={[",", "，"]} placeholder={t("tagsPlaceholder")} />
                             </Form.Item>
                             <div className="grid gap-x-4 sm:grid-cols-2">
-                                <Form.Item label="可见范围" name="visibility" rules={[{ required: true }]}>
-                                    <Select options={Object.entries(VISIBILITY_LABELS).map(([value, label]) => ({ value, label }))} />
+                                <Form.Item label={t("visibility")} name="visibility" rules={[{ required: true }]}>
+                                    <Select options={["private", "unlisted", "public"].map((value) => ({ value, label: tWorks(`visibility.${value}`) }))} />
                                 </Form.Item>
-                                <Form.Item label="作者显示" name="authorDisplay" rules={[{ required: true }]}>
+                                <Form.Item label={t("authorDisplay")} name="authorDisplay" rules={[{ required: true }]}>
                                     <Select
                                         options={[
-                                            { value: "profile", label: "使用个人资料昵称" },
-                                            { value: "custom", label: "使用自定义作者名" },
-                                            { value: "hidden", label: "不显示作者" },
+                                            { value: "profile", label: t("author.profile") },
+                                            { value: "custom", label: t("author.custom") },
+                                            { value: "hidden", label: t("author.hidden") },
                                         ]}
                                     />
                                 </Form.Item>
                             </div>
-                            <p className={`-mt-2 mb-4 text-xs leading-5 ${visibility === "public" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
-                                {visibility === "public" ? "审核通过后会进入作品广场，并可通过分享链接访问。" : visibility === "unlisted" ? "审核通过后仅持链接可访问，不会出现在作品广场。" : "仅自己可见，不会生成公开分享页面，也不会进入作品广场。"}
-                            </p>
+                            <p className={`-mt-2 mb-4 text-xs leading-5 ${visibility === "public" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>{t(`visibilityHelp.${visibility}`)}</p>
                             {authorDisplay === "custom" ? (
-                                <Form.Item label="展示作者名" name="authorName" rules={[{ required: true, message: "请输入展示作者名" }, { max: 80 }]}>
-                                    <Input maxLength={80} placeholder="只在公开作品中展示" />
+                                <Form.Item label={t("authorName")} name="authorName" rules={[{ required: true, message: t("authorNameRequired") }, { max: 80 }]}>
+                                    <Input maxLength={80} placeholder={t("authorNamePlaceholder")} />
                                 </Form.Item>
                             ) : null}
                         </section>

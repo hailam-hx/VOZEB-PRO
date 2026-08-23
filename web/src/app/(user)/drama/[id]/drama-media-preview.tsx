@@ -2,19 +2,16 @@
 
 import { Modal } from "antd";
 import { Film, ImageIcon, ScanSearch } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
 export type DramaPreviewMedia = { type: "image" | "video"; url: string; title: string };
 
 export function DramaMediaThumbnail({ media, onOpen }: { media: DramaPreviewMedia; onOpen: (media: DramaPreviewMedia) => void }) {
+    const t = useTranslations("drama.editor.mediaPreview");
     return (
-        <button
-            type="button"
-            className="group relative aspect-video w-44 shrink-0 overflow-hidden rounded-md border border-border bg-muted text-left"
-            onClick={() => onOpen(media)}
-            aria-label={`查看${media.type === "image" ? "图片" : "视频"}：${media.title}`}
-        >
+        <button type="button" className="group relative aspect-video w-44 shrink-0 overflow-hidden rounded-md border border-border bg-muted text-left" onClick={() => onOpen(media)} aria-label={t("view", { type: t(media.type), title: media.title })}>
             {media.type === "image" ? (
                 <img className="size-full object-cover transition group-hover:scale-[1.02]" src={imagePreviewUrl(media.url, 640)} alt={media.title} />
             ) : (
@@ -29,8 +26,9 @@ export function DramaMediaThumbnail({ media, onOpen }: { media: DramaPreviewMedi
 }
 
 export function DramaMediaPreviewModal({ media, onClose }: { media?: DramaPreviewMedia; onClose: () => void }) {
+    const t = useTranslations("drama.editor.mediaPreview");
     return (
-        <Modal title={media?.title || "媒体预览"} open={Boolean(media)} width={960} footer={null} destroyOnHidden onCancel={onClose}>
+        <Modal title={media?.title || t("title")} open={Boolean(media)} width={960} footer={null} destroyOnHidden onCancel={onClose}>
             {media?.type === "image" ? <img className="max-h-[75dvh] w-full rounded-md object-contain" src={imagePreviewUrl(media.url, 2048)} alt={media.title} /> : null}
             {media?.type === "video" ? <video className="max-h-[75dvh] w-full rounded-md bg-black" src={media.url} controls autoPlay playsInline preload="metadata" /> : null}
         </Modal>

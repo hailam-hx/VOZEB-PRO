@@ -2,6 +2,7 @@
 
 import { Button, Checkbox, Dropdown, Input, Modal } from "antd";
 import { Check, CheckSquare2, Clock3, MessagesSquare, MoreHorizontal, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useFormatter, useTranslations } from "next-intl";
 import { useEffect, useMemo, useState } from "react";
 
 import type { CreativeConversation } from "@/lib/creative-runtime-contract";
@@ -21,6 +22,8 @@ type Props = {
 };
 
 export function CreativeConversationList({ items, activeId, loading, onNew, onOpen, onRename, onDelete, hasMore, loadingMore, onLoadMore }: Props) {
+    const t = useTranslations("create");
+    const format = useFormatter();
     const [managing, setManaging] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [renaming, setRenaming] = useState<CreativeConversation>();
@@ -76,17 +79,17 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                     className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#20242a] !bg-[#20242a] px-3 text-sm font-medium !text-white transition hover:border-[#343a42] hover:!bg-[#343a42] dark:border-[#f3f5f7] dark:!bg-[#f3f5f7] dark:!text-[#20242a] dark:hover:border-white dark:hover:!bg-white"
                     onClick={onNew}
                 >
-                    <Plus className="size-4 text-current" /> 新建对话
+                    <Plus className="size-4 text-current" /> {t("newConversation")}
                 </button>
             </div>
 
             <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-[#edf0f2] px-3 dark:border-[#252a30]">
                 {managing ? (
                     <Checkbox checked={allSelected} indeterminate={selectedIds.length > 0 && !allSelected} onChange={(event) => setSelectedIds(event.target.checked ? items.map((item) => item.id) : [])}>
-                        全选
+                        {t("selectAll")}
                     </Checkbox>
                 ) : (
-                    <span className="text-xs text-[#8b949f] dark:text-[#7f8996]">{items.length} 条对话</span>
+                    <span className="text-xs text-[#8b949f] dark:text-[#7f8996]">{t("conversationCount", { count: items.length })}</span>
                 )}
                 <button
                     type="button"
@@ -94,13 +97,13 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                     onClick={() => (managing ? leaveManage() : setManaging(true))}
                 >
                     {managing ? <X className="size-3.5" /> : <CheckSquare2 className="size-3.5" />}
-                    {managing ? "退出管理" : "批量管理"}
+                    {managing ? t("exitManagement") : t("batchManagement")}
                 </button>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-                {loading ? <div className="py-10 text-center text-sm text-stone-400">正在读取...</div> : null}
-                {!loading && !items.length ? <div className="py-10 text-center text-sm text-stone-400">暂无创作会话</div> : null}
+                {loading ? <div className="py-10 text-center text-sm text-stone-400">{t("loading")}</div> : null}
+                {!loading && !items.length ? <div className="py-10 text-center text-sm text-stone-400">{t("noCreativeConversations")}</div> : null}
                 <div className="space-y-1.5">
                     {items.map((item) => {
                         const checked = selected.has(item.id);
@@ -122,7 +125,7 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                                             maxLength={120}
                                             autoFocus
                                             className="min-w-0 flex-1"
-                                            aria-label="对话标题"
+                                            aria-label={t("conversationTitle")}
                                             onChange={(event) => setTitle(event.target.value)}
                                             onPressEnter={() => void saveTitle()}
                                             onKeyDown={(event) => {
@@ -132,8 +135,8 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                                         <button
                                             type="button"
                                             className="grid size-8 shrink-0 place-items-center rounded-md text-[#56616d] transition hover:bg-[#e8ecef] hover:text-[#20242a] dark:text-[#b8c0ca] dark:hover:bg-[#303740] dark:hover:text-white"
-                                            aria-label="保存标题"
-                                            title="保存标题"
+                                            aria-label={t("saveTitle")}
+                                            title={t("saveTitle")}
                                             onClick={() => void saveTitle()}
                                         >
                                             <Check className="size-4" />
@@ -141,8 +144,8 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                                         <button
                                             type="button"
                                             className="grid size-8 shrink-0 place-items-center rounded-md text-[#8b949f] transition hover:bg-[#e8ecef] hover:text-[#20242a] dark:text-[#8f99a6] dark:hover:bg-[#303740] dark:hover:text-white"
-                                            aria-label="取消修改"
-                                            title="取消修改"
+                                            aria-label={t("cancelChanges")}
+                                            title={t("cancelChanges")}
                                             onClick={() => setRenaming(undefined)}
                                         >
                                             <X className="size-4" />
@@ -151,7 +154,12 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                                 ) : (
                                     <>
                                         {managing ? (
-                                            <Checkbox className="ml-2 shrink-0" checked={checked} aria-label={`选择${item.title}`} onChange={() => setSelectedIds((current) => (checked ? current.filter((id) => id !== item.id) : [...current, item.id]))} />
+                                            <Checkbox
+                                                className="ml-2 shrink-0"
+                                                checked={checked}
+                                                aria-label={t("selectNamedConversation", { name: item.title })}
+                                                onChange={() => setSelectedIds((current) => (checked ? current.filter((id) => id !== item.id) : [...current, item.id]))}
+                                            />
                                         ) : null}
                                         <button
                                             type="button"
@@ -164,7 +172,7 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                                             <span className="min-w-0 flex-1">
                                                 <span className="block truncate text-sm font-medium text-stone-800 dark:text-stone-100">{item.title}</span>
                                                 <span className="mt-0.5 flex items-center gap-1 text-[11px] text-stone-400 dark:text-stone-500">
-                                                    <Clock3 className="size-3" /> {formatConversationTime(item.lastMessageAt)}
+                                                    <Clock3 className="size-3" /> {formatConversationTime(item.lastMessageAt, format)}
                                                 </span>
                                             </span>
                                         </button>
@@ -172,7 +180,7 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                                             <Dropdown
                                                 trigger={["click"]}
                                                 menu={{
-                                                    items: [{ key: "rename", icon: <Pencil className="size-3.5" />, label: "重命名" }, { type: "divider" }, { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除" }],
+                                                    items: [{ key: "rename", icon: <Pencil className="size-3.5" />, label: t("rename") }, { type: "divider" }, { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: t("delete") }],
                                                     onClick: ({ key }) => {
                                                         if (key === "rename") {
                                                             setRenaming(item);
@@ -186,8 +194,8 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                                                 <button
                                                     type="button"
                                                     className="grid size-8 shrink-0 place-items-center rounded-md text-stone-400 opacity-100 transition hover:bg-white hover:text-stone-950 sm:opacity-0 sm:group-hover:opacity-100 dark:text-stone-500 dark:hover:bg-stone-700 dark:hover:text-white"
-                                                    aria-label={`管理${item.title}`}
-                                                    title="管理对话"
+                                                    aria-label={t("manageNamedConversation", { name: item.title })}
+                                                    title={t("manageConversation")}
                                                 >
                                                     <MoreHorizontal className="size-4" />
                                                 </button>
@@ -200,7 +208,7 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                     })}
                     {hasMore ? (
                         <Button type="text" block loading={loadingMore} onClick={onLoadMore}>
-                            加载更多对话
+                            {t("loadMoreConversations")}
                         </Button>
                     ) : null}
                 </div>
@@ -208,18 +216,18 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
 
             {managing ? (
                 <div className="flex shrink-0 items-center gap-3 border-t border-[#e6eaee] bg-white px-4 py-3 dark:border-[#2b3037] dark:bg-[#181b20]">
-                    <span className="min-w-0 flex-1 text-xs text-[#8b949f] dark:text-[#7f8996]">已选择 {selectedIds.length} 条</span>
+                    <span className="min-w-0 flex-1 text-xs text-[#8b949f] dark:text-[#7f8996]">{t("selectedConversationCount", { count: selectedIds.length })}</span>
                     <Button danger icon={<Trash2 className="size-3.5" />} disabled={!selectedIds.length} loading={submitting} onClick={() => setDeleteIds(selectedIds)}>
-                        批量删除
+                        {t("batchDelete")}
                     </Button>
                 </div>
             ) : null}
 
             <Modal
-                title={deleteIds.length > 1 ? `删除 ${deleteIds.length} 条对话？` : "删除这条对话？"}
+                title={deleteIds.length > 1 ? t("deleteConversationCountQuestion", { count: deleteIds.length }) : t("deleteConversationQuestion")}
                 open={Boolean(deleteIds.length)}
-                okText="删除"
-                cancelText="取消"
+                okText={t("delete")}
+                cancelText={t("cancel")}
                 okButtonProps={{ danger: true }}
                 confirmLoading={submitting}
                 onOk={() =>
@@ -229,14 +237,14 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                 }
                 onCancel={() => setDeleteIds([])}
             >
-                <p className="text-sm text-[#697381] dark:text-[#a7afb9]">将永久删除消息、生成记录和仅由这些对话使用的媒体；仍被素材库、画布、短剧或作品引用的媒体会保留。</p>
+                <p className="text-sm text-[#697381] dark:text-[#a7afb9]">{t("deleteConversationDescription")}</p>
             </Modal>
         </div>
     );
 }
 
-function formatConversationTime(value: number) {
+function formatConversationTime(value: number, format: ReturnType<typeof useFormatter>) {
     const date = new Date(value);
     const today = new Date();
-    return date.toDateString() === today.toDateString() ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+    return date.toDateString() === today.toDateString() ? format.dateTime(date, { hour: "2-digit", minute: "2-digit" }) : format.dateTime(date, { month: "2-digit", day: "2-digit" });
 }

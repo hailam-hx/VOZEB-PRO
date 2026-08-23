@@ -7,7 +7,17 @@ import { buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcPreset } from "@/lib/gl
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
-import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import {
+    boolConfig,
+    buildSeedancePromptText,
+    isSeedanceVideoConfig,
+    normalizeSeedanceDuration,
+    normalizeSeedanceRatio,
+    normalizeSeedanceResolution,
+    seedanceVideoReferenceIssue,
+    seedanceVideoReferenceIssueCode,
+    SEEDANCE_REFERENCE_LIMITS,
+} from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -357,25 +367,19 @@ export async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTa
 }
 
 export function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[]) {
-    const error = seedanceVideoReferenceError(videoReferences);
-    if (error) throw new Error(error);
-    let total = 0;
-    for (const video of videoReferences) {
-        if (!video.durationMs) continue;
-        if (video.durationMs < 2000 || video.durationMs > 15000) throw new Error("Seedance 参考视频单个时长需要在 2-15 秒之间");
-        total += video.durationMs;
-    }
-    if (total > 15000) throw new Error("Seedance 参考视频总时长不能超过 15 秒");
+    const issue = seedanceVideoReferenceIssue(videoReferences);
+    if (issue) throw new Error(seedanceVideoReferenceIssueCode(issue));
 }
 
 export function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[]) {
     let total = 0;
-    for (const audio of audioReferences) {
+    for (let index = 0; index < audioReferences.length; index += 1) {
+        const audio = audioReferences[index];
         if (!audio.durationMs) continue;
-        if (audio.durationMs < 2000 || audio.durationMs > 15000) throw new Error("Seedance 参考音频单个时长需要在 2-15 秒之间");
+        if (audio.durationMs < 2000 || audio.durationMs > 15000) throw new Error(`seedance-reference-audio-duration-out-of-range:${index + 1}`);
         total += audio.durationMs;
     }
-    if (total > 15000) throw new Error("Seedance 参考音频总时长不能超过 15 秒");
+    if (total > 15000) throw new Error("seedance-reference-audio-total-duration-out-of-range");
 }
 
 export function seedanceApiUrl(config: AiConfig, taskId?: string) {

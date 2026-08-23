@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { LoaderCircle, Maximize2, Minimize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
+import { useTranslations } from "next-intl";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, formatCreditAmount, requestCreditCost } from "@/constant/credits";
@@ -36,6 +37,7 @@ type CanvasNodePromptPanelProps = {
 };
 
 export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
+    const t = useTranslations("canvas");
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -47,6 +49,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const isEditingExistingContent = hasTextContent || hasImageContent;
     const [prompt, setPrompt] = useState(isEditingExistingContent ? "" : node.metadata?.prompt || "");
     const [expanded, setExpanded] = useState(false);
+    const placeholder = t(`promptPanel.placeholders.${promptPlaceholderKey(mode, hasImageContent, hasTextContent, isPanorama)}`);
     const expandedEditorRef = useRef<HTMLTextAreaElement | null>(null);
     const credits = requestCreditCost({
         apiSource: config.apiSource,
@@ -96,12 +99,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     references={mentionReferences}
                     onChange={updatePrompt}
                     onSubmit={submit}
-                    aria-label="节点提示词"
+                    aria-label={t("promptPanel.nodePrompt")}
                     className="thin-scrollbar h-24 w-full resize-none rounded-xl border px-3 py-2 pr-11 text-sm leading-5 outline-none"
                     style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
-                    placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent, isPanorama)}
+                    placeholder={placeholder}
                 />
-                <Tooltip title="放大提示词输入" placement="top">
+                <Tooltip title={t("promptPanel.expandPrompt")} placement="top">
                     <button
                         type="button"
                         data-canvas-no-drag
@@ -113,7 +116,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         }}
                         onMouseDown={stopCanvasInteraction}
                         onPointerDown={stopCanvasInteraction}
-                        aria-label="放大提示词输入"
+                        aria-label={t("promptPanel.expandPrompt")}
                     >
                         <Maximize2 className="size-4" aria-hidden />
                     </button>
@@ -132,7 +135,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 buttonClassName="canvas-composer-settings !h-10 !min-w-[9rem] !max-w-full !flex-1 !justify-start !rounded-full !px-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
                                 onOpenChange={onImageSettingsOpenChange}
-                                fixedSizeLabel={isPanorama ? "全景 2:1" : undefined}
+                                fixedSizeLabel={isPanorama ? t("promptPanel.panoramaSize") : undefined}
                             />
                             {!isPanorama ? (
                                 <CanvasCameraControl
@@ -178,18 +181,18 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     danger={isRunning}
                     disabled={!isRunning && !prompt.trim()}
                     onClick={() => (isRunning ? onStop(node.id) : submit())}
-                    aria-label={isRunning ? "停止生成" : "生成"}
+                    aria-label={isRunning ? t("promptPanel.stopGeneration") : t("promptPanel.generate")}
                 >
                     <span className="flex items-center gap-1.5">
                         {isRunning ? (
                             <>
                                 <LoaderCircle className="size-4 animate-spin" />
                                 <Square className="size-3.5 fill-current" />
-                                <span className="text-xs font-medium">停止</span>
+                                <span className="text-xs font-medium">{t("promptPanel.stop")}</span>
                             </>
                         ) : (
                             <>
-                                <span className="text-xs font-semibold">生成</span>
+                                <span className="text-xs font-semibold">{t("promptPanel.generate")}</span>
                                 <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
                                     <CreditSymbol />
                                     {formatCreditAmount(credits)}
@@ -204,7 +207,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 <Modal
                     className="canvas-prompt-editor-modal"
                     open={expanded}
-                    title="编辑提示词"
+                    title={t("promptPanel.editPrompt")}
                     centered
                     destroyOnHidden
                     mask={{ closable: false }}
@@ -234,18 +237,24 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             references={mentionReferences}
                             onChange={updatePrompt}
                             onSubmit={submitExpanded}
-                            aria-label="提示词编辑器"
+                            aria-label={t("promptPanel.promptEditor")}
                             className="thin-scrollbar h-[min(52vh,26rem)] min-h-64 w-full resize-none border-0 px-4 py-3 text-sm leading-6 outline-none"
                             style={{ background: theme.node.fill, color: theme.node.text }}
-                            placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent, isPanorama)}
+                            placeholder={placeholder}
                         />
                     </div>
                     <div className="mt-3 flex items-center justify-end gap-2">
-                        <Button icon={<Minimize2 className="size-4" />} onClick={() => setExpanded(false)} aria-label="收起提示词输入">
-                            收起
+                        <Button icon={<Minimize2 className="size-4" />} onClick={() => setExpanded(false)} aria-label={t("promptPanel.collapsePrompt")}>
+                            {t("promptPanel.collapse")}
                         </Button>
-                        <Button type="primary" danger={isRunning} disabled={!isRunning && !prompt.trim()} onClick={() => (isRunning ? onStop(node.id) : submitExpanded())} aria-label={isRunning ? "停止生成" : "生成"}>
-                            {isRunning ? "停止生成" : "生成"}
+                        <Button
+                            type="primary"
+                            danger={isRunning}
+                            disabled={!isRunning && !prompt.trim()}
+                            onClick={() => (isRunning ? onStop(node.id) : submitExpanded())}
+                            aria-label={isRunning ? t("promptPanel.stopGeneration") : t("promptPanel.generate")}
+                        >
+                            {isRunning ? t("promptPanel.stopGeneration") : t("promptPanel.generate")}
                         </Button>
                     </div>
                 </Modal>
@@ -265,10 +274,10 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     return node.type === CanvasNodeType.Panorama ? { ...config, size: PANORAMA_IMAGE_SIZE } : config;
 }
 
-function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: boolean, hasTextContent: boolean, isPanorama: boolean) {
-    if (mode === "video") return "描述要生成的视频内容";
-    if (mode === "audio") return "描述要生成的音频内容";
-    if (isPanorama) return hasImageContent ? "描述要如何调整这个全景环境" : "描述要生成的 360° 全景环境";
-    if (mode === "image") return hasImageContent ? "请输入你想要把这张图修改成什么" : "描述要生成的图片内容";
-    return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";
+function promptPlaceholderKey(mode: CanvasNodeGenerationMode, hasImageContent: boolean, hasTextContent: boolean, isPanorama: boolean) {
+    if (mode === "video") return "video";
+    if (mode === "audio") return "audio";
+    if (isPanorama) return hasImageContent ? "editPanorama" : "panorama";
+    if (mode === "image") return hasImageContent ? "editImage" : "image";
+    return hasTextContent ? "editText" : "text";
 }

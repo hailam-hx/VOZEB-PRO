@@ -5,13 +5,27 @@ import { resolve } from "node:path";
 import { normalizePositiveInteger, normalizePositiveNumber, normalizeVideoQuality } from "@/components/creative-generation-preference-fields";
 import { generationPreferenceSummary, normalizeGenerationCount } from "@/components/creative-generation-preferences";
 
+const zhCopy = {
+    smartParameters: "智能参数",
+    smartRatio: "智能比例",
+    smartClarity: "智能清晰度",
+    withAudio: "有声",
+    withoutAudio: "无声",
+    withWatermark: "带水印",
+    withoutWatermark: "无水印",
+    imageQuality: { auto: "智能画质", high: "高画质", medium: "中画质", low: "低画质" },
+    referenceMode: { reference: "智能参考", first_frame: "首帧", first_last: "首尾帧" },
+    seconds: (value: number) => `${value}秒`,
+    count: (value: number, capability: "image" | "video" | "audio") => `${value}${capability === "image" ? "张" : "条"}`,
+};
+
 describe("generationPreferenceSummary", () => {
     it("keeps image, video and audio settings readable in one compact label", () => {
-        expect(generationPreferenceSummary("image", {})).toBe("智能参数");
-        expect(generationPreferenceSummary("video", { video: { size: "16:9", quality: "2160", seconds: 60, count: 3, generateAudio: false, watermark: true } })).toBe("16:9 · 2160P · 60秒 · 无声 · 带水印 · 3条");
-        expect(generationPreferenceSummary("image", { image: { size: "1024x1536", quality: "high", count: 2 } })).toBe("1024×1536 · 高画质 · 2张");
-        expect(generationPreferenceSummary("audio", { audio: { voice: "nova", format: "wav", speed: 1.25 } })).toBe("Nova · WAV · 1.25x");
-        expect(generationPreferenceSummary("video", {})).toBe("智能参数 · 5秒 · 有声 · 无水印");
+        expect(generationPreferenceSummary("image", {}, zhCopy)).toBe("智能参数");
+        expect(generationPreferenceSummary("video", { video: { size: "16:9", quality: "2160", seconds: 60, count: 3, generateAudio: false, watermark: true } }, zhCopy)).toBe("16:9 · 2160P · 60秒 · 无声 · 带水印 · 3条");
+        expect(generationPreferenceSummary("image", { image: { size: "1024x1536", quality: "high", count: 2 } }, zhCopy)).toBe("1024×1536 · 高画质 · 2张");
+        expect(generationPreferenceSummary("audio", { audio: { voice: "nova", format: "wav", speed: 1.25 } }, zhCopy)).toBe("Nova · WAV · 1.25x");
+        expect(generationPreferenceSummary("video", {}, zhCopy)).toBe("智能参数 · 5秒 · 有声 · 无水印");
     });
 
     it("accepts custom generation counts within the server contract", () => {
@@ -33,17 +47,17 @@ describe("generationPreferenceSummary", () => {
     it("exposes the same positive custom pixel editor for images and videos", async () => {
         const source = await readFile(resolve(process.cwd(), "src/components/creative-generation-preferences.tsx"), "utf8");
 
-        expect(source).toContain('aria-label={`打开${capability === "image" ? "图片" : "视频"}自定义像素尺寸`}');
+        expect(source).toContain('aria-label={t("openCustomPixelSize"');
         expect(source).toContain("<CustomMediaSizeEditor capability={capability}");
-        expect(source).toContain('`自定义${capability === "image" ? "图片" : "视频"}宽度`');
-        expect(source).toContain('`自定义${capability === "image" ? "图片" : "视频"}高度`');
+        expect(source).toContain('t("customMediaWidth"');
+        expect(source).toContain('t("customMediaHeight"');
     });
 
     it("keeps media type above the canvas and output parameter tabs", async () => {
         const source = await readFile(resolve(process.cwd(), "src/components/creative-generation-preferences.tsx"), "utf8");
 
         expect(source.indexOf("availableCapabilities.map")).toBeLessThan(source.indexOf("<PreferencePanel"));
-        expect(source.indexOf("画面")).toBeLessThan(source.indexOf("输出"));
-        expect(source.indexOf("比例")).toBeLessThan(source.indexOf("自定义像素尺寸"));
+        expect(source.indexOf('t("visual")')).toBeLessThan(source.indexOf('t("output")'));
+        expect(source.indexOf('t("ratio")')).toBeLessThan(source.indexOf('t("customPixelSize")'));
     });
 });

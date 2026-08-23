@@ -80,7 +80,7 @@ describe("Canvas video references", () => {
                 videoReferenceMode: "first_last",
                 videoReferences: [snapshot("frame-one", "first_frame", "permanent/frames/first.webp")],
             }),
-        ).toThrow("请先选择视频尾帧图片");
+        ).toThrow("Select a last-frame image first");
     });
 });
 

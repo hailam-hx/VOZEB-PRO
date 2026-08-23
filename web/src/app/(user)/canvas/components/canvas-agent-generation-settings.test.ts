@@ -16,10 +16,10 @@ describe("Canvas Agent generation settings", () => {
     });
 
     it("keeps the compact trigger readable without dropping the primary output values", () => {
-        expect(canvasAgentCompactPreferenceSummary("image", { mode: "image", image: { size: "1:1", quality: "low", count: 4 } })).toBe("1:1 · 4张");
-        expect(canvasAgentCompactPreferenceSummary("video", { mode: "video", video: { size: "16:9", quality: "1080", seconds: 10, generateAudio: true, watermark: false } })).toBe("16:9 · 10秒");
-        expect(canvasAgentCompactPreferenceSummary("image", {})).toBe("智能 · 1张");
-        expect(canvasAgentCompactPreferenceSummary("video", {})).toBe("智能 · 5秒");
+        expect(canvasAgentCompactPreferenceSummary("image", { mode: "image", image: { size: "1:1", quality: "low", count: 4 } })).toBe("1:1 · 4 images");
+        expect(canvasAgentCompactPreferenceSummary("video", { mode: "video", video: { size: "16:9", quality: "1080", seconds: 10, generateAudio: true, watermark: false } })).toBe("16:9 · 10s");
+        expect(canvasAgentCompactPreferenceSummary("image", {})).toBe("Smart · 1 images");
+        expect(canvasAgentCompactPreferenceSummary("video", {})).toBe("Smart · 5s");
         expect(canvasAgentCompactPreferenceSummary("image", { mode: "image", image: { size: "1824x1024", quality: "high", count: 4 } })).toBe("1824×1024");
         expect(canvasAgentCompactPreferenceSummary("video", { mode: "video", video: { size: "1080x1920", quality: "1080", seconds: 10 } })).toBe("1080×1920");
     });

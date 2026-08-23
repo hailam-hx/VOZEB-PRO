@@ -17,9 +17,9 @@ describe("drama project entry", () => {
         const source = await readFile(resolve(process.cwd(), "src/app/(user)/drama/components/drama-project-card.tsx"), "utf8");
 
         expect(source).toContain("href={`/drama/${project.id}`}");
-        expect(source).toContain("aria-label={`进入短剧项目：${project.title}`}");
-        expect(source).toContain('aria-label="删除项目"');
+        expect(source).toContain('aria-label={t("openNamed", { title: project.title })}');
+        expect(source).toContain('aria-label={t("delete")}');
         expect(source).toContain("sourceType=drama");
-        expect(source).not.toContain("继续制作");
+        expect(source).not.toContain('t("continue")');
     });
 });

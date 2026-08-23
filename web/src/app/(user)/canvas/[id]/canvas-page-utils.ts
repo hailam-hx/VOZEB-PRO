@@ -7,7 +7,6 @@ import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CANVAS_CONFIG_NODE_HEIGHT, NODE_DEFAULT_SIZE } from "../constants";
-import type { CanvasImageAngleParams } from "../components/canvas-node-angle-dialog";
 import type { NodeGenerationInput } from "../components/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
 import { resolveCanvasGenerationModel } from "../utils/canvas-node-config";
@@ -46,7 +45,7 @@ export async function uploadGeneratedCanvasImage(url: string, remoteFallback = "
             // Try the next fallback source.
         }
     }
-    throw new Error("图片保存到服务器失败");
+    throw new Error("Failed to save the image on the server");
 }
 
 export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
@@ -361,14 +360,4 @@ export function isHiddenBatchConnectionEndpoint(node: CanvasNodeData, nodes: Can
     if (!rootId) return false;
     const root = nodes.find((item) => item.id === rootId);
     return Boolean(root && !root.metadata?.imageBatchExpanded);
-}
-
-export function buildAngleLabel(params: CanvasImageAngleParams) {
-    const horizontal = params.horizontalAngle === 0 ? "正面视角" : params.horizontalAngle > 0 ? `向右旋转 ${params.horizontalAngle} 度` : `向左旋转 ${Math.abs(params.horizontalAngle)} 度`;
-    const pitch = params.pitchAngle === 0 ? "水平视角" : params.pitchAngle > 0 ? `俯视 ${params.pitchAngle} 度` : `仰视 ${Math.abs(params.pitchAngle)} 度`;
-    return `AI 多角度：${horizontal}，${pitch}，镜头距离 ${params.cameraDistance.toFixed(1)}，${params.wideAngle ? "广角" : "标准"}镜头`;
-}
-
-export function buildAnglePrompt(params: CanvasImageAngleParams) {
-    return `基于参考图重新生成同一主体的新视角，保持主体、颜色、材质和画面风格一致，不要只做透视变形。${buildAngleLabel(params)}。`;
 }

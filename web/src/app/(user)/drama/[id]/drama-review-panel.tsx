@@ -3,6 +3,7 @@
 import { Button, Input, InputNumber, Modal } from "antd";
 import { ArrowLeft, Check, ChevronDown, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import type { DramaEpisode, DramaProject } from "@/lib/drama-project-contract";
 import { useDramaStore } from "../stores/use-drama-store";
@@ -11,6 +12,7 @@ import type { DramaProjectStage } from "./drama-project-sections";
 import { DramaShotDialogueEditor } from "./drama-shot-dialogue-editor";
 
 export function DramaReviewPanel({ project, episode, onDesignVisuals, designing, onStageChange }: { project: DramaProject; episode: DramaEpisode; onDesignVisuals: () => void; designing: boolean; onStageChange: (stage: DramaProjectStage) => void }) {
+    const t = useTranslations("drama.editor.review");
     const updateEpisode = useDramaStore((state) => state.updateEpisode);
     const updateShot = useDramaStore((state) => state.updateShot);
     const [episodeInfoOpen, setEpisodeInfoOpen] = useState(false);
@@ -36,22 +38,22 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing,
         <div>
             <DramaStageHeader
                 step="02"
-                title="内容审核"
-                description="确认剧本事实、镜头边界、对白与叙事信息；视觉模型不会在这个阶段改写内容。"
-                status={!episode.shots.length ? "等待内容结构" : episode.reviewStatus === "visual_ready" ? "视觉方案已生成" : "待确认"}
+                title={t("title")}
+                description={t("description")}
+                status={!episode.shots.length ? t("waitingStructure") : episode.reviewStatus === "visual_ready" ? t("visualPlanReady") : t("pendingConfirmation")}
                 tone={!episode.shots.length ? "attention" : episode.reviewStatus === "visual_ready" ? "ready" : "neutral"}
                 metrics={
                     episode.shots.length
                         ? [
-                              { label: "镜头", value: episode.shots.length },
-                              { label: "总时长", value: `${totalDuration} 秒` },
-                              { label: "对白", value: `${dialogueCount} 句` },
+                              { label: t("shots"), value: episode.shots.length },
+                              { label: t("duration"), value: t("seconds", { count: totalDuration }) },
+                              { label: t("dialogue"), value: t("lines", { count: dialogueCount }) },
                           ]
                         : []
                 }
                 secondaryAction={
                     <Button className="!h-8" icon={<SlidersHorizontal className="size-3.5" />} onClick={() => setEpisodeInfoOpen(true)}>
-                        本集信息
+                        {t("episodeInfo")}
                     </Button>
                 }
                 action={
@@ -62,7 +64,7 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing,
                         loading={designing}
                         onClick={episode.shots.length ? onDesignVisuals : () => onStageChange("script")}
                     >
-                        {!episode.shots.length ? "返回剧本并提取结构" : episode.reviewStatus === "visual_ready" ? "更新视觉方案" : "确认内容并生成视觉方案"}
+                        {!episode.shots.length ? t("returnAndExtract") : episode.reviewStatus === "visual_ready" ? t("updateVisualPlan") : t("confirmAndGenerate")}
                     </Button>
                 }
             />
@@ -71,7 +73,7 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing,
                     {episode.shots.map((shot) => {
                         const expanded = expandedShotIds.has(shot.id);
                         const dialogueCount = shot.utterances.filter((item) => item.type === "dialogue").length || shot.dialogue.split(/\n+/).filter((line) => line.trim()).length;
-                        const sourcePreview = compactReviewText(shot.sourceText || shot.description || "暂无原文依据");
+                        const sourcePreview = compactReviewText(shot.sourceText || shot.description || t("noSource"));
                         return (
                             <article key={shot.id} className="rounded-lg border border-border bg-background p-3">
                                 <div className="flex min-w-0 items-center gap-2">
@@ -79,7 +81,7 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing,
                                     <Input variant="borderless" className="!min-w-0 !flex-1 !p-0 !font-semibold" value={shot.title} onChange={(event) => updateContentShot(shot.id, { title: event.target.value })} />
                                     <span className="hidden shrink-0 items-center gap-1.5 rounded-md border border-border bg-muted/45 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex">
                                         <span className="size-1.5 rounded-full bg-foreground/60" />
-                                        可编辑内容
+                                        {t("editableContent")}
                                     </span>
                                     <Button
                                         size="small"
@@ -89,64 +91,54 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing,
                                         aria-expanded={expanded}
                                         onClick={() => toggleShot(shot.id)}
                                     >
-                                        {expanded ? "收起" : "展开"}
+                                        {expanded ? t("collapse") : t("expand")}
                                     </Button>
                                 </div>
                                 {expanded ? (
                                     <>
                                         <div className="mt-3 grid gap-3 xl:grid-cols-2">
                                             <label className="block space-y-1.5 xl:col-span-2">
-                                                <span className="text-xs font-medium text-muted-foreground">原文依据</span>
-                                                <Input.TextArea
-                                                    value={shot.sourceText}
-                                                    onChange={(event) => updateContentShot(shot.id, { sourceText: event.target.value })}
-                                                    autoSize={{ minRows: 2, maxRows: 5 }}
-                                                    placeholder="保留这一镜头对应的连续原文，便于核对台词和动作"
-                                                />
+                                                <span className="text-xs font-medium text-muted-foreground">{t("source")}</span>
+                                                <Input.TextArea value={shot.sourceText} onChange={(event) => updateContentShot(shot.id, { sourceText: event.target.value })} autoSize={{ minRows: 2, maxRows: 5 }} placeholder={t("sourcePlaceholder")} />
                                             </label>
                                             <label className="block space-y-1.5">
-                                                <span className="text-xs font-medium text-muted-foreground">镜头事实</span>
-                                                <Input.TextArea
-                                                    value={shot.description}
-                                                    onChange={(event) => updateContentShot(shot.id, { description: event.target.value })}
-                                                    autoSize={{ minRows: 2, maxRows: 4 }}
-                                                    placeholder="只写画面中能看到的动作、人物状态和环境事实"
-                                                />
+                                                <span className="text-xs font-medium text-muted-foreground">{t("shotFacts")}</span>
+                                                <Input.TextArea value={shot.description} onChange={(event) => updateContentShot(shot.id, { description: event.target.value })} autoSize={{ minRows: 2, maxRows: 4 }} placeholder={t("shotFactsPlaceholder")} />
                                             </label>
                                             <label className="block space-y-1.5">
-                                                <span className="text-xs font-medium text-muted-foreground">镜头边界</span>
+                                                <span className="text-xs font-medium text-muted-foreground">{t("shotBoundary")}</span>
                                                 <Input.TextArea
                                                     value={shot.shotBoundary}
                                                     onChange={(event) => updateContentShot(shot.id, { shotBoundary: event.target.value })}
                                                     autoSize={{ minRows: 2, maxRows: 4 }}
-                                                    placeholder="例如：说话人改变、动作反应或场景变化"
+                                                    placeholder={t("shotBoundaryPlaceholder")}
                                                 />
                                             </label>
                                             <div className="min-w-0">
                                                 <DramaShotDialogueEditor projectId={project.id} episodeId={episode.id} shot={shot} />
                                             </div>
                                             <label className="block space-y-1.5">
-                                                <span className="text-xs font-medium text-muted-foreground">画外音（旁白）</span>
+                                                <span className="text-xs font-medium text-muted-foreground">{t("narration")}</span>
                                                 <Input.TextArea
                                                     value={shot.narration}
                                                     onChange={(event) => updateContentShot(shot.id, { narration: event.target.value, subtitle: [shot.dialogue, event.target.value].filter(Boolean).join("\n") })}
                                                     autoSize={{ minRows: 2, maxRows: 5 }}
-                                                    placeholder="只填写原文明确存在的旁白；没有旁白请留空"
+                                                    placeholder={t("narrationPlaceholder")}
                                                 />
                                             </label>
                                         </div>
                                         <div className="mt-3 grid grid-cols-[auto_72px_auto] items-center gap-2 text-sm text-muted-foreground sm:grid-cols-[auto_88px_auto_minmax(0,1fr)]">
-                                            <span className="whitespace-nowrap">镜头时长</span>
+                                            <span className="whitespace-nowrap">{t("shotDuration")}</span>
                                             <InputNumber className="!h-9 !w-[72px] sm:!w-[88px]" min={1} max={20} value={shot.duration} onChange={(value) => updateContentShot(shot.id, { duration: Number(value) || 5 })} />
-                                            <span>秒</span>
-                                            <span className="hidden min-w-0 text-right text-xs sm:block">视觉提示词将在确认后生成</span>
+                                            <span>{t("secondUnit")}</span>
+                                            <span className="hidden min-w-0 text-right text-xs sm:block">{t("visualPromptNotice")}</span>
                                         </div>
                                     </>
                                 ) : (
                                     <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-                                        <span className="min-w-0 max-w-full truncate">原文：{sourcePreview}</span>
-                                        <span>{dialogueCount ? `${dialogueCount} 句对白` : "暂无对白"}</span>
-                                        <span>{shot.duration} 秒</span>
+                                        <span className="min-w-0 max-w-full truncate">{t("sourcePreview", { source: sourcePreview })}</span>
+                                        <span>{dialogueCount ? t("dialogueLines", { count: dialogueCount }) : t("noDialogue")}</span>
+                                        <span>{t("seconds", { count: shot.duration })}</span>
                                     </div>
                                 )}
                             </article>
@@ -156,18 +148,18 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing,
             ) : (
                 <div className="mt-2.5 flex min-h-14 items-center rounded-lg border border-dashed border-border bg-card/25 px-3 py-2.5">
                     <div className="min-w-0">
-                        <h3 className="text-sm font-medium">还没有待审核的内容结构</h3>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">先填写或导入本集剧本，再由 AI 提取可编辑的镜头事实、对白和原文依据。</p>
+                        <h3 className="text-sm font-medium">{t("emptyTitle")}</h3>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">{t("emptyDescription")}</p>
                     </div>
                 </div>
             )}
-            <Modal title="本集信息" open={episodeInfoOpen} width={620} centered destroyOnHidden footer={null} onCancel={() => setEpisodeInfoOpen(false)} styles={{ container: { maxWidth: "calc(100vw - 24px)" } }}>
+            <Modal title={t("episodeInfo")} open={episodeInfoOpen} width={620} centered destroyOnHidden footer={null} onCancel={() => setEpisodeInfoOpen(false)} styles={{ container: { maxWidth: "calc(100vw - 24px)" } }}>
                 <div className="grid gap-3 pt-1 sm:grid-cols-2">
                     {[
-                        ["本集大纲", "outline", "用一句话概括本集推进"],
-                        ["来源范围", "sourceRange", "例如：原文第 1-3 节"],
-                        ["结尾钩子", "hook", "本集结尾要留下的冲突"],
-                        ["下集预告", "nextPreview", "下一集承接方向"],
+                        [t("info.outline"), "outline", t("info.outlinePlaceholder")],
+                        [t("info.sourceRange"), "sourceRange", t("info.sourceRangePlaceholder")],
+                        [t("info.hook"), "hook", t("info.hookPlaceholder")],
+                        [t("info.nextPreview"), "nextPreview", t("info.nextPreviewPlaceholder")],
                     ].map(([label, key, placeholder]) => (
                         <label key={key} className="block space-y-1.5">
                             <span className="text-xs font-medium text-muted-foreground">{label}</span>

@@ -8,10 +8,10 @@ describe("Drama generation production workspace", () => {
 
         expect(source).toContain("summarizeDramaGeneration");
         expect(source).toContain("data-drama-generation-readiness");
-        expect(source).toContain("生成前检查");
-        expect(source).toContain("主生成");
-        expect(source).toContain("后期处理");
-        expect(source).toContain("交付导出");
+        expect(source).toContain('t("preflight.title")');
+        expect(source).toContain('t("tools.primary")');
+        expect(source).toContain('t("tools.postProduction")');
+        expect(source).toContain('t("tools.delivery")');
         expect(source).toContain("buildPrimaryAction");
         expect(source).toContain("onOpenAssets");
         expect(source).not.toContain("data-drama-generation-empty");
@@ -27,9 +27,9 @@ describe("Drama generation production workspace", () => {
         expect(source).toContain("data-drama-shot-task");
         expect(source).toContain("[content-visibility:visible]");
         expect(source).toContain("sm:[content-visibility:auto]");
-        expect(source).toContain("分镜图：");
-        expect(source).toContain("结束帧：");
-        expect(source).toContain("视频：");
-        expect(source).toContain("配音：");
+        expect(source).toContain('t("shot.errors.storyboard")');
+        expect(source).toContain('t("shot.errors.endFrame")');
+        expect(source).toContain('t("shot.errors.video")');
+        expect(source).toContain('t("shot.errors.voiceover")');
     });
 });

@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { Copy, Download, Pencil } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { downloadAgentMedia, type AgentMediaDownload } from "@/components/agent/agent-media-download";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -22,9 +23,10 @@ export function AgentMessageActions({
     className?: string;
     style?: CSSProperties;
 }) {
+    const t = useTranslations("common.agentMessage");
     const copyText = useCopyText();
     if (!text.trim() && !downloads.length) return null;
-    const downloadLabel = downloads.length > 1 ? `下载本条消息的全部媒体，共 ${downloads.length} 个` : downloads[0]?.type === "video" ? "下载视频" : "下载图片";
+    const downloadLabel = downloads.length > 1 ? t("downloadAll", { count: downloads.length }) : downloads[0]?.type === "video" ? t("downloadVideo") : t("downloadImage");
     return (
         <div
             className={cn(
@@ -40,7 +42,7 @@ export function AgentMessageActions({
                     className="grid size-8 place-items-center rounded-md text-current transition hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 sm:size-7"
                     onClick={() => downloadAgentMedia(downloads)}
                     aria-label={downloadLabel}
-                    title={downloads.length > 1 ? "下载全部媒体" : downloadLabel}
+                    title={downloads.length > 1 ? t("downloadAllShort") : downloadLabel}
                 >
                     <Download className="size-3.5" />
                 </button>
@@ -49,9 +51,9 @@ export function AgentMessageActions({
                 <button
                     type="button"
                     className="grid size-8 place-items-center rounded-md text-current transition hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 sm:size-7"
-                    onClick={() => copyText(text, "消息已复制")}
-                    aria-label="复制消息"
-                    title="复制"
+                    onClick={() => copyText(text, t("copied"))}
+                    aria-label={t("copyMessage")}
+                    title={t("copy")}
                 >
                     <Copy className="size-3.5" />
                 </button>
@@ -61,8 +63,8 @@ export function AgentMessageActions({
                     type="button"
                     className="grid size-8 place-items-center rounded-md text-current transition hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 sm:size-7"
                     onClick={() => onEdit(text)}
-                    aria-label="编辑消息"
-                    title="编辑并重新发送"
+                    aria-label={t("editMessage")}
+                    title={t("editAndResend")}
                 >
                     <Pencil className="size-3.5" />
                 </button>

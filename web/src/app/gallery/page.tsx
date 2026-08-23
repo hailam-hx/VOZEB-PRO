@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { getPublicSiteSettings } from "@/lib/server/site-metadata";
@@ -11,10 +12,10 @@ import { GalleryView } from "./gallery-view";
 type GallerySearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export async function generateMetadata(): Promise<Metadata> {
-    const site = await getPublicSiteSettings();
+    const [site, t] = await Promise.all([getPublicSiteSettings(), getTranslations("public")]);
     return {
-        title: `作品广场 | ${site.title}`,
-        description: "浏览社区公开发布并通过审核的图片、视频、画布与短剧作品。",
+        title: t("galleryMetadataTitle", { site: site.title }),
+        description: t("galleryMetadataDescription"),
         alternates: { canonical: "/gallery" },
         robots: { index: true, follow: true },
     };

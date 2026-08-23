@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
+import createNextIntlPlugin from "next-intl/plugin";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -14,13 +15,14 @@ const distDir = process.env.NEXT_DIST_DIR?.trim() || ".next";
 const skipBuildTypeCheck = process.env.NEXT_SKIP_BUILD_TYPECHECK === "1";
 const nodeProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
 const privatePageSource = "/:section(api|admin|assets|billing|canvas|community|create|drama|forgot-password|help|image|install|login|my-prompts|profile|prompts|register|video|works)/:path*";
+const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 if (nodeProxy) setGlobalDispatcher(new ProxyAgent(nodeProxy));
 
 export default function nextConfig(phase: string): NextConfig {
     const isDev = phase === PHASE_DEVELOPMENT_SERVER;
     const isProduction = process.env.NODE_ENV === "production";
     const releases = parseChangelog(localChangelog);
-    return {
+    return withNextIntl({
         distDir,
         output: "standalone",
         outputFileTracingRoot: webDir,
@@ -60,5 +62,5 @@ export default function nextConfig(phase: string): NextConfig {
                 },
             ];
         },
-    };
+    });
 }

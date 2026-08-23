@@ -56,8 +56,3 @@ export async function fetchPrompts({
     if (!response.ok) throw new Error("获取提示词失败");
     return (await response.json()) as PromptListResponse;
 }
-
-export function formatPromptDate(value: string) {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
-}

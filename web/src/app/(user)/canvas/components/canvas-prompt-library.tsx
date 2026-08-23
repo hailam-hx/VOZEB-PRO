@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { Button, Tooltip } from "antd";
 import { BookOpen } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
@@ -13,6 +14,7 @@ const loadPromptSelectDialog = () => import("@/components/prompts/prompt-select-
 const PromptSelectDialog = dynamic(loadPromptSelectDialog, { ssr: false, loading: () => null });
 
 export function CanvasPromptLibrary({ onSelect }: { onSelect: (prompt: string) => void }) {
+    const t = useTranslations("canvas");
     const [open, setOpen] = useState(false);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
@@ -24,8 +26,8 @@ export function CanvasPromptLibrary({ onSelect }: { onSelect: (prompt: string) =
 
     return (
         <>
-            <Tooltip title="提示词库">
-                <Button type="text" className="!h-8 !w-8 !min-w-8 shrink-0 !rounded-full !bg-transparent !p-0" style={{ color: theme.node.text }} icon={<BookOpen className="size-3.5" />} onClick={() => setOpen(true)} aria-label="提示词库" />
+            <Tooltip title={t("promptLibrary")}>
+                <Button type="text" className="!h-8 !w-8 !min-w-8 shrink-0 !rounded-full !bg-transparent !p-0" style={{ color: theme.node.text }} icon={<BookOpen className="size-3.5" />} onClick={() => setOpen(true)} aria-label={t("promptLibrary")} />
             </Tooltip>
             {open ? <PromptSelectDialog open={open} onOpenChange={setOpen} onSelect={onSelect} /> : null}
         </>

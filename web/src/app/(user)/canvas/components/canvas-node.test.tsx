@@ -1,8 +1,8 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { renderWithI18n } from "@/test/render-with-i18n";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
 import { CanvasNode } from "./canvas-node";
 import { NodeContent } from "./canvas-node-content";
@@ -20,7 +20,7 @@ const imageNode: CanvasNodeData = {
 const noop = () => undefined;
 
 function renderImageNode(overrides: Partial<React.ComponentProps<typeof CanvasNode>> = {}) {
-    return renderToStaticMarkup(
+    return renderWithI18n(
         <CanvasNode
             data={imageNode}
             scale={1}
@@ -44,7 +44,7 @@ function renderImageNode(overrides: Partial<React.ComponentProps<typeof CanvasNo
 }
 
 function renderContent(node: CanvasNodeData, theme: (typeof canvasThemes)[keyof typeof canvasThemes]) {
-    return renderToStaticMarkup(
+    return renderWithI18n(
         <NodeContent
             node={node}
             theme={theme}
@@ -176,7 +176,7 @@ describe("CanvasNode error content", () => {
 
         expect(markup).toContain("h-full w-full flex-col items-center justify-center");
         expect(markup).toContain(`color:${canvasThemes.light.node.danger}`);
-        expect(markup).toContain("生成失败，请稍后重试");
+        expect(markup).toContain("生成失败，请稍后重试。");
         expect(markup).toContain("重试");
     });
 
@@ -194,7 +194,7 @@ describe("CanvasNode error content", () => {
 
         const markup = renderImageNode({ data: reviewNode, onRetry: noop });
 
-        expect(markup).toContain("上游创建状态待确认");
+        expect(markup).toContain("任务创建结果待管理员确认，系统未重复提交。");
         expect(markup).toContain("检查状态");
         expect(markup).not.toContain(">重试<");
     });

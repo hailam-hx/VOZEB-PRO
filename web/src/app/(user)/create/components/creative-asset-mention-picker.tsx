@@ -1,12 +1,14 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FileAudio, FileText, FileVideo, ImageIcon, Play } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
 export function CreativeAssetMentionPicker({ assets, selectedAssetIds, onSelect }: { assets: CreativeAsset[]; selectedAssetIds: string[]; onSelect: (asset: CreativeAsset) => void }) {
+    const t = useTranslations("create");
     const [activeType, setActiveType] = useState<"image" | "video">("image");
     const gridRef = useRef<HTMLDivElement>(null);
     const [scrollEdges, setScrollEdges] = useState({ previous: false, next: false });
@@ -43,11 +45,11 @@ export function CreativeAssetMentionPicker({ assets, selectedAssetIds, onSelect 
         };
     }, [visibleAssets.length, visibleType]);
 
-    if (!visibleType) return <p className="w-64 px-3 py-5 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">没有匹配的图片或视频</p>;
+    if (!visibleType) return <p className="w-64 px-3 py-5 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noMatchingImageOrVideo")}</p>;
     return (
         <div className="flex w-[min(17rem,calc(100vw-2rem))] min-w-0 flex-col overflow-hidden p-1.5" data-testid="creative-asset-mention-picker">
             {showTypeSwitcher ? (
-                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-black/[0.035] p-1 dark:bg-white/[0.06]" role="tablist" aria-label="引用素材类型">
+                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-black/[0.035] p-1 dark:bg-white/[0.06]" role="tablist" aria-label={t("referenceMediaType")}>
                     <TypeTab type="image" count={imageAssets.length} active={visibleType === "image"} onClick={() => setActiveType("image")} />
                     <TypeTab type="video" count={videoAssets.length} active={visibleType === "video"} onClick={() => setActiveType("video")} />
                 </div>
@@ -64,7 +66,7 @@ export function CreativeAssetMentionPicker({ assets, selectedAssetIds, onSelect 
                             }`}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => onSelect(asset)}
-                            aria-label={`选择${asset.title}`}
+                            aria-label={t("selectNamedAsset", { name: asset.title })}
                             title={asset.title}
                         >
                             <AssetPreview asset={asset} />
@@ -93,7 +95,8 @@ export function CreativeAssetMentionPicker({ assets, selectedAssetIds, onSelect 
 }
 
 function TypeTab({ type, count, active, onClick }: { type: "image" | "video"; count: number; active: boolean; onClick: () => void }) {
-    const label = type === "image" ? "图片" : "视频";
+    const t = useTranslations("create");
+    const label = t(type === "image" ? "imageCapability" : "videoCapability");
     const Icon = type === "image" ? ImageIcon : FileVideo;
     return (
         <button

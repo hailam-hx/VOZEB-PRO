@@ -1,6 +1,6 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { renderWithI18n } from "@/test/render-with-i18n";
 import { DramaMediaThumbnail } from "./drama-media-preview";
 
 describe("drama media thumbnail", () => {
@@ -10,7 +10,7 @@ describe("drama media thumbnail", () => {
     ])("renders $type results as an accessible preview button", ({ type, title }) => {
         const onOpen = vi.fn();
         const media = { type, title, url: `/media/${type}` };
-        const markup = renderToStaticMarkup(<DramaMediaThumbnail media={media} onOpen={onOpen} />);
+        const markup = renderWithI18n(<DramaMediaThumbnail media={media} onOpen={onOpen} />);
 
         expect(markup).toContain(`<button type="button"`);
         expect(markup).toContain(`aria-label="查看${type === "image" ? "图片" : "视频"}：${title}"`);

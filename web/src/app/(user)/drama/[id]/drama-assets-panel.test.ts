@@ -7,18 +7,21 @@ import { filterAndSortDramaAssets, type DramaAssetLibraryRow } from "./drama-ass
 
 describe("drama asset image results", () => {
     it("keeps every generated image as a candidate reference", () => {
-        const references = imageResultsToReferences({
-            dataUrl: "data:image/png;base64,first",
-            serverUrl: "/api/generation-log-assets/first.png",
-            results: [
-                { dataUrl: "data:image/png;base64,first", serverUrl: "/api/generation-log-assets/first.png", width: 1024, height: 1024 },
-                { serverUrl: "/api/generation-log-assets/second.png", width: 1024, height: 1024 },
-            ],
-        });
+        const references = imageResultsToReferences(
+            {
+                dataUrl: "data:image/png;base64,first",
+                serverUrl: "/api/generation-log-assets/first.png",
+                results: [
+                    { dataUrl: "data:image/png;base64,first", serverUrl: "/api/generation-log-assets/first.png", width: 1024, height: 1024 },
+                    { serverUrl: "/api/generation-log-assets/second.png", width: 1024, height: 1024 },
+                ],
+            },
+            (index) => `AI candidate ${index}`,
+        );
 
         expect(references).toHaveLength(2);
         expect(references.map((item) => item.url)).toEqual(["/api/generation-log-assets/first.png", "/api/generation-log-assets/second.png"]);
-        expect(references.map((item) => item.label)).toEqual(["AI 候选图 1", "AI 候选图 2"]);
+        expect(references.map((item) => item.label)).toEqual(["AI candidate 1", "AI candidate 2"]);
     });
 
     it("uses an asset card library and moves create/edit fields into a responsive drawer", async () => {
@@ -26,11 +29,11 @@ describe("drama asset image results", () => {
 
         expect(panel).toContain("data-drama-asset-grid");
         expect(panel).toContain("data-drama-assets-toolbar");
-        expect(panel).toContain("待补基准");
-        expect(panel).toContain("当前集涉及");
-        expect(panel).toContain("下载项目基准图");
+        expect(panel).toContain('t("missingReference")');
+        expect(panel).toContain('"current-episode"');
+        expect(panel).toContain('t("downloadReferences")');
         expect(panel).toContain("downloadDramaAssetBundle");
-        expect(panel).toContain("未被引用");
+        expect(panel).toContain('t("unused")');
         expect(panel).toContain("data-drama-source-assets");
         expect(panel).toContain("<DramaAssetEditorDrawer");
         expect(editor).toContain("<Modal");
@@ -38,9 +41,9 @@ describe("drama asset image results", () => {
         expect(editor).toContain("if (!asset)");
         expect(editor).toContain("size={620}");
         expect(editor).toContain('maxWidth: "100vw"');
-        expect(editor).toContain("从来源选择");
-        expect(editor).toContain("上传候选");
-        expect(editor).toContain("生成候选");
+        expect(editor).toContain('t("selectFromSources")');
+        expect(editor).toContain('t("uploadCandidate")');
+        expect(editor).toContain('t("generateCandidate")');
     });
 
     it("filters derived readiness and usage states without changing project data", () => {

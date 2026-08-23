@@ -2,6 +2,7 @@
 
 import { Button, Drawer, Dropdown, Grid, Input, Modal, Spin, Tabs, Tooltip } from "antd";
 import { AtSign, ChevronDown, CornerDownLeft, FileVideo, ImageIcon, LibraryBig, ListFilter, Play, RefreshCw, Search, Sparkles, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
@@ -42,6 +43,7 @@ export function CreativeAssetsPanel({
     onUsePrompt: (prompt: string) => void;
     onClose: () => void;
 }) {
+    const t = useTranslations("create");
     const screens = Grid.useBreakpoint();
     const [activeTab, setActiveTab] = useState<AssetPanelTab>("assets");
     const [myPrompts, setMyPrompts] = useState(emptyPromptCollection);
@@ -54,30 +56,33 @@ export function CreativeAssetsPanel({
     const inFlightRef = useRef(new Set<string>());
     const mediaAssets = assets.filter((asset) => asset.status === "ready" && (asset.type === "image" || asset.type === "video"));
 
-    const loadPromptPage = useCallback(async (kind: "my" | "library", page: number, category: string, keyword: string) => {
-        const requestKey = `${kind}:${category}:${keyword}:${page}`;
-        if (inFlightRef.current.has(requestKey)) return;
-        inFlightRef.current.add(requestKey);
-        const setCollection = kind === "my" ? setMyPrompts : setLibraryPrompts;
-        setCollection((current) => ({ ...current, loading: true, error: "" }));
-        try {
-            const includeFacets = page === 1;
-            const payload = kind === "my" ? await listMyPrompts({ page, category, keyword, includeFacets }) : await fetchPrompts({ page, category, keyword, includeFacets });
-            setCollection((current) => ({
-                items: page === 1 ? payload.items : uniquePrompts([...current.items, ...payload.items]),
-                page,
-                total: payload.total,
-                categories: page === 1 ? payload.categories : current.categories,
-                loading: false,
-                loaded: true,
-                error: "",
-            }));
-        } catch (error) {
-            setCollection((current) => ({ ...current, loading: false, loaded: true, error: error instanceof Error ? error.message : "提示词加载失败" }));
-        } finally {
-            inFlightRef.current.delete(requestKey);
-        }
-    }, []);
+    const loadPromptPage = useCallback(
+        async (kind: "my" | "library", page: number, category: string, keyword: string) => {
+            const requestKey = `${kind}:${category}:${keyword}:${page}`;
+            if (inFlightRef.current.has(requestKey)) return;
+            inFlightRef.current.add(requestKey);
+            const setCollection = kind === "my" ? setMyPrompts : setLibraryPrompts;
+            setCollection((current) => ({ ...current, loading: true, error: "" }));
+            try {
+                const includeFacets = page === 1;
+                const payload = kind === "my" ? await listMyPrompts({ page, category, keyword, includeFacets }) : await fetchPrompts({ page, category, keyword, includeFacets });
+                setCollection((current) => ({
+                    items: page === 1 ? payload.items : uniquePrompts([...current.items, ...payload.items]),
+                    page,
+                    total: payload.total,
+                    categories: page === 1 ? payload.categories : current.categories,
+                    loading: false,
+                    loaded: true,
+                    error: "",
+                }));
+            } catch {
+                setCollection((current) => ({ ...current, loading: false, loaded: true, error: t("promptLoadFailed") }));
+            } finally {
+                inFlightRef.current.delete(requestKey);
+            }
+        },
+        [t],
+    );
 
     useEffect(() => {
         if (!open || activeTab === "assets") return;
@@ -91,9 +96,9 @@ export function CreativeAssetsPanel({
         <div className="flex h-full min-h-0 flex-col bg-white dark:bg-[#15181c]">
             <div className="hidden h-14 shrink-0 items-center gap-2 border-b border-[#eceef1] px-4 lg:flex dark:border-[#2b3036]">
                 <LibraryBig className="size-4 text-[#5b61cf] dark:text-[#b4b7ff]" />
-                <h2 className="min-w-0 flex-1 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">资产</h2>
-                <Tooltip title="关闭资产面板">
-                    <Button type="text" shape="circle" icon={<X className="size-4" />} onClick={onClose} aria-label="关闭资产面板" />
+                <h2 className="min-w-0 flex-1 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">{t("assets")}</h2>
+                <Tooltip title={t("closeAssets")}>
+                    <Button type="text" shape="circle" icon={<X className="size-4" />} onClick={onClose} aria-label={t("closeAssets")} />
                 </Tooltip>
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
@@ -105,12 +110,12 @@ export function CreativeAssetsPanel({
                     items={[
                         {
                             key: "assets",
-                            label: <TabLabel text="当前对话" count={mediaAssets.length} />,
+                            label: <TabLabel text={t("currentConversation")} count={mediaAssets.length} />,
                             children: <ConversationAssets conversationId={conversationId} assets={mediaAssets} selectedAssetIds={selectedAssetIds} onToggle={onToggleAsset} onPreview={setPreview} />,
                         },
                         {
                             key: "my",
-                            label: <TabLabel text="我的提示词" count={myPrompts.loaded ? myPrompts.total : undefined} />,
+                            label: <TabLabel text={t("myPrompts")} count={myPrompts.loaded ? myPrompts.total : undefined} />,
                             children: (
                                 <PromptList
                                     collection={myPrompts}
@@ -133,7 +138,7 @@ export function CreativeAssetsPanel({
                         },
                         {
                             key: "library",
-                            label: <TabLabel text="提示词库" count={libraryPrompts.loaded ? libraryPrompts.total : undefined} />,
+                            label: <TabLabel text={t("promptLibrary")} count={libraryPrompts.loaded ? libraryPrompts.total : undefined} />,
                             children: (
                                 <PromptList
                                     collection={libraryPrompts}
@@ -163,7 +168,7 @@ export function CreativeAssetsPanel({
     return (
         <>
             {open && screens.lg ? <aside className="h-full min-h-0 w-[352px] shrink-0 border-l border-[#eceef1] dark:border-[#2b3036]">{panel}</aside> : null}
-            <Drawer title="资产" placement="right" size={360} open={open && screens.lg !== true} onClose={onClose} styles={{ wrapper: { maxWidth: "100vw" }, body: { height: "100%", padding: 0, overflow: "hidden" } }}>
+            <Drawer title={t("assets")} placement="right" size={360} open={open && screens.lg !== true} onClose={onClose} styles={{ wrapper: { maxWidth: "100vw" }, body: { height: "100%", padding: 0, overflow: "hidden" } }}>
                 {screens.lg !== true ? panel : null}
             </Drawer>
             <AssetPreviewModal preview={preview} onClose={() => setPreview(undefined)} />
@@ -184,8 +189,9 @@ export function ConversationAssets({
     onToggle: (id: string) => void;
     onPreview: (preview: PanelPreview) => void;
 }) {
+    const t = useTranslations("create");
     const [activeType, setActiveType] = useState<"image" | "video">("image");
-    if (!conversationId || !assets.length) return <PanelEmpty icon={<ImageIcon className="size-5" />} text="当前对话还没有资产" />;
+    if (!conversationId || !assets.length) return <PanelEmpty icon={<ImageIcon className="size-5" />} text={t("noAssetsInConversation")} />;
     const imageAssets = assets.filter((asset) => asset.type === "image");
     const videoAssets = assets.filter((asset) => asset.type === "video");
     const visibleType = activeType === "image" && imageAssets.length ? "image" : activeType === "video" && videoAssets.length ? "video" : imageAssets.length ? "image" : "video";
@@ -193,9 +199,9 @@ export function ConversationAssets({
     const selected = new Set(selectedAssetIds);
     return (
         <div className="flex h-full min-h-0 flex-col" data-testid="creative-conversation-assets">
-            <div className="mx-3 mb-2 grid grid-cols-2 gap-1 rounded-lg border border-[#e4e7eb] bg-[#f5f6f8] p-1 dark:border-[#343a42] dark:bg-[#20242a]" role="tablist" aria-label="当前对话资产类型">
-                <ConversationAssetTypeTab label="图片" count={imageAssets.length} active={visibleType === "image"} disabled={!imageAssets.length} onClick={() => setActiveType("image")} />
-                <ConversationAssetTypeTab label="视频" count={videoAssets.length} active={visibleType === "video"} disabled={!videoAssets.length} onClick={() => setActiveType("video")} />
+            <div className="mx-3 mb-2 grid grid-cols-2 gap-1 rounded-lg border border-[#e4e7eb] bg-[#f5f6f8] p-1 dark:border-[#343a42] dark:bg-[#20242a]" role="tablist" aria-label={t("conversationAssetTypes")}>
+                <ConversationAssetTypeTab label={t("imageCapability")} count={imageAssets.length} active={visibleType === "image"} disabled={!imageAssets.length} onClick={() => setActiveType("image")} />
+                <ConversationAssetTypeTab label={t("videoCapability")} count={videoAssets.length} active={visibleType === "video"} disabled={!videoAssets.length} onClick={() => setActiveType("video")} />
             </div>
             <div className="hide-scrollbar grid min-h-0 flex-1 auto-rows-max grid-cols-4 gap-2 overflow-y-auto px-3 pb-4" data-testid={`creative-conversation-${visibleType}-assets`}>
                 {visibleAssets.map((asset) => {
@@ -216,7 +222,7 @@ export function ConversationAssets({
                                         const posterUrl = typeof asset.metadata.coverUrl === "string" ? asset.metadata.coverUrl : undefined;
                                         onPreview({ type: asset.type, url, title: asset.title, posterUrl });
                                     }}
-                                    aria-label={`展开查看${asset.title}`}
+                                    aria-label={t("expandNamedAsset", { name: asset.title })}
                                 >
                                     <AssetPreview asset={asset} />
                                 </button>
@@ -234,11 +240,11 @@ export function ConversationAssets({
                                 }`}
                                 onClick={() => onToggle(asset.id)}
                                 aria-pressed={active}
-                                aria-label={`${active ? "取消引用" : "引用"}${asset.title}`}
-                                title={active ? "取消引用" : "引用"}
+                                aria-label={t(active ? "unreferenceNamedAsset" : "referenceNamedAsset", { name: asset.title })}
+                                title={active ? t("cancelReference") : t("reference")}
                             >
                                 <AtSign className="size-3" aria-hidden="true" />
-                                {active ? "已引用" : "引用"}
+                                {active ? t("referenced") : t("reference")}
                             </button>
                         </article>
                     );
@@ -248,7 +254,7 @@ export function ConversationAssets({
     );
 }
 
-function ConversationAssetTypeTab({ label, count, active, disabled, onClick }: { label: "图片" | "视频"; count: number; active: boolean; disabled: boolean; onClick: () => void }) {
+function ConversationAssetTypeTab({ label, count, active, disabled, onClick }: { label: string; count: number; active: boolean; disabled: boolean; onClick: () => void }) {
     return (
         <button
             type="button"
@@ -289,6 +295,7 @@ export function PromptList({
     onRetry: () => void;
     onLoadMore: () => void;
 }) {
+    const t = useTranslations("create");
     const [searchValue, setSearchValue] = useState(keyword);
 
     useEffect(() => setSearchValue(keyword), [keyword]);
@@ -302,11 +309,16 @@ export function PromptList({
                     value={searchValue}
                     allowClear
                     prefix={
-                        <button type="button" className="grid size-6 place-items-center text-[#7a8490] transition hover:text-[#555bc7] dark:text-[#929ca8] dark:hover:text-[#c3c5ff]" onClick={() => onSearch(searchValue.trim())} aria-label="搜索提示词">
+                        <button
+                            type="button"
+                            className="grid size-6 place-items-center text-[#7a8490] transition hover:text-[#555bc7] dark:text-[#929ca8] dark:hover:text-[#c3c5ff]"
+                            onClick={() => onSearch(searchValue.trim())}
+                            aria-label={t("searchPrompts")}
+                        >
                             <Search className="size-4" />
                         </button>
                     }
-                    placeholder="搜索提示词"
+                    placeholder={t("searchPrompts")}
                     className="min-w-0 flex-1 !rounded-md [&_.ant-input]:!text-xs"
                     onChange={(event) => {
                         const next = event.target.value;
@@ -314,7 +326,7 @@ export function PromptList({
                         if (!next && keyword) onSearch("");
                     }}
                     onPressEnter={() => onSearch(searchValue.trim())}
-                    aria-label="搜索提示词"
+                    aria-label={t("searchPrompts")}
                 />
                 {collection.categories.length ? (
                     <Dropdown
@@ -325,17 +337,17 @@ export function PromptList({
                             </div>
                         )}
                         menu={{
-                            items: categories.map((category) => ({ key: category, label: promptCategoryLabel(category) })),
+                            items: categories.map((category) => ({ key: category, label: displayPromptCategory(category, t) })),
                             onClick: ({ key }) => onCategoryChange(key),
                         }}
                     >
                         <button
                             type="button"
                             className="flex h-8 max-w-28 shrink-0 items-center gap-1.5 rounded-md border border-[#e1e5e9] bg-transparent px-2.5 text-xs font-medium text-[#596572] transition hover:border-[#bec2eb] hover:bg-[#f7f7ff] hover:text-[#4f55bd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6268d8] dark:border-[#343a42] dark:text-[#b4bdc7] dark:hover:border-[#666b9c] dark:hover:bg-[#24263e] dark:hover:text-[#c3c5ff]"
-                            aria-label="提示词分类"
+                            aria-label={t("promptCategories")}
                         >
                             <ListFilter className="size-3.5 shrink-0 text-[#6268d8] dark:text-[#b7baff]" />
-                            <span className="truncate">{promptCategoryLabel(activeCategory)}</span>
+                            <span className="truncate">{displayPromptCategory(activeCategory, t)}</span>
                             <ChevronDown className="size-3.5 shrink-0 opacity-55" />
                         </button>
                     </Dropdown>
@@ -351,12 +363,12 @@ export function PromptList({
                     text={collection.error}
                     action={
                         <Button size="small" type="text" icon={<RefreshCw className="size-3.5" />} onClick={onRetry}>
-                            重新加载
+                            {t("reload")}
                         </Button>
                     }
                 />
             ) : !collection.items.length ? (
-                <PanelEmpty icon={<Sparkles className="size-5" />} text="暂无可用提示词" />
+                <PanelEmpty icon={<Sparkles className="size-5" />} text={t("noPromptsAvailable")} />
             ) : (
                 <>
                     <div className="grid grid-cols-4 gap-1.5" data-testid="creative-prompt-thumbnails">
@@ -368,7 +380,7 @@ export function PromptList({
                                             type="button"
                                             className="block size-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#6268d8]"
                                             onClick={() => onPreview({ type: "image", url: item.coverUrl, title: item.title })}
-                                            aria-label={`展开查看${item.title}`}
+                                            aria-label={t("expandNamedAsset", { name: item.title })}
                                         >
                                             <LazyMediaImage src={imagePreviewUrl(item.coverUrl, 480)} alt="" containerClassName="size-full" imageClassName="size-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
                                         </button>
@@ -383,17 +395,17 @@ export function PromptList({
                                     data-testid="creative-prompt-insert-action"
                                     className="mt-1 flex h-5 w-full items-center justify-center gap-1 rounded-sm !bg-transparent !text-[11px] !text-[#68727e] font-medium transition-colors hover:!bg-transparent hover:!text-[#555bc7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6268d8] dark:!text-[#aab3bd] dark:hover:!text-[#c3c5ff]"
                                     onClick={() => onUse(item.prompt)}
-                                    aria-label={`插入：${item.title}`}
+                                    aria-label={t("insertNamedPrompt", { name: item.title })}
                                 >
                                     <CornerDownLeft className="size-3" aria-hidden="true" />
-                                    插入
+                                    {t("insert")}
                                 </button>
                             </article>
                         ))}
                     </div>
                     {hasMore ? (
                         <Button block type="text" size="small" loading={collection.loading} className="!mt-2 !text-xs" onClick={onLoadMore}>
-                            加载更多
+                            {t("loadMore")}
                         </Button>
                     ) : null}
                 </>
@@ -427,8 +439,9 @@ function AssetPreview({ asset }: { asset: CreativeAsset }) {
 }
 
 function AssetPreviewModal({ preview, onClose }: { preview?: PanelPreview; onClose: () => void }) {
+    const t = useTranslations("create");
     return (
-        <Modal title="预览" open={Boolean(preview)} footer={null} centered width="fit-content" destroyOnHidden onCancel={onClose} style={{ maxWidth: "calc(100vw - 32px)" }}>
+        <Modal title={t("preview")} open={Boolean(preview)} footer={null} centered width="fit-content" destroyOnHidden onCancel={onClose} style={{ maxWidth: "calc(100vw - 32px)" }}>
             <div className="overflow-hidden rounded-md border border-[#e3e7eb] bg-white dark:border-[#343a42] dark:bg-[#111316]">
                 {preview?.type === "image" ? <img src={imagePreviewUrl(preview.url, 2048)} alt={preview.title} className="block h-auto max-h-[78dvh] w-auto max-w-[calc(100vw-80px)] object-contain" /> : null}
                 {preview?.type === "video" ? (
@@ -446,6 +459,12 @@ function AssetPreviewModal({ preview, onClose }: { preview?: PanelPreview; onClo
             </div>
         </Modal>
     );
+}
+
+function displayPromptCategory(category: string, t: ReturnType<typeof useTranslations<"create">>) {
+    if (category === ALL_PROMPTS_OPTION) return t("all");
+    if (category === "UI 与社交媒体") return t("promptCategoryUiSocial");
+    return promptCategoryLabel(category);
 }
 
 function uniquePrompts(items: Prompt[]) {

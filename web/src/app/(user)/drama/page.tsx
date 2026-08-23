@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { App, Button, Input, InputNumber, Modal, Segmented } from "antd";
 import { Clapperboard, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { useUserStore } from "@/stores/use-user-store";
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { normalizeDramaImageSize } from "@/lib/drama-image-size";
@@ -12,6 +13,7 @@ import { DramaProjectCard } from "./components/drama-project-card";
 import { useDramaStore } from "./stores/use-drama-store";
 
 export default function DramaPage() {
+    const t = useTranslations("drama.list");
     const router = useRouter();
     const { message } = App.useApp();
     const hydrated = useDramaStore((state) => state.hydrated);
@@ -26,7 +28,7 @@ export default function DramaPage() {
     const [open, setOpen] = useState(false);
     const [title, setTitle] = useState("");
     const [summary, setSummary] = useState("");
-    const [style, setStyle] = useState("电影感国漫");
+    const [style, setStyle] = useState(() => t("defaultStyle"));
     const [ratio, setRatio] = useState("9:16");
     const [customWidth, setCustomWidth] = useState(1080);
     const [customHeight, setCustomHeight] = useState(1920);
@@ -37,9 +39,9 @@ export default function DramaPage() {
         void hydrate();
     }, [hydrate, userId]);
     const create = async () => {
-        if (!title.trim()) return message.warning("请输入项目名称");
+        if (!title.trim()) return message.warning(t("errors.titleRequired"));
         const normalizedSize = normalizeDramaImageSize(ratio);
-        if (!normalizedSize) return message.warning("请输入有效的短剧尺寸");
+        if (!normalizedSize) return message.warning(t("errors.invalidSize"));
         setCreating(true);
         try {
             const id = await createProject({ title: title.trim(), summary: summary.trim(), style: style.trim(), ratio: normalizedSize });
@@ -47,8 +49,8 @@ export default function DramaPage() {
             setTitle("");
             setSummary("");
             router.push(`/drama/${id}`);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "短剧项目创建失败");
+        } catch {
+            message.error(t("errors.createFailed"));
         } finally {
             setCreating(false);
         }
@@ -60,20 +62,18 @@ export default function DramaPage() {
                     <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <Clapperboard className="size-4" />
-                            短剧生产线
+                            {t("pipeline")}
                         </div>
-                        <h1 className="mt-1.5 text-xl font-semibold sm:mt-2 sm:text-2xl">短剧项目</h1>
-                        <p className="mt-1.5 text-xs leading-5 text-muted-foreground sm:mt-2 sm:text-sm">
-                            共 {projectTotal} 个项目 · 已加载 {projects.length} 个 / {episodeCount} 集 · {pendingCount} 个执行中任务
-                        </p>
+                        <h1 className="mt-1.5 text-xl font-semibold sm:mt-2 sm:text-2xl">{t("title")}</h1>
+                        <p className="mt-1.5 text-xs leading-5 text-muted-foreground sm:mt-2 sm:text-sm">{t("summary", { total: projectTotal, loaded: projects.length, episodes: episodeCount, pending: pendingCount })}</p>
                     </div>
                     <Button type="primary" className="!h-9 !shrink-0 !px-3 sm:!px-4" icon={<Plus className="size-4" />} disabled={!hydrated} onClick={() => setOpen(true)}>
-                        新建短剧
+                        {t("newDrama")}
                     </Button>
                 </header>
-                {syncError ? <div className="mt-4 border-l-2 border-amber-400 pl-3 text-sm text-amber-700 dark:text-amber-200">项目服务暂不可用：{syncError}</div> : null}
+                {syncError ? <div className="mt-4 border-l-2 border-amber-400 pl-3 text-sm text-amber-700 dark:text-amber-200">{t("serviceUnavailable")}</div> : null}
                 {!hydrated ? (
-                    <div className="grid min-h-16 place-items-center text-sm text-muted-foreground sm:min-h-32">正在加载短剧项目…</div>
+                    <div className="grid min-h-16 place-items-center text-sm text-muted-foreground sm:min-h-32">{t("loading")}</div>
                 ) : projects.length ? (
                     <>
                         <section className="grid gap-1.5 py-1 sm:grid-cols-2 sm:gap-4 sm:py-6 xl:grid-cols-3">
@@ -84,27 +84,27 @@ export default function DramaPage() {
                         {projects.length < projectTotal ? (
                             <div className="flex justify-center pb-4 sm:pb-8">
                                 <Button loading={loadingMore} onClick={() => void loadMore()}>
-                                    加载更多
+                                    {t("loadMore")}
                                 </Button>
                             </div>
                         ) : null}
                     </>
                 ) : (
                     <CompactEmptyState
-                        title="还没有短剧项目"
-                        description="从剧本结构开始创建第一条短剧生产线。"
+                        title={t("emptyTitle")}
+                        description={t("emptyDescription")}
                         icon={<Clapperboard className="size-4" />}
                         className="mt-3 min-h-24 sm:mt-6 sm:min-h-40"
                         action={
                             <Button type="primary" onClick={() => setOpen(true)}>
-                                新建第一个项目
+                                {t("createFirst")}
                             </Button>
                         }
                     />
                 )}
             </div>
             <Modal
-                title="新建短剧项目"
+                title={t("modalTitle")}
                 open={open}
                 width={520}
                 destroyOnHidden
@@ -113,32 +113,32 @@ export default function DramaPage() {
                 confirmLoading={creating}
                 onCancel={() => setOpen(false)}
                 onOk={() => void create()}
-                okText="创建并进入"
-                cancelText="取消"
+                okText={t("createAndOpen")}
+                cancelText={t("cancel")}
                 okButtonProps={{ className: "!h-9" }}
                 cancelButtonProps={{ className: "!h-9" }}
             >
                 <div className="grid gap-3 pt-1">
                     <div className="grid gap-1.5">
                         <label htmlFor="drama-project-title" className="text-sm font-medium leading-5">
-                            项目名称
+                            {t("projectName")}
                         </label>
-                        <Input id="drama-project-title" className="!h-9" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：月影长安" />
+                        <Input id="drama-project-title" className="!h-9" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t("projectNamePlaceholder")} />
                     </div>
                     <div className="grid gap-1.5">
                         <label htmlFor="drama-project-summary" className="text-sm font-medium leading-5">
-                            故事简介
+                            {t("storySummary")}
                         </label>
-                        <Input.TextArea id="drama-project-summary" value={summary} onChange={(event) => setSummary(event.target.value)} autoSize={{ minRows: 2, maxRows: 3 }} placeholder="一句话说明人物、冲突和目标" />
+                        <Input.TextArea id="drama-project-summary" value={summary} onChange={(event) => setSummary(event.target.value)} autoSize={{ minRows: 2, maxRows: 3 }} placeholder={t("storySummaryPlaceholder")} />
                     </div>
                     <div className="grid gap-1.5">
                         <label htmlFor="drama-project-style" className="text-sm font-medium leading-5">
-                            视觉风格
+                            {t("visualStyle")}
                         </label>
                         <Input id="drama-project-style" className="!h-9" value={style} onChange={(event) => setStyle(event.target.value)} />
                     </div>
                     <div className="grid min-w-0 gap-1.5">
-                        <span className="text-sm font-medium leading-5">生成尺寸</span>
+                        <span className="text-sm font-medium leading-5">{t("generationSize")}</span>
                         <div className="min-w-0">
                             <Segmented
                                 block
@@ -147,7 +147,7 @@ export default function DramaPage() {
                                 options={[
                                     { label: "9:16", value: "9:16" },
                                     { label: "16:9", value: "16:9" },
-                                    { label: "自定义", value: "custom" },
+                                    { label: t("custom"), value: "custom" },
                                 ]}
                                 onChange={(value) => setRatio(value === "custom" ? `${customWidth}x${customHeight}` : String(value))}
                             />

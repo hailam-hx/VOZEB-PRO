@@ -5,6 +5,7 @@ import { App, Button } from "antd";
 import { UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { cn } from "@/lib/utils";
 import { getWorkCommunity, setWorkAuthorFollow, type WorkCommunitySummary } from "@/services/api/work-community";
@@ -12,6 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { PublicWorkLikeButton } from "./public-work-like-button";
 
 export function PublicWorkCommunityActions({ slug, className, compact = false, compactFollowIcon = false }: { slug: string; className?: string; compact?: boolean; compactFollowIcon?: boolean }) {
+    const t = useTranslations("public.work.community");
     const router = useRouter();
     const queryClient = useQueryClient();
     const user = useUserStore((state) => state.user);
@@ -22,7 +24,7 @@ export function PublicWorkCommunityActions({ slug, className, compact = false, c
 
     const requireLogin = () => {
         if (user) return true;
-        message.info("登录后可参与作品互动");
+        message.info(t("loginRequired"));
         router.push(`/login?next=${encodeURIComponent(`/share/${slug}`)}`);
         return false;
     };
@@ -35,16 +37,16 @@ export function PublicWorkCommunityActions({ slug, className, compact = false, c
         try {
             const result = await setWorkAuthorFollow(slug, !summary.followingAuthor);
             updateSummary({ followingAuthor: result.active, followerCount: result.followerCount });
-            message.success(result.active ? "已关注作者" : "已取消关注");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "关注操作失败");
+            message.success(result.active ? t("followed") : t("unfollowed"));
+        } catch {
+            message.error(t("followFailed"));
         } finally {
             setBusy(false);
         }
     };
 
     return (
-        <div className={cn("flex min-w-0 flex-wrap items-center gap-2", className)} aria-label="作品互动">
+        <div className={cn("flex min-w-0 flex-wrap items-center gap-2", className)} aria-label={t("aria")}>
             <PublicWorkLikeButton slug={slug} initialCount={summary?.likeCount} compact={compact} />
             {summary?.canFollow ? (
                 <Button
@@ -54,11 +56,11 @@ export function PublicWorkCommunityActions({ slug, className, compact = false, c
                     icon={<UserPlus className="size-4" />}
                     loading={busy}
                     disabled={busy}
-                    aria-label={summary.followingAuthor ? "取消关注作者" : "关注作者"}
-                    title={`${summary.followingAuthor ? "已关注" : "关注作者"} · ${summary.followerCount}`}
+                    aria-label={summary.followingAuthor ? t("unfollowAuthor") : t("followAuthor")}
+                    title={t("followCount", { state: summary.followingAuthor ? t("following") : t("followAuthor"), count: summary.followerCount })}
                     onClick={() => void toggleFollow()}
                 >
-                    {compact && compactFollowIcon ? null : `${summary.followingAuthor ? "已关注" : "关注作者"} · ${summary.followerCount}`}
+                    {compact && compactFollowIcon ? null : t("followCount", { state: summary.followingAuthor ? t("following") : t("followAuthor"), count: summary.followerCount })}
                 </Button>
             ) : null}
         </div>

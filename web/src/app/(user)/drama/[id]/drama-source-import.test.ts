@@ -7,8 +7,8 @@ describe("drama source import workspace", () => {
         const source = await readFile(resolve(process.cwd(), "src/app/(user)/drama/[id]/drama-source-import.tsx"), "utf8");
 
         expect(source).toContain("splitDramaSource(await file.text())");
-        expect(source).toContain('createVersion(project, "整本导入前")');
-        expect(source).toContain("importEpisodes(project.id, drafts)");
+        expect(source).toContain('createVersion(project, t("versionReason"))');
+        expect(source).toContain('sectionsT("episodeNumber"');
         expect(source).toContain("IMPORT_PAGE_SIZE = 20");
         expect(source).toContain("data-drama-import-preview");
         expect(source).toContain("<Pagination");

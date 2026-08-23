@@ -3,16 +3,17 @@
 import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button, Card, Tag } from "antd";
+import { useFormatter, useTranslations } from "next-intl";
 
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
 import { imagePreviewUrl } from "@/lib/media-image-url";
-import { formatPromptDate, type Prompt } from "@/services/api/prompts";
+import type { Prompt } from "@/services/api/prompts";
 
 export function PromptCard({
     item,
     onOpen,
     onCopy,
-    actionLabel = "复制",
+    actionLabel,
     actionIcon = <Copy className="size-3.5" />,
     actionType = "text",
     extraAction,
@@ -25,6 +26,10 @@ export function PromptCard({
     actionType?: "text" | "primary";
     extraAction?: ReactNode;
 }) {
+    const t = useTranslations("media.promptLibrary");
+    const format = useFormatter();
+    const resolvedActionLabel = actionLabel || t("copy");
+    const updatedAt = format.dateTime(new Date(item.updatedAt), { year: "numeric", month: "2-digit", day: "2-digit" });
     return (
         <>
             <article className="overflow-hidden rounded-xl border border-border bg-card text-card-foreground sm:hidden">
@@ -37,7 +42,7 @@ export function PromptCard({
                     <div className="min-w-0 p-2">
                         <div className="flex items-start justify-between gap-2">
                             <h2 className="line-clamp-1 text-sm font-semibold text-stone-950 dark:text-stone-100">{item.title}</h2>
-                            <span className="shrink-0 text-[10px] text-stone-400 dark:text-stone-500">{formatPromptDate(item.updatedAt)}</span>
+                            <span className="shrink-0 text-[10px] text-stone-400 dark:text-stone-500">{updatedAt}</span>
                         </div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-stone-600 dark:text-stone-400">{item.prompt}</p>
                         <div className="mt-1.5 flex min-w-0 gap-1 overflow-hidden">
@@ -51,7 +56,7 @@ export function PromptCard({
                 </button>
                 <div className="flex items-center gap-1.5 border-t border-border px-2 py-1">
                     <Button block={actionType === "primary"} type={actionType} size="small" icon={actionIcon} onClick={onCopy}>
-                        {actionLabel}
+                        {resolvedActionLabel}
                     </Button>
                     {extraAction}
                 </div>
@@ -75,7 +80,7 @@ export function PromptCard({
                     <div className="p-3">
                         <div className="flex items-start justify-between gap-3">
                             <h2 className="line-clamp-1 text-sm font-semibold text-stone-950 dark:text-stone-100">{item.title}</h2>
-                            <span className="shrink-0 text-xs text-stone-400 dark:text-stone-500">{formatPromptDate(item.updatedAt)}</span>
+                            <span className="shrink-0 text-xs text-stone-400 dark:text-stone-500">{updatedAt}</span>
                         </div>
                         <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-stone-600 dark:text-stone-400">{item.prompt}</p>
                         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -89,7 +94,7 @@ export function PromptCard({
                 </button>
                 <div className="flex items-center gap-1.5 px-3 pb-3">
                     <Button block={actionType === "primary"} type={actionType} size="small" icon={actionIcon} onClick={onCopy}>
-                        {actionLabel}
+                        {resolvedActionLabel}
                     </Button>
                     {extraAction}
                 </div>

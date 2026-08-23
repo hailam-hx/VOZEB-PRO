@@ -5,6 +5,7 @@ import { CircleHelp } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { useTranslations } from "next-intl";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
@@ -19,6 +20,7 @@ type MobileNavDrawerProps = {
 };
 
 export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDrawerProps) {
+    const t = useTranslations("workspace");
     const pathname = usePathname();
     const router = useRouter();
     const previousPathnameRef = useRef(pathname);
@@ -49,7 +51,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
         >
             {navigationGroups.map((group, groupIndex) => (
                 <div key={group.id} className={cn(groupIndex > 0 && "mt-5")}>
-                    <div className="mb-1 px-3 text-[11px] font-medium text-[#9aa2ad] dark:text-[#737d89]">{group.label}</div>
+                    <div className="mb-1 px-3 text-[11px] font-medium text-[#9aa2ad] dark:text-[#737d89]">{t(group.labelKey)}</div>
                     <div className="space-y-1">
                         {navigationTools
                             .filter((tool) => tool.group === group.id)
@@ -73,7 +75,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                                         aria-current={active ? "page" : undefined}
                                     >
                                         <Icon className="size-[18px] shrink-0" />
-                                        <span className="min-w-0 flex-1 truncate">{tool.label}</span>
+                                        <span className="min-w-0 flex-1 truncate">{t(tool.labelKey)}</span>
                                         <span className={cn("size-1.5 rounded-full", active ? "bg-current" : "bg-transparent")} />
                                     </Link>
                                 );
@@ -95,7 +97,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                     aria-current={helpActive ? "page" : undefined}
                 >
                     <CircleHelp className="size-[18px] shrink-0" />
-                    <span className="min-w-0 flex-1 truncate">帮助</span>
+                    <span className="min-w-0 flex-1 truncate">{t("help")}</span>
                     <span className={cn("size-1.5 rounded-full", helpActive ? "bg-current" : "bg-transparent")} />
                 </Link>
             </div>

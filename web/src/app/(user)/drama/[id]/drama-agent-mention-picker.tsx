@@ -2,13 +2,15 @@
 
 import { Clapperboard, FileText, KeyRound, MapPinned, Package, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 
-import { dramaAgentMentionKindLabel, type DramaAgentMentionItem, type DramaAgentMentionKind } from "./drama-agent-mention";
+import type { DramaAgentMentionItem, DramaAgentMentionKind } from "./drama-agent-mention";
 
 const KIND_ICONS = { character: UserRound, scene: MapPinned, prop: Package, clue: KeyRound, source: FileText, shot: Clapperboard } satisfies Record<DramaAgentMentionKind, typeof UserRound>;
 const KIND_ORDER: DramaAgentMentionKind[] = ["character", "scene", "prop", "clue", "source", "shot"];
 
 export function DramaAgentMentionPicker({ items, selectedIds, onSelect }: { items: DramaAgentMentionItem[]; selectedIds: Set<string>; onSelect: (item: DramaAgentMentionItem) => void }) {
+    const t = useTranslations("drama.editor.mentions");
     const [activeKind, setActiveKind] = useState<DramaAgentMentionKind>("character");
     const groups = useMemo(() => new Map(KIND_ORDER.map((kind) => [kind, items.filter((item) => item.kind === kind)])), [items]);
     const availableKinds = KIND_ORDER.filter((kind) => groups.get(kind)?.length);
@@ -16,10 +18,10 @@ export function DramaAgentMentionPicker({ items, selectedIds, onSelect }: { item
     const visibleItems = visibleKind ? groups.get(visibleKind) || [] : [];
     const tabColumns = availableKinds.length === 1 ? "grid-cols-1" : availableKinds.length === 2 ? "grid-cols-2" : "grid-cols-3";
 
-    if (!visibleKind) return <p className="w-[min(17rem,calc(100vw-1.5rem))] px-3 py-4 text-center text-xs text-muted-foreground">没有匹配的项目内容</p>;
+    if (!visibleKind) return <p className="w-[min(17rem,calc(100vw-1.5rem))] px-3 py-4 text-center text-xs text-muted-foreground">{t("empty")}</p>;
     return (
         <div className="flex w-[min(17rem,calc(100vw-1.5rem))] min-w-0 flex-col overflow-hidden p-1.5" data-drama-agent-mention-picker>
-            <div className={`mb-1.5 grid gap-1 rounded-lg bg-muted/60 p-1 ${tabColumns}`} role="tablist" aria-label="引用项目内容类型">
+            <div className={`mb-1.5 grid gap-1 rounded-lg bg-muted/60 p-1 ${tabColumns}`} role="tablist" aria-label={t("typeAria")}>
                 {availableKinds.map((kind) => {
                     const Icon = KIND_ICONS[kind];
                     const active = kind === visibleKind;
@@ -36,7 +38,7 @@ export function DramaAgentMentionPicker({ items, selectedIds, onSelect }: { item
                             onClick={() => setActiveKind(kind)}
                         >
                             <Icon className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-                            <span className="truncate">{dramaAgentMentionKindLabel(kind)}</span>
+                            <span className="truncate">{t(`kinds.${kind}`)}</span>
                             <span className="text-[10px] font-normal tabular-nums opacity-55">{groups.get(kind)?.length}</span>
                         </button>
                     );
@@ -52,7 +54,7 @@ export function DramaAgentMentionPicker({ items, selectedIds, onSelect }: { item
                             className={`flex h-8 min-w-0 items-center rounded-md px-2.5 text-left text-[13px] font-medium transition-colors ${selected ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted/70"}`}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => onSelect(item)}
-                            aria-label={`引用${dramaAgentMentionKindLabel(item.kind)}：${item.title}`}
+                            aria-label={t("reference", { kind: t(`kinds.${item.kind}`), title: item.title })}
                             title={item.title}
                         >
                             <span className="truncate">{item.title}</span>

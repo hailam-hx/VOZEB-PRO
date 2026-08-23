@@ -2,6 +2,7 @@
 
 import { Film, Image as ImageIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { cn } from "@/lib/utils";
 import { imagePreviewUrl } from "@/lib/media-image-url";
@@ -11,16 +12,17 @@ import type { PublicWorkPublication } from "@/services/api/work-publications";
 type PublicWorkAsset = PublicWorkPublication["assets"][number];
 
 export function PublicWorkMediaBrowser({ assets, title, compact = false }: { assets: PublicWorkAsset[]; title: string; compact?: boolean }) {
+    const t = useTranslations("public.work.media");
     const ordered = useMemo(() => assets.filter((asset) => asset.mediaType === "image" || asset.mediaType === "video"), [assets]);
     const [activeId, setActiveId] = useState(ordered[0]?.id || "");
     const active = ordered.find((asset) => asset.id === activeId) || ordered[0];
 
     useEffect(() => setActiveId(ordered[0]?.id || ""), [ordered]);
 
-    if (!active) return <div className="grid min-h-56 place-items-center border-y border-dashed border-border text-sm text-muted-foreground">作品没有可展示的媒体</div>;
+    if (!active) return <div className="grid min-h-56 place-items-center border-y border-dashed border-border text-sm text-muted-foreground">{t("empty")}</div>;
 
     return (
-        <section className={cn("grid min-w-0 gap-3", compact ? "md:grid-cols-[64px_minmax(0,1fr)]" : "lg:grid-cols-[72px_minmax(0,1fr)]")} aria-label="作品媒体">
+        <section className={cn("grid min-w-0 gap-3", compact ? "md:grid-cols-[64px_minmax(0,1fr)]" : "lg:grid-cols-[72px_minmax(0,1fr)]")} aria-label={t("aria")}>
             <div
                 className={cn(
                     "order-2 flex min-w-0 gap-2 overflow-x-auto pb-1",
@@ -36,7 +38,7 @@ export function PublicWorkMediaBrowser({ assets, title, compact = false }: { ass
                             "relative size-16 shrink-0 overflow-hidden rounded-md border bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             asset.id === active.id ? "border-foreground ring-1 ring-foreground" : "border-border hover:border-foreground/40",
                         )}
-                        aria-label={`查看${mediaLabel(asset.mediaType)} ${index + 1}`}
+                        aria-label={t("view", { type: t(asset.mediaType), index: index + 1 })}
                         aria-pressed={asset.id === active.id}
                     >
                         {asset.mediaType === "image" ? (
@@ -65,8 +67,4 @@ export function PublicWorkMediaBrowser({ assets, title, compact = false }: { ass
             </div>
         </section>
     );
-}
-
-function mediaLabel(type: PublicWorkAsset["mediaType"]) {
-    return type === "image" ? "图片" : "视频";
 }

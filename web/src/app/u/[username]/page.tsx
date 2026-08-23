@@ -2,10 +2,12 @@ import type { Metadata } from "next";
 import { DatabaseZap } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getLocale, getTranslations } from "next-intl/server";
 import { cache } from "react";
 
 import { GalleryThemeToggle } from "@/app/gallery/gallery-theme-toggle";
 import { SiteLogo } from "@/components/layout/site-logo";
+import { isAppLocale, localeMetadata } from "@/i18n/config";
 import { getCurrentUser } from "@/lib/auth/session";
 import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { getPublicCreatorPage, getPublicCreatorProfile, WorkCommunityServiceError } from "@/lib/server/work-community-service";
@@ -36,12 +38,13 @@ const loadCreatorPage = cache(async (username: string, viewerUserId: string) => 
 
 export async function generateMetadata({ params }: CreatorPageProps): Promise<Metadata> {
     const { username } = await params;
-    const [profile, site] = await Promise.all([loadCreatorProfile(username), getPublicSiteSettings()]);
-    if (profile === undefined) return { title: `创作者主页暂不可用 | ${site.title}`, robots: { index: false, follow: false } };
-    if (!profile) return { title: `创作者不存在 | ${site.title}`, robots: { index: false, follow: false } };
+    const [profile, site, t, localeValue] = await Promise.all([loadCreatorProfile(username), getPublicSiteSettings(), getTranslations("public.creatorPage"), getLocale()]);
+    const locale = isAppLocale(localeValue) ? localeValue : "vi";
+    if (profile === undefined) return { title: t("metadataUnavailable", { site: site.title }), robots: { index: false, follow: false } };
+    if (!profile) return { title: t("metadataNotFound", { site: site.title }), robots: { index: false, follow: false } };
     const canonical = `/u/${encodeURIComponent(profile.username)}`;
     const title = `${profile.displayName || profile.username} (@${profile.username}) | ${site.title}`;
-    const description = profile.bio || `查看 ${profile.displayName || profile.username} 发布的图片与视频作品。`;
+    const description = profile.bio || t("metadataDescription", { name: profile.displayName || profile.username });
     const image = absoluteSiteUrl(profile.avatarUrl || site.logoUrl || "/logo.svg", siteMetadataBase());
     return {
         metadataBase: siteMetadataBase(),
@@ -49,7 +52,7 @@ export async function generateMetadata({ params }: CreatorPageProps): Promise<Me
         description,
         alternates: { canonical },
         robots: { index: true, follow: true },
-        openGraph: { type: "profile", title, description, siteName: site.title, url: canonical, images: [{ url: image, alt: profile.displayName || profile.username }], locale: "zh_CN" },
+        openGraph: { type: "profile", title, description, siteName: site.title, url: canonical, images: [{ url: image, alt: profile.displayName || profile.username }], locale: localeMetadata[locale].openGraphLocale },
         twitter: { card: "summary", title, description, images: [image] },
     };
 }
@@ -58,7 +61,7 @@ export default async function CreatorPage({ params }: CreatorPageProps) {
     const { username } = await params;
     const sitePromise = getPublicSiteSettings();
     const viewer = await getCurrentUser();
-    const [site, data] = await Promise.all([sitePromise, loadCreatorPage(username, viewer?.id || "")]);
+    const [site, data, t] = await Promise.all([sitePromise, loadCreatorPage(username, viewer?.id || ""), getTranslations("public.creatorPage")]);
     if (data === null) notFound();
 
     return (
@@ -71,7 +74,7 @@ export default async function CreatorPage({ params }: CreatorPageProps) {
                     </Link>
                     <div className="flex shrink-0 items-center gap-2">
                         <Link href="/gallery" className="inline-flex h-9 items-center rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground transition hover:bg-muted">
-                            作品广场
+                            {t("gallery")}
                         </Link>
                         <GalleryThemeToggle />
                     </div>
@@ -85,11 +88,11 @@ export default async function CreatorPage({ params }: CreatorPageProps) {
                         <DatabaseZap className="size-5" />
                     </span>
                     <h1 id="creator-unavailable-title" className="mt-4 text-xl font-semibold sm:text-2xl">
-                        创作者主页暂不可用
+                        {t("unavailable")}
                     </h1>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">当前部署未启用 PostgreSQL，作品发布与社区数据暂时无法读取。</p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{t("databaseUnavailable")}</p>
                     <Link href="/" className="mt-5 inline-flex h-10 items-center rounded-md bg-foreground px-4 text-sm font-semibold text-background transition hover:opacity-85">
-                        返回首页
+                        {t("backHome")}
                     </Link>
                 </section>
             )}

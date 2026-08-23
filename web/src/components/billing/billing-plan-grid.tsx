@@ -2,6 +2,7 @@
 
 import { Button } from "antd";
 import { ArrowUpRight, Check } from "lucide-react";
+import { useFormatter, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
@@ -14,6 +15,8 @@ type BillingPlanGridProps = {
 };
 
 export function BillingPlanGrid({ products, onSelect, variant = "page" }: BillingPlanGridProps) {
+    const t = useTranslations("billing.plansGrid");
+    const format = useFormatter();
     const recommendedId = products.find((product) => productMetadata(product).recommended)?.id || products[Math.min(1, products.length - 1)]?.id;
     const [activeProductId, setActiveProductId] = useState(recommendedId);
 
@@ -30,13 +33,13 @@ export function BillingPlanGrid({ products, onSelect, variant = "page" }: Billin
         <>
             <div className="mb-2 sm:hidden">
                 <div className="mb-2 flex items-center justify-between px-1 text-xs">
-                    <span className="font-medium text-stone-500 dark:text-stone-400">选择方案</span>
+                    <span className="font-medium text-stone-500 dark:text-stone-400">{t("selectPlan")}</span>
                     <span className="tabular-nums text-stone-400 dark:text-stone-500">
                         {products.length ? activeProductIndex + 1 : 0} / {products.length}
                     </span>
                 </div>
                 <div className="-mx-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    <div className="flex min-w-full gap-1.5" role="tablist" aria-label="套餐选择">
+                    <div className="flex min-w-full gap-1.5" role="tablist" aria-label={t("planSelection")}>
                         {products.map((product) => {
                             const selected = product.id === activeProduct?.id;
                             const pricing = productPricing(product);
@@ -58,8 +61,12 @@ export function BillingPlanGrid({ products, onSelect, variant = "page" }: Billin
                                 >
                                     <span className="block truncate text-sm font-semibold">{product.name}</span>
                                     <span className={`mt-1 flex min-w-0 items-center gap-1.5 truncate text-xs ${selected ? "font-medium text-[#52627a] dark:text-[#d8dee8]" : "text-stone-400 dark:text-stone-500"}`}>
-                                        <span>¥ {formatYuan(pricing.saleUnitAmountCents)}</span>
-                                        {pricing.discountCents > 0 ? <span className="truncate text-[10px] text-stone-400 line-through dark:text-stone-500">¥ {formatYuan(pricing.listUnitAmountCents)}</span> : null}
+                                        <span>¥ {format.number(pricing.saleUnitAmountCents / 100, { minimumFractionDigits: pricing.saleUnitAmountCents % 100 ? 2 : 0, maximumFractionDigits: 2 })}</span>
+                                        {pricing.discountCents > 0 ? (
+                                            <span className="truncate text-[10px] text-stone-400 line-through dark:text-stone-500">
+                                                ¥ {format.number(pricing.listUnitAmountCents / 100, { minimumFractionDigits: pricing.listUnitAmountCents % 100 ? 2 : 0, maximumFractionDigits: 2 })}
+                                            </span>
+                                        ) : null}
                                     </span>
                                 </button>
                             );
@@ -82,13 +89,16 @@ export function BillingPlanGrid({ products, onSelect, variant = "page" }: Billin
 }
 
 function PlanCard({ product, index, recommended, variant, onSelect }: { product: BillingProduct; index: number; recommended: boolean; variant: "modal" | "page"; onSelect: (product: BillingProduct) => void }) {
+    const t = useTranslations("billing.plansGrid");
+    const format = useFormatter();
+    const formatYuan = (amountCents: number) => format.number(Math.max(0, amountCents) / 100, { minimumFractionDigits: amountCents % 100 ? 2 : 0, maximumFractionDigits: 2 });
     if (variant === "modal") return <CompactPlanCard product={product} recommended={recommended} onSelect={onSelect} />;
 
     const metadata = productMetadata(product);
     const pricing = productPricing(product);
     const promotion = pricing.discountCents > 0 ? pricing.promotion : undefined;
     const isPointsProduct = product.productKind === "points";
-    const features = featureLines(product, metadata.features).slice(0, 4);
+    const features = featureLines(product, metadata.features, t).slice(0, 4);
     return (
         <article
             data-billing-plan-card={product.id}
@@ -101,7 +111,9 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
                 {promotion ? (
                     <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700 sm:px-3 sm:py-1 sm:text-[11px] dark:border-rose-900/60 dark:bg-rose-950/35 dark:text-rose-200">{promotion.label}</span>
                 ) : recommended ? (
-                    <span className="rounded-full border border-[#cfd7e3] bg-[#eef2f7] px-2 py-0.5 text-[10px] font-semibold text-[#52627a] sm:px-3 sm:py-1 sm:text-[11px] dark:border-[#52627a]/60 dark:bg-[#66758e]/15 dark:text-[#d8dee8]">推荐方案</span>
+                    <span className="rounded-full border border-[#cfd7e3] bg-[#eef2f7] px-2 py-0.5 text-[10px] font-semibold text-[#52627a] sm:px-3 sm:py-1 sm:text-[11px] dark:border-[#52627a]/60 dark:bg-[#66758e]/15 dark:text-[#d8dee8]">
+                        {t("recommendedPlan")}
+                    </span>
                 ) : metadata.highlight ? (
                     <span className="rounded-full border border-stone-200 px-3 py-1 text-[11px] font-medium text-stone-500 dark:border-stone-700 dark:text-stone-400">{metadata.highlight}</span>
                 ) : null}
@@ -109,18 +121,18 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
 
             <div className="relative mt-4 sm:mt-5">
                 <h3 className="line-clamp-2 text-xl font-semibold leading-tight tracking-tight sm:min-h-[4.25rem] sm:text-[1.7rem]">{product.name}</h3>
-                <p className="mt-2 hidden min-h-12 line-clamp-2 text-sm leading-6 text-stone-500 sm:block dark:text-stone-400">{product.description || "适合持续完成多媒体创作与商业项目交付。"}</p>
+                <p className="mt-2 hidden min-h-12 line-clamp-2 text-sm leading-6 text-stone-500 sm:block dark:text-stone-400">{product.description || t("defaultDescription")}</p>
             </div>
 
             <div className="relative mt-4 flex flex-col gap-4 border-t border-stone-200 pt-4 sm:mt-5 sm:flex-row sm:items-end sm:justify-between sm:gap-3 sm:pt-5 dark:border-stone-800">
                 <div data-billing-plan-price className="flex min-w-0 flex-wrap items-end gap-x-1 gap-y-1">
                     <span className="pb-1 text-sm font-medium">¥</span>
                     <span className="min-w-0 break-all text-3xl font-semibold leading-none sm:text-[2.35rem]">{formatYuan(pricing.saleUnitAmountCents)}</span>
-                    <span className="pb-1 text-sm text-stone-500 dark:text-stone-400">/ {isPointsProduct ? "一次性" : periodLabel(product.periodDays)}</span>
+                    <span className="pb-1 text-sm text-stone-500 dark:text-stone-400">/ {isPointsProduct ? t("oneTime") : periodLabel(product.periodDays, t)}</span>
                 </div>
                 <Button type="primary" data-billing-plan-action className="profile-primary-button !h-10 w-full shrink-0 !rounded-xl px-5 text-sm sm:w-auto sm:min-w-28" onClick={() => onSelect(product)}>
                     <span className="inline-flex items-center gap-2">
-                        {isPointsProduct ? "立即充值" : "购买套餐"} <ArrowUpRight className="size-4" />
+                        {isPointsProduct ? t("topUpNow") : t("buyPlan")} <ArrowUpRight className="size-4" />
                     </span>
                 </Button>
             </div>
@@ -128,11 +140,11 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
             <div aria-hidden={promotion ? undefined : true} className={`relative mt-2 flex min-h-5 flex-wrap items-center gap-x-2 text-xs text-stone-500 dark:text-stone-400 ${promotion ? "" : "invisible"}`}>
                 {promotion ? (
                     <>
-                        <span className="line-through">日常价 ¥ {formatYuan(pricing.listUnitAmountCents)}</span>
-                        <span className="font-medium text-rose-600 dark:text-rose-300">省 ¥ {formatYuan(pricing.discountCents)}</span>
+                        <span className="line-through">{t("regularPrice", { price: formatYuan(pricing.listUnitAmountCents) })}</span>
+                        <span className="font-medium text-rose-600 dark:text-rose-300">{t("saveAmount", { amount: formatYuan(pricing.discountCents) })}</span>
                     </>
                 ) : (
-                    <span>标准价格</span>
+                    <span>{t("standardPrice")}</span>
                 )}
             </div>
 
@@ -142,7 +154,7 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
                         <CreditSymbol className="text-[10px]" />
                     </span>
                     <span>
-                        <strong className="font-semibold text-stone-950 dark:text-white">{formatCreditAmount(product.pointsAmount)}</strong> {isPointsProduct ? "永久积分" : "创作积分"}
+                        <strong className="font-semibold text-stone-950 dark:text-white">{formatCreditAmount(product.pointsAmount)}</strong> {isPointsProduct ? t("permanentCredits") : t("creativeCredits")}
                     </span>
                 </li>
                 {features.map((line) => (
@@ -159,11 +171,14 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
 }
 
 function CompactPlanCard({ product, recommended, onSelect }: { product: BillingProduct; recommended: boolean; onSelect: (product: BillingProduct) => void }) {
+    const t = useTranslations("billing.plansGrid");
+    const format = useFormatter();
+    const formatYuan = (amountCents: number) => format.number(Math.max(0, amountCents) / 100, { minimumFractionDigits: amountCents % 100 ? 2 : 0, maximumFractionDigits: 2 });
     const metadata = productMetadata(product);
     const pricing = productPricing(product);
     const promotion = pricing.discountCents > 0 ? pricing.promotion : undefined;
     const isPointsProduct = product.productKind === "points";
-    const features = featureLines(product, metadata.features).slice(0, 2);
+    const features = featureLines(product, metadata.features, t).slice(0, 2);
     return (
         <article
             data-billing-plan-card={product.id}
@@ -177,24 +192,24 @@ function CompactPlanCard({ product, recommended, onSelect }: { product: BillingP
                 {promotion ? (
                     <span className="max-w-[60%] truncate rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/35 dark:text-rose-200">{promotion.label}</span>
                 ) : recommended ? (
-                    <span className="rounded-md border border-[#cfd7e3] bg-[#eef2f7] px-1.5 py-0.5 text-[10px] font-semibold text-[#52627a] dark:border-[#52627a]/60 dark:bg-[#66758e]/15 dark:text-[#d8dee8]">推荐</span>
+                    <span className="rounded-md border border-[#cfd7e3] bg-[#eef2f7] px-1.5 py-0.5 text-[10px] font-semibold text-[#52627a] dark:border-[#52627a]/60 dark:bg-[#66758e]/15 dark:text-[#d8dee8]">{t("recommended")}</span>
                 ) : metadata.highlight ? (
                     <span className="max-w-[60%] truncate text-[10px] font-medium text-stone-500 dark:text-stone-400">{metadata.highlight}</span>
                 ) : null}
             </div>
-            <p className="mt-0.5 line-clamp-2 text-xs leading-[18px] text-stone-500 dark:text-stone-400">{product.description || "适合持续完成多媒体创作与项目交付。"}</p>
+            <p className="mt-0.5 line-clamp-2 text-xs leading-[18px] text-stone-500 dark:text-stone-400">{product.description || t("compactDescription")}</p>
 
             <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-y border-stone-200 py-3 dark:border-stone-800">
                 <div className="min-w-0">
                     <div className="flex min-w-0 flex-wrap items-end gap-x-1 gap-y-1" data-billing-plan-price>
                         <span className="pb-0.5 text-xs font-medium">¥</span>
                         <span className="min-w-0 break-all text-2xl font-semibold leading-none">{formatYuan(pricing.saleUnitAmountCents)}</span>
-                        <span className="pb-0.5 text-xs text-stone-500 dark:text-stone-400">/ {isPointsProduct ? "一次性" : periodLabel(product.periodDays)}</span>
+                        <span className="pb-0.5 text-xs text-stone-500 dark:text-stone-400">/ {isPointsProduct ? t("oneTime") : periodLabel(product.periodDays, t)}</span>
                     </div>
                     {promotion ? (
                         <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[10px] text-stone-500 dark:text-stone-400">
                             <span className="line-through">¥ {formatYuan(pricing.listUnitAmountCents)}</span>
-                            <span className="font-medium text-rose-600 dark:text-rose-300">省 ¥ {formatYuan(pricing.discountCents)}</span>
+                            <span className="font-medium text-rose-600 dark:text-rose-300">{t("saveAmount", { amount: formatYuan(pricing.discountCents) })}</span>
                         </div>
                     ) : null}
                 </div>
@@ -203,7 +218,7 @@ function CompactPlanCard({ product, recommended, onSelect }: { product: BillingP
                         <CreditSymbol className="text-[11px]" />
                     </span>
                     <span className="whitespace-nowrap font-semibold text-stone-950 dark:text-white">{formatCreditAmount(product.pointsAmount)}</span>
-                    <span className="hidden text-stone-500 lg:inline dark:text-stone-400">积分</span>
+                    <span className="hidden text-stone-500 lg:inline dark:text-stone-400">{t("credits")}</span>
                 </div>
             </div>
 
@@ -220,7 +235,7 @@ function CompactPlanCard({ product, recommended, onSelect }: { product: BillingP
 
             <Button type="primary" data-billing-plan-action className="profile-primary-button mt-3 !h-9 w-full !rounded-md text-sm" onClick={() => onSelect(product)}>
                 <span className="inline-flex items-center gap-1.5">
-                    {isPointsProduct ? "立即充值" : "选择套餐"} <ArrowUpRight className="size-3.5" />
+                    {isPointsProduct ? t("topUpNow") : t("selectPlanAction")} <ArrowUpRight className="size-3.5" />
                 </span>
             </Button>
         </article>
@@ -249,21 +264,17 @@ function productMetadata(product: BillingProduct) {
     };
 }
 
-function featureLines(product: BillingProduct, configured: string[]) {
+function featureLines(product: BillingProduct, configured: string[], t: ReturnType<typeof useTranslations>) {
     if (configured.length) return configured;
-    if (product.productKind === "points") return ["支付成功后一次性到账", "永久积分不会按日过期", "订单与积分流水可查"];
-    return ["图片、视频、音频与 Agent 创作", "适用于个人创作与商业项目交付", "订单、套餐和积分流水统一管理", product.periodDays ? `${product.periodDays} 天完整套餐权益` : "长期有效套餐权益"];
+    if (product.productKind === "points") return [t("features.instant"), t("features.permanent"), t("features.traceable")];
+    return [t("features.multimedia"), t("features.delivery"), t("features.management"), product.periodDays ? t("features.days", { count: product.periodDays }) : t("features.longTerm")];
 }
 
-function periodLabel(periodDays: number) {
-    if (!periodDays) return "长期";
-    if (periodDays === 30) return "月";
-    if (periodDays === 365) return "年";
-    return `${periodDays} 天`;
-}
-
-function formatYuan(amountCents: number) {
-    return (Math.max(0, amountCents) / 100).toLocaleString("zh-CN", { minimumFractionDigits: amountCents % 100 ? 2 : 0, maximumFractionDigits: 2 });
+function periodLabel(periodDays: number, t: ReturnType<typeof useTranslations>) {
+    if (!periodDays) return t("period.longTerm");
+    if (periodDays === 30) return t("period.month");
+    if (periodDays === 365) return t("period.year");
+    return t("period.days", { count: periodDays });
 }
 
 function productPricing(product: BillingProduct): BillingProduct["pricing"] {

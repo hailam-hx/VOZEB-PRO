@@ -5,6 +5,7 @@ import { App, Button, Modal, Tooltip } from "antd";
 import { CalendarDays, Copy, Eye, ImagePlus, LoaderCircle, Share2, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef } from "react";
+import { useFormatter, useTranslations } from "next-intl";
 
 import { getPublicWorkPublication, recordPublicWorkPublicationView, type PublicWorkPublication } from "@/services/api/work-publications";
 import { createAgentPromptHref } from "@/lib/create-agent-prompt";
@@ -28,6 +29,8 @@ export function PublicWorkPreviewModal({
     onUseImage?: () => void | Promise<void>;
     imageImporting?: boolean;
 }) {
+    const t = useTranslations("public.work.preview");
+    const format = useFormatter();
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const viewedSlugs = useRef(new Set<string>());
@@ -51,9 +54,9 @@ export function PublicWorkPreviewModal({
         if (!work?.publicPrompt) return;
         try {
             await navigator.clipboard.writeText(work.publicPrompt);
-            message.success("提示词已复制");
+            message.success(t("promptCopied"));
         } catch {
-            message.error("复制失败，请手动选择提示词");
+            message.error(t("promptCopyFailed"));
         }
     };
 
@@ -62,9 +65,9 @@ export function PublicWorkPreviewModal({
         const url = new URL(`/share/${encodeURIComponent(work.slug)}`, window.location.origin).toString();
         try {
             await navigator.clipboard.writeText(url);
-            message.success("分享链接已复制");
+            message.success(t("linkCopied"));
         } catch {
-            message.error("分享链接复制失败");
+            message.error(t("linkCopyFailed"));
         }
     };
 
@@ -74,9 +77,9 @@ export function PublicWorkPreviewModal({
     const authorIdentity = work ? (
         <>
             <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-full bg-foreground text-[11px] font-semibold text-background" aria-hidden="true">
-                {work.authorAvatarUrl ? <img src={work.authorAvatarUrl} alt="" className="size-full object-cover" /> : userAvatarFallback(work.authorName || "匿名作者")}
+                {work.authorAvatarUrl ? <img src={work.authorAvatarUrl} alt="" className="size-full object-cover" /> : userAvatarFallback(work.authorName || t("anonymous"))}
             </span>
-            <span className="flex h-8 min-w-0 flex-1 items-center truncate text-sm font-semibold leading-none">{work.authorName || "匿名作者"}</span>
+            <span className="flex h-8 min-w-0 flex-1 items-center truncate text-sm font-semibold leading-none">{work.authorName || t("anonymous")}</span>
         </>
     ) : null;
 
@@ -85,15 +88,15 @@ export function PublicWorkPreviewModal({
             <div className="max-h-[92dvh] min-w-0 overflow-y-auto bg-background text-foreground lg:h-[min(82dvh,780px)] lg:overflow-hidden">
                 {query.isLoading ? (
                     <div className="flex min-h-[420px] items-center justify-center gap-2 text-sm text-muted-foreground">
-                        <LoaderCircle className="size-4 animate-spin" /> 正在加载作品
+                        <LoaderCircle className="size-4 animate-spin" /> {t("loading")}
                     </div>
                 ) : query.error || !work ? (
                     <div className="grid min-h-[360px] place-items-center px-5 text-center">
                         <div>
-                            <p className="text-sm font-semibold">作品暂时无法打开</p>
-                            <p className="mt-2 text-xs text-muted-foreground">{query.error instanceof Error ? query.error.message : "作品不存在或已停止公开"}</p>
+                            <p className="text-sm font-semibold">{t("unavailable")}</p>
+                            <p className="mt-2 text-xs text-muted-foreground">{t("notFound")}</p>
                             <Button className="mt-4" onClick={() => void query.refetch()}>
-                                重新加载
+                                {t("reload")}
                             </Button>
                         </div>
                     </div>
@@ -102,14 +105,14 @@ export function PublicWorkPreviewModal({
                         <div className="min-w-0 border-b border-border bg-muted/20 p-2.5 sm:p-3 lg:h-full lg:border-b-0 lg:border-r">
                             <PublicWorkMediaBrowser assets={contentAssets} title={work.title} compact />
                         </div>
-                        <aside className="min-w-0 p-3.5 sm:p-4 lg:h-full lg:overflow-y-auto" aria-label="作品详情">
+                        <aside className="min-w-0 p-3.5 sm:p-4 lg:h-full lg:overflow-y-auto" aria-label={t("detailsAria")}>
                             <header className="border-b border-border pb-3">
                                 <div className="flex min-w-0 items-center gap-2">
                                     {authorUsername && onOpenCreator ? (
                                         <button
                                             type="button"
                                             className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                            aria-label={`查看 ${work.authorName || authorUsername} 的主页`}
+                                            aria-label={t("viewCreator", { name: work.authorName || authorUsername })}
                                             aria-haspopup="dialog"
                                             onClick={() => {
                                                 onClose();
@@ -130,26 +133,26 @@ export function PublicWorkPreviewModal({
                                         <div className="flex min-w-0 flex-1 items-center gap-2.5">{authorIdentity}</div>
                                     )}
                                     <div className="ml-auto flex shrink-0 items-center gap-0.5">
-                                        <span className="inline-flex h-7 items-center gap-1 px-1 text-[11px] text-muted-foreground" aria-label="作品浏览量" title="浏览量">
+                                        <span className="inline-flex h-7 items-center gap-1 px-1 text-[11px] text-muted-foreground" aria-label={t("viewCountAria")} title={t("views")}>
                                             <Eye className="size-3.5" /> <span className="tabular-nums">{work.viewCount}</span>
                                         </span>
                                         <PublicWorkCommunityActions slug={work.slug} compact compactFollowIcon className="flex-nowrap !gap-0.5" />
-                                        <Tooltip title="分享作品">
-                                            <Button type="text" size="small" shape="circle" icon={<Share2 className="size-3.5" />} onClick={() => void share()} aria-label="分享作品" />
+                                        <Tooltip title={t("share")}>
+                                            <Button type="text" size="small" shape="circle" icon={<Share2 className="size-3.5" />} onClick={() => void share()} aria-label={t("share")} />
                                         </Tooltip>
-                                        <Button type="text" size="small" shape="circle" className="!-mr-1" icon={<X className="size-4" />} onClick={onClose} aria-label="关闭作品详情" title="关闭" />
+                                        <Button type="text" size="small" shape="circle" className="!-mr-1" icon={<X className="size-4" />} onClick={onClose} aria-label={t("closeDetails")} title={t("close")} />
                                     </div>
                                 </div>
 
                                 <h2 className="mt-3.5 break-words text-lg font-semibold leading-7">{work.title}</h2>
                                 <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
-                                    <span className="inline-flex shrink-0 items-center gap-1" title="发布时间">
-                                        <CalendarDays className="size-3" /> {formatDate(work.publishedAt)}
+                                    <span className="inline-flex shrink-0 items-center gap-1" title={t("publishedAt")}>
+                                        <CalendarDays className="size-3" /> {format.dateTime(new Date(work.publishedAt), { month: "2-digit", day: "2-digit" })}
                                     </span>
                                     <span className="min-w-0 truncate">
-                                        {sourceTypeLabel(work.sourceType)} · {work.category}
+                                        {t(`sources.${work.sourceType}`)} · {work.category}
                                     </span>
-                                    <span>{work.visibility === "public" ? "公开作品" : "仅链接分享"}</span>
+                                    <span>{work.visibility === "public" ? t("publicVisibility") : t("unlistedVisibility")}</span>
                                     <div className="ml-auto shrink-0">
                                         <PublicWorkReportButton slug={work.slug} compact />
                                     </div>
@@ -158,40 +161,40 @@ export function PublicWorkPreviewModal({
 
                             {work.description ? (
                                 <section className="mt-3.5">
-                                    <h3 className="text-xs font-semibold">作品说明</h3>
+                                    <h3 className="text-xs font-semibold">{t("description")}</h3>
                                     <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-5 text-muted-foreground">{work.description}</p>
                                 </section>
                             ) : null}
 
                             <section className="mt-3.5">
-                                <h3 className="text-xs font-semibold">作品提示词</h3>
-                                <pre className="mt-1.5 max-h-44 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted p-2.5 font-sans text-[13px] leading-5 text-foreground">{work.publicPrompt || "该作品暂无可公开提示词。"}</pre>
+                                <h3 className="text-xs font-semibold">{t("prompt")}</h3>
+                                <pre className="mt-1.5 max-h-44 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted p-2.5 font-sans text-[13px] leading-5 text-foreground">{work.publicPrompt || t("noPrompt")}</pre>
                                 {work.publicPrompt ? (
                                     <div className="mt-2.5">
                                         <div className="flex justify-end gap-1">
-                                            <Tooltip title="复制提示词">
-                                                <Button size="small" shape="circle" icon={<Copy className="size-3.5" />} onClick={() => void copyPrompt()} aria-label="复制提示词" />
+                                            <Tooltip title={t("copyPrompt")}>
+                                                <Button size="small" shape="circle" icon={<Copy className="size-3.5" />} onClick={() => void copyPrompt()} aria-label={t("copyPrompt")} />
                                             </Tooltip>
                                             {onUseImage && contentAssets.some((asset) => asset.mediaType === "image") ? (
-                                                <Tooltip title="引用图片到 Agent">
+                                                <Tooltip title={t("useImage")}>
                                                     <Button
                                                         size="small"
                                                         shape="circle"
                                                         icon={imageImporting ? <LoaderCircle className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
                                                         disabled={imageImporting}
                                                         onClick={() => void onUseImage()}
-                                                        aria-label="引用图片到 Agent"
+                                                        aria-label={t("useImage")}
                                                     />
                                                 </Tooltip>
                                             ) : null}
                                             {onUsePrompt ? (
-                                                <Tooltip title="引用提示词到 Agent">
+                                                <Tooltip title={t("usePrompt")}>
                                                     <Button
                                                         type="primary"
                                                         size="small"
                                                         shape="circle"
                                                         icon={<Sparkles className="size-3.5" />}
-                                                        aria-label="引用提示词到 Agent"
+                                                        aria-label={t("usePrompt")}
                                                         onClick={() => {
                                                             onUsePrompt(work.publicPrompt);
                                                             onClose();
@@ -202,7 +205,7 @@ export function PublicWorkPreviewModal({
                                         </div>
                                         {!onUsePrompt ? (
                                             <Link href={remixHref} className="mt-3 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md !bg-foreground px-4 text-sm font-semibold !text-background transition hover:opacity-80">
-                                                <Sparkles className="size-4" /> 做同款
+                                                <Sparkles className="size-4" /> {t("remix")}
                                             </Link>
                                         ) : null}
                                     </div>
@@ -224,12 +227,4 @@ export function PublicWorkPreviewModal({
             </div>
         </Modal>
     );
-}
-
-function sourceTypeLabel(sourceType: PublicWorkPublication["sourceType"]) {
-    return sourceType === "media" ? "素材作品" : sourceType === "canvas" ? "画布作品" : "短剧作品";
-}
-
-function formatDate(value: string) {
-    return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit" }).format(new Date(value));
 }

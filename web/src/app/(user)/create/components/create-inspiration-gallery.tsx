@@ -4,6 +4,7 @@ import type { MenuProps } from "antd";
 import { App, Dropdown } from "antd";
 import { Copy, Ellipsis, Eye, FileText, ImagePlus, LoaderCircle, RefreshCw, Video } from "lucide-react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
 import { PublicWorkPreviewModal } from "@/components/works/public-work-preview-modal";
@@ -15,12 +16,14 @@ import { LazyMediaImage } from "@/components/media/lazy-media-image";
 import { PublicWorkCardTitle } from "@/components/works/public-work-card-title";
 import { userAvatarFallback } from "@/lib/user-avatar";
 import { WORK_CATEGORY_OPTIONS } from "@/lib/work-publication-options";
+import { workCategoryMessageKeys } from "@/i18n/display-keys";
 import { cn } from "@/lib/utils";
 import { listPublicGallery, type PublicGalleryItem } from "@/services/api/work-governance";
 
-const categories = [{ value: "", label: "全部" }, ...WORK_CATEGORY_OPTIONS];
-
 export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePrompt: (prompt: string) => void; onUseImage: (item: PublicGalleryItem) => Promise<void> }) {
+    const t = useTranslations("create");
+    const tCategories = useTranslations("home");
+    const categories = [{ value: "", label: t("all") }, ...WORK_CATEGORY_OPTIONS.map((item) => ({ value: item.value, label: tCategories(workCategoryMessageKeys[item.value]) }))];
     const [category, setCategory] = useState("");
     const [items, setItems] = useState<PublicGalleryItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -38,8 +41,8 @@ export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePro
             .then((result) => {
                 if (active) setItems(result.items);
             })
-            .catch((error) => {
-                if (active) setError(error instanceof Error ? error.message : "灵感作品加载失败");
+            .catch(() => {
+                if (active) setError(t("inspirationLoadFailed"));
             })
             .finally(() => {
                 if (active) setLoading(false);
@@ -47,7 +50,7 @@ export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePro
         return () => {
             active = false;
         };
-    }, [category, reloadToken]);
+    }, [category, reloadToken, t]);
 
     const importImage = async (item: PublicGalleryItem) => {
         setImportingSlug(item.slug);
@@ -64,14 +67,14 @@ export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePro
         <section className="mt-7 w-full sm:mt-12" aria-labelledby="create-inspiration-heading">
             <div className="flex min-w-0 items-center justify-between gap-3">
                 <h2 id="create-inspiration-heading" className="text-[15px] font-semibold text-[#20242a] dark:text-[#f3f5f7]">
-                    灵感发现
+                    {t("inspirationDiscovery")}
                 </h2>
                 <Link href="/community" className="text-xs text-[#697381] transition hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:text-white">
-                    查看全部 →
+                    {t("viewAllArrow")}
                 </Link>
             </div>
 
-            <nav className="hide-scrollbar mt-3 flex min-w-0 gap-1 overflow-x-auto border-b border-[#e8ebef] pb-2 dark:border-[#292d33]" aria-label="灵感分类">
+            <nav className="hide-scrollbar mt-3 flex min-w-0 gap-1 overflow-x-auto border-b border-[#e8ebef] pb-2 dark:border-[#292d33]" aria-label={t("inspirationCategories")}>
                 {categories.map((item) => (
                     <button
                         key={item.value || "all"}
@@ -90,23 +93,23 @@ export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePro
 
             {loading ? (
                 <div className="flex min-h-36 items-center justify-center gap-2 text-xs text-[#9aa2ad] dark:text-[#737d89]">
-                    <LoaderCircle className="size-4 animate-spin" /> 正在读取灵感作品...
+                    <LoaderCircle className="size-4 animate-spin" /> {t("loadingInspiration")}
                 </div>
             ) : error ? (
                 <div className="flex min-h-36 flex-col items-center justify-center gap-2 text-center">
                     <p className="text-xs text-[#9a5b5b] dark:text-[#d49a9a]">{error}</p>
                     <button type="button" className="inline-flex items-center gap-1.5 text-xs font-medium text-[#697381] hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:text-white" onClick={() => setReloadToken((value) => value + 1)}>
-                        <RefreshCw className="size-3.5" /> 重新读取
+                        <RefreshCw className="size-3.5" /> {t("reloadOverview")}
                     </button>
                 </div>
             ) : items.length ? (
-                <ResponsiveMasonryGrid className="grid-cols-2 pt-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6" ariaLabel="灵感作品列表">
+                <ResponsiveMasonryGrid className="grid-cols-2 pt-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6" ariaLabel={t("inspirationWorksList")}>
                     {items.map((item) => (
                         <InspirationCard key={item.slug} item={item} importing={importingSlug === item.slug} onOpen={() => setPreviewSlug(item.slug)} onOpenAuthor={setCreatorUsername} onUsePrompt={onUsePrompt} onUseImage={() => void importImage(item)} />
                     ))}
                 </ResponsiveMasonryGrid>
             ) : (
-                <div className="flex min-h-32 items-center justify-center border-b border-dashed border-[#e2e7eb] text-sm text-[#9aa2ad] dark:border-[#2b3037] dark:text-[#737d89]">当前分类还没有公开作品</div>
+                <div className="flex min-h-32 items-center justify-center border-b border-dashed border-[#e2e7eb] text-sm text-[#9aa2ad] dark:border-[#2b3037] dark:text-[#737d89]">{t("noPublicWorksInCategory")}</div>
             )}
             <PublicWorkPreviewModal
                 slug={previewSlug || undefined}
@@ -146,13 +149,14 @@ function InspirationCard({
     onUsePrompt: (prompt: string) => void;
     onUseImage: () => void;
 }) {
+    const t = useTranslations("create");
     const { message } = App.useApp();
     const image = item.preview?.mediaType === "image";
     const authorUsername = item.authorUsername;
     const menuItems: MenuProps["items"] = [
-        item.publicPrompt ? { key: "prompt", icon: <FileText className="size-4" />, label: "使用提示词" } : null,
-        item.publicPrompt ? { key: "copy", icon: <Copy className="size-4" />, label: "复制提示词" } : null,
-        image ? { key: "image", icon: <ImagePlus className="size-4" />, label: "使用图片" } : null,
+        item.publicPrompt ? { key: "prompt", icon: <FileText className="size-4" />, label: t("usePrompt") } : null,
+        item.publicPrompt ? { key: "copy", icon: <Copy className="size-4" />, label: t("copyPrompt") } : null,
+        image ? { key: "image", icon: <ImagePlus className="size-4" />, label: t("useImage") } : null,
     ].filter(Boolean) as MenuProps["items"];
 
     const runAction: MenuProps["onClick"] = ({ key }) => {
@@ -161,15 +165,15 @@ function InspirationCard({
         if (key === "copy") {
             void navigator.clipboard
                 .writeText(item.publicPrompt)
-                .then(() => message.success("提示词已复制"))
-                .catch(() => message.error("复制失败，请打开作品详情后手动复制"));
+                .then(() => message.success(t("promptCopied")))
+                .catch(() => message.error(t("copyPromptFailed")));
         }
     };
 
     return (
         <article className="group w-full min-w-0 overflow-hidden text-[#20242a] dark:text-[#f3f5f7]">
             <div className="relative overflow-hidden rounded-lg bg-[#eef1f4] dark:bg-[#252a31]">
-                <button type="button" className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6e87db]" onClick={onOpen} aria-label={`查看作品：${item.title}`} aria-haspopup="dialog">
+                <button type="button" className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6e87db]" onClick={onOpen} aria-label={t("viewWorkNamed", { name: item.title })} aria-haspopup="dialog">
                     {image ? (
                         <LazyMediaImage src={imagePreviewUrl(item.preview!.url, 640)} alt={item.title} containerClassName="w-full" imageClassName="block h-auto w-full group-hover:scale-[1.015]" />
                     ) : item.preview?.mediaType === "video" ? (
@@ -181,7 +185,7 @@ function InspirationCard({
                     )}
                 </button>
                 {item.preview?.mediaType === "video" ? (
-                    <span className="absolute right-2 top-2 grid size-7 place-items-center rounded-md bg-black/65 text-white" title="视频作品">
+                    <span className="absolute right-2 top-2 grid size-7 place-items-center rounded-md bg-black/65 text-white" title={t("videoWork")}>
                         <Video className="size-3.5" />
                     </span>
                 ) : null}
@@ -193,25 +197,25 @@ function InspirationCard({
                         <button
                             type="button"
                             className="flex min-w-0 items-center gap-1.5 rounded-sm text-left transition hover:text-[#20242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6e87db] dark:hover:text-white"
-                            aria-label={`查看 ${item.authorName || authorUsername} 的主页`}
+                            aria-label={t("viewCreatorProfile", { name: item.authorName || authorUsername })}
                             aria-haspopup="dialog"
                             onClick={() => onOpenAuthor(authorUsername)}
                         >
                             <span className="grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-[#20242a] text-[8px] font-semibold text-white dark:bg-[#f3f5f7] dark:text-[#20242a]">
-                                {item.authorAvatarUrl ? <img src={item.authorAvatarUrl} alt="" className="size-full object-cover" loading="lazy" /> : userAvatarFallback(item.authorName || "匿名作者")}
+                                {item.authorAvatarUrl ? <img src={item.authorAvatarUrl} alt="" className="size-full object-cover" loading="lazy" /> : userAvatarFallback(item.authorName || t("anonymousCreator"))}
                             </span>
-                            <span className="truncate">{item.authorName || "匿名作者"}</span>
+                            <span className="truncate">{item.authorName || t("anonymousCreator")}</span>
                         </button>
                     ) : (
                         <span className="flex min-w-0 items-center gap-1.5">
                             <span className="grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-[#20242a] text-[8px] font-semibold text-white dark:bg-[#f3f5f7] dark:text-[#20242a]">
-                                {item.authorAvatarUrl ? <img src={item.authorAvatarUrl} alt="" className="size-full object-cover" loading="lazy" /> : userAvatarFallback(item.authorName || "匿名作者")}
+                                {item.authorAvatarUrl ? <img src={item.authorAvatarUrl} alt="" className="size-full object-cover" loading="lazy" /> : userAvatarFallback(item.authorName || t("anonymousCreator"))}
                             </span>
-                            <span className="truncate">{item.authorName || "匿名作者"}</span>
+                            <span className="truncate">{item.authorName || t("anonymousCreator")}</span>
                         </span>
                     )}
                     <span className="flex shrink-0 items-center gap-2 tabular-nums">
-                        <span className="inline-flex items-center gap-1" title="访问">
+                        <span className="inline-flex items-center gap-1" title={t("views")}>
                             <Eye className="size-3" />
                             {item.viewCount}
                         </span>
@@ -222,7 +226,7 @@ function InspirationCard({
                                     type="button"
                                     disabled={importing}
                                     className="grid size-7 place-items-center rounded-md text-[#7f8996] transition hover:bg-[#eef1f4] hover:text-[#20242a] disabled:cursor-wait disabled:opacity-60 dark:hover:bg-[#252a31] dark:hover:text-white"
-                                    aria-label={`使用作品：${item.title}`}
+                                    aria-label={t("useWorkNamed", { name: item.title })}
                                     aria-haspopup="menu"
                                 >
                                     {importing ? <LoaderCircle className="size-3.5 animate-spin" /> : <Ellipsis className="size-4" />}

@@ -40,12 +40,6 @@ function openCheckoutWindow(openWindow: WindowOpen): CheckoutWindow | null {
     if (!popup) return null;
     const checkoutWindow = popup as CheckoutWindow;
     checkoutWindow.opener = null;
-    try {
-        checkoutWindow.document.title = "正在打开支付";
-        checkoutWindow.document.body.textContent = "正在打开支付页面，请稍候...";
-    } catch {
-        // Some browser payment windows restrict document access; navigation can still continue.
-    }
     return checkoutWindow;
 }
 

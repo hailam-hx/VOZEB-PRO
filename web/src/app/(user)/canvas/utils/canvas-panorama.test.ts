@@ -6,7 +6,7 @@ describe("canvas panorama", () => {
     it("builds an idempotent equirectangular prompt", () => {
         const first = buildPanoramaPrompt("未来城市大厅", false);
         expect(buildPanoramaPrompt(first, false)).toBe(first);
-        expect(first).toContain("2:1 等距柱状投影全景图");
+        expect(first).toContain("2:1 equirectangular panorama");
     });
 
     it("recognizes practical 2:1 dimensions", () => {

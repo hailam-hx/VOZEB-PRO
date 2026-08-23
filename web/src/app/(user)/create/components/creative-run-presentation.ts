@@ -1,40 +1,53 @@
+"use client";
+
+import { useLocale, useTranslations } from "next-intl";
+
+import type { AppLocale } from "@/i18n/config";
 import type { CreativeGenerationMode } from "@/lib/creative-runtime-contract";
 import type { CreativeAgentRun } from "@/services/api/creative";
 
 export type CreativeRunPresentationItem = { key: string; label: string; value: string };
+export type CreativeRunPresentationCopy = {
+    labels: Record<"mode" | "model" | "size" | "ratio" | "quality" | "definition" | "duration" | "voice" | "format" | "count" | "status", string>;
+    modes: Record<CreativeGenerationMode, string>;
+    qualities: Record<string, string>;
+    statuses: Record<CreativeAgentRun["status"], string>;
+    seconds: (value: number) => string;
+    resultCount: (value: number) => string;
+};
 
-export function creativeRunPresentation(run: CreativeAgentRun | undefined, modelNames: ReadonlyMap<string, string>) {
+export function creativeRunPresentation(run: CreativeAgentRun | undefined, modelNames: ReadonlyMap<string, string>, copy: CreativeRunPresentationCopy) {
     if (!run) return [];
     const mode = creativeRunMode(run);
     const tasks = mode ? run.tasks.filter((task) => task.type === mode) : run.tasks;
     const preferences = mode ? run.generationPreferences?.[mode] : undefined;
     const items: CreativeRunPresentationItem[] = [];
-    if (mode) items.push({ key: "mode", label: "类型", value: mediaModeLabel(mode) });
+    if (mode) items.push({ key: "mode", label: copy.labels.mode, value: copy.modes[mode] });
 
     const modelIds = uniqueText([...tasks.map((task) => task.model), ...(run.requestedModelIds || [])]);
-    if (modelIds.length) items.push({ key: "model", label: "模型", value: modelIds.map((id) => modelNames.get(id) || id).join(" + ") });
+    if (modelIds.length) items.push({ key: "model", label: copy.labels.model, value: modelIds.map((id) => modelNames.get(id) || id).join(" + ") });
 
     const size = firstText(tasks.map((task) => task.ratio)) || (preferences && "size" in preferences ? preferences.size : undefined);
-    if (size) items.push({ key: "size", label: mode === "video" ? "比例" : "尺寸", value: size });
+    if (size) items.push({ key: "size", label: mode === "video" ? copy.labels.ratio : copy.labels.size, value: size });
 
     const quality = firstText(tasks.map((task) => task.quality)) || (preferences && "quality" in preferences ? preferences.quality : undefined);
-    if (quality) items.push({ key: "quality", label: mode === "video" ? "清晰度" : "画质", value: qualityLabel(quality) });
+    if (quality) items.push({ key: "quality", label: mode === "video" ? copy.labels.definition : copy.labels.quality, value: copy.qualities[quality.toLowerCase()] || quality });
 
     const seconds = firstNumber(tasks.map((task) => task.seconds)) || (preferences && "seconds" in preferences ? preferences.seconds : undefined);
-    if (seconds) items.push({ key: "seconds", label: "时长", value: `${seconds}秒` });
+    if (seconds) items.push({ key: "seconds", label: copy.labels.duration, value: copy.seconds(seconds) });
 
     const voice = firstText(tasks.map((task) => task.voice)) || (preferences && "voice" in preferences ? preferences.voice : undefined);
-    if (voice) items.push({ key: "voice", label: "音色", value: voice });
+    if (voice) items.push({ key: "voice", label: copy.labels.voice, value: voice });
     const format = firstText(tasks.map((task) => task.format)) || (preferences && "format" in preferences ? preferences.format : undefined);
-    if (format) items.push({ key: "format", label: "格式", value: format.toUpperCase() });
+    if (format) items.push({ key: "format", label: copy.labels.format, value: format.toUpperCase() });
 
     const count = tasks.reduce((total, task) => total + (task.count || 1), 0);
-    if (count > 1) items.push({ key: "count", label: "数量", value: `${count}个结果` });
-    items.push({ key: "status", label: "状态", value: runStatusLabel(run.status) });
+    if (count > 1) items.push({ key: "count", label: copy.labels.count, value: copy.resultCount(count) });
+    items.push({ key: "status", label: copy.labels.status, value: copy.statuses[run.status] });
     return items;
 }
 
-export function creativeRunDuration(run: CreativeAgentRun | undefined) {
+export function creativeRunDuration(run: CreativeAgentRun | undefined, locale: AppLocale = "zh-CN") {
     const startedAt = Number(run?.createdAt);
     const finishedAt = Number(run?.updatedAt);
     if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || finishedAt <= startedAt) return "";
@@ -42,9 +55,11 @@ export function creativeRunDuration(run: CreativeAgentRun | undefined) {
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
-    if (hours) return `${hours}小时${minutes ? `${minutes}分` : ""}`;
-    if (minutes) return `${minutes}分${seconds ? `${seconds}秒` : ""}`;
-    return `${seconds}秒`;
+    const values: string[] = [];
+    if (hours) values.push(new Intl.NumberFormat(locale, { style: "unit", unit: "hour", unitDisplay: "short" }).format(hours));
+    if (minutes) values.push(new Intl.NumberFormat(locale, { style: "unit", unit: "minute", unitDisplay: "short" }).format(minutes));
+    if (!hours && seconds) values.push(new Intl.NumberFormat(locale, { style: "unit", unit: "second", unitDisplay: "short" }).format(seconds));
+    return values.join(locale === "zh-CN" ? "" : " ");
 }
 
 export function creativeRunMode(run: CreativeAgentRun | undefined): CreativeGenerationMode | undefined {
@@ -52,22 +67,32 @@ export function creativeRunMode(run: CreativeAgentRun | undefined): CreativeGene
     return taskMode === "image" || taskMode === "video" || taskMode === "audio" ? taskMode : run?.generationPreferences?.mode;
 }
 
-export function mediaModeLabel(mode: CreativeGenerationMode) {
-    return mode === "image" ? "图片生成" : mode === "video" ? "视频生成" : "音频生成";
+export function useCreativeRunPresentation(run: CreativeAgentRun | undefined, modelNames: ReadonlyMap<string, string>) {
+    const t = useTranslations("create");
+    return creativeRunPresentation(run, modelNames, {
+        labels: {
+            mode: t("type"),
+            model: t("model"),
+            size: t("size"),
+            ratio: t("ratio"),
+            quality: t("imageQuality"),
+            definition: t("definition"),
+            duration: t("duration"),
+            voice: t("voice"),
+            format: t("format"),
+            count: t("quantity"),
+            status: t("status"),
+        },
+        modes: { image: t("modeImage"), video: t("modeVideo"), audio: t("modeAudio") },
+        qualities: { auto: t("smart"), high: t("highImageQuality"), medium: t("standard"), low: t("fast") },
+        statuses: { planning: t("statusPlanning"), running: t("generating"), paused: t("statusPaused"), completed: t("statusCompleted"), cancelled: t("statusCancelled"), failed: t("statusFailed") },
+        seconds: (value) => t("secondsCompact", { value }),
+        resultCount: (value) => t("resultCount", { count: value }),
+    });
 }
 
-function qualityLabel(value: string) {
-    const labels: Record<string, string> = { auto: "智能", high: "高画质", medium: "标准", low: "快速" };
-    return labels[value.toLowerCase()] || value;
-}
-
-function runStatusLabel(status: CreativeAgentRun["status"]) {
-    if (status === "planning") return "规划中";
-    if (status === "running") return "生成中";
-    if (status === "paused") return "已暂停";
-    if (status === "completed") return "已完成";
-    if (status === "cancelled") return "已取消";
-    return "失败";
+export function useCreativeRunDuration(run: CreativeAgentRun | undefined) {
+    return creativeRunDuration(run, useLocale() as AppLocale);
 }
 
 function uniqueText(values: Array<string | undefined>) {

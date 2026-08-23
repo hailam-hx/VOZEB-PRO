@@ -13,14 +13,14 @@ export function dramaAssetReferences(item: DramaNamedAsset): DramaAssetReference
                   url: item.referenceImageUrl,
                   storageKey: item.referenceStorageKey,
                   source: "library",
-                  label: "原参考图",
+                  label: item.name,
                   createdAt: new Date(0).toISOString(),
               },
           ]
         : [];
 }
 
-export function imageResultsToReferences(result: ImageGenerationResult & { results?: ImageGenerationResult[] }): DramaAssetReference[] {
+export function imageResultsToReferences(result: ImageGenerationResult & { results?: ImageGenerationResult[] }, label: (index: number, total: number) => string): DramaAssetReference[] {
     const images = result.results?.length ? result.results : [result];
     const createdAt = new Date().toISOString();
     return images.flatMap((image, index) => {
@@ -31,7 +31,7 @@ export function imageResultsToReferences(result: ImageGenerationResult & { resul
                       id: `reference-${nanoid()}`,
                       url,
                       source: "generated" as const,
-                      label: images.length > 1 ? `AI 候选图 ${index + 1}` : "AI 候选图",
+                      label: label(index + 1, images.length),
                       width: image.width,
                       height: image.height,
                       createdAt,

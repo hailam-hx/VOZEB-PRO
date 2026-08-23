@@ -16,14 +16,14 @@ export const CANVAS_CONFIG_NODE_HEIGHT = {
 
 export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Image]: { width: 340, height: 240, title: "New Generation" },
-    [CanvasNodeType.Panorama]: { ...PANORAMA_NODE_SIZE, title: "全景图" },
+    [CanvasNodeType.Panorama]: { ...PANORAMA_NODE_SIZE, title: "Panorama" },
     [CanvasNodeType.Text]: { width: 340, height: 240, title: "Note" },
-    [CanvasNodeType.Config]: { width: 340, height: CANVAS_CONFIG_NODE_HEIGHT.collapsed, title: "生成配置" },
+    [CanvasNodeType.Config]: { width: 340, height: CANVAS_CONFIG_NODE_HEIGHT.collapsed, title: "Generation config" },
     [CanvasNodeType.Video]: { width: 420, height: 236, title: "Video" },
     [CanvasNodeType.Audio]: { width: 340, height: 120, title: "Audio" },
-    [CanvasNodeType.Brief]: { width: 380, height: 280, title: "创作简报" },
-    [CanvasNodeType.Task]: { width: 340, height: 210, title: "Agent 任务" },
-    [CanvasNodeType.BrandKit]: { width: 340, height: 240, title: "品牌规范" },
+    [CanvasNodeType.Brief]: { width: 380, height: 280, title: "Creative brief" },
+    [CanvasNodeType.Task]: { width: 340, height: 210, title: "Agent task" },
+    [CanvasNodeType.BrandKit]: { width: 340, height: 240, title: "Brand guidelines" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
 const NODE_SPECS = {

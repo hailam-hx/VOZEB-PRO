@@ -1,8 +1,9 @@
 "use client";
 
 import { SlidersHorizontal } from "lucide-react";
+import { useTranslations } from "next-intl";
 
-import { CreativeGenerationPreferences, generationPreferenceSummary, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
+import { CreativeGenerationPreferences, useGenerationPreferenceSummary, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
 import type { CreativeGenerationPreferences as GenerationPreferences } from "@/lib/creative-runtime-contract";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useCreativeComposerPopoverPlacement, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
@@ -17,6 +18,8 @@ type CanvasImageSettingsPopoverProps = {
 };
 
 export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChange, buttonClassName, placement = "topLeft", fixedSizeLabel }: CanvasImageSettingsPopoverProps) {
+    const t = useTranslations("canvas");
+    const createT = useTranslations("create");
     const responsivePlacement = useCreativeComposerPopoverPlacement(placement);
     const preferences: GenerationPreferences = {
         mode: "image",
@@ -26,15 +29,20 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
             count: positiveInteger(config.count),
         },
     };
-    const summary = canvasImagePreferenceSummary(preferences, fixedSizeLabel);
-    const fullSummary = fixedSizeLabel ? `${fixedSizeLabel} · ${imageQualityLabel(preferences.image?.quality)} · ${preferences.image?.count || 1}张` : generationPreferenceSummary("image", preferences);
+    const summary = canvasImagePreferenceSummary(preferences, fixedSizeLabel, {
+        autoSize: createT("smartRatio"),
+        quality: { auto: createT("smartImageQuality"), high: createT("high"), medium: createT("medium"), low: createT("low") },
+        count: (count) => createT("imageCount", { count }),
+    });
+    const localizedSummary = useGenerationPreferenceSummary("image", preferences);
+    const fullSummary = fixedSizeLabel ? summary : localizedSummary;
 
     return (
         <CreativeGenerationPreferences
             capability="image"
             preferences={preferences}
             triggerLabel={summary}
-            triggerAriaLabel={`图片设置：${fullSummary}`}
+            triggerAriaLabel={t("imageSettingsAria", { summary: fullSummary })}
             triggerIcon={<SlidersHorizontal className="size-4" />}
             triggerClassName={buttonClassName}
             triggerLabelClassName="whitespace-nowrap text-left !overflow-visible !text-clip"
@@ -47,13 +55,13 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     );
 }
 
-export function canvasImagePreferenceSummary(preferences: GenerationPreferences, fixedSizeLabel?: string) {
+export function canvasImagePreferenceSummary(preferences: GenerationPreferences, fixedSizeLabel: string | undefined, labels: { autoSize: string; quality: Record<string, string>; count: (count: number) => string }) {
     const image = preferences.image;
-    const size = fixedSizeLabel || compactSizeLabel(image?.size);
+    const size = fixedSizeLabel || compactSizeLabel(image?.size, labels.autoSize);
     if (!fixedSizeLabel && /^\d+x\d+$/i.test(image?.size || "")) return size;
-    const quality = ({ auto: "智能", high: "高", medium: "中", low: "低" } as Record<string, string>)[image?.quality || "auto"] || image?.quality || "智能";
+    const quality = labels.quality[image?.quality || "auto"] || image?.quality || labels.quality.auto;
     const count = image?.count || 1;
-    return `${size} · ${quality}${count > 1 ? ` · ${count}张` : ""}`;
+    return `${size} · ${quality}${count > 1 ? ` · ${labels.count(count)}` : ""}`;
 }
 
 function applyImagePreferencePatch(patch: CreativeGenerationPreferencePatch, onChange: (key: keyof AiConfig, value: string) => void) {
@@ -66,15 +74,11 @@ function imageQuality(value?: string): NonNullable<GenerationPreferences["image"
     return value === "high" || value === "medium" || value === "low" ? value : "auto";
 }
 
-function imageQualityLabel(value?: string) {
-    return ({ auto: "智能画质", high: "高画质", medium: "中画质", low: "低画质" } as Record<string, string>)[value || "auto"] || value;
-}
-
 function positiveInteger(value: unknown) {
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
-function compactSizeLabel(value?: string) {
-    return !value || value === "auto" ? "智能" : value.replace("x", "×");
+function compactSizeLabel(value: string | undefined, autoLabel: string) {
+    return !value || value === "auto" ? autoLabel : value.replace("x", "×");
 }

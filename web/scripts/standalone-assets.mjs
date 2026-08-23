@@ -1,4 +1,4 @@
-import { cp, mkdir, readdir, stat } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 export async function prepareStandaloneAssets({ webRoot, distDir = ".next" }) {
@@ -45,7 +45,13 @@ async function copySharpRuntimePackages(webRoot, standaloneRoot) {
     }
 
     await mkdir(targetPnpmRoot, { recursive: true });
-    await Promise.all(packages.map((entry) => cp(path.join(sourcePnpmRoot, entry.name), path.join(targetPnpmRoot, entry.name), { recursive: true, force: true })));
+    await Promise.all(
+        packages.map(async (entry) => {
+            const target = path.join(targetPnpmRoot, entry.name);
+            await rm(target, { recursive: true, force: true });
+            await cp(path.join(sourcePnpmRoot, entry.name), target, { recursive: true, force: true });
+        }),
+    );
     return packages.map((entry) => entry.name).sort();
 }
 

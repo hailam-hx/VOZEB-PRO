@@ -210,6 +210,7 @@
     min-width: 0;
 }
 
+.languageButton,
 .themeButton,
 .mobileMenuButton {
     align-items: center;
@@ -227,6 +228,7 @@
     width: 46px;
 }
 
+.languageButton svg,
 .themeButton svg,
 .mobileMenuButton svg {
     height: 18px;
@@ -1039,6 +1041,7 @@
     .headerActions > .primarySmallButton {
         display: none;
     }
+    .languageButton,
     .themeButton,
     .mobileMenuButton {
         height: 44px;

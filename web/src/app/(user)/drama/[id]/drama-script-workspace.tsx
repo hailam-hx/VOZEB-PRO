@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Drawer } from "antd";
 import { ListTree, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import type { DramaEpisode, DramaProject, DramaShot } from "../types";
 import { useDramaStore } from "../stores/use-drama-store";
@@ -24,6 +25,7 @@ export function DramaScriptWorkspace({
     analyzing: boolean;
     onAnalyze: () => void;
 }) {
+    const t = useTranslations("drama.editor.sceneStructure");
     const updateEpisode = useDramaStore((state) => state.updateEpisode);
     const selectTextRef = useRef<(value: string) => void>(() => undefined);
     const [mobilePanel, setMobilePanel] = useState<"scenes">();
@@ -48,15 +50,15 @@ export function DramaScriptWorkspace({
             </div>
             <div className="relative flex min-h-0 min-w-0 flex-col">
                 <Button type="default" size="small" className="!absolute !left-2 !top-2 !z-10 min-[1120px]:!hidden" icon={<ListTree className="size-3.5" />} onClick={() => setMobilePanel("scenes")}>
-                    场景结构
+                    {t("title")}
                 </Button>
                 <DramaRichScriptEditor episode={episode} fullscreen={fullscreen} onFullscreenChange={setFullscreen} onReady={registerEditor} onChange={(script, scriptRichContent) => updateEpisode(project.id, episode.id, { script, scriptRichContent })} />
             </div>
-            <Drawer title="场景结构" placement="left" size={300} open={mobilePanel === "scenes"} closable={false} onClose={() => setMobilePanel(undefined)} styles={{ wrapper: { maxWidth: "100vw" }, body: { padding: 0 } }}>
+            <Drawer title={t("title")} placement="left" size={300} open={mobilePanel === "scenes"} closable={false} onClose={() => setMobilePanel(undefined)} styles={{ wrapper: { maxWidth: "100vw" }, body: { padding: 0 } }}>
                 <div className="flex h-full min-h-0 flex-col">
                     <div className="flex justify-end border-b border-border px-3 py-2">
                         <Button type="text" size="small" icon={<X className="size-3.5" />} onClick={() => setMobilePanel(undefined)}>
-                            关闭场景结构
+                            {t("close")}
                         </Button>
                     </div>
                     <DramaSceneStructure project={project} episode={episode} selectedShotId={selectedShotId} onSelect={selectShot} analyzing={analyzing} onAnalyze={onAnalyze} />

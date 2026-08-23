@@ -4,11 +4,16 @@ import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App, ConfigProvider } from "antd";
-import zhCN from "antd/locale/zh_CN";
 import dayjs from "dayjs";
+import { useLocale } from "next-intl";
+import { usePathname } from "next/navigation";
+import "dayjs/locale/en";
+import "dayjs/locale/vi";
 import "dayjs/locale/zh-cn";
 
 import { ClientRootInit } from "@/components/layout/client-root-init";
+import { defaultLocale, isAppLocale } from "@/i18n/config";
+import { antLocales, effectiveLocale, localeMetadata } from "@/i18n/runtime";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -23,11 +28,12 @@ const queryClient = new QueryClient({
     },
 });
 
-dayjs.locale("zh-cn");
-
 export function AppProviders({ children }: { children: ReactNode }) {
+    const requestedLocale = useLocale();
+    const pathname = usePathname();
     const theme = useThemeStore((state) => state.theme);
     const dark = theme === "dark";
+    const locale = effectiveLocale(isAppLocale(requestedLocale) ? requestedLocale : defaultLocale, pathname);
 
     useEffect(() => {
         const reloadOnceForChunkError = (reason: unknown) => {
@@ -55,8 +61,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
         document.documentElement.style.colorScheme = theme;
     }, [dark, theme]);
 
+    useLayoutEffect(() => {
+        document.documentElement.lang = localeMetadata[locale].htmlLang;
+        dayjs.locale(localeMetadata[locale].dayjsLocale);
+    }, [locale]);
+
     return (
-        <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark)}>
+        <ConfigProvider locale={antLocales[locale]} theme={getAntThemeConfig(dark)}>
             <App message={{ top: 84, duration: 2.4, maxCount: 3 }}>
                 <QueryClientProvider client={queryClient}>
                     <ClientRootInit>{children}</ClientRootInit>

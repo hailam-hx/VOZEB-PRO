@@ -1,6 +1,7 @@
 "use client";
 
 import { nanoid } from "nanoid";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeGenerationPreferences, type CreativeMessage, type CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
@@ -53,6 +54,7 @@ type CreateSubmitOptions = {
 const MESSAGE_PAGE_SIZE = 50;
 
 export function useCreateAgent() {
+    const t = useTranslations("create");
     const streamRef = useRef<(() => void) | null>(null);
     const conversationGenerationRef = useRef(0);
     const activeConversationRef = useRef<string | undefined>(undefined);
@@ -207,7 +209,7 @@ export function useCreateAgent() {
             setConversationLoading(true);
             try {
                 const conversation = await getCreativeConversation(id);
-                if (conversation.surface !== "chat" || conversation.source !== "agent") throw new Error("该记录不属于创作 Agent 工作台");
+                if (conversation.surface !== "chat" || conversation.source !== "agent") throw new Error(t("invalidAgentRecord"));
                 await refreshConversation(id, generation);
                 if (isCurrentConversation(id, generation)) {
                     setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)].sort((a, b) => b.updatedAt - a.updatedAt));
@@ -247,7 +249,7 @@ export function useCreateAgent() {
 
     const materializeProject = useCallback(
         async (handoff: CreativeProjectHandoff, generation = conversationGenerationRef.current) => {
-            if (!isCurrentConversation(handoff.conversationId, generation)) throw new Error("当前对话已切换");
+            if (!isCurrentConversation(handoff.conversationId, generation)) throw new Error(t("conversationChanged"));
             setMaterializingProjectId(handoff.id);
             setProjectErrors((current) => ({ ...current, [handoff.id]: "" }));
             try {
@@ -256,8 +258,7 @@ export function useCreateAgent() {
                 return result;
             } catch (error) {
                 if (isCurrentConversation(handoff.conversationId, generation)) {
-                    const text = error instanceof Error ? error.message : "项目创建失败";
-                    setProjectErrors((current) => ({ ...current, [handoff.id]: text }));
+                    setProjectErrors((current) => ({ ...current, [handoff.id]: t("projectCreationFailed") }));
                 }
                 throw error;
             } finally {
@@ -272,7 +273,7 @@ export function useCreateAgent() {
     const ensureConversation = useCallback(
         async (generation = conversationGenerationRef.current) => {
             if (activeConversationRef.current) return activeConversationRef.current;
-            const conversation = await createCreativeConversation({ surface: "chat", source: "agent", title: "新对话" });
+            const conversation = await createCreativeConversation({ surface: "chat", source: "agent", title: t("newConversation") });
             if (isCurrentConversation(undefined, generation)) {
                 activeConversationRef.current = conversation.id;
                 setConversationId(conversation.id);
@@ -410,7 +411,7 @@ export function useCreateAgent() {
             } catch (error) {
                 if (!isCurrentConversation(snapshot.conversationId, snapshot.generation)) return false;
                 failedSubmissionsRef.current.set(snapshot.temporaryAssistantId, snapshot);
-                updateAssistant(snapshot.temporaryAssistantId, error instanceof Error ? error.message : "创作请求失败", "failed");
+                updateAssistant(snapshot.temporaryAssistantId, t("creationRequestFailed"), "failed");
                 setSending(false);
                 submittingRef.current = false;
                 return false;
@@ -492,7 +493,7 @@ export function useCreateAgent() {
             submittingRef.current = true;
             stopWatching();
             setSending(true);
-            updateAssistant(assistantMessageId, "正在重新提交创作请求", "running");
+            updateAssistant(assistantMessageId, t("resubmittingCreationRequest"), "running");
             return executeSubmission(snapshot);
         },
         [executeSubmission, isCurrentConversation, sending, stopWatching, updateAssistant],
@@ -530,7 +531,7 @@ export function useCreateAgent() {
             setRunDetails((current) => ({ ...current, [runId]: result }));
             const assistantMessage = messages.find((item) => item.runId === runId && item.role === "assistant");
             if (assistantMessage) {
-                updateAssistant(assistantMessage.id, "正在重新生成失败任务…");
+                updateAssistant(assistantMessage.id, t("regeneratingFailedTasks"));
                 watchRun(result, assistantMessage.id, generation);
             }
         },
@@ -547,7 +548,7 @@ export function useCreateAgent() {
             setRunDetails((current) => ({ ...current, [runId]: result }));
             const assistantMessage = messages.find((item) => item.runId === runId && item.role === "assistant");
             if (assistantMessage) {
-                updateAssistant(assistantMessage.id, "正在重新生成失败任务…");
+                updateAssistant(assistantMessage.id, t("regeneratingFailedTasks"));
                 watchRun(result, assistantMessage.id, generation);
             }
         },
@@ -564,7 +565,7 @@ export function useCreateAgent() {
             setRunDetails((current) => ({ ...current, [runId]: result.run }));
             const assistantMessage = messages.find((item) => item.runId === runId && item.role === "assistant");
             if (assistantMessage) {
-                updateAssistant(assistantMessage.id, "正在重新分析并执行这次请求…", "running");
+                updateAssistant(assistantMessage.id, t("reanalyzingRequest"), "running");
                 watchRun(result.run, assistantMessage.id, generation);
             }
         },

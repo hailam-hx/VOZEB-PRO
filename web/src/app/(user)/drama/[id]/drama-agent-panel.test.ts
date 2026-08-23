@@ -16,7 +16,7 @@ describe("Drama project Agent references", () => {
 
         expect(source).toContain("clientRequestId: submission.clientRequestId");
         expect(source).toContain("failedSubmissionsRef.current.get(assistantMessageId)");
-        expect(source).toContain('aria-label="重试本次项目 Agent 请求"');
+        expect(source).toContain('aria-label={t("retryAria")}');
         expect(source).toContain("metadata: { assetIds }");
         expect(source).toMatch(/messageAssetIds\(message\)\s*\.filter/);
     });
@@ -25,23 +25,21 @@ describe("Drama project Agent references", () => {
         const source = await readFile(resolve(process.cwd(), "src/app/(user)/drama/[id]/drama-agent-panel.tsx"), "utf8");
         const snapshotSource = source.slice(source.indexOf("function dramaSnapshot"), source.indexOf("function agentAssetDownloads"));
 
-        expect(source).toContain("DRAMA_AGENT_STAGE_GUIDES");
-        expect(source).toContain("检查阶段完成度");
-        expect(source).toContain("检查缺失资产");
-        expect(source).toContain("检查一致性");
-        expect(source).toContain("建议下一步");
+        expect(source).toContain("STAGE_GUIDE_ACTIONS");
+        expect(source).toContain("t(`guides.${stage}.label`)");
+        expect(source).toContain("t(`guides.actions.${action}`)");
         expect(source).toContain("currentStage: stage");
         expect(source).toContain("agentAssetSnapshot");
         expect(source).toContain('styles={{ wrapper: { maxWidth: "calc(100vw - 8px)" }, body: { padding: 0 } }}');
         expect(source).toContain("size={360}");
         expect(source).toContain("mask={false}");
         expect(source).toContain("useState(404)");
-        expect(source).toContain('aria-label="调整项目 Agent 面板宽度"');
+        expect(source).toContain('aria-label={t("resizeAria")}');
         expect(source).toContain("Math.min(640, Math.max(348");
         expect(source).not.toContain('title="项目 Agent"');
         expect(source).toContain("data-drama-agent-quick-actions");
-        expect(source).toContain("本阶段建议");
-        expect(source).toContain('aria-label="打开本阶段 Agent 建议"');
+        expect(source).toContain('t("suggestions")');
+        expect(source).toContain('aria-label={t("openSuggestionsAria")}');
         expect(source).toContain('trigger={["click"]}');
         expect(source).toContain("stageGuide.prompts.map((item, index)");
         expect(source).toContain("fillStagePrompt(item.prompt)");
@@ -66,8 +64,8 @@ describe("Drama project Agent references", () => {
         expect(source).toContain("disabled={sending || loading}");
         expect(source).toContain('controlCreativeAgentRun(failedMessage.runId, "retry"');
         expect(source).toContain("retryCreativeAgentTasks");
-        expect(source).toContain('aria-label="暂停项目 Agent"');
-        expect(source).toContain('aria-label="继续项目 Agent"');
+        expect(source).toContain('aria-label={t("pause")}');
+        expect(source).toContain('aria-label={t("resume")}');
         expect(source).toContain("!messages.length ?");
         expect(source).toContain("data-drama-agent-composer");
         expect(source).toContain("data-drama-agent-input-row");
@@ -80,8 +78,8 @@ describe("Drama project Agent references", () => {
         expect(source).not.toContain("CompactAgentGenerationSettings");
         expect(source).not.toContain("generationPreferences");
         expect(source).not.toContain("preferences: submission.preferences");
-        expect(source).toContain('aria-label="新建项目 Agent 对话"');
-        expect(source).toContain('aria-label="打开项目 Agent 历史对话"');
+        expect(source).toContain('aria-label={t("newConversationAria")}');
+        expect(source).toContain('aria-label={t("openHistoryAria")}');
         expect(source).toContain('listCreativeConversationPage({ surface: "drama", source: "drama", projectId: project.id');
         expect(source).toContain("<DramaAgentHistory");
         expect(source).not.toContain("w-[340px]");
@@ -97,7 +95,7 @@ describe("Drama project Agent references", () => {
         expect(picker).toContain("w-[min(17rem,calc(100vw-1.5rem))]");
         expect(picker).toContain("max-h-[min(14rem,calc(100dvh-12rem))]");
         expect(picker).toContain('role="tablist"');
-        expect(picker).toContain('aria-label="引用项目内容类型"');
+        expect(picker).toContain('aria-label={t("typeAria")}');
         expect(picker).toContain("visibleItems.map");
         expect(picker).not.toContain("<section");
         expect(picker).not.toContain("item.description");

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Bot, History, PanelRightClose, Pause, Pencil, Play, Plus, Square, Trash2, X } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
+import { useTranslations } from "next-intl";
 
 import { modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -27,6 +28,7 @@ import type { CanvasAgentOp, CanvasAgentSnapshot } from "../utils/canvas-agent-o
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 export function AgentTextModelPicker({ config, value, onChange }: { config: AiConfig; value: string; onChange: (model: string) => void }) {
+    const t = useTranslations("canvas");
     const options = useMemo(() => Array.from(new Set([value, ...selectableModelsByCapability(config, "text")].filter(Boolean))), [config, value]);
     const current = value || "";
     return (
@@ -34,12 +36,12 @@ export function AgentTextModelPicker({ config, value, onChange }: { config: AiCo
             <SelectTrigger
                 hideChevron
                 className="h-7 min-w-0 max-w-[220px] gap-1.5 border-0 bg-transparent px-1 py-0 text-xs font-normal shadow-none hover:bg-transparent hover:opacity-75 focus-visible:border-transparent focus-visible:ring-0 data-[state=open]:ring-0 dark:bg-transparent dark:hover:bg-transparent"
-                title={current ? `${modelOptionName(current)} · ${resolveModelChannel(config, current).name}` : "选择文本模型"}
+                title={current ? `${modelOptionName(current)} · ${resolveModelChannel(config, current).name}` : t("assistant.chooseTextModel")}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
             >
                 <ModelIcon model={current} />
-                <span className="min-w-0 truncate">{current ? modelOptionName(current) : "选择文本模型"}</span>
+                <span className="min-w-0 truncate">{current ? modelOptionName(current) : t("assistant.chooseTextModel")}</span>
                 {current ? <span className="shrink-0 opacity-55">{resolveModelChannel(config, current).name}</span> : null}
             </SelectTrigger>
             <SelectContent
@@ -64,7 +66,7 @@ export function AgentTextModelPicker({ config, value, onChange }: { config: AiCo
                     ))
                 ) : (
                     <SelectItem value="__empty_text_model__" disabled>
-                        暂无文本模型
+                        {t("assistant.noTextModels")}
                     </SelectItem>
                 )}
             </SelectContent>
@@ -85,6 +87,7 @@ export function AssistantHistory({
     onDelete: (ids: string[]) => void;
     onRename: (id: string, title: string) => void;
 }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -116,17 +119,23 @@ export function AssistantHistory({
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <div className="text-sm font-semibold" style={{ color: theme.node.text }}>
-                        历史对话
+                        {t("assistant.historyTitle")}
                     </div>
                     <div className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>
-                        {sessions.length ? `${sessions.length} 条记录` : "暂无历史"}
+                        {sessions.length ? t("assistant.historyCount", { count: sessions.length }) : t("assistant.noHistory")}
                     </div>
                 </div>
                 {sessions.length ? (
                     <div className="flex items-center gap-2">
                         <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs" style={{ color: theme.node.muted }}>
-                            <input type="checkbox" checked={allSelected} onChange={(event) => setSelectedIds(event.target.checked ? sessions.map((session) => session.id) : [])} className="size-3.5 accent-current" aria-label="全选历史对话" />
-                            全选
+                            <input
+                                type="checkbox"
+                                checked={allSelected}
+                                onChange={(event) => setSelectedIds(event.target.checked ? sessions.map((session) => session.id) : [])}
+                                className="size-3.5 accent-current"
+                                aria-label={t("assistant.selectAllHistory")}
+                            />
+                            {t("assistant.selectAll")}
                         </label>
                         {selectedIds.length ? (
                             <button
@@ -136,7 +145,7 @@ export function AssistantHistory({
                                 onClick={() => onDelete(selectedIds)}
                             >
                                 <Trash2 className="size-3.5" />
-                                删除所选 ({selectedIds.length})
+                                {t("assistant.deleteSelected", { count: selectedIds.length })}
                             </button>
                         ) : null}
                     </div>
@@ -154,7 +163,7 @@ export function AssistantHistory({
                             checked={selectedSet.has(session.id)}
                             onChange={(event) => setSelectedIds((current) => (event.target.checked ? [...current, session.id] : current.filter((id) => id !== session.id)))}
                             className="size-4 shrink-0 accent-current"
-                            aria-label={`选择对话：${session.title}`}
+                            aria-label={t("assistant.selectConversation", { title: session.title })}
                         />
                         <div className="min-w-0 flex-1">
                             {editingId === session.id ? (
@@ -169,23 +178,31 @@ export function AssistantHistory({
                                     }}
                                     className="w-full rounded-md border bg-transparent px-1.5 py-1 text-sm font-semibold outline-none"
                                     style={{ borderColor: theme.node.activeStroke, color: theme.node.text }}
-                                    aria-label="编辑对话标题"
+                                    aria-label={t("assistant.editConversationTitle")}
                                 />
                             ) : (
-                                <button type="button" className="block w-full truncate text-left text-sm font-semibold leading-7" onDoubleClick={() => startRename(session)} title="双击修改标题">
+                                <button type="button" className="block w-full truncate text-left text-sm font-semibold leading-7" onDoubleClick={() => startRename(session)} title={t("assistant.doubleClickRename")}>
                                     {session.title}
                                 </button>
                             )}
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
-                            <Tooltip title="修改标题">
-                                <Button type="text" size="small" className="!h-7 !w-7 !min-w-7" icon={<Pencil className="size-3.5" />} onClick={() => startRename(session)} aria-label={`修改标题：${session.title}`} />
+                            <Tooltip title={t("assistant.renameConversation")}>
+                                <Button type="text" size="small" className="!h-7 !w-7 !min-w-7" icon={<Pencil className="size-3.5" />} onClick={() => startRename(session)} aria-label={t("assistant.renameConversationNamed", { title: session.title })} />
                             </Tooltip>
-                            <Tooltip title="进入对话">
-                                <Button type="text" size="small" className="!h-7 !w-7 !min-w-7" icon={<ArrowRight className="size-3.5" />} onClick={() => onOpen(session.id)} aria-label={`进入对话：${session.title}`} />
+                            <Tooltip title={t("assistant.openConversation")}>
+                                <Button type="text" size="small" className="!h-7 !w-7 !min-w-7" icon={<ArrowRight className="size-3.5" />} onClick={() => onOpen(session.id)} aria-label={t("assistant.openConversationNamed", { title: session.title })} />
                             </Tooltip>
-                            <Tooltip title="删除记录">
-                                <Button size="small" danger type="text" className="!h-7 !w-7 !min-w-7" icon={<Trash2 className="size-3.5" />} onClick={() => onDelete([session.id])} aria-label={`删除对话：${session.title}`} />
+                            <Tooltip title={t("assistant.deleteRecord")}>
+                                <Button
+                                    size="small"
+                                    danger
+                                    type="text"
+                                    className="!h-7 !w-7 !min-w-7"
+                                    icon={<Trash2 className="size-3.5" />}
+                                    onClick={() => onDelete([session.id])}
+                                    aria-label={t("assistant.deleteConversationNamed", { title: session.title })}
+                                />
                             </Tooltip>
                         </div>
                     </div>
@@ -193,7 +210,7 @@ export function AssistantHistory({
             ))}
             {!sessions.length ? (
                 <div className="px-3 py-8 text-center text-sm" style={{ color: theme.node.muted }}>
-                    网站 Agent 的对话记录会显示在这里
+                    {t("assistant.historyEmpty")}
                 </div>
             ) : null}
         </div>
@@ -201,8 +218,9 @@ export function AssistantHistory({
 }
 
 export function AssistantReferenceChip({ item, label, onRemove }: { item: CanvasAssistantReference; label?: string; onRemove?: () => void }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const text = (item.text || item.title).replace(/\s+/g, " ").trim().slice(0, 1) || "文";
+    const text = (item.text || item.title).replace(/\s+/g, " ").trim().slice(0, 1) || "T";
     return (
         <div className="group/chip relative inline-flex h-8 max-w-[150px] shrink-0 items-center gap-1.5 rounded-lg text-sm" style={{ color: theme.node.text }}>
             {item.dataUrl ? (
@@ -221,7 +239,7 @@ export function AssistantReferenceChip({ item, label, onRemove }: { item: Canvas
                     className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full border opacity-0 shadow-sm transition group-hover/chip:opacity-100"
                     style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke }}
                     onClick={onRemove}
-                    aria-label="移除引用"
+                    aria-label={t("assistant.removeReference")}
                 >
                     <X className="size-3" />
                 </button>
@@ -236,13 +254,13 @@ export function assistantImageReferenceLabel(references: CanvasAssistantReferenc
     return imageIndex >= 0 ? imageReferenceLabel(imageIndex) : undefined;
 }
 
-export function assistantMessageToChatMessage(message: CanvasAssistantMessage): CanvasAgentChatMessage {
+export function assistantMessageToChatMessage(message: CanvasAssistantMessage, formatter = { formatMessage: formatAgentMessageText, friendlyError: friendlyAgentError }): CanvasAgentChatMessage {
     const attachments = message.references?.flatMap((item) => (item.dataUrl ? [{ id: item.id, name: item.title, url: item.dataUrl, type: item.type === CanvasNodeType.Video ? ("video" as const) : ("image" as const) }] : []));
     return {
         id: message.id,
         role: message.role,
         title: message.title,
-        text: message.role === "error" ? friendlyAgentError(message.text) : formatAgentMessageText(message.text),
+        text: message.role === "error" ? formatter.friendlyError(message.text) : formatter.formatMessage(message.text),
         meta: message.meta,
         detail: message.detail,
         ...(attachments?.length ? { attachments } : {}),
@@ -328,16 +346,16 @@ function isStableCanvasMediaUrl(value: string) {
     return value.startsWith("/api/reference-assets/") || value.startsWith("/api/generation-log-assets/");
 }
 
-export function createSession(): CanvasAssistantSession {
+export function createSession(title = "New chat"): CanvasAssistantSession {
     const now = new Date().toISOString();
-    return { id: nanoid(), title: "新对话", messages: [], createdAt: now, updatedAt: now };
+    return { id: nanoid(), title, messages: [], createdAt: now, updatedAt: now };
 }
 
-export function removeCanvasAssistantSessions(sessions: CanvasAssistantSession[], activeSessionId: string | null, removedIds: Iterable<string>) {
+export function removeCanvasAssistantSessions(sessions: CanvasAssistantSession[], activeSessionId: string | null, removedIds: Iterable<string>, replacementTitle?: string) {
     const removed = new Set(removedIds);
     const remaining = sessions.filter((session) => !removed.has(session.id));
     if (!remaining.length) {
-        const session = createSession();
+        const session = createSession(replacementTitle);
         return { sessions: [session], activeSessionId: session.id };
     }
     const nextActiveId = activeSessionId && !removed.has(activeSessionId) && remaining.some((session) => session.id === activeSessionId) ? activeSessionId : remaining[0].id;

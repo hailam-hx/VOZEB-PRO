@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { App, Button, Input, Pagination } from "antd";
 import { saveAs } from "file-saver";
 import { CreditCard, Download, History, ReceiptText, RefreshCw, ShieldCheck, WalletCards } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
 import { CompactEmptyState } from "@/components/compact-empty-state";
@@ -38,6 +39,7 @@ import {
 import { useProfileData } from "./use-profile-data";
 
 export default function ProfilePage() {
+    const t = useTranslations("profile.page");
     const router = useRouter();
     const searchParams = useSearchParams();
     const { message } = App.useApp();
@@ -86,12 +88,12 @@ export default function ProfilePage() {
                 body: JSON.stringify({ displayName, bio }),
             });
             const payload = (await response.json()) as { user?: LocalUser; error?: string };
-            if (!response.ok || !payload.user) throw new Error(payload.error || "保存个人资料失败");
+            if (!response.ok || !payload.user) throw new Error(payload.error || t("errors.saveProfile"));
             setUser(payload.user);
             setEmailCode("");
-            message.success("个人资料已保存");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "保存个人资料失败");
+            message.success(t("profileSaved"));
+        } catch {
+            message.error(t("errors.saveProfile"));
         } finally {
             setSavingProfile(false);
         }
@@ -107,12 +109,12 @@ export default function ProfilePage() {
                 body: JSON.stringify({ email, emailCode }),
             });
             const payload = (await response.json()) as { user?: LocalUser; error?: string };
-            if (!response.ok || !payload.user) throw new Error(payload.error || "邮箱更新失败");
+            if (!response.ok || !payload.user) throw new Error(payload.error || t("errors.saveEmail"));
             setUser(payload.user);
             setEmailCode("");
-            message.success("邮箱已更新");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "邮箱更新失败");
+            message.success(t("emailSaved"));
+        } catch {
+            message.error(t("errors.saveEmail"));
         } finally {
             setSavingEmail(false);
         }
@@ -120,7 +122,7 @@ export default function ProfilePage() {
 
     const sendEmailCode = async () => {
         if (!emailChanged) {
-            message.info("邮箱未变化，无需获取验证码");
+            message.info(t("emailUnchanged"));
             return;
         }
         setSendingCode(true);
@@ -131,10 +133,10 @@ export default function ProfilePage() {
                 body: JSON.stringify({ purpose: "email-change", email }),
             });
             const payload = (await response.json()) as { error?: string };
-            if (!response.ok) throw new Error(payload.error || "验证码发送失败");
-            message.success("验证码已发送，请查看邮箱");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "验证码发送失败");
+            if (!response.ok) throw new Error(payload.error || t("errors.sendCode"));
+            message.success(t("codeSent"));
+        } catch {
+            message.error(t("errors.sendCode"));
         } finally {
             setSendingCode(false);
         }
@@ -149,12 +151,12 @@ export default function ProfilePage() {
                 body: JSON.stringify({ currentPassword, newPassword }),
             });
             const payload = (await response.json()) as { error?: string };
-            if (!response.ok) throw new Error(payload.error || "修改密码失败");
+            if (!response.ok) throw new Error(payload.error || t("errors.savePassword"));
             await resetClientSessionState();
-            message.success("密码已修改，请重新登录");
+            message.success(t("passwordSaved"));
             window.location.href = "/login";
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "修改密码失败");
+        } catch {
+            message.error(t("errors.savePassword"));
         } finally {
             setSavingPassword(false);
         }
@@ -165,9 +167,9 @@ export default function ProfilePage() {
         try {
             const result = await downloadUserDataExport();
             saveAs(result.blob, result.fileName);
-            message.success("个人数据已导出");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "个人数据导出失败");
+            message.success(t("dataExported"));
+        } catch {
+            message.error(t("errors.exportData"));
         } finally {
             setExportingData(false);
         }
@@ -178,17 +180,17 @@ export default function ProfilePage() {
             <div className="mx-auto w-full max-w-[1280px] pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(2rem+env(safe-area-inset-bottom))]">
                 <div className="mb-1 flex items-center justify-end gap-1.5 sm:mb-5 sm:justify-between sm:gap-3 sm:rounded-xl sm:border sm:border-border sm:bg-card sm:p-6 sm:text-card-foreground">
                     <div className="hidden min-w-0 sm:block">
-                        <h1 className="text-lg font-semibold text-stone-950 sm:text-2xl dark:text-white">个人中心</h1>
-                        <p className="mt-2 hidden max-w-2xl text-sm leading-6 text-stone-500 sm:block dark:text-stone-400">个人资料、套餐优惠、订单记录、消费记录和积分流水统一放在一个用户后台里。</p>
+                        <h1 className="text-lg font-semibold text-stone-950 sm:text-2xl dark:text-white">{t("title")}</h1>
+                        <p className="mt-2 hidden max-w-2xl text-sm leading-6 text-stone-500 sm:block dark:text-stone-400">{t("description")}</p>
                     </div>
                     <div className="flex shrink-0 gap-2">
                         <Button size="small" className={profileSecondaryButtonClass} icon={<RefreshCw className="size-3.5 sm:size-4" />} loading={accountLoading} onClick={() => void refreshAccount()}>
-                            <span className="sm:hidden">刷新</span>
-                            <span className="hidden sm:inline">刷新记录</span>
+                            <span className="sm:hidden">{t("refreshShort")}</span>
+                            <span className="hidden sm:inline">{t("refresh")}</span>
                         </Button>
                         <Button size="small" className={profilePrimaryButtonClass} type="primary" icon={<CreditCard className="size-3.5 sm:size-4" />} onClick={() => switchSection("billing")}>
-                            <span className="sm:hidden">套餐</span>
-                            <span className="hidden sm:inline">购买套餐</span>
+                            <span className="sm:hidden">{t("plansShort")}</span>
+                            <span className="hidden sm:inline">{t("buyPlan")}</span>
                         </Button>
                     </div>
                 </div>
@@ -199,15 +201,15 @@ export default function ProfilePage() {
 
                 {activeSection === "overview" ? (
                     <section className="mb-2 grid grid-cols-2 gap-1 overflow-hidden rounded-lg border border-border bg-card p-1 sm:mb-5 xl:grid-cols-4 xl:gap-3 xl:overflow-visible xl:rounded-none xl:border-0 xl:bg-transparent xl:p-0">
-                        <AccountMetric label="当前套餐" value={user?.planName || user?.planId || "未加载"} icon={<WalletCards className="size-4" />} />
+                        <AccountMetric label={t("metrics.currentPlan")} value={user?.planName || user?.planId || t("metrics.notLoaded")} icon={<WalletCards className="size-4" />} />
                         <AccountMetric
-                            label="积分余额"
-                            value={`${formatCreditAmount(user?.pointsBalance || 0)} 积分`}
-                            detail={`今日 ${formatCreditAmount(user?.dailyPointsBalance || 0)} · 永久 ${formatCreditAmount(user?.permanentPointsBalance ?? user?.pointsBalance ?? 0)}`}
+                            label={t("metrics.creditBalance")}
+                            value={t("metrics.creditValue", { amount: formatCreditAmount(user?.pointsBalance || 0) })}
+                            detail={t("metrics.creditDetail", { daily: formatCreditAmount(user?.dailyPointsBalance || 0), permanent: formatCreditAmount(user?.permanentPointsBalance ?? user?.pointsBalance ?? 0) })}
                             icon={<CreditSymbol className="text-base" />}
                         />
-                        <AccountMetric label="充值订单" value={`${orders.total} 笔`} icon={<ReceiptText className="size-4" />} />
-                        <AccountMetric label="积分流水" value={`${points.total} 条`} icon={<History className="size-4" />} />
+                        <AccountMetric label={t("metrics.orders")} value={t("metrics.orderCount", { count: orders.total })} icon={<ReceiptText className="size-4" />} />
+                        <AccountMetric label={t("metrics.creditHistory")} value={t("metrics.recordCount", { count: points.total })} icon={<History className="size-4" />} />
                     </section>
                 ) : null}
 
@@ -218,17 +220,23 @@ export default function ProfilePage() {
                     <div className="min-w-0 space-y-1.5 sm:space-y-5">
                         {activeSection === "overview" ? (
                             <div className="grid gap-1.5 sm:gap-5 lg:grid-cols-2">
-                                <AccountPanel title="最近积分流水" description="展示最近的积分变化，更多记录在积分记录分区。">
-                                    {points.loading ? <LoadingBlock /> : points.items.length ? <RecordList records={points.items.slice(0, 4)} /> : <CompactEmptyState title="暂无积分记录" description="每日积分、充值和模型消费记录会显示在这里。" />}
+                                <AccountPanel title={t("recentCredits.title")} description={t("recentCredits.description")}>
+                                    {points.loading ? (
+                                        <LoadingBlock />
+                                    ) : points.items.length ? (
+                                        <RecordList records={points.items.slice(0, 4)} />
+                                    ) : (
+                                        <CompactEmptyState title={t("recentCredits.emptyTitle")} description={t("recentCredits.emptyDescription")} />
+                                    )}
                                 </AccountPanel>
-                                <AccountPanel title="最近订单" description="展示最近的充值订单，支付完成后权益会自动或由管理员确认开通。">
+                                <AccountPanel title={t("recentOrders.title")} description={t("recentOrders.description")}>
                                     <OrderList loading={orders.loading} orders={orders.items.slice(0, 5)} total={orders.total} page={orders.page} onPageChange={orders.setPage} compact />
                                 </AccountPanel>
                             </div>
                         ) : null}
 
                         {activeSection === "profile" ? (
-                            <AccountPanel title="个人资料" description="更换头像、修改显示昵称和个人简介。">
+                            <AccountPanel title={t("profilePanel.title")} description={t("profilePanel.description")}>
                                 <ProfileForm user={user} displayName={displayName} bio={bio} savingProfile={savingProfile} onDisplayNameChange={setDisplayName} onBioChange={setBio} onSave={() => void saveProfile()} />
                             </AccountPanel>
                         ) : null}
@@ -261,13 +269,13 @@ export default function ProfilePage() {
                         {activeSection === "referrals" ? <ProfileReferralCenter /> : null}
 
                         {activeSection === "orders" ? (
-                            <AccountPanel title="订单记录" description="查看充值订单、支付渠道、订单状态和套餐开通结果。">
+                            <AccountPanel title={t("ordersPanel.title")} description={t("ordersPanel.description")}>
                                 <OrderList loading={orders.loading} orders={orders.items} total={orders.total} page={orders.page} onPageChange={orders.setPage} />
                             </AccountPanel>
                         ) : null}
 
                         {activeSection === "consume" ? (
-                            <AccountPanel title="消费记录" description="展示最近扣除积分的模型调用、生成任务和接口消费。">
+                            <AccountPanel title={t("consumptionPanel.title")} description={t("consumptionPanel.description")}>
                                 {consumption.loading ? (
                                     <LoadingBlock />
                                 ) : consumption.items.length ? (
@@ -276,13 +284,13 @@ export default function ProfilePage() {
                                         {consumption.total > RECORD_PAGE_SIZE ? <Pagination size="small" current={consumption.page} pageSize={RECORD_PAGE_SIZE} total={consumption.total} showSizeChanger={false} onChange={consumption.setPage} /> : null}
                                     </>
                                 ) : (
-                                    <CompactEmptyState title="暂无消费记录" description="产生模型调用或生成任务后会显示在这里。" />
+                                    <CompactEmptyState title={t("consumptionPanel.emptyTitle")} description={t("consumptionPanel.emptyDescription")} />
                                 )}
                             </AccountPanel>
                         ) : null}
 
                         {activeSection === "points" ? (
-                            <AccountPanel title="积分记录" description="每日积分、充值赠送、管理员调整和失败退回都会出现在这里。">
+                            <AccountPanel title={t("creditsPanel.title")} description={t("creditsPanel.description")}>
                                 {points.loading ? (
                                     <LoadingBlock />
                                 ) : points.items.length ? (
@@ -291,13 +299,13 @@ export default function ProfilePage() {
                                         {points.total > RECORD_PAGE_SIZE ? <Pagination size="small" current={points.page} pageSize={RECORD_PAGE_SIZE} total={points.total} showSizeChanger={false} onChange={points.setPage} /> : null}
                                     </>
                                 ) : (
-                                    <CompactEmptyState title="暂无积分记录" description="积分变化会按时间记录在这里。" />
+                                    <CompactEmptyState title={t("creditsPanel.emptyTitle")} description={t("creditsPanel.emptyDescription")} />
                                 )}
                             </AccountPanel>
                         ) : null}
 
                         {activeSection === "security" ? (
-                            <AccountPanel title="账户与安全" description="管理绑定邮箱、登录密码和个人数据。">
+                            <AccountPanel title={t("securityPanel.title")} description={t("securityPanel.description")}>
                                 <div className="max-w-2xl space-y-6">
                                     <AccountEmailForm
                                         boundEmail={boundEmail}
@@ -318,30 +326,30 @@ export default function ProfilePage() {
 
                                     <div className="max-w-xl space-y-4 border-t border-stone-200 pt-5 dark:border-stone-800">
                                         <div>
-                                            <h3 className="text-sm font-semibold text-stone-950 dark:text-white">登录密码</h3>
-                                            <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">修改密码后会退出当前登录，需要使用新密码重新登录。</p>
+                                            <h3 className="text-sm font-semibold text-stone-950 dark:text-white">{t("password.title")}</h3>
+                                            <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">{t("password.description")}</p>
                                         </div>
                                         <label className="block space-y-2">
-                                            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">当前密码</span>
+                                            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("password.current")}</span>
                                             <Input.Password value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
                                         </label>
                                         <label className="block space-y-2">
-                                            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">新密码</span>
-                                            <Input.Password value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="至少 8 位" />
+                                            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("password.new")}</span>
+                                            <Input.Password value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder={t("password.placeholder")} />
                                         </label>
                                         <Button danger className={profileDangerButtonClass} loading={savingPassword} icon={<ShieldCheck className="size-4" />} onClick={() => void savePassword()}>
-                                            修改密码并重新登录
+                                            {t("password.save")}
                                         </Button>
                                     </div>
 
                                     <div className="border-t border-stone-200 pt-5 dark:border-stone-800">
                                         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                                             <div className="min-w-0">
-                                                <h3 className="text-sm font-semibold text-stone-950 dark:text-white">个人数据</h3>
-                                                <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">导出账户、积分、订单和创作记录。媒体原文件与安全凭据不包含在 JSON 中。</p>
+                                                <h3 className="text-sm font-semibold text-stone-950 dark:text-white">{t("data.title")}</h3>
+                                                <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">{t("data.description")}</p>
                                             </div>
                                             <Button className={`${profileSecondaryButtonClass} shrink-0`} loading={exportingData} icon={<Download className="size-4" />} onClick={() => void exportUserData()}>
-                                                导出我的数据
+                                                {t("data.export")}
                                             </Button>
                                         </div>
                                     </div>

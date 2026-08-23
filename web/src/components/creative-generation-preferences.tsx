@@ -2,6 +2,7 @@
 
 import { Button, Popover, Select } from "antd";
 import { AudioLines, ChevronDown, ImageIcon, Lightbulb, Maximize2, Sparkles, Video } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { audioFormatLabel, audioFormatOptions, audioVoiceLabel, audioVoiceOptions } from "@/lib/audio-generation";
@@ -30,7 +31,7 @@ export type CreativeGenerationPreferencePatch = {
 };
 
 const imageRatios = [
-    { value: "auto", label: "智能", width: 18, height: 18 },
+    { value: "auto", label: "auto", width: 18, height: 18 },
     { value: "1:1", label: "1:1", width: 18, height: 18 },
     { value: "16:9", label: "16:9", width: 24, height: 14 },
     { value: "4:3", label: "4:3", width: 21, height: 16 },
@@ -41,7 +42,7 @@ const imageRatios = [
 ] as const;
 
 const videoRatios = [
-    { value: "auto", label: "智能", width: 18, height: 18 },
+    { value: "auto", label: "auto", width: 18, height: 18 },
     { value: "21:9", label: "21:9", width: 26, height: 11 },
     { value: "16:9", label: "16:9", width: 24, height: 14 },
     { value: "4:3", label: "4:3", width: 21, height: 16 },
@@ -51,36 +52,23 @@ const videoRatios = [
 ] as const;
 
 const imageQualityOptions = [
-    { value: "auto", label: "智能画质", shortLabel: "智能" },
-    { value: "high", label: "高画质", shortLabel: "高" },
-    { value: "medium", label: "中画质", shortLabel: "中" },
-    { value: "low", label: "低画质", shortLabel: "低" },
+    { value: "auto", label: "auto", shortLabel: "auto" },
+    { value: "high", label: "high", shortLabel: "high" },
+    { value: "medium", label: "medium", shortLabel: "medium" },
+    { value: "low", label: "low", shortLabel: "low" },
 ] as const;
 
 const videoQualityOptions = [
-    { value: "auto", label: "智能清晰度", shortLabel: "智能" },
+    { value: "auto", label: "auto", shortLabel: "auto" },
     { value: "480", label: "480P", shortLabel: "480P" },
     { value: "720", label: "720P", shortLabel: "720P" },
     { value: "1080", label: "1080P", shortLabel: "1080P" },
 ] as const;
 
-const videoDurationOptions = [
-    { value: 5, label: "5 秒" },
-    { value: 10, label: "10 秒" },
-] as const;
+const generationOptionValues = [1, 2, 3, 4] as const;
+const videoDurationValues = [5, 10] as const;
 
-const generationCountOptions = [
-    { value: 1, label: "1 份" },
-    { value: 2, label: "2 份" },
-    { value: 3, label: "3 份" },
-    { value: 4, label: "4 份" },
-] as const;
-
-const videoReferenceModeOptions = [
-    { value: "reference", label: "智能参考" },
-    { value: "first_frame", label: "首帧" },
-    { value: "first_last", label: "首尾帧" },
-] as const;
+const videoReferenceModeValues = ["reference", "first_frame", "first_last"] as const;
 
 export function CreativeGenerationPreferences({
     capability,
@@ -121,12 +109,14 @@ export function CreativeGenerationPreferences({
     onCapabilityChange?: (capability: MediaCapability) => void;
     onChange: (patch: CreativeGenerationPreferencePatch) => void;
 }) {
+    const t = useTranslations("create");
     const [open, setOpen] = useState(false);
     const [panelMaxHeight, setPanelMaxHeight] = useState<number>();
     const triggerRef = useRef<HTMLButtonElement>(null);
     const availableCapabilities = capabilities.length ? capabilities : [capability];
     const activeCapability = availableCapabilities.includes(capability) ? capability : availableCapabilities[0];
-    const summary = triggerLabel || generationPreferenceSummary(activeCapability, preferences);
+    const localizedSummary = useGenerationPreferenceSummary(activeCapability, preferences);
+    const summary = triggerLabel || localizedSummary;
     const maximumPanelHeight = compact ? 440 : 520;
 
     const measurePanelHeight = useCallback(() => {
@@ -196,7 +186,7 @@ export function CreativeGenerationPreferences({
                                     aria-pressed={activeCapability === item}
                                 >
                                     <CreativeModeIcon mode={item} />
-                                    {mediaCapabilityLabel(item)}
+                                    {t(capabilityMessageKeys[item])}
                                 </button>
                             ))}
                         </div>
@@ -210,7 +200,7 @@ export function CreativeGenerationPreferences({
                 type="text"
                 className={typeof triggerClassName === "function" ? triggerClassName(open) : triggerClassName || creativeComposerToolButtonClass(open)}
                 icon={triggerIcon || <PreferenceSummaryIcon capability={activeCapability} preferences={preferences} />}
-                aria-label={triggerAriaLabel || `生成参数：${summary}`}
+                aria-label={triggerAriaLabel || t("generationParametersSummary", { summary })}
                 aria-haspopup="menu"
                 aria-expanded={open}
             >
@@ -238,7 +228,17 @@ function PreferencePanel({
     videoReferenceContent?: ReactNode;
     onChange: (patch: CreativeGenerationPreferencePatch) => void;
 }) {
+    const t = useTranslations("create");
     const ratios = capability === "image" ? imageRatios : videoRatios;
+    const localizedRatios = ratios.map((ratio) => ({ ...ratio, label: ratio.value === "auto" ? t("smart") : ratio.label }));
+    const localizedImageQualityOptions = imageQualityOptions.map((option) => ({
+        ...option,
+        label: t(imageQualityMessageKeys[option.value].label),
+        shortLabel: t(imageQualityMessageKeys[option.value].shortLabel),
+    }));
+    const localizedVideoQualityOptions = videoQualityOptions.map((option) => ({ ...option, label: option.value === "auto" ? t("smartClarity") : option.label, shortLabel: option.value === "auto" ? t("smart") : option.shortLabel }));
+    const videoReferenceModeOptions = videoReferenceModeValues.map((value) => ({ value, label: t(videoReferenceModeMessageKeys[value]) }));
+    const videoDurationOptions = videoDurationValues.map((value) => ({ value, label: t("secondsValue", { value }) }));
     const selectedSize = capability === "image" ? preferences.image?.size || "auto" : preferences.video?.size || "auto";
     const selectedQuality = capability === "image" ? preferences.image?.quality || "auto" : preferences.video?.quality || "auto";
     const selectedCount = capability === "image" ? preferences.image?.count || 1 : preferences.video?.count || 1;
@@ -256,16 +256,16 @@ function PreferencePanel({
     if (capability === "audio") {
         return (
             <div className="grid grid-cols-2 gap-1.5">
-                <PreferenceSelect label="音色" ariaLabel="选择音色" value={preferences.audio?.voice || "alloy"} options={audioVoiceOptions} onChange={(voice) => onChange({ voice })} />
-                <PreferenceSelect label="格式" ariaLabel="选择音频格式" value={preferences.audio?.format || "mp3"} options={audioFormatOptions} onChange={(format) => onChange({ format })} />
-                <PositiveNumberField className="col-span-2" label="语速" ariaLabel="输入音频语速" value={preferences.audio?.speed || 1} suffix="x" onChange={(speed) => onChange({ speed })} />
+                <PreferenceSelect label={t("voice")} ariaLabel={t("selectVoice")} value={preferences.audio?.voice || "alloy"} options={audioVoiceOptions} onChange={(voice) => onChange({ voice })} />
+                <PreferenceSelect label={t("format")} ariaLabel={t("selectAudioFormat")} value={preferences.audio?.format || "mp3"} options={audioFormatOptions} onChange={(format) => onChange({ format })} />
+                <PositiveNumberField className="col-span-2" label={t("speechSpeed")} ariaLabel={t("enterSpeechSpeed")} value={preferences.audio?.speed || 1} suffix="x" onChange={(speed) => onChange({ speed })} />
             </div>
         );
     }
 
     return (
         <div className={cn("grid min-w-0", compact ? "gap-2" : "gap-2.5")}>
-            <div className={cn("grid grid-cols-2 gap-1 bg-[#f1f3f5] dark:bg-[#252a31]", compact ? "rounded-lg p-0.5" : "rounded-xl p-1")} role="tablist" aria-label="生成参数分组">
+            <div className={cn("grid grid-cols-2 gap-1 bg-[#f1f3f5] dark:bg-[#252a31]", compact ? "rounded-lg p-0.5" : "rounded-xl p-1")} role="tablist" aria-label={t("generationParameterGroups")}>
                 <button
                     type="button"
                     role="tab"
@@ -276,7 +276,7 @@ function PreferencePanel({
                     )}
                     onClick={() => setSection("canvas")}
                 >
-                    画面
+                    {t("visual")}
                 </button>
                 <button
                     type="button"
@@ -288,7 +288,7 @@ function PreferencePanel({
                     )}
                     onClick={() => setSection("output")}
                 >
-                    输出
+                    {t("output")}
                 </button>
             </div>
 
@@ -297,21 +297,28 @@ function PreferencePanel({
                     {capability === "video" && videoReferenceContent ? (
                         videoReferenceContent
                     ) : capability === "video" ? (
-                        <CompactOptionGroup label="参考方式" ariaLabel="选择视频参考方式" value={preferences.video?.referenceMode || "reference"} options={videoReferenceModeOptions} columns={3} onChange={(referenceMode) => onChange({ referenceMode })} />
+                        <CompactOptionGroup
+                            label={t("referenceMethod")}
+                            ariaLabel={t("selectVideoReferenceMethod")}
+                            value={preferences.video?.referenceMode || "reference"}
+                            options={videoReferenceModeOptions}
+                            columns={3}
+                            onChange={(referenceMode) => onChange({ referenceMode })}
+                        />
                     ) : null}
                     {fixedSizeLabel ? (
                         <div className="flex h-9 items-center justify-between rounded-lg bg-[#f5f6f7] px-3 text-[11px] dark:bg-[#24282e]">
-                            <span className="font-medium text-[#7b8591] dark:text-[#98a2ae]">尺寸</span>
+                            <span className="font-medium text-[#7b8591] dark:text-[#98a2ae]">{t("size")}</span>
                             <span className="text-[#20242a] dark:text-white">{fixedSizeLabel}</span>
                         </div>
                     ) : (
                         <div className="grid min-w-0 gap-1.5">
                             <div className="flex items-center justify-between gap-3">
-                                <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">比例</p>
-                                <span className="text-[10px] text-[#a0a8b2] dark:text-[#707b88]">{selectedSize === "auto" ? "智能" : formatSizeLabel(selectedSize)}</span>
+                                <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{t("ratio")}</p>
+                                <span className="text-[10px] text-[#a0a8b2] dark:text-[#707b88]">{selectedSize === "auto" ? t("smart") : formatSizeLabel(selectedSize)}</span>
                             </div>
                             <div className="grid min-w-0 grid-cols-4 gap-1">
-                                {ratios.map((ratio) => (
+                                {localizedRatios.map((ratio) => (
                                     <button
                                         key={ratio.value}
                                         type="button"
@@ -323,7 +330,7 @@ function PreferencePanel({
                                                 : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
                                         )}
                                         onClick={() => onChange({ size: ratio.value })}
-                                        aria-label={`选择${capability === "image" ? "图片" : "视频"}比例 ${ratio.label}`}
+                                        aria-label={t("selectMediaRatio", { media: t(capabilityMessageKeys[capability]), ratio: ratio.label })}
                                         aria-pressed={selectedSize === ratio.value}
                                     >
                                         <span className="grid h-4 w-5 shrink-0 place-items-center">
@@ -342,11 +349,11 @@ function PreferencePanel({
                                         : "border-[#d8dde2] text-[#687481] hover:border-[#b8c3cc] hover:bg-[#f7f8f9] hover:text-[#20242a] dark:border-[#414953] dark:text-[#a6afb9] dark:hover:bg-[#24282e] dark:hover:text-white",
                                 )}
                                 onClick={() => setCustomEditorOpen(true)}
-                                aria-label={`打开${capability === "image" ? "图片" : "视频"}自定义像素尺寸`}
+                                aria-label={t("openCustomPixelSize", { media: t(capabilityMessageKeys[capability]) })}
                                 aria-pressed={customEditorOpen || Boolean(parseCustomDimensions(selectedSize))}
                             >
                                 <Maximize2 className="size-3.5" />
-                                自定义像素尺寸
+                                {t("customPixelSize")}
                             </button>
                             {customEditorOpen ? <CustomMediaSizeEditor capability={capability} size={selectedSize} onChange={onChange} /> : null}
                         </div>
@@ -355,17 +362,24 @@ function PreferencePanel({
             ) : (
                 <div className="grid gap-2.5">
                     {capability === "video" ? (
-                        <VideoQualityField value={selectedQuality} options={videoQualityOptions} onChange={(quality) => onChange({ quality })} />
+                        <VideoQualityField value={selectedQuality} options={localizedVideoQualityOptions} onChange={(quality) => onChange({ quality })} />
                     ) : (
-                        <CompactOptionGroup label="画质" ariaLabel="选择图片画质" value={selectedQuality} options={imageQualityOptions} onChange={(quality) => onChange({ quality })} />
+                        <CompactOptionGroup label={t("imageQuality")} ariaLabel={t("selectImageQuality")} value={selectedQuality} options={localizedImageQualityOptions} onChange={(quality) => onChange({ quality })} />
                     )}
                     {showCount ? <GenerationCountGroup key={capability} capability={capability} value={selectedCount} onChange={(count) => onChange({ count })} /> : null}
                     {capability === "video" ? (
                         <>
-                            <SuggestedPositiveIntegerField label="时长" ariaLabel="输入视频时长" value={preferences.video?.seconds || 5} suffix="秒" options={videoDurationOptions} onChange={(seconds) => onChange({ seconds })} />
+                            <SuggestedPositiveIntegerField
+                                label={t("duration")}
+                                ariaLabel={t("enterVideoDuration")}
+                                value={preferences.video?.seconds || 5}
+                                suffix={t("secondsUnit")}
+                                options={videoDurationOptions}
+                                onChange={(seconds) => onChange({ seconds })}
+                            />
                             <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-[#e3e8ec] bg-[#fafbfc] p-2 dark:border-[#343b44] dark:bg-[#1f242a]">
-                                <SwitchPreference label="生成声音" checked={preferences.video?.generateAudio ?? true} onChange={(generateAudio) => onChange({ generateAudio })} />
-                                <SwitchPreference label="添加水印" checked={preferences.video?.watermark ?? false} onChange={(watermark) => onChange({ watermark })} />
+                                <SwitchPreference label={t("generateAudio")} checked={preferences.video?.generateAudio ?? true} onChange={(generateAudio) => onChange({ generateAudio })} />
+                                <SwitchPreference label={t("addWatermark")} checked={preferences.video?.watermark ?? false} onChange={(watermark) => onChange({ watermark })} />
                             </div>
                         </>
                     ) : null}
@@ -376,6 +390,7 @@ function PreferencePanel({
 }
 
 function CustomMediaSizeEditor({ capability, size, onChange }: { capability: Extract<MediaCapability, "image" | "video">; size: string; onChange: (patch: CreativeGenerationPreferencePatch) => void }) {
+    const t = useTranslations("create");
     const dimensions = parseCustomDimensions(size);
     const [width, setWidth] = useState(dimensions?.[0] || "");
     const [height, setHeight] = useState(dimensions?.[1] || "");
@@ -391,7 +406,7 @@ function CustomMediaSizeEditor({ capability, size, onChange }: { capability: Ext
     const updateSize = (nextWidth: string, nextHeight: string) => {
         const normalizedWidth = normalizeDimension(nextWidth);
         const normalizedHeight = normalizeDimension(nextHeight);
-        setError(nextWidth && nextHeight && (!normalizedWidth || !normalizedHeight) ? "宽和高必须是正整数" : "");
+        setError(nextWidth && nextHeight && (!normalizedWidth || !normalizedHeight) ? t("positiveDimensionsRequired") : "");
         if (normalizedWidth && normalizedHeight) onChange({ size: `${normalizedWidth}x${normalizedHeight}` });
     };
     const changeWidth = (value: string) => {
@@ -405,9 +420,9 @@ function CustomMediaSizeEditor({ capability, size, onChange }: { capability: Ext
     return (
         <div className="grid min-w-0 max-w-full gap-1.5 rounded-xl border border-[#e3e8ec] bg-[#fafbfc] p-2 dark:border-[#343b44] dark:bg-[#1f242a]">
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5">
-                <DimensionInput ariaLabel={`自定义${capability === "image" ? "图片" : "视频"}宽度`} placeholder="宽" value={width} onChange={changeWidth} />
+                <DimensionInput ariaLabel={t("customMediaWidth", { media: t(capabilityMessageKeys[capability]) })} placeholder={t("width")} value={width} onChange={changeWidth} />
                 <span className="shrink-0 text-xs text-[#9aa4ae]">×</span>
-                <DimensionInput ariaLabel={`自定义${capability === "image" ? "图片" : "视频"}高度`} placeholder="高" value={height} onChange={changeHeight} />
+                <DimensionInput ariaLabel={t("customMediaHeight", { media: t(capabilityMessageKeys[capability]) })} placeholder={t("height")} value={height} onChange={changeHeight} />
             </div>
             {error ? <p className="text-[10px] text-[#b85c5c] dark:text-[#e39a9a]">{error}</p> : null}
         </div>
@@ -415,13 +430,15 @@ function CustomMediaSizeEditor({ capability, size, onChange }: { capability: Ext
 }
 
 function GenerationCountGroup({ capability, value, onChange }: { capability: Extract<MediaCapability, "image" | "video">; value: number; onChange: (value: number) => void }) {
-    const customSelected = value > generationCountOptions.length;
+    const t = useTranslations("create");
+    const generationCountOptions = generationOptionValues.map((optionValue) => ({ value: optionValue, label: t("itemCount", { count: optionValue }) }));
+    const customSelected = value > generationOptionValues.length;
     const [draft, setDraft] = useState(customSelected ? String(value) : "");
     const [error, setError] = useState("");
     const lastEmittedValueRef = useRef(value);
 
     useEffect(() => {
-        if (value !== lastEmittedValueRef.current) setDraft(value > generationCountOptions.length ? String(value) : "");
+        if (value !== lastEmittedValueRef.current) setDraft(value > generationOptionValues.length ? String(value) : "");
         setError("");
         lastEmittedValueRef.current = value;
     }, [value]);
@@ -429,8 +446,8 @@ function GenerationCountGroup({ capability, value, onChange }: { capability: Ext
     const changeDraft = (next: string) => {
         const normalized = next.replace(/[^0-9]/g, "");
         const count = normalizeGenerationCount(normalized);
-        setDraft(count && count <= generationCountOptions.length ? "" : normalized);
-        setError(normalized && !count ? "请输入正整数" : "");
+        setDraft(count && count <= generationOptionValues.length ? "" : normalized);
+        setError(normalized && !count ? t("positiveIntegerRequired") : "");
         if (count) {
             lastEmittedValueRef.current = count;
             onChange(count);
@@ -439,8 +456,8 @@ function GenerationCountGroup({ capability, value, onChange }: { capability: Ext
 
     return (
         <div className="grid gap-1.5">
-            <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">数量</p>
-            <div className="grid grid-cols-5 gap-1" role="group" aria-label={`选择${capability === "image" ? "图片" : "视频"}生成数量`}>
+            <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{t("quantity")}</p>
+            <div className="grid grid-cols-5 gap-1" role="group" aria-label={t("selectGenerationCount", { media: t(capabilityMessageKeys[capability]) })}>
                 {generationCountOptions.map((option) => (
                     <button
                         key={option.value}
@@ -457,7 +474,7 @@ function GenerationCountGroup({ capability, value, onChange }: { capability: Ext
                             lastEmittedValueRef.current = option.value;
                             onChange(option.value);
                         }}
-                        aria-label={`选择${capability === "image" ? "图片" : "视频"}生成数量 ${option.label}`}
+                        aria-label={t("selectGenerationCountValue", { media: t(capabilityMessageKeys[capability]), count: option.value })}
                         aria-pressed={value === option.value}
                     >
                         {option.label}
@@ -470,18 +487,18 @@ function GenerationCountGroup({ capability, value, onChange }: { capability: Ext
                             ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
                             : "bg-[#f5f6f7] text-[#687481] focus-within:bg-[#f5f8fa] focus-within:text-[#315d78] focus-within:ring-1 focus-within:ring-[#9bbdce] focus-within:ring-inset hover:bg-[#edf0f2] dark:bg-[#24282e] dark:text-[#a6afb9] dark:focus-within:bg-[#222d34] dark:focus-within:text-[#a8c8dc] dark:focus-within:ring-[#557f96] dark:hover:bg-[#30363e]",
                     )}
-                    title="输入正整数，修改后立即生效"
+                    title={t("customCountHint")}
                 >
                     <input
-                        aria-label="自定义生成数量"
+                        aria-label={t("customGenerationCount")}
                         inputMode="numeric"
                         type="text"
                         value={draft}
                         onChange={(event) => changeDraft(event.target.value)}
-                        placeholder="自定义"
+                        placeholder={t("custom")}
                         className="size-full min-w-0 bg-transparent px-1 text-center text-[11px] font-medium outline-none placeholder:font-normal placeholder:text-current"
                     />
-                    {draft ? <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[9px] opacity-70">份</span> : null}
+                    {draft ? <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[9px] opacity-70">{t("itemUnit")}</span> : null}
                 </label>
             </div>
             {error ? <p className="text-[10px] text-[#b85c5c] dark:text-[#e39a9a]">{error}</p> : null}
@@ -580,24 +597,25 @@ function PreferenceSummaryIcon({ capability, preferences }: { capability: MediaC
     );
 }
 
-export function generationPreferenceSummary(capability: MediaCapability, preferences: CreativeGenerationPreferences) {
+export function generationPreferenceSummary(capability: MediaCapability, preferences: CreativeGenerationPreferences, copy: GenerationPreferenceSummaryCopy) {
     if (capability === "audio") return `${audioVoiceLabel(preferences.audio?.voice || "alloy")} · ${audioFormatLabel(preferences.audio?.format || "mp3")} · ${preferences.audio?.speed || 1}x`;
     const size = capability === "image" ? preferences.image?.size || "auto" : preferences.video?.size || "auto";
     const quality = capability === "image" ? preferences.image?.quality || "auto" : preferences.video?.quality || "auto";
     const count = capability === "image" ? preferences.image?.count || 1 : preferences.video?.count || 1;
-    const countLabel = count > 1 ? ` · ${count}${capability === "image" ? "张" : "条"}` : "";
-    const sizeLabel = size === "auto" ? "智能比例" : formatSizeLabel(size);
-    const qualityLabel = capability === "image" ? imageQualityOptions.find((item) => item.value === quality)?.label || quality : videoQualityLabel(quality);
-    const referenceLabel = capability === "video" ? videoReferenceModeOptions.find((item) => item.value === (preferences.video?.referenceMode || "reference"))?.label : undefined;
-    if (capability === "image") return size === "auto" && quality === "auto" ? `智能参数${countLabel}` : `${sizeLabel} · ${qualityLabel}${countLabel}`;
-    const parameterLabel = size === "auto" && quality === "auto" ? "智能参数" : `${sizeLabel} · ${qualityLabel}`;
-    const audioLabel = (preferences.video?.generateAudio ?? true) ? "有声" : "无声";
-    const watermarkLabel = (preferences.video?.watermark ?? false) ? "带水印" : "无水印";
-    return `${parameterLabel} · ${preferences.video?.seconds || 5}秒 · ${audioLabel} · ${watermarkLabel}${referenceLabel && referenceLabel !== "智能参考" ? ` · ${referenceLabel}` : ""}${countLabel}`;
+    const countLabel = count > 1 ? ` · ${copy.count(count, capability)}` : "";
+    const sizeLabel = size === "auto" ? copy.smartRatio : formatSizeLabel(size);
+    const qualityLabel = capability === "image" ? copy.imageQuality[quality] || quality : videoQualityLabel(quality, copy);
+    const referenceMode = preferences.video?.referenceMode || "reference";
+    const referenceLabel = capability === "video" ? copy.referenceMode[referenceMode] : undefined;
+    if (capability === "image") return size === "auto" && quality === "auto" ? `${copy.smartParameters}${countLabel}` : `${sizeLabel} · ${qualityLabel}${countLabel}`;
+    const parameterLabel = size === "auto" && quality === "auto" ? copy.smartParameters : `${sizeLabel} · ${qualityLabel}`;
+    const audioLabel = (preferences.video?.generateAudio ?? true) ? copy.withAudio : copy.withoutAudio;
+    const watermarkLabel = (preferences.video?.watermark ?? false) ? copy.withWatermark : copy.withoutWatermark;
+    return `${parameterLabel} · ${copy.seconds(preferences.video?.seconds || 5)} · ${audioLabel} · ${watermarkLabel}${referenceMode !== "reference" && referenceLabel ? ` · ${referenceLabel}` : ""}${countLabel}`;
 }
 
-function videoQualityLabel(value: string) {
-    const preset = videoQualityOptions.find((item) => item.value === value)?.label;
+function videoQualityLabel(value: string, copy: GenerationPreferenceSummaryCopy) {
+    const preset = value === "auto" ? copy.smartClarity : videoQualityOptions.find((item) => item.value === value)?.label;
     if (preset) return preset;
     return /^\d+$/.test(value) ? `${value}P` : value;
 }
@@ -620,10 +638,6 @@ function formatSizeLabel(value: string) {
     return dimensions ? `${dimensions[0]}×${dimensions[1]}` : value;
 }
 
-export function mediaCapabilityLabel(capability: MediaCapability) {
-    return capability === "image" ? "图片" : capability === "video" ? "视频" : "音频";
-}
-
 export function CreativeModeIcon({ mode }: { mode: "agent" | MediaCapability }) {
     if (mode === "image") return <ImageIcon className="size-4" />;
     if (mode === "video") return <Video className="size-4" />;
@@ -631,9 +645,63 @@ export function CreativeModeIcon({ mode }: { mode: "agent" | MediaCapability }) 
     return <Lightbulb className="size-4" />;
 }
 
-export const creativeModeOptions = [
-    { value: "agent", label: "Agent 模式", description: "自动理解需求并匹配能力" },
-    { value: "image", label: "图片生成", description: "生成或编辑图片" },
-    { value: "video", label: "视频生成", description: "文生视频或图生视频" },
-    { value: "audio", label: "音频生成", description: "配音、旁白和音频" },
-] as const;
+export const creativeModeOptions = [{ value: "agent" }, { value: "image" }, { value: "video" }, { value: "audio" }] as const;
+
+const capabilityMessageKeys = {
+    image: "imageCapability",
+    video: "videoCapability",
+    audio: "audioCapability",
+} as const;
+
+const imageQualityMessageKeys = {
+    auto: { label: "smartImageQuality", shortLabel: "smart" },
+    high: { label: "highImageQuality", shortLabel: "high" },
+    medium: { label: "mediumImageQuality", shortLabel: "medium" },
+    low: { label: "lowImageQuality", shortLabel: "low" },
+} as const;
+
+const videoReferenceModeMessageKeys = {
+    reference: "smartReference",
+    first_frame: "firstFrame",
+    first_last: "firstAndLastFrames",
+} as const;
+
+export type GenerationPreferenceSummaryCopy = {
+    smartParameters: string;
+    smartRatio: string;
+    smartClarity: string;
+    withAudio: string;
+    withoutAudio: string;
+    withWatermark: string;
+    withoutWatermark: string;
+    imageQuality: Record<string, string>;
+    referenceMode: Record<(typeof videoReferenceModeValues)[number], string>;
+    seconds: (value: number) => string;
+    count: (value: number, capability: MediaCapability) => string;
+};
+
+export function useGenerationPreferenceSummary(capability: MediaCapability, preferences: CreativeGenerationPreferences) {
+    const t = useTranslations("create");
+    return generationPreferenceSummary(capability, preferences, {
+        smartParameters: t("smartParameters"),
+        smartRatio: t("smartRatio"),
+        smartClarity: t("smartClarity"),
+        withAudio: t("withAudio"),
+        withoutAudio: t("withoutAudio"),
+        withWatermark: t("withWatermark"),
+        withoutWatermark: t("withoutWatermark"),
+        imageQuality: {
+            auto: t("smartImageQuality"),
+            high: t("highImageQuality"),
+            medium: t("mediumImageQuality"),
+            low: t("lowImageQuality"),
+        },
+        referenceMode: {
+            reference: t("smartReference"),
+            first_frame: t("firstFrame"),
+            first_last: t("firstAndLastFrames"),
+        },
+        seconds: (value) => t("secondsCompact", { value }),
+        count: (value, mediaCapability) => t(mediaCapability === "image" ? "imageCount" : "videoCount", { count: value }),
+    });
+}

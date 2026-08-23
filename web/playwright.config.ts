@@ -20,17 +20,23 @@ export default defineConfig({
     reporter: process.env.CI ? [["github"], ["html", { open: "never", outputFolder: "playwright-report" }]] : "list",
     use: {
         baseURL,
+        locale: "zh-CN",
         trace: "retain-on-failure",
         screenshot: "only-on-failure",
         video: "retain-on-failure",
     },
     projects: [
         { name: "setup", testMatch: /installation\.spec\.ts/ },
-        { name: "chromium", testMatch: [/(?:all-pages|canvas|commerce|core|creative-video-result|home|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
-        { name: "mobile-390", testMatch: /(?:all-pages|commerce|creative-video-result|home|responsive)\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState } },
+        { name: "chromium", testMatch: [/(?:all-pages|canvas|commerce|core|creative-video-result|home|i18n|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
+        {
+            name: "mobile-390",
+            testMatch: /(?:all-pages|commerce|creative-video-result|home|i18n|responsive)\.spec\.ts/,
+            dependencies: ["setup"],
+            use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState },
+        },
         {
             name: "mobile-430",
-            testMatch: /(?:all-pages|commerce|creative-video-result|home|responsive)\.spec\.ts/,
+            testMatch: /(?:all-pages|commerce|creative-video-result|home|i18n|responsive)\.spec\.ts/,
             dependencies: ["setup"],
             use: { ...devices["iPhone 14 Pro Max"], browserName: "chromium", viewport: { width: 430, height: 932 }, storageState },
         },

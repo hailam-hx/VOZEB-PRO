@@ -2,6 +2,7 @@
 
 import { Globe2, ImageIcon, List, Music2, Settings2, Video } from "lucide-react";
 import { nanoid } from "nanoid";
+import { useTranslations } from "next-intl";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -49,21 +50,14 @@ export const NODE_STATUS_LOADING = "loading" as const;
 export const NODE_STATUS_SUCCESS = "success" as const;
 export const NODE_STATUS_ERROR = "error" as const;
 export const NODE_STATUS_NEEDS_REVIEW = "needs_review" as const;
-export const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
-
-要求：
-1. 只输出提示词正文，不要解释。
-2. 覆盖主体、构图、风格、光线、色彩、材质、镜头和氛围。
-3. 尽量写成可直接用于生图模型的完整提示词。`;
-
-export function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
+export function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata, title?: string): CanvasNodeData {
     const spec = getNodeSpec(type);
     const id = `${type}-${nanoid()}`;
 
     return {
         id,
         type,
-        title: spec.title,
+        title: title || spec.title,
         position: {
             x: position.x - spec.width / 2,
             y: position.y - spec.height / 2,
@@ -111,6 +105,7 @@ export function CanvasRefreshShell() {
 }
 
 export function NodeCreateMenu({ position, onCreate, onClose }: { position: Position; onCreate: (type: CanvasCreatableNodeType) => void; onClose: () => void }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
@@ -123,7 +118,7 @@ export function NodeCreateMenu({ position, onCreate, onClose }: { position: Posi
         >
             <div className="mb-2 flex items-center justify-between px-1">
                 <span className="text-sm font-medium" style={{ color: theme.node.muted }}>
-                    新建节点
+                    {t("createMenu.newNode")}
                 </span>
                 <button
                     type="button"
@@ -131,24 +126,25 @@ export function NodeCreateMenu({ position, onCreate, onClose }: { position: Posi
                     onClick={onClose}
                     onMouseEnter={(event) => (event.currentTarget.style.background = theme.node.fill)}
                     onMouseLeave={(event) => (event.currentTarget.style.background = "transparent")}
-                    aria-label="关闭"
+                    aria-label={t("createMenu.close")}
                 >
                     ×
                 </button>
             </div>
             <div className="grid gap-1">
-                <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
-                <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片" onClick={() => onCreate(CanvasNodeType.Image)} />
-                <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title="全景图" description="生成 2:1 环境全景" onClick={() => onCreate(CanvasNodeType.Panorama)} />
-                <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频" onClick={() => onCreate(CanvasNodeType.Video)} />
-                <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title="音频" onClick={() => onCreate(CanvasNodeType.Audio)} />
-                <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-5" />} title="生成配置" description="模型、尺寸、数量和输入顺序" onClick={() => onCreate(CanvasNodeType.Config)} />
+                <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title={t("text")} description={t("createMenu.textDescription")} onClick={() => onCreate(CanvasNodeType.Text)} />
+                <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title={t("image")} onClick={() => onCreate(CanvasNodeType.Image)} />
+                <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title={t("panoramaLabel")} description={t("createMenu.panoramaDescription")} onClick={() => onCreate(CanvasNodeType.Panorama)} />
+                <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title={t("video")} onClick={() => onCreate(CanvasNodeType.Video)} />
+                <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title={t("audio")} onClick={() => onCreate(CanvasNodeType.Audio)} />
+                <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-5" />} title={t("generationConfig")} description={t("createMenu.configDescription")} onClick={() => onCreate(CanvasNodeType.Config)} />
             </div>
         </div>
     );
 }
 
 export function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: PendingConnectionCreate; onCreate: (type: CanvasCreatableNodeType) => void; onClose: () => void }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div
@@ -160,7 +156,7 @@ export function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: 
         >
             <div className="mb-2 flex items-center justify-between px-1">
                 <span className="text-sm font-medium" style={{ color: theme.node.muted }}>
-                    引用该节点生成
+                    {t("createMenu.generateFromNode")}
                 </span>
                 <button
                     type="button"
@@ -168,18 +164,18 @@ export function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: 
                     onClick={onClose}
                     onMouseEnter={(event) => (event.currentTarget.style.background = theme.node.fill)}
                     onMouseLeave={(event) => (event.currentTarget.style.background = "transparent")}
-                    aria-label="关闭"
+                    aria-label={t("createMenu.close")}
                 >
                     ×
                 </button>
             </div>
             <div className="grid gap-1">
-                <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本生成" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
-                <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片生成" onClick={() => onCreate(CanvasNodeType.Image)} />
-                <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title="全景生成" description="生成 2:1 环境全景" onClick={() => onCreate(CanvasNodeType.Panorama)} />
-                <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
-                <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title="音频参考" onClick={() => onCreate(CanvasNodeType.Audio)} />
-                <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-5" />} title="配置节点" description="模型、尺寸、数量和输入顺序" onClick={() => onCreate(CanvasNodeType.Config)} />
+                <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title={t("createMenu.textGeneration")} description={t("createMenu.textDescription")} onClick={() => onCreate(CanvasNodeType.Text)} />
+                <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title={t("createMenu.imageGeneration")} onClick={() => onCreate(CanvasNodeType.Image)} />
+                <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title={t("createMenu.panoramaGeneration")} description={t("createMenu.panoramaDescription")} onClick={() => onCreate(CanvasNodeType.Panorama)} />
+                <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title={t("createMenu.videoGeneration")} onClick={() => onCreate(CanvasNodeType.Video)} />
+                <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title={t("createMenu.audioReference")} onClick={() => onCreate(CanvasNodeType.Audio)} />
+                <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-5" />} title={t("createMenu.configNode")} description={t("createMenu.configDescription")} onClick={() => onCreate(CanvasNodeType.Config)} />
             </div>
         </div>
     );

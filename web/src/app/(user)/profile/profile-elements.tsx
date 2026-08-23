@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Button, Input, Pagination, Select, Spin, Tag } from "antd";
 import { CreditCard, History, ReceiptText, RefreshCw, Save, ShieldCheck, TicketPercent, UserCircle, UserPlus, WalletCards } from "lucide-react";
+import { useFormatter, useTranslations } from "next-intl";
 
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
 import { BillingPlanGrid } from "@/components/billing/billing-plan-grid";
@@ -19,16 +20,16 @@ export const RECORD_PAGE_SIZE = 8;
 export const ORDER_PAGE_SIZE = 8;
 export const COUPON_PAGE_SIZE = 8;
 
-export const profileSections: Array<{ key: ProfileSectionKey; label: string; description: string; shortDescription: string; icon: ReactNode }> = [
-    { key: "overview", label: "账户概览", description: "查看当前套餐、积分余额、最近订单和最近积分流水。", shortDescription: "资产摘要", icon: <WalletCards className="size-4" /> },
-    { key: "profile", label: "个人资料", description: "维护头像、显示昵称和个人简介。", shortDescription: "头像与资料", icon: <UserCircle className="size-4" /> },
-    { key: "billing", label: "套餐中心", description: "在个人中心内选择套餐，支付时进入独立安全结算页。", shortDescription: "购买套餐", icon: <CreditCard className="size-4" /> },
-    { key: "coupons", label: "我的优惠券", description: "领取优惠券并查看可用、锁定、已使用和过期状态。", shortDescription: "领取与状态", icon: <TicketPercent className="size-4" /> },
-    { key: "orders", label: "订单记录", description: "查看所有充值订单、支付状态和开通结果。", shortDescription: "收款状态", icon: <ReceiptText className="size-4" /> },
-    { key: "points", label: "积分记录", description: "查看每日积分、充值赠送、退款退回和管理员调整流水。", shortDescription: "余额流水", icon: <CreditSymbol className="text-sm" /> },
-    { key: "consume", label: "消费记录", description: "查看模型调用、生成任务和接口消费扣除。", shortDescription: "积分扣除", icon: <History className="size-4" /> },
-    { key: "referrals", label: "邀请有礼", description: "复制邀请码和邀请链接，查看注册、首单与奖励进度。", shortDescription: "拉新与奖励", icon: <UserPlus className="size-4" /> },
-    { key: "security", label: "账户与安全", description: "管理绑定邮箱、登录密码和个人数据。", shortDescription: "邮箱、密码与 MFA", icon: <ShieldCheck className="size-4" /> },
+const profileSections: Array<{ key: ProfileSectionKey; icon: ReactNode }> = [
+    { key: "overview", icon: <WalletCards className="size-4" /> },
+    { key: "profile", icon: <UserCircle className="size-4" /> },
+    { key: "billing", icon: <CreditCard className="size-4" /> },
+    { key: "coupons", icon: <TicketPercent className="size-4" /> },
+    { key: "orders", icon: <ReceiptText className="size-4" /> },
+    { key: "points", icon: <CreditSymbol className="text-sm" /> },
+    { key: "consume", icon: <History className="size-4" /> },
+    { key: "referrals", icon: <UserPlus className="size-4" /> },
+    { key: "security", icon: <ShieldCheck className="size-4" /> },
 ];
 
 export const profilePrimaryButtonClass = "profile-primary-button";
@@ -36,11 +37,12 @@ export const profileSecondaryButtonClass = "profile-secondary-button";
 export const profileDangerButtonClass = "profile-danger-button";
 
 export function ProfileSectionNav({ activeKey, onChange, mode }: { activeKey: ProfileSectionKey; onChange: (key: ProfileSectionKey) => void; mode: "mobile" | "desktop" }) {
+    const t = useTranslations("profile.sections");
     if (mode === "mobile") {
         return (
-            <nav className="flex h-9 items-center gap-2 rounded-lg border border-border bg-card px-2 text-card-foreground" aria-label="个人中心分区">
-                <span className="shrink-0 text-[11px] font-medium text-stone-500 dark:text-stone-400">当前分区</span>
-                <Select aria-label="切换个人中心分区" className="min-w-0 flex-1" variant="borderless" value={activeKey} options={profileSections.map((section) => ({ label: section.label, value: section.key }))} onChange={onChange} />
+            <nav className="flex h-9 items-center gap-2 rounded-lg border border-border bg-card px-2 text-card-foreground" aria-label={t("aria")}>
+                <span className="shrink-0 text-[11px] font-medium text-stone-500 dark:text-stone-400">{t("current")}</span>
+                <Select aria-label={t("switchAria")} className="min-w-0 flex-1" variant="borderless" value={activeKey} options={profileSections.map((section) => ({ label: t(`${section.key}.label`), value: section.key }))} onChange={onChange} />
             </nav>
         );
     }
@@ -72,8 +74,8 @@ export function ProfileSectionNav({ activeKey, onChange, mode }: { activeKey: Pr
                                     {section.icon}
                                 </span>
                                 <span className="min-w-0">
-                                    <span className={cn("block text-sm font-semibold", active ? "text-[#263141] dark:text-white" : "text-stone-950 dark:text-stone-100")}>{section.label}</span>
-                                    <span className={cn("mt-0.5 block truncate text-xs", active ? "text-[#66758e] dark:text-[#b8c4d6]" : "text-stone-500 dark:text-stone-400")}>{section.shortDescription}</span>
+                                    <span className={cn("block text-sm font-semibold", active ? "text-[#263141] dark:text-white" : "text-stone-950 dark:text-stone-100")}>{t(`${section.key}.label`)}</span>
+                                    <span className={cn("mt-0.5 block truncate text-xs", active ? "text-[#66758e] dark:text-[#b8c4d6]" : "text-stone-500 dark:text-stone-400")}>{t(`${section.key}.shortDescription`)}</span>
                                 </span>
                             </button>
                         );
@@ -85,28 +87,27 @@ export function ProfileSectionNav({ activeKey, onChange, mode }: { activeKey: Pr
 }
 
 export function BillingCenterSection({ products, productsLoading, onRefresh, onCheckout }: { products: BillingProduct[]; productsLoading: boolean; onRefresh: () => void; onCheckout: (product: BillingProduct) => void }) {
+    const t = useTranslations("profile.billingCenter");
     return (
         <section className="rounded-lg border border-border bg-card p-2 text-card-foreground sm:rounded-2xl sm:p-6">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <h2 className="text-lg font-semibold tracking-tight text-stone-950 sm:text-xl dark:text-white">套餐中心</h2>
-                    <p className="mt-1 text-xs leading-5 text-stone-500 sm:text-sm sm:leading-6 dark:text-stone-400">选择适合当前创作频率的方案，结算时进入独立安全支付页。</p>
+                    <h2 className="text-lg font-semibold tracking-tight text-stone-950 sm:text-xl dark:text-white">{t("title")}</h2>
+                    <p className="mt-1 text-xs leading-5 text-stone-500 sm:text-sm sm:leading-6 dark:text-stone-400">{t("description")}</p>
                 </div>
                 <Button className={`${profileSecondaryButtonClass} shrink-0`} icon={<RefreshCw className="size-4" />} onClick={onRefresh} loading={productsLoading}>
-                    <span className="hidden sm:inline">刷新</span>
+                    <span className="hidden sm:inline">{t("refresh")}</span>
                 </Button>
             </div>
             <div className="mt-2 border-t border-stone-200 pt-2 sm:mt-4 sm:pt-4 dark:border-stone-800">
                 <div className="flex items-end justify-between gap-3">
                     <div className="min-w-0">
-                        <h3 className="text-base font-semibold text-stone-950 dark:text-white">可选套餐</h3>
-                        <p className="mt-1 hidden text-sm text-stone-500 sm:block dark:text-stone-400">价格、积分与有效期均同步后台已上架商品。</p>
+                        <h3 className="text-base font-semibold text-stone-950 dark:text-white">{t("available")}</h3>
+                        <p className="mt-1 hidden text-sm text-stone-500 sm:block dark:text-stone-400">{t("availableDescription")}</p>
                     </div>
-                    {!productsLoading && products.length ? <span className="shrink-0 text-xs text-stone-400 dark:text-stone-500">共 {products.length} 个方案</span> : null}
+                    {!productsLoading && products.length ? <span className="shrink-0 text-xs text-stone-400 dark:text-stone-500">{t("count", { count: products.length })}</span> : null}
                 </div>
-                <div className="mt-2 sm:mt-4">
-                    {productsLoading ? <LoadingBlock /> : products.length ? <BillingPlanGrid products={products} onSelect={onCheckout} /> : <CompactEmptyState title="暂无已上架套餐商品" description="管理员上架商品后会显示在这里。" />}
-                </div>
+                <div className="mt-2 sm:mt-4">{productsLoading ? <LoadingBlock /> : products.length ? <BillingPlanGrid products={products} onSelect={onCheckout} /> : <CompactEmptyState title={t("emptyTitle")} description={t("emptyDescription")} />}</div>
             </div>
         </section>
     );
@@ -129,24 +130,25 @@ export function ProfileForm({
     onBioChange: (value: string) => void;
     onSave: () => void;
 }) {
+    const t = useTranslations("profile.form");
     return (
         <div className="max-w-2xl">
             <ProfileAvatarUploader />
             <div className="mt-3 grid gap-3 sm:mt-4 sm:grid-cols-2 sm:gap-4">
                 <label className="block min-w-0 space-y-2">
-                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">登录用户名</span>
+                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("username")}</span>
                     <Input value={user?.username || ""} disabled />
                 </label>
                 <label className="block min-w-0 space-y-2">
-                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">显示昵称</span>
+                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("displayName")}</span>
                     <Input value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} />
                 </label>
                 <label className="block min-w-0 space-y-2 sm:col-span-2">
-                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">个人简介</span>
-                    <Input.TextArea value={bio} maxLength={160} showCount autoSize={{ minRows: 3, maxRows: 5 }} placeholder="介绍你的创作方向、擅长领域或常用风格" onChange={(event) => onBioChange(event.target.value)} />
+                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("bio")}</span>
+                    <Input.TextArea value={bio} maxLength={160} showCount autoSize={{ minRows: 3, maxRows: 5 }} placeholder={t("bioPlaceholder")} onChange={(event) => onBioChange(event.target.value)} />
                 </label>
                 <Button className={`${profilePrimaryButtonClass} w-fit sm:col-span-2`} type="primary" icon={<Save className="size-4" />} loading={savingProfile} onClick={onSave}>
-                    保存资料
+                    {t("save")}
                 </Button>
             </div>
         </div>
@@ -176,32 +178,33 @@ export function AccountEmailForm({
     onSendEmailCode: () => void;
     onSave: () => void;
 }) {
+    const t = useTranslations("profile.email");
     return (
         <div className="max-w-2xl">
             <div>
-                <h3 className="text-sm font-semibold text-stone-950 dark:text-white">绑定邮箱</h3>
-                <p className="mt-1 break-all text-sm leading-6 text-stone-500 dark:text-stone-400">{boundEmail || "绑定邮箱后可用于找回密码和接收验证码。"}</p>
+                <h3 className="text-sm font-semibold text-stone-950 dark:text-white">{t("title")}</h3>
+                <p className="mt-1 break-all text-sm leading-6 text-stone-500 dark:text-stone-400">{boundEmail || t("description")}</p>
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className="block min-w-0 space-y-2">
-                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{boundEmail ? "修改邮箱" : "绑定邮箱"}</span>
-                    <Input value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="请输入邮箱地址" />
+                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{boundEmail ? t("change") : t("bind")}</span>
+                    <Input value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder={t("placeholder")} />
                 </label>
                 <label className="block min-w-0 space-y-2">
-                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">邮箱验证码</span>
+                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("code")}</span>
                     <Input.Search
                         className="profile-email-code-search"
                         value={emailCode}
                         onChange={(event) => onEmailCodeChange(event.target.value)}
-                        placeholder={emailChanged ? "修改邮箱时必填" : "邮箱未变化时无需填写"}
-                        enterButton="获取验证码"
+                        placeholder={emailChanged ? t("codeRequired") : t("codeNotNeeded")}
+                        enterButton={t("getCode")}
                         loading={sendingCode}
                         disabled={!emailChanged}
                         onSearch={onSendEmailCode}
                     />
                 </label>
                 <Button className={`${profilePrimaryButtonClass} w-fit sm:col-span-2`} type="primary" icon={<Save className="size-4" />} loading={savingEmail} disabled={!emailChanged || !email.trim()} onClick={onSave}>
-                    保存邮箱
+                    {t("save")}
                 </Button>
             </div>
         </div>
@@ -209,8 +212,10 @@ export function AccountEmailForm({
 }
 
 export function OrderList({ loading, orders, total, page, onPageChange, compact }: { loading: boolean; orders: BillingOrder[]; total: number; page: number; onPageChange: (page: number) => void; compact?: boolean }) {
+    const t = useTranslations("profile.records");
+    const format = useFormatter();
     if (loading) return <LoadingBlock />;
-    if (!orders.length) return <CompactEmptyState title="暂无订单记录" description="购买套餐后可在这里查看支付状态。" />;
+    if (!orders.length) return <CompactEmptyState title={t("emptyOrders")} description={t("emptyOrdersDescription")} />;
     return (
         <div className="divide-y divide-stone-200 dark:divide-stone-800" role="list">
             {orders.map((order) => (
@@ -219,14 +224,14 @@ export function OrderList({ loading, orders, total, page, onPageChange, compact 
                         <div className="truncate font-semibold text-stone-950 dark:text-white">{order.subject}</div>
                         <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] leading-4 text-stone-500 sm:mt-1 sm:gap-2 sm:text-xs dark:text-stone-400">
                             <span className={cn("truncate", compact && "hidden sm:inline")}>{order.orderNo}</span>
-                            <span className="shrink-0">{formatShortTime(order.createdAt)}</span>
+                            <span className="shrink-0">{format.dateTime(new Date(order.createdAt), { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
                         </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-0.5 sm:flex-row sm:items-center sm:gap-2">
                         <Tag className="m-0 !px-1 !py-0 text-[10px] leading-[18px] sm:!px-2 sm:text-xs sm:leading-5" color={orderStatusColor(order.status)}>
-                            {orderStatusLabel(order.status)}
+                            {t(`orderStatuses.${order.status}`)}
                         </Tag>
-                        <div className="text-xs font-semibold tabular-nums text-stone-900 dark:text-stone-100 sm:text-[13px]">{formatMoney(order.amountCents, order.currency)}</div>
+                        <div className="text-xs font-semibold tabular-nums text-stone-900 dark:text-stone-100 sm:text-[13px]">{format.number(order.amountCents / 100, { style: "currency", currency: order.currency || "CNY" })}</div>
                     </div>
                 </div>
             ))}
@@ -272,6 +277,8 @@ export function LoadingBlock() {
 }
 
 export function RecordList({ records }: { records: PointRecord[] }) {
+    const t = useTranslations("profile.records");
+    const format = useFormatter();
     return (
         <div className="divide-y divide-stone-200 dark:divide-stone-800">
             {records.map((record) => {
@@ -280,15 +287,15 @@ export function RecordList({ records }: { records: PointRecord[] }) {
                     <div key={record.id} className="py-1.5 first:pt-0 last:pb-0 sm:px-1 sm:py-3">
                         <div className="flex min-w-0 items-start justify-between gap-3">
                             <div className="min-w-0">
-                                <div className="break-words text-sm font-semibold text-stone-900 dark:text-stone-100">{record.description || pointRecordTypeLabel(record.type)}</div>
-                                <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">{formatTime(record.createdAt)}</div>
+                                <div className="break-words text-sm font-semibold text-stone-900 dark:text-stone-100">{record.description || t(`pointTypes.${record.type}`)}</div>
+                                <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">{format.dateTime(new Date(record.createdAt), { dateStyle: "medium", timeStyle: "short" })}</div>
                             </div>
                             <Tag color={positive ? "green" : "red"} className="m-0 shrink-0">
                                 {positive ? "+" : ""}
                                 {formatCreditAmount(record.amount)}
                             </Tag>
                         </div>
-                        <div className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">余额 {formatCreditAmount(record.balanceAfter)}</div>
+                        <div className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">{t("balanceAfter", { amount: formatCreditAmount(record.balanceAfter) })}</div>
                     </div>
                 );
             })}
@@ -300,45 +307,10 @@ export function parseProfileSection(value: string | null): ProfileSectionKey {
     return profileSections.some((section) => section.key === value) ? (value as ProfileSectionKey) : "overview";
 }
 
-export function pointRecordTypeLabel(type: PointRecord["type"]) {
-    if (type === "consume") return "模型消费";
-    if (type === "refund") return "消费退款";
-    if (type === "credit") return "积分充值";
-    return "后台调整";
-}
-
-export function orderStatusLabel(status: BillingOrderStatus) {
-    if (status === "pending") return "待支付";
-    if (status === "paid") return "已开通";
-    if (status === "refunding") return "退款处理中";
-    if (status === "closed") return "已关闭";
-    if (status === "canceled") return "已取消";
-    return "已退款";
-}
-
 export function orderStatusColor(status: BillingOrderStatus) {
     if (status === "pending") return "gold";
     if (status === "paid") return "green";
     if (status === "refunded") return "blue";
     if (status === "refunding") return "orange";
     return "default";
-}
-
-export function formatMoney(cents: number, currency = "CNY") {
-    const amount = (Number(cents || 0) / 100).toFixed(2);
-    if (currency === "CNY") return `¥${amount}`;
-    if (currency === "USD") return `$${amount}`;
-    return `${amount} ${currency}`;
-}
-
-export function formatTime(value: string) {
-    const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return "-";
-    return date.toLocaleString("zh-CN", { hour12: false });
-}
-
-export function formatShortTime(value: string) {
-    const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return "-";
-    return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }

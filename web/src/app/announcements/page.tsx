@@ -1,19 +1,24 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, ChevronLeft, ChevronRight, Megaphone } from "lucide-react";
+import { getFormatter, getTranslations } from "next-intl/server";
 
 import { listAnnouncementsPage } from "@/lib/auth/store";
 
 export const dynamic = "force-dynamic";
 const PAGE_SIZE = 20;
-export const metadata: Metadata = {
-    title: "网站公告",
-    description: "查看站点通知、维护说明和功能更新。",
-    alternates: { canonical: "/announcements" },
-    robots: { index: true, follow: true },
-};
+export async function generateMetadata(): Promise<Metadata> {
+    const t = await getTranslations("public");
+    return {
+        title: t("announcements"),
+        description: t("announcementsMetadataDescription"),
+        alternates: { canonical: "/announcements" },
+        robots: { index: true, follow: true },
+    };
+}
 
 export default async function AnnouncementsPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
+    const [t, format] = await Promise.all([getTranslations("public"), getFormatter()]);
     const params = searchParams ? await searchParams : {};
     const page = positiveInteger(first(params.page), 1);
     const announcementPage = await listAnnouncementsPage(false, { page, pageSize: PAGE_SIZE });
@@ -29,8 +34,8 @@ export default async function AnnouncementsPage({ searchParams }: { searchParams
                                 <Megaphone className="size-5" />
                             </span>
                             <div className="min-w-0">
-                                <h1 className="text-2xl font-semibold">网站公告</h1>
-                                <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">按发布时间展示站点通知、维护说明和功能提醒。</p>
+                                <h1 className="text-2xl font-semibold">{t("announcements")}</h1>
+                                <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{t("announcementsDescription")}</p>
                             </div>
                         </div>
                         <Link
@@ -38,7 +43,7 @@ export default async function AnnouncementsPage({ searchParams }: { searchParams
                             className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-stone-200 px-3 text-sm font-medium text-stone-600 transition hover:border-stone-300 hover:bg-stone-50 hover:text-stone-950 dark:border-stone-800 dark:text-stone-300 dark:hover:border-stone-700 dark:hover:bg-stone-900 dark:hover:text-white"
                         >
                             <ArrowLeft className="size-4" />
-                            返回首页
+                            {t("backHome")}
                         </Link>
                     </div>
                 </div>
@@ -47,33 +52,31 @@ export default async function AnnouncementsPage({ searchParams }: { searchParams
                         <article id={announcement.id} key={announcement.id} className="scroll-mt-4 rounded-xl border border-stone-200 bg-white p-5 shadow-sm shadow-stone-200/40 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20">
                             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                                 <h2 className="text-lg font-semibold text-stone-950 dark:text-stone-100">{announcement.title}</h2>
-                                <time className="text-xs text-stone-500 dark:text-stone-400">{new Date(announcement.createdAt).toLocaleString("zh-CN")}</time>
+                                <time className="text-xs text-stone-500 dark:text-stone-400">{format.dateTime(new Date(announcement.createdAt), { dateStyle: "medium", timeStyle: "short" })}</time>
                             </div>
                             <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-stone-600 dark:text-stone-300">{announcement.content}</p>
                         </article>
                     ))}
-                    {!announcementPage.items.length ? <div className="rounded-xl border border-dashed border-stone-300 py-16 text-center text-sm text-stone-500 dark:border-stone-700">暂无公告</div> : null}
+                    {!announcementPage.items.length ? <div className="rounded-xl border border-dashed border-stone-300 py-16 text-center text-sm text-stone-500 dark:border-stone-700">{t("noAnnouncements")}</div> : null}
                 </div>
                 {announcementPage.total > announcementPage.pageSize ? (
-                    <nav className="mt-5 flex items-center justify-center gap-3 text-sm" aria-label="公告分页">
+                    <nav className="mt-5 flex items-center justify-center gap-3 text-sm" aria-label={t("announcementPagination")}>
                         {page > 1 ? (
                             <Link
                                 href={announcementPageHref(page - 1)}
                                 className="inline-flex h-9 items-center gap-1.5 rounded-md border border-stone-200 px-3 text-stone-700 transition hover:bg-stone-50 dark:border-stone-800 dark:text-stone-200 dark:hover:bg-stone-900"
                             >
                                 <ChevronLeft className="size-4" />
-                                上一页
+                                {t("previousPage")}
                             </Link>
                         ) : null}
-                        <span className="text-xs text-stone-500 dark:text-stone-400">
-                            第 {page} / {totalPages} 页
-                        </span>
+                        <span className="text-xs text-stone-500 dark:text-stone-400">{t("pageCount", { page, total: totalPages })}</span>
                         {page < totalPages ? (
                             <Link
                                 href={announcementPageHref(page + 1)}
                                 className="inline-flex h-9 items-center gap-1.5 rounded-md border border-stone-200 px-3 text-stone-700 transition hover:bg-stone-50 dark:border-stone-800 dark:text-stone-200 dark:hover:bg-stone-900"
                             >
-                                下一页
+                                {t("nextPage")}
                                 <ChevronRight className="size-4" />
                             </Link>
                         ) : null}

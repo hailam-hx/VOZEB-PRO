@@ -3,40 +3,46 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { ArrowRight, Mail, Send } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { SiteLogo } from "@/components/layout/site-logo";
+import { builtInSiteCopy, localizeBuiltInSiteCopy } from "@/i18n/site-copy";
 import { HOME_NAVIGATION, type HomeNavigationItem } from "./home-data";
 import { useHomeActions } from "./home-actions";
 import styles from "./home.module.css";
 
 export function HomeCta() {
+    const t = useTranslations("home");
     const { site, startCreating } = useHomeActions();
     return (
         <section className={styles.cta} aria-labelledby="home-cta-title">
             <span className={`${styles.ctaCrystal} ${styles.ctaCrystalLeft}`} aria-hidden="true" />
             <span className={`${styles.ctaCrystal} ${styles.ctaCrystalRight}`} aria-hidden="true" />
             <div>
-                <h2 id="home-cta-title">开启你的 AI 创作工作流</h2>
-                <p>加入 {site.title}，释放你的创作潜力，让 AI 成为你最强的创作伙伴。</p>
+                <h2 id="home-cta-title">{t("ctaTitle")}</h2>
+                <p>{t("ctaDescription", { site: site.title })}</p>
             </div>
             <button type="button" onClick={() => startCreating()}>
-                免费开始 <ArrowRight aria-hidden="true" />
+                {t("startFree")} <ArrowRight aria-hidden="true" />
             </button>
         </section>
     );
 }
 
 export function HomeFooter() {
+    const t = useTranslations("home");
+    const publicT = useTranslations("public");
     const { site, openBillingPlans, openProtectedPath } = useHomeActions();
     const friendLinks = site.friendLinks.filter((item) => item.enabled && item.label.trim() && item.url.trim());
     const socials = Object.entries(site.socials).filter(([, item]) => item.enabled && item.label.trim() && item.url.trim());
     const copyright = site.footerCopyright?.trim();
-    const policies = [site.privacyUrl?.trim() ? { label: "隐私政策", href: site.privacyUrl.trim() } : null, site.termsUrl?.trim() ? { label: "服务条款", href: site.termsUrl.trim() } : null].filter((item): item is { label: string; href: string } =>
-        Boolean(item),
+    const description = localizeBuiltInSiteCopy(site.seoDescription, builtInSiteCopy.seoDescription, t("footerDefaultDescription"));
+    const policies = [site.privacyUrl?.trim() ? { label: publicT("privacyLabel"), href: site.privacyUrl.trim() } : null, site.termsUrl?.trim() ? { label: publicT("termsLabel"), href: site.termsUrl.trim() } : null].filter(
+        (item): item is { label: string; href: string } => Boolean(item),
     );
     const navigationGroups: Array<{ title: string; items: readonly HomeNavigationItem[] }> = [
-        { title: "产品", items: HOME_NAVIGATION },
-        { title: "平台", items: [{ label: "公告中心", href: "/announcements", action: "link" }] },
+        { title: t("footerProduct"), items: HOME_NAVIGATION },
+        { title: t("footerPlatform"), items: [{ translationKey: "announcementCenter", href: "/announcements", action: "link" }] },
     ];
 
     return (
@@ -47,12 +53,13 @@ export function HomeFooter() {
                         <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
                         <span>{site.title}</span>
                     </Link>
-                    {site.seoDescription?.trim() ? <p>{site.seoDescription}</p> : null}
+                    {description ? <p>{description}</p> : null}
                     {socials.length ? (
                         <div className={styles.footerSocials}>
                             {socials.map(([key, item]) => {
+                                const label = key === "email" ? localizeBuiltInSiteCopy(item.label, builtInSiteCopy.emailLabel, t("footerEmailLabel")) : item.label;
                                 return (
-                                    <a key={key} href={item.url} target={externalTarget(item.url)} rel={externalTarget(item.url) ? "noreferrer" : undefined} aria-label={item.label} title={item.label}>
+                                    <a key={key} href={item.url} target={externalTarget(item.url)} rel={externalTarget(item.url) ? "noreferrer" : undefined} aria-label={label} title={label}>
                                         {socialIcon(key)}
                                     </a>
                                 );
@@ -67,25 +74,25 @@ export function HomeFooter() {
                             {group.items.map((item) =>
                                 item.action === "protected" ? (
                                     <button key={item.href} type="button" onClick={() => openProtectedPath(item.href)}>
-                                        {item.label}
+                                        {t(item.translationKey)}
                                     </button>
                                 ) : item.action === "billing" ? (
                                     <button key={item.href} type="button" onClick={openBillingPlans}>
-                                        {item.label}
+                                        {t(item.translationKey)}
                                     </button>
                                 ) : (
                                     <Link key={item.href} href={item.href}>
-                                        {item.label}
+                                        {t(item.translationKey)}
                                     </Link>
                                 ),
                             )}
                         </FooterColumn>
                     ))}
                     {friendLinks.length ? (
-                        <FooterColumn title="友情链接">
+                        <FooterColumn title={t("friendLinks")}>
                             {friendLinks.map((item) => (
                                 <a key={item.id} href={item.url} target={externalTarget(item.url)} rel={externalTarget(item.url) ? "noreferrer" : undefined}>
-                                    {item.label}
+                                    {item.id === "qq-vozeb-open-source" ? localizeBuiltInSiteCopy(item.label, builtInSiteCopy.qqGroupLabel, t("footerQqGroupLabel")) : item.label}
                                 </a>
                             ))}
                         </FooterColumn>

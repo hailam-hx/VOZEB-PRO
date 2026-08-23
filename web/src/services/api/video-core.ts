@@ -9,7 +9,7 @@ import { GenerationTaskRequestError } from "@/services/api/generation-task-reque
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
-import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";

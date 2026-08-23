@@ -209,7 +209,7 @@ describe("client store session isolation", () => {
             await vi.advanceTimersByTimeAsync(250);
 
             expect(useCanvasStore.getState().projects[0]).toMatchObject({ id: project.id, showImageInfo: true });
-            expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "saving", message: "网络波动，正在重新保存" });
+            expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "saving", message: "The network is unstable. Saving again…" });
             await vi.advanceTimersByTimeAsync(1_000);
 
             expect(mocks.saveCanvasProjectMutation).toHaveBeenCalledTimes(2);

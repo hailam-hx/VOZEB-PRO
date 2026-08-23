@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { App, Button, Input, Modal, Pagination } from "antd";
 import { BookOpenText, FileText, Search } from "lucide-react";
+import { useFormatter, useTranslations } from "next-intl";
 
 import { splitDramaSource, type DramaSourceEpisodeDraft } from "@/lib/drama-source-splitter";
 import type { DramaProject } from "../types";
@@ -11,6 +12,9 @@ import { useDramaStore } from "../stores/use-drama-store";
 const IMPORT_PAGE_SIZE = 20;
 
 export function DramaSourceImport({ project, onImported }: { project: DramaProject; onImported: () => void }) {
+    const t = useTranslations("drama.editor.sourceImport");
+    const sectionsT = useTranslations("drama.sections");
+    const format = useFormatter();
     const { message } = App.useApp();
     const importEpisodes = useDramaStore((state) => state.importEpisodes);
     const createVersion = useDramaStore((state) => state.createVersion);
@@ -40,13 +44,13 @@ export function DramaSourceImport({ project, onImported }: { project: DramaProje
         if (!file) return;
         try {
             const nextDrafts = splitDramaSource(await file.text());
-            if (!nextDrafts.length) return message.warning("导入文件没有可识别的文本内容");
+            if (!nextDrafts.length) return message.warning(t("noRecognizableText"));
             setDrafts(nextDrafts);
             setFileName(file.name);
             setQuery("");
             setPage(1);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "整本导入失败");
+        } catch {
+            message.error(t("failed"));
         } finally {
             if (inputRef.current) inputRef.current.value = "";
         }
@@ -55,13 +59,16 @@ export function DramaSourceImport({ project, onImported }: { project: DramaProje
     const confirmImport = async () => {
         setImporting(true);
         try {
-            await createVersion(project, "整本导入前");
-            importEpisodes(project.id, drafts);
+            await createVersion(project, t("versionReason"));
+            importEpisodes(
+                project.id,
+                drafts.map((draft, index) => ({ ...draft, title: draft.title || sectionsT("episodeNumber", { number: index + 1 }) })),
+            );
             close();
             onImported();
-            message.success(`已导入 ${drafts.length} 集，请逐集检查并提取内容结构`);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "整本导入失败");
+            message.success(t("success", { count: drafts.length }));
+        } catch {
+            message.error(t("failed"));
         } finally {
             setImporting(false);
         }
@@ -70,19 +77,19 @@ export function DramaSourceImport({ project, onImported }: { project: DramaProje
     return (
         <>
             <Button className="!h-8 !px-2.5" size="small" icon={<BookOpenText className="size-3.5" />} onClick={() => inputRef.current?.click()}>
-                导入剧本
+                {t("button")}
             </Button>
             <input ref={inputRef} type="file" accept=".txt,.md,text/plain,text/markdown" className="hidden" onChange={(event) => void readSource(event.target.files?.[0])} />
             <Modal
-                title="导入整本剧本"
+                title={t("title")}
                 open={open}
                 width={720}
                 centered
                 destroyOnHidden
                 mask={{ closable: !importing }}
                 closable={!importing}
-                okText={`确认导入 ${drafts.length} 集`}
-                cancelText="取消"
+                okText={t("confirm", { count: drafts.length })}
+                cancelText={t("cancel")}
                 okButtonProps={{ loading: importing }}
                 cancelButtonProps={{ disabled: importing }}
                 onOk={() => void confirmImport()}
@@ -96,9 +103,9 @@ export function DramaSourceImport({ project, onImported }: { project: DramaProje
                                 <FileText className="size-3.5 shrink-0" />
                                 <span className="max-w-60 truncate text-foreground">{fileName}</span>
                             </span>
-                            <span>{drafts.length.toLocaleString("zh-CN")} 集</span>
-                            <span>{totalCharacters.toLocaleString("zh-CN")} 字</span>
-                            <span>将替换当前 {project.episodes.length} 集，并自动创建恢复版本</span>
+                            <span>{t("episodes", { count: format.number(drafts.length) })}</span>
+                            <span>{t("characters", { count: format.number(totalCharacters) })}</span>
+                            <span>{t("replacementWarning", { count: project.episodes.length })}</span>
                         </div>
                         <Input
                             className="!mt-3 !h-8"
@@ -109,8 +116,8 @@ export function DramaSourceImport({ project, onImported }: { project: DramaProje
                                 setQuery(event.target.value);
                                 setPage(1);
                             }}
-                            placeholder="搜索分集标题或来源范围"
-                            aria-label="搜索待导入分集"
+                            placeholder={t("searchPlaceholder")}
+                            aria-label={t("searchAria")}
                         />
                     </div>
                     <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-2" data-drama-import-preview>
@@ -120,15 +127,15 @@ export function DramaSourceImport({ project, onImported }: { project: DramaProje
                                     <div key={`${index}-${draft.title}`} className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-2 px-2 py-2.5">
                                         <span className="text-xs font-medium tabular-nums text-muted-foreground">{String(index + 1).padStart(2, "0")}</span>
                                         <span className="min-w-0">
-                                            <span className="block truncate text-sm font-medium">{draft.title || `第 ${index + 1} 集`}</span>
-                                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{draft.sourceRange || "按正文长度自动划分"}</span>
+                                            <span className="block truncate text-sm font-medium">{draft.title || t("episodeNumber", { number: index + 1 })}</span>
+                                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{draft.sourceRange || t("automaticRange")}</span>
                                         </span>
-                                        <span className="text-xs tabular-nums text-muted-foreground">{draft.script.length.toLocaleString("zh-CN")} 字</span>
+                                        <span className="text-xs tabular-nums text-muted-foreground">{t("characters", { count: format.number(draft.script.length) })}</span>
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <div className="grid min-h-40 place-items-center text-sm text-muted-foreground">没有匹配的分集</div>
+                            <div className="grid min-h-40 place-items-center text-sm text-muted-foreground">{t("noMatches")}</div>
                         )}
                     </div>
                     {filtered.length > IMPORT_PAGE_SIZE ? (

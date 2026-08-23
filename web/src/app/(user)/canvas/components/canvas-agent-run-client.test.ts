@@ -60,9 +60,9 @@ describe("Canvas Agent 事件流", () => {
         FakeEventSource.instance.emit("run.completed", { data: { reply: "全部任务已经完成" } });
         await promise;
         expect(stages).toEqual([
-            { key: "planning", text: "正在理解需求并分析当前画布" },
-            { key: "plan", text: "文本执行计划已生成，正在准备任务" },
-            { key: "executing", text: "正在执行「生成文案」（第 1 次）" },
+            { key: "planning", text: "Understanding the request and reviewing the Canvas" },
+            { key: "plan", text: "The execution plan is ready. Preparing tasks…" },
+            { key: "executing", text: "Running 生成文案 (attempt 1)" },
         ]);
         expect(messages).toEqual(["文案已经返回", "全部任务已经完成"]);
         expect(details).toEqual([
@@ -120,7 +120,7 @@ describe("Canvas Agent 事件流", () => {
             { type: "update_node", id: "output-run-0-0", metadata: { status: "loading" } },
             { type: "update_node", id: "output-run-0-0", metadata: { status: "error" } },
         ]);
-        expect(messages).toEqual([{ text: "「编辑图片」执行失败：生成渠道暂时无法连接", detail: { taskType: undefined, nodeIds: [], taskId: "task", title: "编辑图片", runId: "run" } }]);
+        expect(messages).toEqual([{ text: "编辑图片 failed. Please try again later.", detail: { taskType: undefined, nodeIds: [], taskId: "task", title: "编辑图片", runId: "run" } }]);
     });
 
     it("applies each child result immediately and keeps successful siblings visible", async () => {
@@ -166,12 +166,12 @@ describe("Canvas Agent 事件流", () => {
             { type: "update_node", id: "output-run-0-1", metadata: { status: "error" } },
         ]);
         expect(stages).toEqual([
-            { key: "executing", text: "「角色图」已完成 1/2" },
-            { key: "executing", text: "「角色图」已完成 1/2，失败 1" },
+            { key: "executing", text: "角色图: 1/2 complete" },
+            { key: "executing", text: "角色图: 1/2 complete, 1 failed" },
         ]);
         expect(messages).toEqual([
-            { text: "「角色图」已完成 1/2", detail: { nodeIds: ["output-run-0-0"], taskType: "image" } },
-            { text: "「角色图」已完成 1/2，失败 1", detail: { nodeIds: ["output-run-0-0"], taskType: "image" } },
+            { text: "角色图: 1/2 complete", detail: { nodeIds: ["output-run-0-0"], taskType: "image" } },
+            { text: "角色图: 1/2 complete, 1 failed", detail: { nodeIds: ["output-run-0-0"], taskType: "image" } },
             { text: "可用结果已经返回", detail: { nodeIds: ["output-run-0-0"], taskType: "image" } },
         ]);
     });
@@ -189,7 +189,7 @@ describe("Canvas Agent 事件流", () => {
         FakeEventSource.instance.emit("run.failed", { data: { message: "生成渠道暂时无法连接，请稍后重试或联系管理员。" } });
         await promise;
 
-        expect(messages).toEqual([{ text: "生成渠道暂时无法连接，请稍后重试或联系管理员。", detail: { runId: "run", title: "Agent 执行失败" } }]);
+        expect(messages).toEqual([{ text: "Agent failed. Please try again later.", detail: { runId: "run", title: "Agent failed. Please try again later." } }]);
     });
 
     it("keeps a non-terminal Run alive after an event connection interruption", async () => {
@@ -205,7 +205,7 @@ describe("Canvas Agent 事件流", () => {
         });
 
         FakeEventSource.instance.onerror?.();
-        await vi.waitFor(() => expect(stages.some((stage) => stage.text === "任务仍在后台运行，正在恢复连接")).toBe(true));
+        await vi.waitFor(() => expect(stages.some((stage) => stage.text === "The task is still running in the background. Reconnecting…")).toBe(true));
         expect(FakeEventSource.instance.closed).toBe(false);
 
         FakeEventSource.instance.emit("run.completed", { data: { reply: "完成" } });
@@ -235,7 +235,7 @@ describe("Canvas Agent 事件流", () => {
         FakeEventSource.instance.onerror?.();
         await promise;
 
-        expect(messages).toEqual(["「视频」执行失败：上游明确失败"]);
+        expect(messages).toEqual(["视频 failed. Please try again later."]);
         expect(FakeEventSource.instance.closed).toBe(true);
     });
 

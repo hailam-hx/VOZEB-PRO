@@ -35,7 +35,7 @@ describe("Canvas Agent session deletion", () => {
         );
 
         expect(result.sessions).toHaveLength(1);
-        expect(result.sessions[0]).toMatchObject({ title: "新对话", messages: [] });
+        expect(result.sessions[0]).toMatchObject({ title: "New chat", messages: [] });
         expect(result.activeSessionId).toBe(result.sessions[0].id);
     });
 });
@@ -61,7 +61,8 @@ describe("Canvas Agent current-turn references", () => {
         expect(composer).toContain("relative size-10");
         expect(composer).toContain("max-w-[44%]");
         expect(composer).toContain('className="relative min-w-0 flex-1"');
-        expect(composer.indexOf('aria-label="本轮参考素材"')).toBeLessThan(composer.indexOf("<Popover"));
+        expect(composer.indexOf('aria-label={t("assistant.currentReferences")}')).toBeGreaterThanOrEqual(0);
+        expect(composer.indexOf('aria-label={t("assistant.currentReferences")}')).toBeLessThan(composer.indexOf("<Popover"));
         expect(composer.indexOf("<Popover")).toBeLessThan(composer.indexOf("<textarea"));
     });
 
@@ -84,8 +85,8 @@ describe("Canvas Agent current-turn references", () => {
         const toolbar = chatSource.slice(chatSource.indexOf('className="mt-2 flex min-w-0'), chatSource.indexOf("export function AgentPanelTabs"));
         const controls = controlsSource.slice(controlsSource.indexOf("const mutedStyle"), controlsSource.indexOf("function capabilityLabel"));
 
-        expect(inputRow).toContain('aria-label={uploading ? "正在上传图片" : attachments.length ? "继续添加参考素材" : "添加参考素材"}');
-        expect(inputRow.indexOf('aria-label="本轮参考素材"')).toBeLessThan(inputRow.indexOf("<textarea"));
+        expect(inputRow).toContain('aria-label={uploading ? t("assistant.uploadingImages") : attachments.length ? t("assistant.addMoreReferences") : t("assistant.addReferences")}');
+        expect(inputRow.indexOf('aria-label={t("assistant.currentReferences")}')).toBeLessThan(inputRow.indexOf("<textarea"));
         expect(toolbar).toContain("data-canvas-agent-toolbar");
         expect(toolbar).not.toContain("添加参考素材");
         expect(inputRow).toContain("min-h-20");
@@ -98,7 +99,7 @@ describe("Canvas Agent current-turn references", () => {
         expect(controlsSource).toContain('data-creative-agent-model-picker={compact ? "compact" : "default"}');
         expect(controlsSource).toContain('compact ? "max-w-[280px]"');
         expect(controlsSource).toContain('compact ? "max-h-40"');
-        expect(toolbar.indexOf("{left}")).toBeLessThan(toolbar.indexOf('aria-label="发送"'));
+        expect(toolbar.indexOf("{left}")).toBeLessThan(toolbar.indexOf('aria-label={t("assistant.send")}'));
         expect(assistantSource.indexOf("middle={<CanvasAgentGenerationSettings")).toBeGreaterThan(assistantSource.indexOf("<CreativeAgentControls"));
         expect(controls.indexOf("skillOpen")).toBeLessThan(controls.indexOf("smartPlanning"));
         expect(controls.indexOf("smartPlanning")).toBeLessThan(controls.indexOf("modelOpen"));
@@ -113,10 +114,10 @@ describe("Canvas Agent current-turn references", () => {
 
         expect(imageSettings).toContain('triggerIcon={<SlidersHorizontal className="size-4" />}');
         expect(videoSettings).toContain('triggerIcon={<SlidersHorizontal className="size-4" />}');
-        expect(imageSettings).toContain("canvasImagePreferenceSummary(preferences, fixedSizeLabel)");
+        expect(imageSettings).toContain("canvasImagePreferenceSummary(preferences, fixedSizeLabel, {");
         expect(imageSettings).toContain('triggerLabelClassName="whitespace-nowrap text-left !overflow-visible !text-clip"');
-        expect(imageSettings).toContain('count > 1 ? ` · ${count}张` : ""');
-        expect(videoSettings).toContain("canvasVideoPreferenceSummary(preferences)");
+        expect(imageSettings).toContain('count > 1 ? ` · ${labels.count(count)}` : ""');
+        expect(videoSettings).toContain("canvasVideoPreferenceSummary(preferences, {");
         expect(videoSettings).toContain('triggerLabelClassName="whitespace-nowrap text-left !overflow-visible !text-clip"');
     });
 

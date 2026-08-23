@@ -3,6 +3,7 @@
 import { ChevronRight, CircleHelp } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
@@ -11,6 +12,7 @@ import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: NavigationToolSlug; expanded: boolean }) {
+    const t = useTranslations("workspace");
     const pathname = usePathname();
     const router = useRouter();
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
@@ -24,12 +26,12 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                 {expanded ? <span className="ml-3 min-w-0 truncate text-[15px] font-semibold">{siteTitle}</span> : null}
             </Link>
 
-            <nav className={cn("hide-scrollbar min-h-0 flex-1 overflow-y-auto py-5", expanded ? "px-3" : "px-2")} aria-label="工作空间导航">
+            <nav className={cn("hide-scrollbar min-h-0 flex-1 overflow-y-auto py-5", expanded ? "px-3" : "px-2")} aria-label={t("navigation")}>
                 {navigationGroups.map((group, groupIndex) => {
                     const tools = navigationTools.filter((tool) => tool.group === group.id);
                     return (
                         <div key={group.id} className={cn(groupIndex > 0 && "mt-[22px]")}>
-                            {expanded ? <div className="mb-1.5 px-2 text-xs font-normal text-[#98a2b3] dark:text-[#737d89]">{group.label}</div> : null}
+                            {expanded ? <div className="mb-1.5 px-2 text-xs font-normal text-[#98a2b3] dark:text-[#737d89]">{t(group.labelKey)}</div> : null}
                             <div className="space-y-1">
                                 {tools.map((tool) => {
                                     const Icon = tool.icon;
@@ -40,7 +42,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                                             key={tool.slug}
                                             href={`/${tool.slug}`}
                                             prefetch
-                                            title={tool.label}
+                                            title={t(tool.labelKey)}
                                             onMouseEnter={() => router.prefetch(`/${tool.slug}`)}
                                             onFocus={() => router.prefetch(`/${tool.slug}`)}
                                             className={cn(
@@ -55,7 +57,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                                             aria-current={active ? "page" : undefined}
                                         >
                                             <Icon className={cn("size-[18px] shrink-0", active && "text-[#5965ff]")} />
-                                            {expanded ? <span className="min-w-0 truncate">{tool.label}</span> : null}
+                                            {expanded ? <span className="min-w-0 truncate">{t(tool.labelKey)}</span> : null}
                                             {active ? <span className="absolute right-2.5 h-[18px] w-0.5 rounded-full bg-[#5965ff]" /> : null}
                                         </Link>
                                     );
@@ -70,7 +72,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                 <Link
                     href="/help"
                     prefetch
-                    title="帮助"
+                    title={t("help")}
                     onMouseEnter={() => router.prefetch("/help")}
                     onFocus={() => router.prefetch("/help")}
                     className={cn(
@@ -84,7 +86,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                     {expanded ? (
                         <>
                             <span className="min-w-0 flex-1">
-                                <span className="block truncate">帮助</span>
+                                <span className="block truncate">{t("help")}</span>
                             </span>
                             <ChevronRight className="size-4 shrink-0 text-[#7f8995]" />
                         </>

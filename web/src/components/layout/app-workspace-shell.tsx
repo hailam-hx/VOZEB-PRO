@@ -4,6 +4,7 @@ import { Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
+import { useTranslations } from "next-intl";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { isFullscreenWorkspacePath } from "@/components/layout/app-workspace-path";
@@ -14,13 +15,14 @@ import { navigationToolForPathname } from "@/constant/navigation-tools";
 import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
-const PAGE_TITLES: Record<string, string> = {
-    billing: "充值中心",
-    help: "帮助中心",
-    profile: "个人中心",
+const PAGE_TITLE_KEYS: Record<string, "billing" | "helpCenter" | "profileCenter"> = {
+    billing: "billing",
+    help: "helpCenter",
+    profile: "profileCenter",
 };
 
 export function AppWorkspaceShell({ children }: { children: ReactNode }) {
+    const t = useTranslations("workspace");
     const pathname = usePathname();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [sidebarExpanded, setSidebarExpanded] = useState(true);
@@ -29,7 +31,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const tool = navigationToolForPathname(pathname);
     const fullscreen = isFullscreenWorkspacePath(pathname);
     const rootSlug = pathname.split("/").filter(Boolean)[0] || "";
-    const pageTitle = tool?.label || PAGE_TITLES[rootSlug] || "工作空间";
+    const pageTitle = tool ? t(tool.labelKey) : PAGE_TITLE_KEYS[rootSlug] ? t(PAGE_TITLE_KEYS[rootSlug]) : t("workspace");
 
     if (fullscreen) return <div className="h-dvh min-h-0 overflow-hidden">{children}</div>;
 
@@ -43,8 +45,8 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                             type="button"
                             className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 lg:hidden dark:text-stone-300 dark:hover:bg-stone-900 dark:hover:text-white"
                             onClick={() => setMobileNavOpen(true)}
-                            aria-label="打开导航菜单"
-                            title="导航菜单"
+                            aria-label={t("openNavigation")}
+                            title={t("navigationMenu")}
                         >
                             <Menu className="size-5" />
                         </button>
@@ -55,8 +57,8 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                             type="button"
                             className="hidden size-8 shrink-0 items-center justify-center rounded-lg text-[#68717c] transition hover:bg-[#f1f3f5] hover:text-[#20242a] lg:inline-flex dark:text-[#a5adb8] dark:hover:bg-[#22262c] dark:hover:text-white"
                             onClick={() => setSidebarExpanded((value) => !value)}
-                            aria-label={sidebarExpanded ? "收起侧边栏" : "展开侧边栏"}
-                            title={sidebarExpanded ? "收起侧边栏" : "展开侧边栏"}
+                            aria-label={sidebarExpanded ? t("collapseSidebar") : t("expandSidebar")}
+                            title={sidebarExpanded ? t("collapseSidebar") : t("expandSidebar")}
                             aria-pressed={sidebarExpanded}
                         >
                             {sidebarExpanded ? <PanelLeftClose className="size-[17px]" /> : <PanelLeftOpen className="size-[17px]" />}

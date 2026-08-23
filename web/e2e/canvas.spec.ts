@@ -660,7 +660,7 @@ test("canvas Agent keeps simultaneous runs bound to separate chats", async ({ pa
         await page.getByRole("button", { name: "发送" }).click();
         await expect.poll(() => createBodies.length).toBe(1);
 
-        await page.getByRole("button", { name: "新建对话" }).click();
+        await page.getByRole("button", { name: "新对话" }).click();
         await expect(composer).toBeEnabled();
         await composer.fill("第二条后台任务");
         await page.getByRole("button", { name: "发送" }).click();
@@ -679,7 +679,7 @@ test("canvas Agent keeps simultaneous runs bound to separate chats", async ({ pa
 
         await page.getByRole("tab", { name: /历史/ }).click();
         await page.getByRole("button", { name: "进入对话：第一条后台任务" }).click();
-        await expect(page.getByText(/正在理解需求并分析当前画布|任务仍在后台运行/)).toBeVisible();
+        await expect(page.getByText(/正在理解需求并分析当前画布|任务仍在后台运行|正在恢复连接/)).toBeVisible();
         await expect(page.getByText("第一条后台任务", { exact: true })).toBeVisible();
     } finally {
         await deleteCanvasProject(request, project.id);

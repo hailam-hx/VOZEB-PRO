@@ -106,6 +106,10 @@
         width: 100%;
     }
 
+    .canvas-topbar .canvas-topbar-divider {
+        display: none;
+    }
+
     .canvas-topbar-actions {
         align-items: center;
         flex: 0 0 auto;

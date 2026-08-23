@@ -28,8 +28,8 @@ describe("public creator modal", () => {
 
         expect(personal).toContain('type ProfileTab = "published" | "likes"');
         expect(personal).toContain('view: "likes"');
-        expect(personal).toContain("我的喜欢");
-        expect(publicProfile).not.toContain("我的喜欢");
+        expect(personal).toContain('t("tabs.likes")');
+        expect(publicProfile).not.toContain('t("tabs.likes")');
         expect(publicProfile).not.toContain('view: "likes"');
     });
 

@@ -5,17 +5,18 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Bell, CheckCheck, ChevronDown, Heart, Megaphone, RotateCcw, X } from "lucide-react";
 import { Modal } from "antd";
+import { useFormatter, useTranslations } from "next-intl";
 
 import { useAnnouncementReadState } from "@/hooks/use-announcement-read-state";
 import { useAnnouncements } from "@/hooks/use-announcements";
 import { useInteractionNotifications } from "@/hooks/use-interaction-notifications";
-import { formatAnnouncementTime } from "@/lib/announcement-notifications";
 import { cn } from "@/lib/utils";
 import type { PublicAnnouncement } from "@/services/api/announcements";
 import type { InteractionNotification } from "@/services/api/work-community";
 import { useUserStore } from "@/stores/use-user-store";
 
 export function AnnouncementNotificationCenter({ compact, buttonClassName, buttonStyle, onOpen }: { compact: boolean; buttonClassName: string; buttonStyle?: CSSProperties; onOpen?: () => void }) {
+    const t = useTranslations("common.notifications");
     const { data: announcements = [], error, isFetching, refetch } = useAnnouncements();
     const user = useUserStore((state) => state.user);
     const interactions = useInteractionNotifications(user?.id);
@@ -44,7 +45,7 @@ export function AnnouncementNotificationCenter({ compact, buttonClassName, butto
         }
     };
     const button = (
-        <button type="button" className={cn(buttonClassName, "relative")} style={buttonStyle} onClick={() => handleOpenChange(true)} aria-label={totalUnread ? `通知中心，${totalUnread} 条未读` : "通知中心"} title="通知中心" aria-expanded={open}>
+        <button type="button" className={cn(buttonClassName, "relative")} style={buttonStyle} onClick={() => handleOpenChange(true)} aria-label={totalUnread ? t("unreadAria", { count: totalUnread }) : t("title")} title={t("title")} aria-expanded={open}>
             <Bell className="size-4" />
             {hydrated && totalUnread ? (
                 <span className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-[#66758e] px-1 text-[9px] font-semibold leading-[14px] text-white ring-2 ring-white dark:bg-[#d8dee8] dark:text-[#252b33] dark:ring-[#181b20]">
@@ -140,24 +141,25 @@ function AnnouncementPanel({
     onInteractionMore: () => void;
     onInteractionRetry: () => void;
 }) {
+    const t = useTranslations("common.notifications");
     return (
-        <section className="flex max-h-[72dvh] min-h-0 w-full flex-col bg-white text-[#20242a] dark:bg-[#15181d] dark:text-[#f3f5f7] sm:max-h-[560px]" aria-label="公告通知中心">
+        <section className="flex max-h-[72dvh] min-h-0 w-full flex-col bg-white text-[#20242a] dark:bg-[#15181d] dark:text-[#f3f5f7] sm:max-h-[560px]" aria-label={t("aria")}>
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e8ebef] px-4 py-3.5 dark:border-[#2a2f36]">
                 <div className="flex min-w-0 items-center gap-3">
                     <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eef1f5] text-[#536178] dark:bg-[#232831] dark:text-[#d8dee8]">
                         <Megaphone className="size-[17px]" />
                     </span>
                     <div className="min-w-0">
-                        <h2 className="text-sm font-semibold tracking-tight">通知中心</h2>
-                        <p className="mt-0.5 text-[11px] text-[#8a939f] dark:text-[#8f98a5]">站点公告与社区互动</p>
+                        <h2 className="text-sm font-semibold tracking-tight">{t("title")}</h2>
+                        <p className="mt-0.5 text-[11px] text-[#8a939f] dark:text-[#8f98a5]">{t("description")}</p>
                     </div>
                 </div>
                 <button
                     type="button"
                     className="grid size-8 shrink-0 place-items-center rounded-lg text-[#7c8591] transition hover:bg-[#f1f3f5] hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:bg-[#22262c] dark:hover:text-white"
                     onClick={onClose}
-                    aria-label="关闭通知中心"
-                    title="关闭"
+                    aria-label={t("closeAria")}
+                    title={t("close")}
                 >
                     <X className="size-4" />
                 </button>
@@ -171,7 +173,7 @@ function AnnouncementPanel({
                     )}
                     onClick={() => onTabChange("announcements")}
                 >
-                    公告 {sessionUnreadIds.size ? `· ${sessionUnreadIds.size}` : ""}
+                    {t("announcements")} {sessionUnreadIds.size ? `· ${sessionUnreadIds.size}` : ""}
                 </button>
                 <button
                     type="button"
@@ -181,7 +183,7 @@ function AnnouncementPanel({
                     )}
                     onClick={() => onTabChange("interactions")}
                 >
-                    互动 {interactionUnreadCount ? `· ${interactionUnreadCount}` : ""}
+                    {t("interactions")} {interactionUnreadCount ? `· ${interactionUnreadCount}` : ""}
                 </button>
             </div>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -198,8 +200,8 @@ function AnnouncementPanel({
                     <div className="grid min-h-40 place-items-center px-5 py-10 text-center">
                         <div>
                             <Bell className="mx-auto size-5 text-[#a4acb6]" />
-                            <p className="mt-3 text-sm font-medium">暂时没有新公告</p>
-                            <p className="mt-1 text-xs text-[#8a939f] dark:text-[#8f98a5]">后续通知会在这里集中展示</p>
+                            <p className="mt-3 text-sm font-medium">{t("emptyAnnouncements")}</p>
+                            <p className="mt-1 text-xs text-[#8a939f] dark:text-[#8f98a5]">{t("emptyAnnouncementsDescription")}</p>
                         </div>
                     </div>
                 ) : null}
@@ -217,7 +219,7 @@ function AnnouncementPanel({
                                 disabled={interactionLoadingMore}
                                 onClick={onInteractionMore}
                             >
-                                {interactionLoadingMore ? "加载中..." : "查看更多"}
+                                {interactionLoadingMore ? t("loadingMore") : t("viewMore")}
                             </button>
                         ) : null}
                     </div>
@@ -226,8 +228,8 @@ function AnnouncementPanel({
                     <div className="grid min-h-40 place-items-center px-5 py-10 text-center">
                         <div>
                             <Heart className="mx-auto size-5 text-[#a4acb6]" />
-                            <p className="mt-3 text-sm font-medium">暂时没有互动通知</p>
-                            <p className="mt-1 text-xs text-[#8a939f] dark:text-[#8f98a5]">点赞和关注会显示在这里</p>
+                            <p className="mt-3 text-sm font-medium">{t("emptyInteractions")}</p>
+                            <p className="mt-1 text-xs text-[#8a939f] dark:text-[#8f98a5]">{t("emptyInteractionsDescription")}</p>
                         </div>
                     </div>
                 ) : null}
@@ -238,7 +240,7 @@ function AnnouncementPanel({
                     onClick={onClose}
                     className="flex h-11 shrink-0 items-center justify-center border-t border-[#e8ebef] text-xs font-semibold text-[#59677d] transition hover:bg-[#f7f8fa] hover:text-[#20242a] dark:border-[#2a2f36] dark:text-[#c2c8d1] dark:hover:bg-[#1d2127] dark:hover:text-white"
                 >
-                    查看全部公告
+                    {t("viewAllAnnouncements")}
                 </Link>
             ) : interactionUnreadCount ? (
                 <button
@@ -246,7 +248,7 @@ function AnnouncementPanel({
                     onClick={onInteractionReadAll}
                     className="flex h-11 shrink-0 items-center justify-center gap-2 border-t border-[#e8ebef] text-xs font-semibold text-[#59677d] transition hover:bg-[#f7f8fa] hover:text-[#20242a] dark:border-[#2a2f36] dark:text-[#c2c8d1] dark:hover:bg-[#1d2127] dark:hover:text-white"
                 >
-                    <CheckCheck className="size-3.5" /> 全部设为已读
+                    <CheckCheck className="size-3.5" /> {t("markAllRead")}
                 </button>
             ) : null}
         </section>
@@ -254,6 +256,8 @@ function AnnouncementPanel({
 }
 
 function InteractionRow({ item, onClose, onRead }: { item: InteractionNotification; onClose: () => void; onRead: (id: string) => void }) {
+    const t = useTranslations("common.notifications");
+    const format = useFormatter();
     return (
         <Link
             href={item.targetPath}
@@ -266,14 +270,15 @@ function InteractionRow({ item, onClose, onRead }: { item: InteractionNotificati
             <span className={cn("absolute left-4 top-[19px] size-2 rounded-full ring-4 ring-white dark:ring-[#15181d]", item.readAt ? "bg-[#cbd0d6] dark:bg-[#4b535e]" : "bg-[#66758e] dark:bg-[#d8dee8]")} aria-hidden="true" />
             <div className="min-w-0 pl-5">
                 <div className="text-sm font-semibold leading-5 text-[#343b44] dark:text-[#eef1f4]">{item.summary}</div>
-                <p className="mt-1 truncate text-xs text-[#6f7884] dark:text-[#a7afb9]">{item.actor?.displayName || item.actor?.username || "系统通知"}</p>
-                <time className="mt-1.5 block text-[11px] text-[#9aa2ad] dark:text-[#737d89]">{formatAnnouncementTime(item.createdAt)}</time>
+                <p className="mt-1 truncate text-xs text-[#6f7884] dark:text-[#a7afb9]">{item.actor?.displayName || item.actor?.username || t("system")}</p>
+                <time className="mt-1.5 block text-[11px] text-[#9aa2ad] dark:text-[#737d89]">{format.dateTime(new Date(item.createdAt), { dateStyle: "medium", timeStyle: "short" })}</time>
             </div>
         </Link>
     );
 }
 
 function AnnouncementRow({ announcement, expanded, unread, onExpand }: { announcement: PublicAnnouncement; expanded: boolean; unread: boolean; onExpand: () => void }) {
+    const format = useFormatter();
     return (
         <button type="button" className="group relative block w-full px-4 py-3.5 text-left transition hover:bg-[#f7f8fa] dark:hover:bg-[#1d2127]" onClick={onExpand} aria-expanded={expanded}>
             <span className={cn("absolute left-4 top-[19px] size-2 rounded-full ring-4 ring-white dark:ring-[#15181d]", unread ? "bg-[#66758e] dark:bg-[#d8dee8]" : "bg-[#cbd0d6] dark:bg-[#4b535e]")} aria-hidden="true" />
@@ -283,15 +288,16 @@ function AnnouncementRow({ announcement, expanded, unread, onExpand }: { announc
                     <ChevronDown className={cn("mt-0.5 size-3.5 shrink-0 text-[#9aa2ad] transition", expanded && "rotate-180")} />
                 </div>
                 <p className={cn("mt-1 whitespace-pre-wrap text-xs leading-5 text-[#6f7884] dark:text-[#a7afb9]", expanded ? "" : "line-clamp-2")}>{announcement.content}</p>
-                <time className="mt-1.5 block text-[11px] text-[#9aa2ad] dark:text-[#737d89]">{formatAnnouncementTime(announcement.createdAt)}</time>
+                <time className="mt-1.5 block text-[11px] text-[#9aa2ad] dark:text-[#737d89]">{format.dateTime(new Date(announcement.createdAt), { dateStyle: "medium", timeStyle: "short" })}</time>
             </div>
         </button>
     );
 }
 
 function AnnouncementLoading() {
+    const t = useTranslations("common.notifications");
     return (
-        <div className="divide-y divide-[#edf0f3] dark:divide-[#272c33]" aria-label="公告加载中">
+        <div className="divide-y divide-[#edf0f3] dark:divide-[#272c33]" aria-label={t("loading")}>
             {[0, 1, 2].map((item) => (
                 <div key={item} className="animate-pulse px-4 py-4">
                     <div className="ml-5 h-3 w-2/3 rounded bg-[#e8ebef] dark:bg-[#2a3038]" />
@@ -304,16 +310,17 @@ function AnnouncementLoading() {
 }
 
 function AnnouncementError({ onRetry }: { onRetry: () => void }) {
+    const t = useTranslations("common.notifications");
     return (
         <div className="grid min-h-40 place-items-center px-5 py-10 text-center">
             <div>
-                <p className="text-sm font-medium">公告暂时无法加载</p>
+                <p className="text-sm font-medium">{t("loadFailed")}</p>
                 <button
                     type="button"
                     className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dfe3e8] px-3 text-xs font-semibold text-[#59616c] transition hover:bg-[#f3f5f7] hover:text-[#20242a] dark:border-[#343a43] dark:text-[#c4cad2] dark:hover:bg-[#22262c] dark:hover:text-white"
                     onClick={onRetry}
                 >
-                    <RotateCcw className="size-3.5" /> 重新加载
+                    <RotateCcw className="size-3.5" /> {t("reload")}
                 </button>
             </div>
         </div>

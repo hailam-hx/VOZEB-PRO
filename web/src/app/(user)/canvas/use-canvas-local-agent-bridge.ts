@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { App } from "antd";
+import { useTranslations } from "next-intl";
 
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "./utils/canvas-agent-ops";
 
@@ -9,6 +10,7 @@ type CanvasAgentConnection = { endpoint: string; token: string };
 type CanvasAgentToolCall = { requestId: string; name: string; input?: { ops?: CanvasAgentOp[] } };
 
 export function useCanvasLocalAgentBridge({ snapshot, onApplyOps }: { snapshot: CanvasAgentSnapshot; onApplyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot }) {
+    const t = useTranslations("canvas.localAgent");
     const { message, modal } = App.useApp();
     const [connection] = useState(() => resolveCanvasAgentConnection(typeof window === "undefined" ? "" : window.location.search));
     const [connected, setConnected] = useState(false);
@@ -30,23 +32,23 @@ export function useCanvasLocalAgentBridge({ snapshot, onApplyOps }: { snapshot: 
             removeCanvasAgentCredentialsFromUrl();
             if (!notifiedRef.current) {
                 notifiedRef.current = true;
-                message.success("本地 Canvas Agent 已连接");
+                message.success(t("connected"));
             }
         });
         source.addEventListener("tool_call", (event) => {
             const call = parseToolCall(event);
             if (!call) return;
-            void handleToolCall(call, connection, clientId, snapshotRef, applyOpsRef, (ops) => confirmCanvasOps(modal, ops));
+            void handleToolCall(call, connection, clientId, snapshotRef, applyOpsRef, (ops) => confirmCanvasOps(modal, { title: t("confirmTitle"), content: t("confirmDescription", { count: ops.length }), allow: t("allow"), reject: t("reject") }));
         });
         source.onerror = () => {
             setConnected(false);
-            if (!notifiedRef.current) message.warning("本地 Canvas Agent 连接失败，请确认本地服务仍在运行");
+            if (!notifiedRef.current) message.warning(t("connectionFailed"));
         };
         return () => {
             setConnected(false);
             source.close();
         };
-    }, [connection, message, modal]);
+    }, [connection, message, modal, t]);
 
     useEffect(() => {
         if (!connection || !connected) return;
@@ -76,10 +78,10 @@ export async function executeCanvasAgentToolCall(call: CanvasAgentToolCall, snap
         const selected = new Set(snapshot.selectedNodeIds);
         return { nodes: snapshot.nodes.filter((node) => selected.has(node.id)) };
     }
-    if (call.name !== "canvas_apply_ops") throw new Error(`网页不支持本地工具：${call.name}`);
+    if (call.name !== "canvas_apply_ops") throw new Error(`Unsupported local tool: ${call.name}`);
     const ops = Array.isArray(call.input?.ops) ? call.input.ops.filter((op) => Boolean(op?.type)) : [];
-    if (!ops.length) throw new Error("本地 Agent 没有提供有效画布操作");
-    if (!(await confirmOps(ops))) throw new Error("用户拒绝了画布操作");
+    if (!ops.length) throw new Error("The local Agent did not provide valid Canvas operations");
+    if (!(await confirmOps(ops))) throw new Error("The user rejected the Canvas operations");
     return applyOps(ops);
 }
 
@@ -96,7 +98,7 @@ async function handleToolCall(
         await postCanvasAgentResult(connection, clientId, { requestId: call.requestId, result });
         if (call.name === "canvas_apply_ops") await postCanvasAgentState(connection, clientId, result as CanvasAgentSnapshot);
     } catch (error) {
-        await postCanvasAgentResult(connection, clientId, { requestId: call.requestId, error: error instanceof Error ? error.message : "画布操作失败" });
+        await postCanvasAgentResult(connection, clientId, { requestId: call.requestId, error: error instanceof Error ? error.message : "Canvas operation failed" });
     }
 }
 
@@ -109,7 +111,7 @@ function parseToolCall(event: Event): CanvasAgentToolCall | null {
     }
 }
 
-function confirmCanvasOps(modal: ReturnType<typeof App.useApp>["modal"], ops: CanvasAgentOp[]) {
+function confirmCanvasOps(modal: ReturnType<typeof App.useApp>["modal"], copy: { title: string; content: string; allow: string; reject: string }) {
     return new Promise<boolean>((resolve) => {
         let settled = false;
         const finish = (value: boolean) => {
@@ -118,10 +120,10 @@ function confirmCanvasOps(modal: ReturnType<typeof App.useApp>["modal"], ops: Ca
             resolve(value);
         };
         modal.confirm({
-            title: "允许本地 Canvas Agent 修改画布？",
-            content: `将执行 ${ops.length} 项节点或连线操作。`,
-            okText: "允许",
-            cancelText: "拒绝",
+            title: copy.title,
+            content: copy.content,
+            okText: copy.allow,
+            cancelText: copy.reject,
             onOk: () => finish(true),
             onCancel: () => finish(false),
             afterClose: () => finish(false),
@@ -139,7 +141,7 @@ function postCanvasAgentResult(connection: CanvasAgentConnection, clientId: stri
 
 async function postCanvasAgentJson(connection: CanvasAgentConnection, path: string, body: unknown) {
     const response = await fetch(`${connection.endpoint}${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(connection.token)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    if (!response.ok) throw new Error("本地 Canvas Agent 请求失败");
+    if (!response.ok) throw new Error("Local Canvas Agent request failed");
 }
 
 function removeCanvasAgentCredentialsFromUrl() {

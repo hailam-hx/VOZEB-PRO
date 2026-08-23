@@ -1,10 +1,8 @@
 import type { AiTextMessage } from "@/types/ai";
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
-import { getGenerationResourceNodes } from "../utils/canvas-resource-references";
+import { getGenerationResourceNodes, type CanvasResourceLabel } from "../utils/canvas-resource-references";
 
 type NodeGenerationContext = {
     prompt: string;
@@ -27,11 +25,11 @@ export type NodeGenerationInput = {
     audio?: ReferenceAudio;
 };
 
-export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string): NodeGenerationContext {
+export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, labelForKind: CanvasResourceLabel = defaultGenerationLabel): NodeGenerationContext {
     const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
     const sourceNode = nodes.find((node) => node.id === nodeId);
     if (sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) {
-        return buildComposerGenerationContext(inputs, prompt);
+        return buildComposerGenerationContext(inputs, prompt, labelForKind);
     }
 
     const upstreamText = inputs
@@ -54,7 +52,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     };
 }
 
-function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string): NodeGenerationContext {
+function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string, labelForKind: CanvasResourceLabel): NodeGenerationContext {
     const inputByNodeId = new Map(inputs.map((input) => [input.nodeId, input]));
     const selectedInputs: NodeGenerationInput[] = [];
     const labelByNodeId = new Map<string, string>();
@@ -72,7 +70,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
         if (input) {
             let label = labelByNodeId.get(input.nodeId);
             if (!label) {
-                label = generationLabel(input.type, counts[input.type]++);
+                label = labelForKind(input.type, counts[input.type]++);
                 labelByNodeId.set(input.nodeId, label);
                 if (input.type === "text") textBlocks.push(`【${label}】\n${input.text || ""}`);
                 else selectedInputs.push(input);
@@ -150,11 +148,9 @@ function readNodeTextInput(node: CanvasNodeData) {
     return node.metadata?.prompt || "";
 }
 
-function generationLabel(type: NodeGenerationInput["type"], index: number) {
-    if (type === "image") return imageReferenceLabel(index);
-    if (type === "video") return seedanceReferenceLabel("video", index);
-    if (type === "audio") return seedanceReferenceLabel("audio", index);
-    return `文本${index + 1}`;
+function defaultGenerationLabel(type: NodeGenerationInput["type"], index: number) {
+    const label = type === "image" ? "Image" : type === "video" ? "Video" : type === "audio" ? "Audio" : "Text";
+    return `${label} ${index + 1}`;
 }
 
 function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {

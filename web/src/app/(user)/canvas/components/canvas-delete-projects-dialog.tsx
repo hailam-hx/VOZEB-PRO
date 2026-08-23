@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { App, Button, Modal } from "antd";
+import { useTranslations } from "next-intl";
 
 import { useCanvasStore } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 
 export function CanvasDeleteProjectsDialog() {
+    const t = useTranslations("canvas");
     const { message } = App.useApp();
     const [deleting, setDeleting] = useState(false);
     const ids = useCanvasUiStore((state) => state.deleteProjectIds);
@@ -19,8 +21,8 @@ export function CanvasDeleteProjectsDialog() {
             await deleteProjects(ids);
             removeSelectedIds(ids);
             setDeleteIds([]);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "画布删除失败");
+        } catch {
+            message.error(t("deleteFailed"));
         } finally {
             setDeleting(false);
         }
@@ -28,20 +30,20 @@ export function CanvasDeleteProjectsDialog() {
 
     return (
         <Modal
-            title="删除画布？"
+            title={t("deleteCanvasesQuestion")}
             open={ids.length > 0}
             centered
             onCancel={() => setDeleteIds([])}
             footer={
                 <>
-                    <Button onClick={() => setDeleteIds([])}>取消</Button>
+                    <Button onClick={() => setDeleteIds([])}>{t("cancel")}</Button>
                     <Button danger type="primary" loading={deleting} onClick={() => void confirm()}>
-                        删除
+                        {t("delete")}
                     </Button>
                 </>
             }
         >
-            <p className="text-sm text-stone-500">将永久删除 {ids.length} 个画布、节点、连线和专属生成记录；仍被素材库、其他项目或作品引用的媒体会保留。</p>
+            <p className="text-sm text-stone-500">{t("deleteDescription", { count: ids.length })}</p>
         </Modal>
     );
 }

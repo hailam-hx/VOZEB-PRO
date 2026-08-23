@@ -4,12 +4,14 @@ import { ArrowRight, GalleryVerticalEnd, Plus, Search, Sparkles } from "lucide-r
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Select } from "antd";
+import { useTranslations } from "next-intl";
 
 import { PublicWorkPreviewModal } from "@/components/works/public-work-preview-modal";
 import { PublicWorkGalleryCard } from "@/components/works/public-work-gallery-card";
 import { PublicCreatorModal } from "@/components/works/public-creator-modal";
 import { ResponsiveMasonryGrid } from "@/components/works/responsive-masonry-grid";
 import { WORK_CATEGORY_OPTIONS } from "@/lib/work-publication-options";
+import { workCategoryMessageKeys } from "@/i18n/display-keys";
 import { cn } from "@/lib/utils";
 import type { GalleryFilters, GalleryResult } from "./gallery-data";
 import { GalleryPublishLink } from "./gallery-publish-link";
@@ -18,6 +20,8 @@ const controlClass = "h-10 min-w-0 rounded-md border border-border bg-card px-3 
 const primaryLinkClass = "inline-flex h-9 items-center justify-center gap-2 rounded-md !bg-foreground px-4 text-sm font-medium !text-background transition hover:opacity-80";
 
 export function GalleryView({ filters, gallery, basePath, embedded = false }: { filters: GalleryFilters; gallery: GalleryResult; basePath: string; embedded?: boolean }) {
+    const t = useTranslations("public");
+    const home = useTranslations("home");
     const filtered = hasFilters(filters);
     const [previewSlug, setPreviewSlug] = useState("");
     const [creatorUsername, setCreatorUsername] = useState("");
@@ -27,22 +31,22 @@ export function GalleryView({ filters, gallery, basePath, embedded = false }: { 
     return (
         <div className={cn("mx-auto w-full max-w-[1600px]", embedded ? "px-2 py-2 sm:px-6 sm:py-6" : "px-3 pb-10 pt-4 sm:px-6 sm:pb-16 sm:pt-6")}>
             <section className="flex min-w-0 items-center justify-between gap-3 pb-3 sm:pb-4">
-                <h1 className="min-w-0 text-xl font-semibold sm:text-2xl">灵感发现</h1>
+                <h1 className="min-w-0 text-xl font-semibold sm:text-2xl">{t("inspirationDiscovery")}</h1>
                 {embedded ? (
                     <Link href="/works" className="inline-flex h-9 w-fit items-center gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground transition hover:bg-muted">
                         <Plus className="size-4" />
-                        管理我的作品
+                        {t("manageMyWorks")}
                     </Link>
                 ) : null}
             </section>
 
-            <nav className="flex min-w-0 gap-1 overflow-x-auto border-b border-border pb-2" aria-label="作品分类">
+            <nav className="flex min-w-0 gap-1 overflow-x-auto border-b border-border pb-2" aria-label={t("workCategories")}>
                 <Link href={galleryFilterHref(basePath, filters, "")} className={categoryClass(!filters.category)}>
-                    全部
+                    {home("categoryAll")}
                 </Link>
                 {WORK_CATEGORY_OPTIONS.map((option) => (
                     <Link key={option.value} href={galleryFilterHref(basePath, filters, option.value)} className={categoryClass(filters.category === option.value)}>
-                        {option.label}
+                        {home(workCategoryMessageKeys[option.value])}
                     </Link>
                 ))}
             </nav>
@@ -51,38 +55,38 @@ export function GalleryView({ filters, gallery, basePath, embedded = false }: { 
                 <input type="hidden" name="category" value={filters.category} />
                 <label className="relative col-span-2 min-w-0 md:col-span-1">
                     <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <input name="keyword" defaultValue={filters.keyword} placeholder="搜索标题、说明或提示词" aria-label="搜索作品" className={cn(controlClass, "w-full pl-9 pr-3")} />
+                    <input name="keyword" defaultValue={filters.keyword} placeholder={t("searchPlaceholder")} aria-label={t("searchWorks")} className={cn(controlClass, "w-full pl-9 pr-3")} />
                 </label>
-                <input name="tag" defaultValue={filters.tag} placeholder="标签" aria-label="作品标签" className={controlClass} />
+                <input name="tag" defaultValue={filters.tag} placeholder={t("tag")} aria-label={t("workTag")} className={controlClass} />
                 <input type="hidden" name="sort" value={sort} />
                 <Select
-                    aria-label="作品排序"
+                    aria-label={t("workSort")}
                     className="w-full"
                     size="large"
                     value={sort}
                     options={[
-                        { value: "random", label: "随机发现" },
-                        { value: "featured", label: "精选优先" },
-                        { value: "latest", label: "最新发布" },
-                        { value: "popular", label: "最多访问" },
-                        { value: "weekly", label: "本周热榜" },
-                        { value: "monthly", label: "本月热榜" },
+                        { value: "random", label: t("sortRandom") },
+                        { value: "featured", label: t("sortFeatured") },
+                        { value: "latest", label: t("sortLatest") },
+                        { value: "popular", label: t("sortPopular") },
+                        { value: "weekly", label: t("sortWeekly") },
+                        { value: "monthly", label: t("sortMonthly") },
                     ]}
                     onChange={setSort}
                 />
                 <label className="flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 text-sm text-foreground transition hover:bg-muted">
                     <input type="checkbox" name="featured" value="1" defaultChecked={filters.featured === "1"} className="size-4 accent-foreground" />
-                    只看精选
+                    {t("featuredOnly")}
                 </label>
                 <div className="col-span-2 flex min-w-0 items-center justify-end gap-2 md:col-span-1">
                     {filtered ? (
                         <Link href={basePath} className="inline-flex h-10 items-center justify-center rounded-md border border-border bg-card px-3 text-sm text-foreground transition hover:bg-muted">
-                            清除
+                            {t("clear")}
                         </Link>
                     ) : null}
                     <button className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-md !bg-foreground px-4 text-sm font-medium !text-background transition hover:opacity-80 md:flex-none" type="submit">
                         <Search className="size-4" />
-                        筛选
+                        {t("filter")}
                     </button>
                 </div>
             </form>
@@ -90,12 +94,12 @@ export function GalleryView({ filters, gallery, basePath, embedded = false }: { 
             {gallery.error ? (
                 <section className="grid min-h-48 place-items-center border-b border-dashed border-border px-4 text-center">
                     <div>
-                        <p className="text-sm font-medium">作品广场暂时不可用</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{gallery.error}</p>
+                        <p className="text-sm font-medium">{t("galleryUnavailable")}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{t("tryAgainLater")}</p>
                     </div>
                 </section>
             ) : gallery.items.length ? (
-                <ResponsiveMasonryGrid className="grid-cols-2 py-3 sm:grid-cols-3 sm:py-4 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6" ariaLabel="作品列表">
+                <ResponsiveMasonryGrid className="grid-cols-2 py-3 sm:grid-cols-3 sm:py-4 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6" ariaLabel={t("worksList")}>
                     {gallery.items.map((item) => (
                         <PublicWorkGalleryCard key={item.slug} item={item} nextPath={basePath} onOpen={() => setPreviewSlug(item.slug)} onOpenAuthor={setCreatorUsername} />
                     ))}
@@ -105,19 +109,19 @@ export function GalleryView({ filters, gallery, basePath, embedded = false }: { 
                     <span className="grid size-11 place-items-center rounded-lg bg-card text-muted-foreground ring-1 ring-border">
                         <GalleryVerticalEnd className="size-5" />
                     </span>
-                    <h2 className="mt-4 text-base font-semibold">{filtered ? "没有匹配的公开作品" : "还没有公开作品"}</h2>
-                    <p className="mt-1.5 max-w-sm text-sm leading-6 text-muted-foreground">{filtered ? "调整筛选条件后再查看。" : "审核通过并公开发布的作品会出现在这里。"}</p>
+                    <h2 className="mt-4 text-base font-semibold">{filtered ? t("noMatchingWorks") : home("noPublicWorks")}</h2>
+                    <p className="mt-1.5 max-w-sm text-sm leading-6 text-muted-foreground">{filtered ? t("adjustFilters") : home("noPublicWorksDescription")}</p>
                     <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                         {filtered ? (
                             <Link href={basePath} className={primaryLinkClass}>
-                                清除筛选
+                                {t("clearFilters")}
                             </Link>
                         ) : (
                             <>
-                                <GalleryPublishLink className={primaryLinkClass} label="发布第一个作品" />
+                                <GalleryPublishLink className={primaryLinkClass} label={t("publishFirstWork")} />
                                 <Link href="/create" className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground transition hover:bg-muted">
                                     <Sparkles className="size-4" />
-                                    开始创作
+                                    {t("startCreating")}
                                 </Link>
                             </>
                         )}
@@ -128,7 +132,7 @@ export function GalleryView({ filters, gallery, basePath, embedded = false }: { 
             {gallery.nextCursor ? (
                 <div className="flex justify-center pt-2 sm:pt-4">
                     <Link href={nextPageHref(basePath, filters, gallery.nextCursor)} className="inline-flex h-10 items-center gap-2 rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground transition hover:bg-muted">
-                        查看更多
+                        {t("viewMore")}
                         <ArrowRight className="size-4" />
                     </Link>
                 </div>

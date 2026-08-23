@@ -3,13 +3,14 @@
 import { Button, Popover } from "antd";
 import { Check, Orbit } from "lucide-react";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import type { CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { cn } from "@/lib/utils";
 
 import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
-import { CreativeGenerationPreferences as GenerationPreferencesControl, mediaCapabilityLabel, type MediaCapability } from "@/components/creative-generation-preferences";
+import { CreativeGenerationPreferences as GenerationPreferencesControl, type MediaCapability } from "@/components/creative-generation-preferences";
 
 export type CreativeModelOption = { id: string; name: string; capability: MediaCapability };
 
@@ -38,12 +39,14 @@ export function CreativeGenerationControls({
     onCapabilityChange: (capability: MediaCapability) => void;
     onChangeGenerationPreference: (capability: MediaCapability, patch: Record<string, string | number | boolean>) => void;
 }) {
+    const t = useTranslations("create");
     const [modelPickerOpen, setModelPickerOpen] = useState(false);
     const [preferredCapability, setPreferredCapability] = useState<MediaCapability>("image");
     const modelCapabilities = creationMode === "agent" ? (["image", "video", "audio"] as const).filter((capability) => models.some((model) => model.capability === capability)) : [creationMode];
     const activeCapability = creationMode === "agent" ? (modelCapabilities.includes(preferredCapability) ? preferredCapability : selectedModels[0]?.capability || modelCapabilities[0] || "image") : creationMode;
     const preferenceCapabilities = creationMode === "agent" ? (modelCapabilities.length ? modelCapabilities : [activeCapability]) : [creationMode];
-    const modelSummary = selectedModels.length === 0 ? (smartPlanning ? "智能模型" : "选择模型") : selectedModels.length === 1 ? selectedModels[0].name : `${selectedModels[0].name} +${selectedModels.length - 1}`;
+    const capabilityLabel = (capability: MediaCapability) => t(capability === "image" ? "imageCapability" : capability === "video" ? "videoCapability" : "audioCapability");
+    const modelSummary = selectedModels.length === 0 ? (smartPlanning ? t("smartModel") : t("selectModel")) : selectedModels.length === 1 ? selectedModels[0].name : `${selectedModels[0].name} +${selectedModels.length - 1}`;
 
     return (
         <>
@@ -58,21 +61,23 @@ export function CreativeGenerationControls({
                     <div className="hide-scrollbar max-h-[calc(100vh-96px)] w-[calc(100vw-40px)] max-w-[360px] overflow-y-auto py-1">
                         <div className="flex items-center justify-between gap-3 px-1 pb-3">
                             <div className="min-w-0">
-                                <p className="text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">选择模型</p>
-                                <p className="mt-0.5 truncate text-[11px] text-[#8b949f] dark:text-[#7f8996]">{selectedModels.length ? `已选择 ${selectedModels.length} 个，最多 6 个` : smartPlanning ? "默认由智能规划自动匹配" : "请选择至少一个模型"}</p>
+                                <p className="text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">{t("selectModel")}</p>
+                                <p className="mt-0.5 truncate text-[11px] text-[#8b949f] dark:text-[#7f8996]">
+                                    {selectedModels.length ? t("selectedModels", { count: selectedModels.length }) : smartPlanning ? t("smartModelDefault") : t("selectAtLeastOneModel")}
+                                </p>
                             </div>
                             <button
                                 type="button"
                                 role="switch"
                                 aria-checked={smartPlanning}
-                                aria-label={smartPlanning ? "关闭自动智能规划" : "开启自动智能规划"}
+                                aria-label={smartPlanning ? t("disableSmartPlanning") : t("enableSmartPlanning")}
                                 className={cn(
                                     "flex shrink-0 items-center gap-2 rounded-lg px-1.5 py-1 text-xs font-medium transition-colors",
                                     smartPlanning ? "bg-[#edf4f9] text-[#315f7d] dark:bg-[#6f9fbd]/12 dark:text-[#8eb8d1]" : "text-[#7f8995] hover:bg-[#f2f4f6] dark:text-[#8b95a1] dark:hover:bg-[#292f37]",
                                 )}
                                 onClick={onToggleSmartPlanning}
                             >
-                                <span>{smartPlanning ? "智能" : "手动"}</span>
+                                <span>{smartPlanning ? t("smart") : t("manual")}</span>
                                 <span
                                     className={cn(
                                         "relative h-5 w-9 rounded-full border transition-colors",
@@ -98,14 +103,16 @@ export function CreativeGenerationControls({
                                             onClick={() => setPreferredCapability(capability)}
                                             aria-pressed={activeCapability === capability}
                                         >
-                                            {mediaCapabilityLabel(capability)} · {count}
+                                            {capabilityLabel(capability)} · {count}
                                         </button>
                                     );
                                 })}
                             </div>
                         ) : null}
                         <div className="hide-scrollbar max-h-64 space-y-1 overflow-y-auto overscroll-contain">
-                            {!models.some((model) => model.capability === activeCapability) ? <p className="px-2 py-5 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">当前未配置可用的{mediaCapabilityLabel(activeCapability)}模型</p> : null}
+                            {!models.some((model) => model.capability === activeCapability) ? (
+                                <p className="px-2 py-5 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noCapabilityModels", { capability: capabilityLabel(activeCapability) })}</p>
+                            ) : null}
                             {models
                                 .filter((model) => model.capability === activeCapability)
                                 .map((model) => {
@@ -125,7 +132,7 @@ export function CreativeGenerationControls({
                                             </span>
                                             <span className="min-w-0 flex-1">
                                                 <span className="block truncate text-xs font-medium">{model.name}</span>
-                                                <span className="mt-0.5 block text-[11px] leading-4 text-[#8b949f] dark:text-[#7f8996]">{mediaCapabilityLabel(model.capability)}模型 · 可与其他模型同时生成</span>
+                                                <span className="mt-0.5 block text-[11px] leading-4 text-[#8b949f] dark:text-[#7f8996]">{t("modelCapabilityDescription", { capability: capabilityLabel(model.capability) })}</span>
                                             </span>
                                             <span
                                                 className={cn(
@@ -145,13 +152,13 @@ export function CreativeGenerationControls({
                                 className="mt-2 w-full rounded-lg px-2 py-2 text-xs font-medium text-[#6d7784] transition hover:bg-[#f3f5f7] hover:text-[#20242a] dark:text-[#98a2ae] dark:hover:bg-[#252a31] dark:hover:text-white"
                                 onClick={onClearModels}
                             >
-                                清除选择并恢复智能规划
+                                {t("clearModels")}
                             </button>
                         ) : null}
                     </div>
                 }
             >
-                <Button type="text" className={creativeComposerToolButtonClass(modelPickerOpen)} icon={<Orbit className="size-4" />} aria-label={`生成模型：${modelSummary}`} aria-haspopup="menu" aria-expanded={modelPickerOpen}>
+                <Button type="text" className={creativeComposerToolButtonClass(modelPickerOpen)} icon={<Orbit className="size-4" />} aria-label={t("generationModel", { model: modelSummary })} aria-haspopup="menu" aria-expanded={modelPickerOpen}>
                     <span className="max-w-[126px] truncate text-xs font-medium sm:max-w-[172px]">{modelSummary}</span>
                 </Button>
             </Popover>
@@ -159,7 +166,7 @@ export function CreativeGenerationControls({
                 capability={activeCapability}
                 capabilities={preferenceCapabilities}
                 preferences={generationPreferences}
-                triggerLabel={creationMode === "agent" ? "生成参数" : undefined}
+                triggerLabel={creationMode === "agent" ? t("generationParameters") : undefined}
                 placement={placement}
                 onCapabilityChange={(capability) => {
                     setPreferredCapability(capability);

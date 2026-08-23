@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { App, Button, Input, Modal, QRCode, Tag, Tooltip } from "antd";
 import { Copy, KeyRound, ShieldCheck, ShieldOff } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { beginAdminMfaSetup, disableAdminMfa, enableAdminMfa, type AdminMfaSetup } from "@/services/api/admin-mfa";
@@ -13,6 +14,7 @@ import { profileDangerButtonClass, profilePrimaryButtonClass, profileSecondaryBu
 type Dialog = "setup" | "disable" | null;
 
 export function AdminMfaPanel() {
+    const t = useTranslations("profile.mfa");
     const { message } = App.useApp();
     const copyText = useCopyText();
     const user = useUserStore((state) => state.user);
@@ -38,8 +40,8 @@ export function AdminMfaPanel() {
         try {
             setSetup(await beginAdminMfaSetup(currentPassword));
             setCurrentPassword("");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "创建 MFA 设置失败");
+        } catch {
+            message.error(t("createFailed"));
         } finally {
             setSubmitting(false);
         }
@@ -49,10 +51,10 @@ export function AdminMfaPanel() {
         setSubmitting(true);
         try {
             setUser(await enableAdminMfa(token));
-            message.success("管理员 MFA 已启用");
+            message.success(t("enabledSuccess"));
             closeAfterSuccess();
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "启用管理员 MFA 失败");
+        } catch {
+            message.error(t("enableFailed"));
         } finally {
             setSubmitting(false);
         }
@@ -62,10 +64,10 @@ export function AdminMfaPanel() {
         setSubmitting(true);
         try {
             setUser(await disableAdminMfa(currentPassword, token));
-            message.success("管理员 MFA 已关闭");
+            message.success(t("disabledSuccess"));
             closeAfterSuccess();
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "关闭管理员 MFA 失败");
+        } catch {
+            message.error(t("disableFailed"));
         } finally {
             setSubmitting(false);
         }
@@ -83,44 +85,44 @@ export function AdminMfaPanel() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-semibold text-stone-950 dark:text-white">管理员 MFA</h3>
-                        <Tag color={user.mfaEnabled ? "green" : "default"}>{user.mfaEnabled ? "已启用" : "未启用"}</Tag>
+                        <h3 className="text-sm font-semibold text-stone-950 dark:text-white">{t("title")}</h3>
+                        <Tag color={user.mfaEnabled ? "green" : "default"}>{user.mfaEnabled ? t("enabled") : t("disabled")}</Tag>
                     </div>
-                    <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">登录管理员账号时验证身份验证器动态码。</p>
+                    <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">{t("description")}</p>
                 </div>
                 {user.mfaEnabled ? (
                     <Button danger className={`${profileDangerButtonClass} shrink-0`} icon={<ShieldOff className="size-4" />} onClick={() => setDialog("disable")}>
-                        关闭 MFA
+                        {t("disable")}
                     </Button>
                 ) : (
                     <Button type="primary" className={`${profilePrimaryButtonClass} shrink-0`} icon={<ShieldCheck className="size-4" />} onClick={() => setDialog("setup")}>
-                        设置 MFA
+                        {t("setup")}
                     </Button>
                 )}
             </div>
 
             <Modal
-                title={dialog === "disable" ? "关闭管理员 MFA" : "设置管理员 MFA"}
+                title={dialog === "disable" ? t("disableTitle") : t("setupTitle")}
                 open={dialog !== null}
                 onCancel={closeDialog}
                 mask={{ closable: false }}
-                closable={{ "aria-label": "关闭" }}
+                closable={{ "aria-label": t("close") }}
                 footer={
                     <div className="flex justify-end gap-2">
                         <Button className={profileSecondaryButtonClass} disabled={submitting} onClick={closeDialog}>
-                            取消
+                            {t("cancel")}
                         </Button>
                         {dialog === "setup" && !setup ? (
                             <Button type="primary" className={profilePrimaryButtonClass} loading={submitting} icon={<KeyRound className="size-4" />} onClick={() => void createSetup()}>
-                                生成设置
+                                {t("generate")}
                             </Button>
                         ) : dialog === "setup" ? (
                             <Button type="primary" className={profilePrimaryButtonClass} loading={submitting} icon={<ShieldCheck className="size-4" />} onClick={() => void confirmSetup()}>
-                                验证并启用
+                                {t("verifyEnable")}
                             </Button>
                         ) : (
                             <Button danger className={profileDangerButtonClass} loading={submitting} icon={<ShieldOff className="size-4" />} onClick={() => void confirmDisable()}>
-                                验证并关闭
+                                {t("verifyDisable")}
                             </Button>
                         )}
                     </div>
@@ -129,15 +131,15 @@ export function AdminMfaPanel() {
                 {dialog === "setup" ? (
                     setup ? (
                         <div className="space-y-5">
-                            <div className="flex justify-center" aria-label="管理员 MFA 设置二维码">
+                            <div className="flex justify-center" aria-label={t("qrAria")}>
                                 <QRCode value={setup.uri} type="svg" />
                             </div>
                             <div className="space-y-2">
-                                <span className="text-sm font-medium text-stone-700 dark:text-stone-200">手动设置密钥</span>
+                                <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("manualSecret")}</span>
                                 <div className="flex min-w-0 items-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-900">
                                     <code className="min-w-0 flex-1 break-all text-sm text-stone-800 dark:text-stone-100">{setup.secret}</code>
-                                    <Tooltip title="复制密钥">
-                                        <Button type="text" aria-label="复制 MFA 密钥" icon={<Copy className="size-4" />} onClick={() => copyText(setup.secret, "MFA 密钥已复制")} />
+                                    <Tooltip title={t("copySecret")}>
+                                        <Button type="text" aria-label={t("copySecretAria")} icon={<Copy className="size-4" />} onClick={() => copyText(setup.secret, t("secretCopied"))} />
                                     </Tooltip>
                                 </div>
                             </div>
@@ -158,19 +160,21 @@ export function AdminMfaPanel() {
 }
 
 function PasswordInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+    const t = useTranslations("profile.mfa");
     return (
         <label className="block space-y-2">
-            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">当前密码</span>
+            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("currentPassword")}</span>
             <Input.Password value={value} autoComplete="current-password" onChange={(event) => onChange(event.target.value)} />
         </label>
     );
 }
 
 function TokenInput({ value, onChange, autoFocus = false }: { value: string; onChange: (value: string) => void; autoFocus?: boolean }) {
+    const t = useTranslations("profile.mfa");
     return (
         <label className="block space-y-2">
-            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">动态验证码</span>
-            <Input value={value} autoFocus={autoFocus} autoComplete="one-time-code" inputMode="numeric" placeholder="输入身份验证器动态码" onChange={(event) => onChange(event.target.value)} />
+            <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{t("token")}</span>
+            <Input value={value} autoFocus={autoFocus} autoComplete="one-time-code" inputMode="numeric" placeholder={t("tokenPlaceholder")} onChange={(event) => onChange(event.target.value)} />
         </label>
     );
 }

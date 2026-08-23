@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Sparkles, Square, Video } from "lucide-react";
 import { Button, Dropdown } from "antd";
+import { useTranslations } from "next-intl";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, formatCreditAmount, requestCreditCost } from "@/constant/credits";
@@ -29,6 +30,7 @@ type CanvasConfigNodePanelProps = {
 };
 
 export function CanvasConfigNodePanel({ node, isRunning, inputSummary, references, onConfigChange, onGenerate, onStop, onComposerToggle }: CanvasConfigNodePanelProps) {
+    const t = useTranslations("canvas");
     const [detailsOpen, setDetailsOpen] = useState(node.metadata?.configDetailsOpen === true);
     const [modeMenuOpen, setModeMenuOpen] = useState(false);
     const globalConfig = useEffectiveConfig();
@@ -52,7 +54,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
     const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
-    const modeLabel = generationModeLabel(mode);
+    const modeLabel = t(`configPanel.modes.${mode}`);
     const setDetails = (nextOpen: boolean) => {
         setDetailsOpen(nextOpen);
         onConfigChange(node.id, { configDetailsOpen: nextOpen });
@@ -74,9 +76,9 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                         <Sparkles className="size-3.5" />
                     </span>
                     <div className="min-w-0">
-                        <div className="truncate text-[13px] font-semibold tracking-[0.01em]">生成配置</div>
+                        <div className="truncate text-[13px] font-semibold tracking-[0.01em]">{t("generationConfig")}</div>
                         <div className="mt-0.5 truncate text-[10px]" style={{ color: theme.node.faint }}>
-                            {isRunning ? "正在处理当前输入" : canGenerate ? `${inputTotal ? `${inputTotal} 项` : "提示词"} · 就绪` : "连接素材或输入提示词"}
+                            {isRunning ? t("configPanel.processing") : canGenerate ? t("configPanel.ready", { input: inputTotal ? t("configPanel.itemCount", { count: inputTotal }) : t("configPanel.prompt") }) : t("configPanel.connectOrPrompt")}
                         </div>
                     </div>
                 </div>
@@ -95,19 +97,19 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={(event) => event.stopPropagation()}
                             >
-                                <div className="px-2 pb-1 pt-0.5 text-[10px] font-medium opacity-45">生成类型</div>
-                                {GENERATION_MODES.map((item) => (
+                                <div className="px-2 pb-1 pt-0.5 text-[10px] font-medium opacity-45">{t("configPanel.generationType")}</div>
+                                {GENERATION_MODES.map((value) => (
                                     <button
-                                        key={item.value}
+                                        key={value}
                                         type="button"
                                         role="menuitem"
-                                        aria-label={item.label}
+                                        aria-label={t(`configPanel.modes.${value}`)}
                                         className="flex h-9 w-full items-center justify-between rounded-lg px-2 text-left text-xs transition-colors hover:bg-black/[.05] dark:hover:bg-white/[.08]"
-                                        style={{ color: item.value === mode ? theme.node.action : theme.node.text }}
-                                        onClick={() => selectMode(item.value)}
+                                        style={{ color: value === mode ? theme.node.action : theme.node.text }}
+                                        onClick={() => selectMode(value)}
                                     >
-                                        <ModeLabel mode={item.value} label={item.label} />
-                                        {item.value === mode ? <Check className="size-3.5" /> : null}
+                                        <ModeLabel mode={value} label={t(`configPanel.modes.${value}`)} />
+                                        {value === mode ? <Check className="size-3.5" /> : null}
                                     </button>
                                 ))}
                             </div>
@@ -119,7 +121,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                             data-canvas-no-drag
                             className="!inline-flex !h-8 !items-center !rounded-lg !border !px-2.5 !shadow-none"
                             style={{ background: theme.toolbar.itemHover, borderColor: theme.node.stroke, color: theme.node.text }}
-                            aria-label={`切换生成类型，当前${modeLabel}`}
+                            aria-label={t("configPanel.switchMode", { mode: modeLabel })}
                         >
                             <ModeLabel mode={mode} label={modeLabel} />
                             <ChevronDown className="ml-1 size-3.5 opacity-60" />
@@ -176,15 +178,15 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                         className="inline-flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 text-left transition-colors hover:bg-black/[.03] dark:hover:bg-white/[.05]"
                         aria-expanded={detailsOpen}
                         aria-controls={`canvas-config-details-${node.id}`}
-                        aria-label={detailsOpen ? "收起输入与镜头" : "展开输入与镜头"}
+                        aria-label={detailsOpen ? t("configPanel.collapseInputs") : t("configPanel.expandInputs")}
                         onClick={() => setDetails(!detailsOpen)}
                     >
                         <span className="grid size-6 shrink-0 place-items-center rounded-md" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
                             <ImageIcon className="size-3.5" />
                         </span>
-                        <span className="min-w-0 truncate text-xs font-medium">素材与镜头</span>
+                        <span className="min-w-0 truncate text-xs font-medium">{t("configPanel.assetsAndCamera")}</span>
                         <span className="truncate text-[11px]" style={{ color: theme.node.faint }}>
-                            {inputTotal ? `${inputTotal} 项已连接` : "等待连接"}
+                            {inputTotal ? t("configPanel.connectedCount", { count: inputTotal }) : t("configPanel.waitingConnection")}
                         </span>
                         <ChevronDown className={`ml-auto size-3.5 shrink-0 opacity-55 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
                     </button>
@@ -196,17 +198,17 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                         onClick={onComposerToggle}
                     >
                         <Settings2 className="size-3.5 opacity-70" />
-                        <span className="hidden min-[360px]:inline">编辑提示词</span>
+                        <span className="hidden min-[360px]:inline">{t("configPanel.editPrompt")}</span>
                     </button>
                 </div>
 
                 {detailsOpen ? (
                     <div id={`canvas-config-details-${node.id}`} data-canvas-config-details className="flex min-w-0 items-center gap-1 border-t px-1.5 py-1.5" style={{ borderColor: theme.node.stroke }}>
                         <div className="flex h-8 min-w-0 flex-1 items-center divide-x overflow-hidden" style={{ color: theme.node.muted }}>
-                            <InputCount icon={<MessageSquare className="size-3" />} label="提示词" value={inputSummary.textCount} />
-                            <InputCount icon={<ImageIcon className="size-3" />} label="参考图" value={inputSummary.imageCount} />
-                            <InputCount icon={<Video className="size-3" />} label="参考视频" value={inputSummary.videoCount} />
-                            <InputCount icon={<Music2 className="size-3" />} label="参考音频" value={inputSummary.audioCount} />
+                            <InputCount icon={<MessageSquare className="size-3" />} label={t("configPanel.prompt")} value={inputSummary.textCount} />
+                            <InputCount icon={<ImageIcon className="size-3" />} label={t("configPanel.referenceImage")} value={inputSummary.imageCount} />
+                            <InputCount icon={<Video className="size-3" />} label={t("configPanel.referenceVideo")} value={inputSummary.videoCount} />
+                            <InputCount icon={<Music2 className="size-3" />} label={t("configPanel.referenceAudio")} value={inputSummary.audioCount} />
                         </div>
                         {mode === "image" || mode === "video" ? (
                             <div className="ml-1.5 min-w-0 w-[118px] shrink-0 border-l pl-1.5">
@@ -242,7 +244,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                         <>
                             <LoaderCircle className="size-4 animate-spin" />
                             <Square className="size-3.5 fill-current" />
-                            <span>停止</span>
+                            <span>{t("promptPanel.stop")}</span>
                         </>
                     ) : (
                         <>
@@ -251,7 +253,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                                 {formatCreditAmount(credits)}
                             </span>
                             <Play className="size-4" />
-                            <span>开始生成</span>
+                            <span>{t("configPanel.startGeneration")}</span>
                         </>
                     )}
                 </span>
@@ -269,12 +271,7 @@ function InputCount({ icon, label, value }: { icon: ReactNode; label: string; va
     );
 }
 
-const GENERATION_MODES: Array<{ value: CanvasGenerationMode; label: string }> = [
-    { value: "image", label: "生图" },
-    { value: "text", label: "文本" },
-    { value: "video", label: "视频" },
-    { value: "audio", label: "音频" },
-];
+const GENERATION_MODES: CanvasGenerationMode[] = ["image", "text", "video", "audio"];
 
 function ModeLabel({ mode, label }: { mode: CanvasGenerationMode; label: string }) {
     const icon = mode === "image" ? <ImageIcon className="size-3.5" /> : mode === "text" ? <MessageSquare className="size-3.5" /> : mode === "video" ? <Video className="size-3.5" /> : <Music2 className="size-3.5" />;
@@ -284,10 +281,6 @@ function ModeLabel({ mode, label }: { mode: CanvasGenerationMode; label: string 
             {label}
         </span>
     );
-}
-
-function generationModeLabel(mode: CanvasGenerationMode) {
-    return GENERATION_MODES.find((item) => item.value === mode)?.label || "生图";
 }
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasGenerationMode): AiConfig {

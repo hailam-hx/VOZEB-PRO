@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 
 import { AuthForm } from "@/components/auth/auth-form";
 import { getAuthSettings } from "@/lib/auth/store";
@@ -10,10 +11,11 @@ type RegisterPageProps = {
 };
 
 export default async function RegisterPage({ searchParams }: RegisterPageProps) {
+    const t = await getTranslations("auth");
     const params = searchParams ? await searchParams : {};
     const nextPath = safeNextPath(firstValue(params.next));
     const referralCode = firstValue(params.ref)?.trim().toUpperCase() || "";
-    const inviteError = firstValue(params.invite) === "invalid" ? "邀请链接无效或已停用，你仍可清空邀请码后正常注册。" : undefined;
+    const inviteError = firstValue(params.invite) === "invalid" ? t("invalidInvite") : undefined;
     const install = await getInstallStatus();
     if (!install.ready) redirect("/install");
 

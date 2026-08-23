@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
-import { isSeedanceFastModel, isSeedanceVideoConfig } from "./seedance-video";
+import { isSeedanceFastModel, isSeedanceVideoConfig, seedanceVideoReferenceIssue } from "./seedance-video";
 
 describe("Seedance video configuration", () => {
     it("recognizes SD2.0 aliases without confusing Stable Diffusion", () => {
@@ -20,6 +20,11 @@ describe("Seedance video configuration", () => {
         expect(isSeedanceVideoConfig({ model: "other-video", videoModel: "", baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3" })).toBe(true);
         expect(isSeedanceVideoConfig({ model: "other-video", videoModel: "", baseUrl: "https://ark.cn-beijing.volces.com.evil.test/api/plan/v3" })).toBe(false);
         expect(isSeedanceVideoConfig({ model: "other-video", videoModel: "", baseUrl: "https://example.com/api/plan/v3" })).toBe(false);
+    });
+
+    it("returns diagnostic reference issue codes instead of display-language errors", () => {
+        expect(seedanceVideoReferenceIssue([{ id: "large", name: "large.mp4", type: "video/mp4", url: "blob:large", bytes: 51 * 1024 * 1024 }])).toEqual({ code: "file-too-large", index: 1 });
+        expect(seedanceVideoReferenceIssue([{ id: "long", name: "long.mp4", type: "video/mp4", url: "blob:long", durationMs: 16_000 }])).toEqual({ code: "duration-out-of-range", index: 1 });
     });
 });
 

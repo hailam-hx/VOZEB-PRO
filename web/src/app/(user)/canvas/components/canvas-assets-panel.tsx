@@ -3,6 +3,7 @@
 import { Drawer, Dropdown, Grid, Input, Modal, Spin, Tooltip } from "antd";
 import { ChevronDown, FileAudio, FileText, FolderOpen, ImageIcon, LayoutGrid, LibraryBig, LocateFixed, Plus, RefreshCw, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useTranslations } from "next-intl";
 
 import type { Asset, AssetKind } from "@/lib/library-asset-contract";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -24,12 +25,12 @@ type PagedCollection<T> = { items: T[]; page: number; total: number; loading: bo
 
 const emptyCollection = <T,>(): PagedCollection<T> => ({ items: [], page: 0, total: 0, loading: false, loaded: false, error: "", categories: [] });
 
-export function collectCanvasPanelMedia(nodes: CanvasNodeData[]): CurrentMedia[] {
+export function collectCanvasPanelMedia(nodes: CanvasNodeData[], labels: { image: string; video: string } = { image: "Canvas image", video: "Canvas video" }): CurrentMedia[] {
     return nodes.reduce<CurrentMedia[]>((items, node) => {
         const url = node.metadata?.content;
         if (!url) return items;
-        if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Panorama) items.push({ id: node.id, title: node.title || "画布图片", kind: "image", url });
-        if (node.type === CanvasNodeType.Video) items.push({ id: node.id, title: node.title || "画布视频", kind: "video", url });
+        if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Panorama) items.push({ id: node.id, title: node.title || labels.image, kind: "image", url });
+        if (node.type === CanvasNodeType.Video) items.push({ id: node.id, title: node.title || labels.video, kind: "video", url });
         return items;
     }, []);
 }
@@ -66,6 +67,7 @@ export function CanvasAssetsPanel({
     onLocateNode: (id: string) => void;
     onClose: () => void;
 }) {
+    const t = useTranslations("canvas");
     const screens = Grid.useBreakpoint();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const userId = useUserStore((state) => state.user?.id || "");
@@ -85,42 +87,48 @@ export function CanvasAssetsPanel({
     const [librarySearch, setLibrarySearch] = useState("");
     const [preview, setPreview] = useState<MediaPreview>();
     const requestVersions = useRef({ assets: 0, my: 0, library: 0 });
-    const currentMedia = useMemo(() => collectCanvasPanelMedia(nodes), [nodes]);
+    const currentMedia = useMemo(() => collectCanvasPanelMedia(nodes, { image: t("assetsPanel.canvasImage"), video: t("assetsPanel.canvasVideo") }), [nodes, t]);
 
-    const loadAssets = useCallback(async (page: number, kind: AssetKind | "all", keyword: string) => {
-        const requestId = ++requestVersions.current.assets;
-        setAssets((current) => ({ ...current, loading: true, error: "" }));
-        try {
-            const result = await listLibraryAssetPage({ page, pageSize: 16, kind: kind === "all" ? undefined : kind, keyword });
-            if (requestVersions.current.assets !== requestId) return;
-            setAssets((current) => ({ items: page === 1 ? result.assets : uniqueById([...current.items, ...result.assets]), page: result.page, total: result.total, loading: false, loaded: true, error: "", categories: [] }));
-        } catch (error) {
-            if (requestVersions.current.assets !== requestId) return;
-            setAssets((current) => ({ ...current, loading: false, loaded: true, error: error instanceof Error ? error.message : "素材加载失败" }));
-        }
-    }, []);
+    const loadAssets = useCallback(
+        async (page: number, kind: AssetKind | "all", keyword: string) => {
+            const requestId = ++requestVersions.current.assets;
+            setAssets((current) => ({ ...current, loading: true, error: "" }));
+            try {
+                const result = await listLibraryAssetPage({ page, pageSize: 16, kind: kind === "all" ? undefined : kind, keyword });
+                if (requestVersions.current.assets !== requestId) return;
+                setAssets((current) => ({ items: page === 1 ? result.assets : uniqueById([...current.items, ...result.assets]), page: result.page, total: result.total, loading: false, loaded: true, error: "", categories: [] }));
+            } catch {
+                if (requestVersions.current.assets !== requestId) return;
+                setAssets((current) => ({ ...current, loading: false, loaded: true, error: t("assetsPanel.errors.assetsLoadFailed") }));
+            }
+        },
+        [t],
+    );
 
-    const loadPromptPage = useCallback(async (kind: "my" | "library", page: number, category: string, keyword: string) => {
-        const requestId = ++requestVersions.current[kind];
-        const setCollection = kind === "my" ? setMyPrompts : setLibraryPrompts;
-        setCollection((current) => ({ ...current, loading: true, error: "" }));
-        try {
-            const result = kind === "my" ? await listMyPrompts({ page, category, keyword, includeFacets: page === 1 }) : await fetchPrompts({ page, category, keyword, includeFacets: page === 1 });
-            if (requestVersions.current[kind] !== requestId) return;
-            setCollection((current) => ({
-                items: page === 1 ? result.items : uniqueById([...current.items, ...result.items]),
-                page,
-                total: result.total,
-                loading: false,
-                loaded: true,
-                error: "",
-                categories: page === 1 ? result.categories : current.categories,
-            }));
-        } catch (error) {
-            if (requestVersions.current[kind] !== requestId) return;
-            setCollection((current) => ({ ...current, loading: false, loaded: true, error: error instanceof Error ? error.message : "提示词加载失败" }));
-        }
-    }, []);
+    const loadPromptPage = useCallback(
+        async (kind: "my" | "library", page: number, category: string, keyword: string) => {
+            const requestId = ++requestVersions.current[kind];
+            const setCollection = kind === "my" ? setMyPrompts : setLibraryPrompts;
+            setCollection((current) => ({ ...current, loading: true, error: "" }));
+            try {
+                const result = kind === "my" ? await listMyPrompts({ page, category, keyword, includeFacets: page === 1 }) : await fetchPrompts({ page, category, keyword, includeFacets: page === 1 });
+                if (requestVersions.current[kind] !== requestId) return;
+                setCollection((current) => ({
+                    items: page === 1 ? result.items : uniqueById([...current.items, ...result.items]),
+                    page,
+                    total: result.total,
+                    loading: false,
+                    loaded: true,
+                    error: "",
+                    categories: page === 1 ? result.categories : current.categories,
+                }));
+            } catch {
+                if (requestVersions.current[kind] !== requestId) return;
+                setCollection((current) => ({ ...current, loading: false, loaded: true, error: t("assetsPanel.errors.promptsLoadFailed") }));
+            }
+        },
+        [t],
+    );
 
     useEffect(() => {
         requestVersions.current = { assets: requestVersions.current.assets + 1, my: requestVersions.current.my + 1, library: requestVersions.current.library + 1 };
@@ -148,13 +156,13 @@ export function CanvasAssetsPanel({
     }, [nodes.length, projectId, projectSummaries, projectTitle]);
 
     const panel = (
-        <div className="flex h-full min-h-0 flex-col" style={{ background: theme.node.panel, color: theme.node.text }} aria-label="Canvas 资产面板" data-testid="canvas-assets-panel">
+        <div className="flex h-full min-h-0 flex-col" style={{ background: theme.node.panel, color: theme.node.text }} aria-label={t("assetsPanel.panelAria")} data-testid="canvas-assets-panel">
             <header className="shrink-0 border-b px-3 pb-0 pt-3" style={{ borderColor: theme.toolbar.border }}>
                 <div className="mb-3 flex items-center gap-2">
                     <LibraryBig className="size-4" aria-hidden="true" />
-                    <h2 className="min-w-0 flex-1 text-sm font-semibold">资产</h2>
-                    <Tooltip title="关闭资产面板">
-                        <button type="button" className="grid size-8 place-items-center rounded-lg transition hover:opacity-70" onClick={onClose} aria-label="关闭资产面板">
+                    <h2 className="min-w-0 flex-1 text-sm font-semibold">{t("assets")}</h2>
+                    <Tooltip title={t("closeAssetsPanel")}>
+                        <button type="button" className="grid size-8 place-items-center rounded-lg transition hover:opacity-70" onClick={onClose} aria-label={t("closeAssetsPanel")}>
                             <X className="size-4" />
                         </button>
                     </Tooltip>
@@ -170,12 +178,12 @@ export function CanvasAssetsPanel({
                                     label: (
                                         <span className="flex min-w-48 items-center justify-between gap-4" aria-current={project.id === projectId ? "page" : undefined}>
                                             <span className="max-w-40 truncate">{project.title}</span>
-                                            <span className="text-xs opacity-45">{project.nodeCount} 节点</span>
+                                            <span className="text-xs opacity-45">{t("assetsPanel.nodeCount", { count: project.nodeCount })}</span>
                                         </span>
                                     ),
                                 })),
                                 { type: "divider" as const },
-                                { key: "__all__", icon: <LayoutGrid className="size-4" />, label: "全部画布" },
+                                { key: "__all__", icon: <LayoutGrid className="size-4" />, label: t("assetsPanel.allCanvases") },
                             ],
                             onClick: ({ key }) => (key === "__all__" ? onOpenProjects() : onOpenProject(key)),
                         }}
@@ -184,7 +192,7 @@ export function CanvasAssetsPanel({
                             type="button"
                             className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 text-left text-xs font-medium transition hover:opacity-80"
                             style={{ borderColor: theme.toolbar.border, background: theme.toolbar.itemHover, color: theme.node.text }}
-                            aria-label="切换画布"
+                            aria-label={t("assetsPanel.switchCanvas")}
                         >
                             <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
                             <span className="min-w-0 flex-1 truncate">{projectTitle}</span>
@@ -196,17 +204,17 @@ export function CanvasAssetsPanel({
                         className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition hover:opacity-80"
                         style={{ borderColor: theme.toolbar.border, background: theme.node.panel, color: theme.node.text }}
                         onClick={onCreateProject}
-                        aria-label="新建画布"
+                        aria-label={t("newCanvas")}
                     >
                         <Plus className="size-3.5" aria-hidden="true" />
-                        新建
+                        {t("assetsPanel.new")}
                     </button>
                 </div>
-                <div className="grid grid-cols-4" role="tablist" aria-label="资产分类">
-                    <PanelTabButton label="当前" active={activeTab === "current"} count={currentMedia.length} onClick={() => setActiveTab("current")} />
-                    <PanelTabButton label="素材" active={activeTab === "assets"} count={assets.loaded ? assets.total : undefined} onClick={() => setActiveTab("assets")} />
-                    <PanelTabButton label="提示词" active={activeTab === "my"} count={myPrompts.loaded ? myPrompts.total : undefined} onClick={() => setActiveTab("my")} />
-                    <PanelTabButton label="词库" active={activeTab === "library"} count={libraryPrompts.loaded ? libraryPrompts.total : undefined} onClick={() => setActiveTab("library")} />
+                <div className="grid grid-cols-4" role="tablist" aria-label={t("assetsPanel.categoriesAria")}>
+                    <PanelTabButton label={t("assetsPanel.current")} active={activeTab === "current"} count={currentMedia.length} onClick={() => setActiveTab("current")} />
+                    <PanelTabButton label={t("assetsPanel.materials")} active={activeTab === "assets"} count={assets.loaded ? assets.total : undefined} onClick={() => setActiveTab("assets")} />
+                    <PanelTabButton label={t("assetsPanel.myPrompts")} active={activeTab === "my"} count={myPrompts.loaded ? myPrompts.total : undefined} onClick={() => setActiveTab("my")} />
+                    <PanelTabButton label={t("assetsPanel.promptLibrary")} active={activeTab === "library"} count={libraryPrompts.loaded ? libraryPrompts.total : undefined} onClick={() => setActiveTab("library")} />
                 </div>
             </header>
             <div className="min-h-0 flex-1 overflow-hidden">
@@ -322,10 +330,11 @@ function PanelTabButton({ label, count, active, onClick }: { label: string; coun
 }
 
 function CurrentCanvasAssets({ items, onLocate, onPreview }: { items: CurrentMedia[]; onLocate: (id: string) => void; onPreview: (preview: MediaPreview) => void }) {
+    const t = useTranslations("canvas");
     const [preferredKind, setPreferredKind] = useState<CurrentMediaKind>("image");
     const images = items.filter((item) => item.kind === "image");
     const videos = items.filter((item) => item.kind === "video");
-    if (!items.length) return <PanelEmpty icon={<ImageIcon className="size-5" />} text="当前画布还没有图片或视频" />;
+    if (!items.length) return <PanelEmpty icon={<ImageIcon className="size-5" />} text={t("assetsPanel.noCurrentMedia")} />;
     const kind = preferredKind === "image" && images.length ? "image" : preferredKind === "video" && videos.length ? "video" : images.length ? "image" : "video";
     const visibleItems = kind === "image" ? images : videos;
     return (
@@ -333,7 +342,7 @@ function CurrentCanvasAssets({ items, onLocate, onPreview }: { items: CurrentMed
             {images.length && videos.length ? <MediaKindSwitch kind={kind} imageCount={images.length} videoCount={videos.length} onChange={setPreferredKind} /> : null}
             <div className="hide-scrollbar grid min-h-0 flex-1 auto-rows-max grid-cols-4 gap-2 overflow-y-auto px-3 py-3" data-testid="canvas-current-assets-grid">
                 {visibleItems.map((item) => (
-                    <ThumbnailActionCard key={item.id} title={item.title} action="定位" actionIcon={<LocateFixed className="size-3" />} onAction={() => onLocate(item.id)} onPreview={() => onPreview(item)}>
+                    <ThumbnailActionCard key={item.id} title={item.title} action={t("assetsPanel.locate")} actionIcon={<LocateFixed className="size-3" />} onAction={() => onLocate(item.id)} onPreview={() => onPreview(item)}>
                         <MediaThumbnail kind={item.kind} url={item.url} title={item.title} />
                     </ThumbnailActionCard>
                 ))}
@@ -365,7 +374,8 @@ function LibraryAssets({
     onRetry: () => void;
     onLoadMore: () => void;
 }) {
-    const kindLabels: Record<AssetKind | "all", string> = { all: "全部", image: "图片", video: "视频", audio: "音频", text: "文本" };
+    const t = useTranslations("canvas");
+    const kindLabels: Record<AssetKind | "all", string> = { all: t("assetsPanel.kinds.all"), image: t("assetsPanel.kinds.image"), video: t("assetsPanel.kinds.video"), audio: t("assetsPanel.kinds.audio"), text: t("assetsPanel.kinds.text") };
     return (
         <PanelScroll>
             <PanelFilters
@@ -376,13 +386,13 @@ function LibraryAssets({
                 filterItems={(Object.keys(kindLabels) as Array<AssetKind | "all">).map((value) => ({ key: value, label: kindLabels[value] }))}
                 onFilterChange={(value) => onKindChange(value as AssetKind | "all")}
             />
-            <CollectionState collection={collection} emptyText="没有找到素材" onRetry={onRetry} />
+            <CollectionState collection={collection} emptyText={t("assetsPanel.noMaterials")} onRetry={onRetry} />
             {collection.items.length ? (
                 <div className="grid grid-cols-4 gap-2 pb-3" data-testid="canvas-library-assets-grid">
                     {collection.items.map((asset) => {
                         const preview = assetPreview(asset);
                         return (
-                            <ThumbnailActionCard key={asset.id} title={asset.title} action="插入" onAction={() => onInsert(asset)} onPreview={preview ? () => onPreview(preview) : undefined}>
+                            <ThumbnailActionCard key={asset.id} title={asset.title} action={t("assetsPanel.insert")} onAction={() => onInsert(asset)} onPreview={preview ? () => onPreview(preview) : undefined}>
                                 <LibraryAssetThumbnail asset={asset} />
                             </ThumbnailActionCard>
                         );
@@ -417,22 +427,30 @@ function PromptAssets({
     onRetry: () => void;
     onLoadMore: () => void;
 }) {
+    const t = useTranslations("canvas");
     const categories = [ALL_PROMPTS_OPTION, ...collection.categories];
+    const categoryLabel = (value: string) => (value === ALL_PROMPTS_OPTION ? t("assetsPanel.kinds.all") : value === "UI 与社交媒体" ? t("assetsPanel.categories.uiSocial") : promptCategoryLabel(value));
     return (
         <PanelScroll>
             <PanelFilters
                 keyword={keyword}
                 onKeywordChange={onKeywordChange}
                 onSearch={onSearch}
-                filterLabel={promptCategoryLabel(category)}
-                filterItems={categories.map((value) => ({ key: value, label: promptCategoryLabel(value) }))}
+                filterLabel={categoryLabel(category)}
+                filterItems={categories.map((value) => ({ key: value, label: categoryLabel(value) }))}
                 onFilterChange={onCategoryChange}
             />
-            <CollectionState collection={collection} emptyText="没有找到提示词" onRetry={onRetry} />
+            <CollectionState collection={collection} emptyText={t("assetsPanel.noPrompts")} onRetry={onRetry} />
             {collection.items.length ? (
                 <div className="grid grid-cols-4 gap-2 pb-3" data-testid="canvas-prompt-assets-grid">
                     {collection.items.map((item) => (
-                        <ThumbnailActionCard key={item.id} title={item.title} action="插入" onAction={() => onInsert(item.prompt)} onPreview={item.coverUrl ? () => onPreview({ kind: "image", title: item.title, url: item.coverUrl }) : undefined}>
+                        <ThumbnailActionCard
+                            key={item.id}
+                            title={item.title}
+                            action={t("assetsPanel.insert")}
+                            onAction={() => onInsert(item.prompt)}
+                            onPreview={item.coverUrl ? () => onPreview({ kind: "image", title: item.title, url: item.coverUrl }) : undefined}
+                        >
                             {item.coverUrl ? <img src={imagePreviewUrl(item.coverUrl, 320)} alt={item.title} className="size-full object-cover" loading="lazy" /> : <FallbackThumbnail icon={<Sparkles className="size-5" />} />}
                         </ThumbnailActionCard>
                     ))}
@@ -458,6 +476,7 @@ function PanelFilters({
     filterItems: Array<{ key: string; label: string }>;
     onFilterChange: (value: string) => void;
 }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div className="sticky top-0 z-10 mb-3 flex gap-1.5 pb-2 pt-3 backdrop-blur-sm">
@@ -466,17 +485,22 @@ function PanelFilters({
                 allowClear
                 value={keyword}
                 prefix={<Search className="size-3.5 opacity-55" aria-hidden="true" />}
-                placeholder="搜索"
+                placeholder={t("assetsPanel.search")}
                 className="min-w-0 flex-1"
                 onChange={(event) => {
                     onKeywordChange(event.target.value);
                     if (!event.target.value) onSearch("");
                 }}
                 onPressEnter={() => onSearch(keyword.trim())}
-                aria-label="搜索资产"
+                aria-label={t("assetsPanel.searchAssets")}
             />
             <Dropdown trigger={["click"]} menu={{ items: filterItems, onClick: ({ key }) => onFilterChange(key) }}>
-                <button type="button" className="flex h-8 max-w-24 items-center gap-1 rounded-md border px-2 text-xs" style={{ borderColor: theme.toolbar.border, background: theme.node.panel, color: theme.node.text }} aria-label="筛选分类">
+                <button
+                    type="button"
+                    className="flex h-8 max-w-24 items-center gap-1 rounded-md border px-2 text-xs"
+                    style={{ borderColor: theme.toolbar.border, background: theme.node.panel, color: theme.node.text }}
+                    aria-label={t("assetsPanel.filterCategories")}
+                >
                     <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
                     <span className="truncate">{filterLabel}</span>
                 </button>
@@ -507,16 +531,18 @@ function CollectionState<T>({ collection, emptyText, onRetry }: { collection: Pa
 }
 
 function LoadMore<T>({ collection, onLoadMore }: { collection: PagedCollection<T>; onLoadMore: () => void }) {
+    const t = useTranslations("canvas");
     if (!collection.items.length || collection.items.length >= collection.total) return null;
     return (
         <button type="button" className="mb-4 flex h-8 w-full items-center justify-center gap-1.5 rounded-md text-xs transition hover:opacity-70" onClick={onLoadMore} disabled={collection.loading}>
             {collection.loading ? <Spin size="small" /> : null}
-            加载更多
+            {t("assetsPanel.loadMore")}
         </button>
     );
 }
 
 function ThumbnailActionCard({ title, action, actionIcon, onAction, onPreview, children }: { title: string; action: string; actionIcon?: ReactNode; onAction: () => void; onPreview?: () => void; children: ReactNode }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <article className="min-w-0" title={title}>
@@ -526,7 +552,7 @@ function ThumbnailActionCard({ title, action, actionIcon, onAction, onPreview, c
                     className="block aspect-square w-full overflow-hidden rounded-md border transition hover:opacity-85 focus-visible:outline-none focus-visible:ring-2"
                     style={{ borderColor: theme.toolbar.border, background: theme.node.fill }}
                     onClick={onPreview}
-                    aria-label={`预览${title}`}
+                    aria-label={t("assetsPanel.previewNamed", { title })}
                 >
                     {children}
                 </button>
@@ -544,9 +570,10 @@ function ThumbnailActionCard({ title, action, actionIcon, onAction, onPreview, c
 }
 
 function MediaKindSwitch({ kind, imageCount, videoCount, onChange }: { kind: CurrentMediaKind; imageCount: number; videoCount: number; onChange: (kind: CurrentMediaKind) => void }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
-        <div className="mx-3 mt-3 grid grid-cols-2 gap-1 rounded-lg border p-1" style={{ borderColor: theme.toolbar.border, background: theme.node.fill }} role="tablist" aria-label="当前资产类型">
+        <div className="mx-3 mt-3 grid grid-cols-2 gap-1 rounded-lg border p-1" style={{ borderColor: theme.toolbar.border, background: theme.node.fill }} role="tablist" aria-label={t("assetsPanel.currentAssetType")}>
             {(["image", "video"] as const).map((value) => {
                 const active = kind === value;
                 return (
@@ -559,7 +586,7 @@ function MediaKindSwitch({ kind, imageCount, videoCount, onChange }: { kind: Cur
                         style={{ background: active ? theme.node.panel : "transparent", color: active ? theme.node.text : theme.node.muted }}
                         onClick={() => onChange(value)}
                     >
-                        {value === "image" ? "图片" : "视频"} <span className="text-[10px] opacity-45">{value === "image" ? imageCount : videoCount}</span>
+                        {value === "image" ? t("assetsPanel.kinds.image") : t("assetsPanel.kinds.video")} <span className="text-[10px] opacity-45">{value === "image" ? imageCount : videoCount}</span>
                     </button>
                 );
             })}
@@ -605,6 +632,7 @@ function PanelEmpty({ icon, text }: { icon: ReactNode; text: string }) {
 }
 
 function PanelError({ message, onRetry }: { message: string; onRetry: () => void }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div className="grid min-h-48 place-items-center px-5 text-center">
@@ -614,7 +642,7 @@ function PanelError({ message, onRetry }: { message: string; onRetry: () => void
                 </p>
                 <button type="button" className="mx-auto flex items-center gap-1 text-xs" onClick={onRetry}>
                     <RefreshCw className="size-3.5" />
-                    重试
+                    {t("assetsPanel.retry")}
                 </button>
             </div>
         </div>

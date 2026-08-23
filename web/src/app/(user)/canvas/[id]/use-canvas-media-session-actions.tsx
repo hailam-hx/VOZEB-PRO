@@ -2,6 +2,7 @@
 
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback } from "react";
+import { useTranslations } from "next-intl";
 
 import { droppedFiles, preventFileDragEvent } from "@/lib/file-drop";
 import { readImageMeta } from "@/lib/image-utils";
@@ -20,6 +21,7 @@ import type { CanvasPageState } from "./use-canvas-page-state";
 import type { CanvasFileActions } from "./use-canvas-file-actions";
 
 export function useCanvasMediaSessionActions({ state, interactions, files }: { state: CanvasPageState; interactions: CanvasInteractions; files: CanvasFileActions }) {
+    const t = useTranslations("canvas.mediaSession");
     const {
         message,
         projectId,
@@ -57,7 +59,7 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
             if (!file.type.startsWith("image/") && !file.type.startsWith("video/") && !isAudioFile(file)) {
                 uploadTargetRef.current = null;
                 event.target.value = "";
-                message.error("请选择图片、视频、MP3 或 WAV 文件");
+                message.error(t("unsupportedFile"));
                 return;
             }
 
@@ -114,7 +116,7 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
                         const objectUrl = URL.createObjectURL(file);
                         const dimensions = await readImageMeta(objectUrl).finally(() => URL.revokeObjectURL(objectUrl));
                         if (!isPanoramaRatio(dimensions.width, dimensions.height)) {
-                            message.error("全景图必须接近 2:1 比例，例如 2048x1024");
+                            message.error(t("invalidPanorama"));
                             return;
                         }
                     }
@@ -142,14 +144,14 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
                     const position = target?.position || screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
                     await (isAudioFile(file) ? createAudioFileNode(file, position) : file.type.startsWith("video/") ? createVideoFileNode(file, position) : createImageFileNode(file, position));
                 }
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "文件添加失败，请稍后重试");
+            } catch {
+                message.error(t("addFailed"));
             } finally {
                 uploadTargetRef.current = null;
                 event.target.value = "";
             }
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, message, nodesRef, screenToCanvas, size.height, size.width],
+        [createAudioFileNode, createImageFileNode, createVideoFileNode, message, nodesRef, screenToCanvas, size.height, size.width, t],
     );
 
     const handleDrop = useCallback(
@@ -167,20 +169,20 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
             });
             void Promise.allSettled(creations).then((results) => {
                 const failures = results.filter((result) => result.status === "rejected");
-                if (failures.length) message.error(failures.length === files.length ? "文件添加失败" : `有 ${failures.length} 个文件添加失败`);
+                if (failures.length) message.error(failures.length === files.length ? t("addFailed") : t("partialAddFailed", { count: failures.length }));
             });
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, message, screenToCanvas, setSelectedConnectionId, setSelectedNodeIds],
+        [createAudioFileNode, createImageFileNode, createVideoFileNode, message, screenToCanvas, setSelectedConnectionId, setSelectedNodeIds, t],
     );
 
     const pasteAssistantImage = useCallback(
         async (file: File) => {
             const position = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
             const nodeId = await createImageFileNode(file, position, true);
-            message.success("图片已添加到本轮引用");
+            message.success(t("referenceAdded"));
             return nodeId;
         },
-        [createImageFileNode, message, screenToCanvas, size.height, size.width],
+        [createImageFileNode, message, screenToCanvas, size.height, size.width, t],
     );
 
     const handleAssistantSessionsChange = useCallback((sessions: CanvasAssistantSession[], activeId: string | null) => {
@@ -189,9 +191,9 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
     }, []);
 
     const startTitleEditing = useCallback(() => {
-        setTitleDraft(currentProject?.title || "未命名画布");
+        setTitleDraft(currentProject?.title || t("untitled"));
         setTitleEditing(true);
-    }, [currentProject?.title]);
+    }, [currentProject?.title, t]);
 
     const finishTitleEditing = useCallback(() => {
         const nextTitle = titleDraft.trim();

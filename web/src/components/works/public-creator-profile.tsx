@@ -4,6 +4,7 @@ import { App, Button } from "antd";
 import { Heart, ImageIcon, UserPlus, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { PublicWorkGalleryCard } from "@/components/works/public-work-gallery-card";
 import { ResponsiveMasonryGrid } from "@/components/works/responsive-masonry-grid";
@@ -24,6 +25,7 @@ export function PublicCreatorProfile({
     onOpenAuthor?: (username: string) => void;
     compact?: boolean;
 }) {
+    const t = useTranslations("public.creatorProfile");
     const { message } = App.useApp();
     const router = useRouter();
     const user = useUserStore((state) => state.user);
@@ -35,7 +37,7 @@ export function PublicCreatorProfile({
 
     const toggleFollow = async () => {
         if (!user) {
-            message.info("登录后可关注创作者");
+            message.info(t("loginToFollow"));
             router.push(`/login?next=${encodeURIComponent(nextPath)}`);
             return;
         }
@@ -44,9 +46,9 @@ export function PublicCreatorProfile({
         try {
             const result = await setPublicCreatorFollow(profile.username, !profile.following);
             setProfile((current) => ({ ...current, following: result.active, followerCount: result.followerCount }));
-            message.success(result.active ? "已关注作者" : "已取消关注");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "关注操作失败");
+            message.success(result.active ? t("followed") : t("unfollowed"));
+        } catch {
+            message.error(t("followFailed"));
         } finally {
             setFollowingBusy(false);
         }
@@ -62,8 +64,8 @@ export function PublicCreatorProfile({
                 return [...current, ...page.items.filter((item) => !known.has(item.slug))];
             });
             setCursor(page.nextCursor);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "更多作品加载失败");
+        } catch {
+            message.error(t("loadMoreFailed"));
         } finally {
             setLoadingMore(false);
         }
@@ -80,10 +82,10 @@ export function PublicCreatorProfile({
                 </h1>
                 {profile.bio ? <p className="mt-2 max-w-xl whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">{profile.bio}</p> : null}
                 <dl className="mt-4 grid w-full max-w-md grid-cols-4 divide-x divide-border">
-                    <CreatorMetric icon={<ImageIcon className="size-3.5" />} label="作品" value={profile.publishedWorkCount} />
-                    <CreatorMetric icon={<Heart className="size-3.5" />} label="获赞" value={profile.receivedLikeCount} />
-                    <CreatorMetric icon={<Users className="size-3.5" />} label="粉丝" value={profile.followerCount} />
-                    <CreatorMetric icon={<UserPlus className="size-3.5" />} label="关注" value={profile.followingCount} />
+                    <CreatorMetric icon={<ImageIcon className="size-3.5" />} label={t("works")} value={profile.publishedWorkCount} />
+                    <CreatorMetric icon={<Heart className="size-3.5" />} label={t("likes")} value={profile.receivedLikeCount} />
+                    <CreatorMetric icon={<Users className="size-3.5" />} label={t("followers")} value={profile.followerCount} />
+                    <CreatorMetric icon={<UserPlus className="size-3.5" />} label={t("followingCount")} value={profile.followingCount} />
                 </dl>
                 {profile.canFollow ? (
                     <Button
@@ -94,7 +96,7 @@ export function PublicCreatorProfile({
                         disabled={followingBusy}
                         onClick={() => void toggleFollow()}
                     >
-                        {profile.following ? "已关注" : "关注"}
+                        {profile.following ? t("following") : t("follow")}
                     </Button>
                 ) : null}
             </section>
@@ -102,12 +104,12 @@ export function PublicCreatorProfile({
             <section className="min-w-0 pt-4" aria-labelledby="creator-works">
                 <div className="flex h-11 items-center gap-2 border-b border-border">
                     <h2 id="creator-works" className="relative inline-flex h-11 items-center gap-1.5 px-1 text-sm font-semibold">
-                        <ImageIcon className="size-4" /> 已发布
+                        <ImageIcon className="size-4" /> {t("published")}
                         <span className="text-xs font-normal tabular-nums text-muted-foreground">{profile.publishedWorkCount}</span>
                         <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-foreground" />
                     </h2>
                 </div>
-                <ResponsiveMasonryGrid className={`mt-4 grid-cols-2 sm:grid-cols-3 ${compact ? "md:grid-cols-4 xl:grid-cols-5" : "md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"}`} ariaLabel="创作者作品列表">
+                <ResponsiveMasonryGrid className={`mt-4 grid-cols-2 sm:grid-cols-3 ${compact ? "md:grid-cols-4 xl:grid-cols-5" : "md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"}`} ariaLabel={t("worksAria")}>
                     {items.map((item) => (
                         <PublicWorkGalleryCard key={item.slug} item={item} nextPath={nextPath} onOpen={() => onOpenWork(item.slug)} onOpenAuthor={onOpenAuthor} />
                     ))}
@@ -115,7 +117,7 @@ export function PublicCreatorProfile({
                 {cursor ? (
                     <div className="flex justify-center pt-3 sm:pt-5">
                         <Button className="min-w-28" loading={loadingMore} disabled={loadingMore} onClick={() => void loadMore()}>
-                            加载更多
+                            {t("loadMore")}
                         </Button>
                     </div>
                 ) : null}

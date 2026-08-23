@@ -4,11 +4,13 @@ import { Button, Spin, Tag } from "antd";
 import { ArrowLeft, CheckCircle2, Clock3, ReceiptText, RefreshCw, RotateCcw, XCircle } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { cancelBillingOrder, getBillingOrder, subscribeBillingOrder, type BillingOrder } from "@/services/api/billing";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
 export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel"; orderId: string }) {
+    const t = useTranslations("billing.result");
     const [order, setOrder] = useState<BillingOrder | null>(null);
     const [loading, setLoading] = useState(true);
     const [checking, setChecking] = useState(false);
@@ -38,7 +40,7 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
     useEffect(() => {
         let active = true;
         if (!orderId) {
-            setError("支付结果缺少订单编号");
+            setError(t("missingOrder"));
             setLoading(false);
             return;
         }
@@ -51,7 +53,7 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
                 () => {
                     if (!active) return;
                     setLoading(false);
-                    setError("实时状态连接暂时中断，正在自动恢复，也可以手动检查订单。");
+                    setError(t("connectionInterrupted"));
                 },
             );
             return () => {
@@ -63,24 +65,24 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
             try {
                 const payload = await cancelBillingOrder(orderId);
                 if (active) applyOrder(payload.order);
-            } catch (value) {
+            } catch {
                 if (!active) return;
-                setError(value instanceof Error ? value.message : "支付结果加载失败");
+                setError(t("loadFailed"));
                 setLoading(false);
             }
         })();
         return () => {
             active = false;
         };
-    }, [applyOrder, mode, orderId]);
+    }, [applyOrder, mode, orderId, t]);
 
     const checkOrder = async () => {
         if (!orderId || checking) return;
         setChecking(true);
         try {
             applyOrder((await getBillingOrder(orderId)).order);
-        } catch (value) {
-            setError(value instanceof Error ? value.message : "支付结果加载失败");
+        } catch {
+            setError(t("loadFailed"));
         } finally {
             setChecking(false);
         }
@@ -91,19 +93,19 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
     const refunded = order?.status === "refunding" || order?.status === "refunded";
     const pending = !order || order.status === "pending";
     const Icon = paid ? CheckCircle2 : canceled ? XCircle : refunded ? RotateCcw : Clock3;
-    const title = paid ? "支付成功" : order?.status === "closed" ? "订单已关闭" : canceled ? "支付已取消" : order?.status === "refunded" ? "订单已退款" : order?.status === "refunding" ? "订单退款中" : "支付结果确认中";
+    const title = t(`titles.${paid ? "paid" : order?.status === "closed" ? "closed" : canceled ? "canceled" : order?.status === "refunded" ? "refunded" : order?.status === "refunding" ? "refunding" : "pending"}`);
     const description = paid
-        ? "套餐权益和积分已经更新。"
+        ? t("descriptions.paid")
         : order?.status === "closed"
-          ? "订单已超过支付有效期，你可以重新选择套餐和支付方式。"
+          ? t("descriptions.closed")
           : canceled
-            ? "订单已取消，你可以重新选择套餐和支付方式。"
+            ? t("descriptions.canceled")
             : order?.status === "refunded"
-              ? "该订单已经完成退款。"
+              ? t("descriptions.refunded")
               : order?.status === "refunding"
-                ? "退款正在处理中，可前往订单记录查看进度。"
-                : "正在等待支付回调，可随时离开并在订单记录中查看最终状态。";
-    const statusLabel = paid ? "已支付" : order?.status === "closed" ? "已关闭" : canceled ? "已取消" : order?.status === "refunded" ? "已退款" : order?.status === "refunding" ? "退款中" : "待确认";
+                ? t("descriptions.refunding")
+                : t("descriptions.pending");
+    const statusLabel = t(`statuses.${paid ? "paid" : order?.status === "closed" ? "closed" : canceled ? "canceled" : order?.status === "refunded" ? "refunded" : order?.status === "refunding" ? "refunding" : "pending"}`);
     const statusColor = paid ? "green" : refunded ? "blue" : canceled ? "default" : "gold";
 
     return (
@@ -113,7 +115,7 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
                     {loading ? (
                         <div className="py-2 sm:py-12">
                             <Spin />
-                            <div className="mt-4 text-sm text-stone-500 dark:text-stone-400">正在确认支付结果…</div>
+                            <div className="mt-4 text-sm text-stone-500 dark:text-stone-400">{t("confirming")}</div>
                         </div>
                     ) : (
                         <>
@@ -126,17 +128,17 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
                             <p className="mt-2 text-sm leading-6 text-stone-500 dark:text-stone-400">{error || description}</p>
                             {mode === "success" && pending ? (
                                 <Button className="mt-3" icon={<RefreshCw className="size-4" />} loading={checking} onClick={() => void checkOrder()}>
-                                    重新检查
+                                    {t("checkAgain")}
                                 </Button>
                             ) : null}
                             {order ? (
                                 <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50 p-3.5 text-left sm:mt-6 sm:p-4 dark:border-stone-800 dark:bg-stone-900/55">
                                     <div className="flex items-center justify-between gap-3 text-sm">
-                                        <span className="text-stone-500 dark:text-stone-400">订单号</span>
+                                        <span className="text-stone-500 dark:text-stone-400">{t("orderNumber")}</span>
                                         <span className="break-all font-mono text-xs">{order.orderNo}</span>
                                     </div>
                                     <div className="mt-3 flex items-center justify-between gap-3 text-sm">
-                                        <span className="text-stone-500 dark:text-stone-400">当前状态</span>
+                                        <span className="text-stone-500 dark:text-stone-400">{t("currentStatus")}</span>
                                         <Tag color={statusColor}>{statusLabel}</Tag>
                                     </div>
                                 </div>
@@ -144,12 +146,12 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
                             <div className="mt-4 grid gap-2.5 sm:mt-6 sm:grid-cols-2 sm:gap-3">
                                 <Link href="/billing" className="block">
                                     <Button block className="!h-10" icon={<ArrowLeft className="size-4" />}>
-                                        返回充值中心
+                                        {t("backToBilling")}
                                     </Button>
                                 </Link>
                                 <Link href="/profile?section=orders" className="block">
                                     <Button block type="primary" className="profile-primary-button !h-10" icon={<ReceiptText className="size-4" />}>
-                                        查看订单记录
+                                        {t("viewOrders")}
                                     </Button>
                                 </Link>
                             </div>

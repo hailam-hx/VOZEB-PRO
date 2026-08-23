@@ -3,11 +3,13 @@
 import { Input } from "antd";
 import { ChevronDown, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { useDramaStore } from "../stores/use-drama-store";
 import type { DramaShot, DramaShotContinuity } from "../types";
 
 export function DramaShotContinuityEditor({ projectId, episodeId, shot }: { projectId: string; episodeId: string; shot: DramaShot }) {
+    const t = useTranslations("drama.editor.continuity");
     const updateShot = useDramaStore((state) => state.updateShot);
     const [open, setOpen] = useState(false);
     const continuity = { ...emptyContinuity, ...shot.continuity };
@@ -28,28 +30,28 @@ export function DramaShotContinuityEditor({ projectId, episodeId, shot }: { proj
                         <SlidersHorizontal className="size-4" />
                     </span>
                     <span className="flex min-w-0 flex-col justify-center gap-0.5 overflow-hidden">
-                        <span className="truncate text-base font-semibold text-foreground">连续性控制</span>
-                        <span className="truncate text-xs text-muted-foreground">站位、视线、轴线与动作衔接</span>
+                        <span className="truncate text-base font-semibold text-foreground">{t("title")}</span>
+                        <span className="truncate text-xs text-muted-foreground">{t("description")}</span>
                     </span>
                 </span>
                 <span
                     className={`flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors ${open ? "border-foreground bg-foreground text-background" : "border-border bg-background text-foreground group-hover:border-foreground/30 group-hover:bg-muted/70"}`}
                 >
-                    <span>{open ? "收起" : "设置连续性"}</span>
+                    <span>{open ? t("collapse") : t("configure")}</span>
                     <ChevronDown className={`size-4 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
                 </span>
             </button>
             {open ? (
                 <div id={panelId} className="mt-2 grid gap-3 rounded-md bg-muted/20 p-3 sm:grid-cols-2">
-                    <ContinuityInput label="景别" value={continuity.shotSize} placeholder="特写 / 近景 / 中景 / 全景" onChange={(value) => updateContinuity("shotSize", value)} />
-                    <ContinuityInput label="机位与角度" value={continuity.cameraAngle} placeholder="平视、俯拍、侧后方" onChange={(value) => updateContinuity("cameraAngle", value)} />
-                    <ContinuityInput label="构图" value={continuity.composition} placeholder="主体位于画面左侧，门口留出视线空间" onChange={(value) => updateContinuity("composition", value)} />
-                    <ContinuityInput label="人物站位" value={continuity.characterBlocking} placeholder="女主在前景右侧，男主位于门边" onChange={(value) => updateContinuity("characterBlocking", value)} />
-                    <ContinuityInput label="视线与屏幕方向" value={continuity.gazeDirection} placeholder="女主看向画面左侧，保持向右运动" onChange={(value) => updateContinuity("gazeDirection", value)} />
-                    <ContinuityInput label="轴线规则" value={continuity.axisRule} placeholder="保持人物连线同侧，不越轴" onChange={(value) => updateContinuity("axisRule", value)} />
-                    <ContinuityTextArea label="动作起始状态" value={continuity.actionStart} placeholder="镜头开始时人物正在做什么" onChange={(value) => updateContinuity("actionStart", value)} />
-                    <ContinuityTextArea label="动作结束状态" value={continuity.actionEnd} placeholder="镜头结束时动作停在哪里，为下一镜头留下什么状态" onChange={(value) => updateContinuity("actionEnd", value)} />
-                    <ContinuityTextArea label="相邻镜头备注" value={continuity.continuityNotes} placeholder="与上一镜头或下一镜头必须保持的细节" onChange={(value) => updateContinuity("continuityNotes", value)} />
+                    <ContinuityInput label={t("shotSize")} value={continuity.shotSize} placeholder={t("shotSizePlaceholder")} onChange={(value) => updateContinuity("shotSize", value)} />
+                    <ContinuityInput label={t("cameraAngle")} value={continuity.cameraAngle} placeholder={t("cameraAnglePlaceholder")} onChange={(value) => updateContinuity("cameraAngle", value)} />
+                    <ContinuityInput label={t("composition")} value={continuity.composition} placeholder={t("compositionPlaceholder")} onChange={(value) => updateContinuity("composition", value)} />
+                    <ContinuityInput label={t("characterBlocking")} value={continuity.characterBlocking} placeholder={t("characterBlockingPlaceholder")} onChange={(value) => updateContinuity("characterBlocking", value)} />
+                    <ContinuityInput label={t("gazeDirection")} value={continuity.gazeDirection} placeholder={t("gazeDirectionPlaceholder")} onChange={(value) => updateContinuity("gazeDirection", value)} />
+                    <ContinuityInput label={t("axisRule")} value={continuity.axisRule} placeholder={t("axisRulePlaceholder")} onChange={(value) => updateContinuity("axisRule", value)} />
+                    <ContinuityTextArea label={t("actionStart")} value={continuity.actionStart} placeholder={t("actionStartPlaceholder")} onChange={(value) => updateContinuity("actionStart", value)} />
+                    <ContinuityTextArea label={t("actionEnd")} value={continuity.actionEnd} placeholder={t("actionEndPlaceholder")} onChange={(value) => updateContinuity("actionEnd", value)} />
+                    <ContinuityTextArea label={t("notes")} value={continuity.continuityNotes} placeholder={t("notesPlaceholder")} onChange={(value) => updateContinuity("continuityNotes", value)} />
                 </div>
             ) : null}
         </div>

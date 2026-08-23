@@ -3,6 +3,7 @@ import { ArrowUpRight, CalendarDays, DatabaseZap, Eye } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
+import { getFormatter, getLocale, getTranslations } from "next-intl/server";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { PublicWorkCommunityActions } from "@/components/works/public-work-community-actions";
@@ -15,6 +16,7 @@ import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/
 import { buildCreativeWorkStructuredData, serializeStructuredData } from "@/lib/structured-data";
 import { userAvatarFallback } from "@/lib/user-avatar";
 import type { SiteSettings } from "@/lib/auth/store";
+import { localeMetadata, type AppLocale } from "@/i18n/config";
 import { WorkViewTracker } from "./work-view-tracker";
 import { WorkGovernanceActions } from "./work-governance-actions";
 import { WorkPromptActions } from "./work-prompt-actions";
@@ -33,15 +35,15 @@ const getSharedWork = cache(async (slug: string) => {
 
 export async function generateMetadata({ params }: SharePageProps): Promise<Metadata> {
     const { slug } = await params;
-    const [work, site] = await Promise.all([getSharedWork(slug), getPublicSiteSettings()]);
-    if (work === undefined) return { title: `作品分享暂不可用 | ${site.title}`, robots: { index: false, follow: false } };
-    if (!work) return { title: `作品不存在 | ${site.title}`, robots: { index: false, follow: false } };
+    const [work, site, t, locale] = await Promise.all([getSharedWork(slug), getPublicSiteSettings(), getTranslations("public.share"), getLocale()]);
+    if (work === undefined) return { title: t("metadataUnavailable", { site: site.title }), robots: { index: false, follow: false } };
+    if (!work) return { title: t("metadataNotFound", { site: site.title }), robots: { index: false, follow: false } };
 
     const base = siteMetadataBase();
     const canonical = `/share/${encodeURIComponent(work.slug)}`;
     const cover = work.assets.find((asset) => asset.role === "cover" && asset.mediaType === "image") || work.assets.find((asset) => asset.mediaType === "image");
     const imageUrl = absoluteSiteUrl(cover ? imagePreviewUrl(cover.url, 1920) : site.logoUrl || "/logo.svg", base);
-    const description = work.description || `${work.authorName ? `${work.authorName} 的` : ""}${work.category}作品`;
+    const description = work.description || t("metadataDescription", { author: work.authorName || "", category: work.category });
     const title = `${work.title} | ${site.title}`;
     return {
         metadataBase: base,
@@ -58,7 +60,7 @@ export async function generateMetadata({ params }: SharePageProps): Promise<Meta
             url: canonical,
             images: [{ url: imageUrl, alt: work.title }],
             publishedTime: work.publishedAt,
-            locale: "zh_CN",
+            locale: localeMetadata[locale as AppLocale].openGraphLocale,
         },
         twitter: {
             card: cover ? "summary_large_image" : "summary",
@@ -71,7 +73,7 @@ export async function generateMetadata({ params }: SharePageProps): Promise<Meta
 
 export default async function SharePage({ params }: SharePageProps) {
     const { slug } = await params;
-    const [work, site] = await Promise.all([getSharedWork(slug), getPublicSiteSettings()]);
+    const [work, site, t, format] = await Promise.all([getSharedWork(slug), getPublicSiteSettings(), getTranslations("public.share"), getFormatter()]);
     if (work === null) notFound();
     if (work === undefined) {
         return (
@@ -82,11 +84,11 @@ export default async function SharePage({ params }: SharePageProps) {
                         <DatabaseZap className="size-5" />
                     </span>
                     <h1 id="share-unavailable-title" className="mt-4 text-xl font-semibold sm:text-2xl">
-                        作品分享暂不可用
+                        {t("unavailable")}
                     </h1>
-                    <p className="mt-2 text-sm leading-6 text-[#747d89] dark:text-[#939ca8]">当前部署未启用 PostgreSQL，公开作品与分享数据暂时无法读取。</p>
+                    <p className="mt-2 text-sm leading-6 text-[#747d89] dark:text-[#939ca8]">{t("databaseUnavailable")}</p>
                     <Link href="/" className="mt-5 inline-flex h-10 items-center rounded-md bg-[#20242a] px-4 text-sm font-semibold text-white transition hover:opacity-85 dark:bg-[#f3f5f7] dark:text-[#17191d]">
-                        返回首页
+                        {t("backHome")}
                     </Link>
                 </section>
             </main>
@@ -102,7 +104,7 @@ export default async function SharePage({ params }: SharePageProps) {
         url: canonicalUrl,
         websiteId: `${absoluteSiteUrl("/", base)}#website`,
         title: work.title,
-        description: work.description || `${work.authorName ? `${work.authorName} 的` : ""}${work.category}作品`,
+        description: work.description || t("metadataDescription", { author: work.authorName || "", category: work.category }),
         publishedAt: work.publishedAt,
         category: work.category,
         tags: work.tags,
@@ -112,11 +114,11 @@ export default async function SharePage({ params }: SharePageProps) {
     const authorIdentity = (
         <>
             <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full bg-foreground text-[10px] font-semibold text-background">
-                {work.authorAvatarUrl ? <img src={work.authorAvatarUrl} alt="" className="size-full object-cover" /> : userAvatarFallback(work.authorName || "匿名作者")}
+                {work.authorAvatarUrl ? <img src={work.authorAvatarUrl} alt="" className="size-full object-cover" /> : userAvatarFallback(work.authorName || t("anonymous"))}
             </span>
             <div className="min-w-0">
-                <div className="text-xs text-muted-foreground">作者</div>
-                <div className="mt-0.5 truncate text-sm font-semibold">{work.authorName || "匿名作者"}</div>
+                <div className="text-xs text-muted-foreground">{t("author")}</div>
+                <div className="mt-0.5 truncate text-sm font-semibold">{work.authorName || t("anonymous")}</div>
             </div>
         </>
     );
@@ -132,11 +134,11 @@ export default async function SharePage({ params }: SharePageProps) {
                     <div className="min-w-0">
                         <h1 className="break-words text-xl font-semibold leading-tight sm:text-2xl">{work.title}</h1>
                         <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <span>{sourceTypeLabel(work.sourceType)}</span>
+                            <span>{t(`sources.${work.sourceType}`)}</span>
                             <span aria-hidden="true">/</span>
                             <span>{work.category}</span>
                             <span aria-hidden="true">/</span>
-                            <span>{work.visibility === "public" ? "公开作品" : "仅链接分享"}</span>
+                            <span>{work.visibility === "public" ? t("publicVisibility") : t("unlistedVisibility")}</span>
                         </div>
                     </div>
                     <div className="shrink-0">
@@ -147,7 +149,7 @@ export default async function SharePage({ params }: SharePageProps) {
                 <div className="grid min-w-0 gap-4 pt-3 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_400px]">
                     <PublicWorkMediaBrowser assets={contentAssets} title={work.title} />
 
-                    <aside className="min-w-0 border-t border-border pt-4 lg:rounded-lg lg:border lg:bg-card lg:p-4 lg:pt-4" aria-label="作品信息">
+                    <aside className="min-w-0 border-t border-border pt-4 lg:rounded-lg lg:border lg:bg-card lg:p-4 lg:pt-4" aria-label={t("infoAria")}>
                         <div className="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)] lg:overflow-y-auto lg:pr-1">
                             <div className="flex min-w-0 items-center justify-between gap-3">
                                 {work.authorUsername ? (
@@ -159,34 +161,34 @@ export default async function SharePage({ params }: SharePageProps) {
                                 )}
                                 <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                                     <CalendarDays className="size-3.5" />
-                                    {formatPublishedDate(work.publishedAt)}
+                                    {format.dateTime(new Date(work.publishedAt), { year: "numeric", month: "long", day: "numeric" })}
                                 </span>
                             </div>
 
                             <div className="mt-5 flex min-w-0 flex-wrap items-center justify-between gap-3 border-y border-border py-3">
-                                <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground" title="访问">
+                                <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground" title={t("views")}>
                                     <Eye className="size-4" />
-                                    <span className="tabular-nums text-foreground">{work.viewCount}</span> 次访问
+                                    <span className="tabular-nums text-foreground">{work.viewCount}</span> {t("viewCount", { count: work.viewCount })}
                                 </span>
                                 <PublicWorkCommunityActions slug={work.slug} />
                             </div>
 
                             {work.description ? (
                                 <section className="mt-5">
-                                    <h2 className="text-sm font-semibold">作品说明</h2>
+                                    <h2 className="text-sm font-semibold">{t("description")}</h2>
                                     <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">{work.description}</p>
                                 </section>
                             ) : null}
 
                             <section className="mt-5">
-                                <h2 className="text-sm font-semibold">公开提示词</h2>
+                                <h2 className="text-sm font-semibold">{t("publicPrompt")}</h2>
                                 {work.publicPrompt ? (
                                     <>
                                         <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-sans text-sm leading-6 text-foreground">{work.publicPrompt}</pre>
                                         <WorkPromptActions prompt={work.publicPrompt} createHref={createHref} />
                                     </>
                                 ) : (
-                                    <p className="mt-2 text-sm leading-6 text-muted-foreground">作者没有公开提示词。</p>
+                                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{t("noPrompt")}</p>
                                 )}
                             </section>
 
@@ -208,28 +210,20 @@ export default async function SharePage({ params }: SharePageProps) {
                         <SiteLogo logoUrl={site.logoUrl || "/logo.svg"} className="size-9" />
                         <div className="min-w-0">
                             <div className="truncate text-sm font-semibold">{site.title}</div>
-                            <div className="mt-0.5 text-xs text-[#747d89] dark:text-[#939ca8]">创作、发布与分享你的作品</div>
+                            <div className="mt-0.5 text-xs text-[#747d89] dark:text-[#939ca8]">{t("footerDescription")}</div>
                         </div>
                     </div>
                     <Link
                         href="/create"
                         className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#20242a] px-4 text-sm font-medium text-[#20242a] transition hover:bg-[#20242a] hover:text-white dark:border-[#f3f5f7] dark:text-[#f3f5f7] dark:hover:bg-[#f3f5f7] dark:hover:text-[#17191d]"
                     >
-                        创建我的作品
+                        {t("createMyWork")}
                         <ArrowUpRight className="size-4" />
                     </Link>
                 </footer>
             </div>
         </main>
     );
-}
-
-function sourceTypeLabel(sourceType: "media" | "canvas" | "drama") {
-    return sourceType === "media" ? "素材作品" : sourceType === "canvas" ? "画布作品" : "短剧作品";
-}
-
-function formatPublishedDate(value: string) {
-    return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" }).format(new Date(value));
 }
 
 function ShareHeader({ site }: { site: SiteSettings }) {

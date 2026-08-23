@@ -31,12 +31,11 @@ type DramaStore = {
     addClue: (projectId: string, input: Omit<DramaClue, "id">) => void;
     updateAsset: (projectId: string, kind: DramaAssetKind, id: string, patch: Partial<DramaCharacter & DramaClue>) => void;
     removeAsset: (projectId: string, kind: DramaAssetKind, id: string) => void;
-    addEpisode: (projectId: string) => void;
+    addEpisode: (projectId: string, title: string) => void;
     importEpisodes: (projectId: string, drafts: DramaSourceEpisodeDraft[]) => void;
     deleteEpisode: (projectId: string, episodeId: string) => void;
     selectEpisode: (projectId: string, episodeId: string) => void;
     updateEpisode: (projectId: string, episodeId: string, patch: Partial<Pick<DramaEpisode, "title" | "script" | "scriptRichContent" | "outline" | "hook" | "nextPreview" | "sourceRange" | "reviewStatus" | "renderTask" | "visualReview">>) => void;
-    buildStoryboard: (projectId: string, episodeId: string) => void;
     updateShot: (projectId: string, episodeId: string, shotId: string, patch: Partial<DramaShot>) => void;
     queueShots: (projectId: string, episodeId: string, shotIds: string[]) => void;
     applyContentAnalysis: (projectId: string, episodeId: string, analysis: DramaContentAnalysis) => void;
@@ -99,7 +98,7 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                 set({ summaries: result.projects, summaryTotal: result.total, summaryPage: result.page, summaryPageSize: result.pageSize, hydrated: true, hydratedUserId: userId });
             })
             .catch((error) => {
-                if (isActiveHydrate(session, requestId)) set({ summaries: [], summaryTotal: 0, summaryPage: 0, hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "短剧项目加载失败" });
+                if (isActiveHydrate(session, requestId)) set({ summaries: [], summaryTotal: 0, summaryPage: 0, hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "drama-project-load-failed" });
             })
             .finally(() => {
                 if (hydrateRequest?.requestId === requestId) hydrateRequest = null;
@@ -127,7 +126,7 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                 };
             });
         } catch (error) {
-            if (sessionEpoch.isCurrent(session)) set({ summaryLoadingMore: false, syncError: error instanceof Error ? error.message : "更多项目加载失败" });
+            if (sessionEpoch.isCurrent(session)) set({ summaryLoadingMore: false, syncError: error instanceof Error ? error.message : "drama-project-page-load-failed" });
         }
     },
     loadProject: async (id, force = false) => {
@@ -204,11 +203,11 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                 ),
             })),
         })),
-    addEpisode: (projectId) =>
+    addEpisode: (projectId, title) =>
         mutateProject(projectId, (project) => {
             const episode: DramaEpisode = {
                 id: `episode-${nanoid()}`,
-                title: `第 ${project.episodes.length + 1} 集`,
+                title,
                 script: "",
                 outline: "",
                 hook: "",
@@ -221,9 +220,9 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
         }),
     importEpisodes: (projectId, drafts) =>
         mutateProject(projectId, (project) => {
-            const episodes = drafts.map<DramaEpisode>((draft, index) => ({
+            const episodes = drafts.map<DramaEpisode>((draft) => ({
                 id: `episode-${nanoid()}`,
-                title: draft.title || `第 ${index + 1} 集`,
+                title: draft.title,
                 script: draft.script,
                 outline: "",
                 hook: "",
@@ -242,8 +241,6 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
         }),
     selectEpisode: (projectId, episodeId) => mutateProject(projectId, (project) => (project.episodes.some((episode) => episode.id === episodeId) ? { ...project, activeEpisodeId: episodeId } : project)),
     updateEpisode: (projectId, episodeId, patch) => mutateProject(projectId, (project) => ({ ...project, episodes: project.episodes.map((episode) => (episode.id === episodeId ? { ...episode, ...patch } : episode)) })),
-    buildStoryboard: (projectId, episodeId) =>
-        mutateProject(projectId, (project) => ({ ...project, episodes: project.episodes.map((episode) => (episode.id === episodeId ? { ...episode, shots: scriptToShots(episode.script, project), renderTask: undefined } : episode)) })),
     updateShot: (projectId, episodeId, shotId, patch) =>
         mutateProject(projectId, (project) => ({
             ...project,
@@ -514,7 +511,7 @@ function queueSave(session: ClientSessionStamp, project: DramaProject) {
                     const latest = useDramaStore.getState().projects.find((item) => item.id === project.id);
                     if (latest?.updatedAt === project.updatedAt)
                         useDramaStore.setState((state) => ({
-                            syncError: error instanceof Error ? error.message : "短剧项目保存失败",
+                            syncError: error instanceof Error ? error.message : "drama-project-save-failed",
                             saveStateByProject: { ...state.saveStateByProject, [project.id]: { status: "error", savedAt: state.saveStateByProject[project.id]?.savedAt } },
                         }));
                 }
@@ -548,12 +545,12 @@ function isActiveHydrate(session: ClientSessionStamp, requestId: number) {
 
 function requireSession() {
     const session = sessionEpoch.capture();
-    if (!session.userId) throw new Error("请先登录");
+    if (!session.userId) throw new Error("authentication-required");
     return session;
 }
 
 function assertCurrent(session: ClientSessionStamp) {
-    if (!sessionEpoch.isCurrent(session)) throw new Error("登录会话已变更，请重试");
+    if (!sessionEpoch.isCurrent(session)) throw new Error("session-changed");
 }
 
 function invalidateSession() {
@@ -569,45 +566,6 @@ function invalidateSession() {
 function upsertSummary(summaries: DramaProjectSummary[], project: DramaProject) {
     const summary = summarizeDramaProject(project);
     return [summary, ...summaries.filter((item) => item.id !== project.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-function scriptToShots(script: string, project: DramaProject): DramaShot[] {
-    return script
-        .split(/\n+/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((text, index) => {
-            const context = [project.style, project.summary, text].filter(Boolean).join("，");
-            return {
-                id: `shot-${nanoid()}`,
-                order: index + 1,
-                title: `镜头 ${String(index + 1).padStart(2, "0")}`,
-                description: text,
-                sourceText: text,
-                shotBoundary: "段落边界",
-                dialogue: "",
-                narration: "",
-                utterances: [],
-                imagePrompt: `${context}，角色与画风保持一致，电影分镜画面`,
-                videoPrompt: `${context}，镜头运动自然，人物动作连续，保持角色一致性`,
-                cameraMotion: "自然镜头运动",
-                startFramePrompt: text,
-                endFramePrompt: text,
-                negativePrompt: "文字、水印、角色身份漂移、服装变化、错误肢体",
-                continuity: emptyContinuity(),
-                duration: 5,
-                characterIds: [],
-                propIds: [],
-                clueIds: [],
-                sceneId: project.scenes[0]?.id,
-                videoMode: project.defaultVideoMode,
-                storyboardFrameMode: "single",
-                storyboardStatus: "idle",
-                generationStatus: "idle",
-                audioMode: "source",
-                audioStatus: "idle",
-            };
-        });
 }
 
 function emptyContinuity() {

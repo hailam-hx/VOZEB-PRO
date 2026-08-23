@@ -24,7 +24,7 @@ describe("gallery surfaces", () => {
         expect(communityPage).toContain("h-full min-h-0 overflow-y-auto");
         expect(sharedView).toContain("WORK_CATEGORY_OPTIONS.map");
         expect(sharedView).toContain("action={basePath}");
-        expect(sharedView).toContain('aria-label="作品分类"');
+        expect(sharedView).toContain('aria-label={t("workCategories")}');
         expect(sharedView).toContain("<ResponsiveMasonryGrid");
         expect(sharedView).toContain("grid-cols-2");
         expect(sharedView).toContain("sm:grid-cols-3");
@@ -37,7 +37,7 @@ describe("gallery surfaces", () => {
         expect(masonryGrid).toContain("gridRowEnd");
         expect(sharedView).not.toContain("max-h-[640px]");
         expect(sharedView).toContain("galleryFilterHref(basePath");
-        expect(sharedView).toContain("发布第一个作品");
+        expect(sharedView).toContain('label={t("publishFirstWork")}');
         expect(sharedView).not.toContain('<span className="hidden sm:inline">发布作品</span>');
         expect(publishLink).toContain("state.ready");
         expect(publishLink).toContain("state.payload?.user");

@@ -179,8 +179,8 @@ export async function expectDialogWithinViewport(dialog: Locator) {
 }
 
 export async function openCreativeHistory(page: Page) {
-    const dialog = page.getByRole("dialog", { name: "创作历史" });
-    const desktopPanel = page.locator("aside").filter({ has: page.getByRole("heading", { name: "创作历史", exact: true }) });
+    const dialog = page.getByRole("dialog", { name: "历史记录" });
+    const desktopPanel = page.locator("aside").filter({ has: page.getByRole("heading", { name: "历史记录", exact: true }) });
     const surface = (page.viewportSize()?.width || 0) >= 1024 ? desktopPanel : dialog;
     if (!(await surface.isVisible().catch(() => false))) {
         const openButton = page.getByTestId("creative-page-tools").getByRole("button", { name: "打开创作历史" });

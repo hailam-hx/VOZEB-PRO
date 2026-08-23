@@ -16,7 +16,7 @@ const galleryResponse = {
 };
 
 test("public homepage is functional for signed-out visitors", async ({ browser }, testInfo) => {
-    const context = await browser.newContext({ baseURL: String(testInfo.project.use.baseURL || "http://127.0.0.1:3100") });
+    const context = await browser.newContext({ baseURL: String(testInfo.project.use.baseURL || "http://127.0.0.1:3100"), locale: "zh-CN" });
     await context.clearCookies();
     const page = await context.newPage();
     const browserErrors = collectBrowserErrors(page);
@@ -88,8 +88,8 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         await expect.poll(() => centerOffset(navGlass, lastNavItem)).toBeLessThanOrEqual(1);
         await lastNavItem.click();
         const plansDialog = page.getByRole("dialog");
-        await expect(plansDialog.getByText("升级创作套餐", { exact: true })).toBeVisible();
-        await expect(plansDialog.getByText("暂无已上架套餐", { exact: true })).toBeVisible();
+        await expect(plansDialog.getByText("选择适合的套餐", { exact: true })).toBeVisible();
+        await expect(plansDialog.getByText("暂无可用套餐", { exact: true })).toBeVisible();
         await plansDialog.getByRole("button", { name: "关闭套餐选择" }).click();
         await expect(plansDialog).toBeHidden();
     } else {

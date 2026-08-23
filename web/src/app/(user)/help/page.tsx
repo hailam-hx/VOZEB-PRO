@@ -3,11 +3,14 @@
 import { Input, Select } from "antd";
 import { ArrowUpRight, BookOpenText, CircleHelp, Clapperboard, ImagePlus, Images, Maximize2, Rocket, Search, ShieldCheck, Sparkles, Video, WalletCards, Wrench, type LucideIcon } from "lucide-react";
 import Link from "next/link";
+import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useState } from "react";
 
+import { isAppLocale } from "@/i18n/config";
 import { cn } from "@/lib/utils";
 
-import { findHelpArticle, helpArticles, searchHelpArticles, type HelpArticleId } from "./help-content";
+import type { HelpArticle, HelpArticleId } from "./help-content";
+import { findLocalizedHelpArticle, getHelpArticles, searchLocalizedHelpArticles } from "./help-content-localized";
 import { HelpFaqList, HelpFlow, HelpGuideSteps } from "./help-elements";
 
 const icons: Record<HelpArticleId, LucideIcon> = {
@@ -39,15 +42,19 @@ const iconStyles: Record<HelpArticleId, string> = {
 };
 
 export default function HelpPage() {
+    const localeValue = useLocale();
+    const locale = isAppLocale(localeValue) ? localeValue : "vi";
+    const t = useTranslations("public.help");
     const [activeId, setActiveId] = useState<HelpArticleId>("start");
     const [query, setQuery] = useState("");
-    const results = useMemo(() => searchHelpArticles(query), [query]);
-    const activeArticle = findHelpArticle(activeId) || helpArticles[0];
+    const articles = useMemo(() => getHelpArticles(locale), [locale]);
+    const results = useMemo(() => searchLocalizedHelpArticles(articles, query, locale), [articles, locale, query]);
+    const activeArticle = findLocalizedHelpArticle(articles, activeId) || articles[0];
 
     useEffect(() => {
-        const requested = findHelpArticle(new URLSearchParams(window.location.search).get("section"));
+        const requested = findLocalizedHelpArticle(articles, new URLSearchParams(window.location.search).get("section"));
         if (requested) setActiveId(requested.id);
-    }, []);
+    }, [articles]);
 
     const selectArticle = (id: HelpArticleId) => {
         setActiveId(id);
@@ -63,19 +70,19 @@ export default function HelpPage() {
                 <header className="grid gap-4 border-b border-border pb-5 sm:pb-6 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-end">
                     <div className="min-w-0">
                         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                            <CircleHelp className="size-4" /> 用户帮助中心
+                            <CircleHelp className="size-4" /> {t("center")}
                         </div>
-                        <h1 className="mt-2 text-2xl font-semibold text-foreground sm:text-3xl">从操作到交付，按真实流程完成创作</h1>
-                        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">选择一个任务，查看完整流程、逐步操作、结果处理和常见问题。</p>
+                        <h1 className="mt-2 text-2xl font-semibold text-foreground sm:text-3xl">{t("title")}</h1>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{t("description")}</p>
                     </div>
-                    <Input allowClear size="large" prefix={<Search className="size-4 text-muted-foreground" />} placeholder="搜索功能、按钮或问题" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="搜索帮助内容" />
+                    <Input allowClear size="large" prefix={<Search className="size-4 text-muted-foreground" />} placeholder={t("searchPlaceholder")} value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t("searchAria")} />
                 </header>
 
                 {query.trim() ? (
-                    <section className="border-b border-border py-4" aria-label="帮助搜索结果">
+                    <section className="border-b border-border py-4" aria-label={t("searchResultsAria")}>
                         <div className="flex items-center justify-between gap-3">
-                            <h2 className="text-sm font-semibold">搜索结果</h2>
-                            <span className="text-xs text-muted-foreground">{results.length} 项</span>
+                            <h2 className="text-sm font-semibold">{t("searchResults")}</h2>
+                            <span className="text-xs text-muted-foreground">{t("resultCount", { count: results.length })}</span>
                         </div>
                         {results.length ? (
                             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -103,15 +110,15 @@ export default function HelpPage() {
                                 })}
                             </div>
                         ) : (
-                            <div className="mt-3 rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">没有找到相关教程，尝试搜索“画布”“参考图”“订单”或“下载”。</div>
+                            <div className="mt-3 rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">{t("noResults")}</div>
                         )}
                     </section>
                 ) : null}
 
                 <div className="grid min-w-0 gap-5 py-5 sm:py-6 lg:grid-cols-[232px_minmax(0,1fr)] lg:gap-8">
                     <aside className="hidden lg:block">
-                        <nav className="sticky top-4 space-y-1" aria-label="帮助分类">
-                            {helpArticles.map((article) => {
+                        <nav className="sticky top-4 space-y-1" aria-label={t("categoriesAria")}>
+                            {articles.map((article) => {
                                 const Icon = icons[article.id];
                                 const active = article.id === activeId;
                                 return (
@@ -136,26 +143,26 @@ export default function HelpPage() {
                     <main className="min-w-0">
                         <div className="mb-5 lg:hidden">
                             <label className="mb-2 block text-xs font-medium text-muted-foreground" htmlFor="help-mobile-section">
-                                选择教程
+                                {t("chooseGuide")}
                             </label>
-                            <Select id="help-mobile-section" className="w-full" size="large" value={activeId} options={helpArticles.map((article) => ({ label: article.label, value: article.id }))} onChange={(value) => selectArticle(value)} />
+                            <Select id="help-mobile-section" className="w-full" size="large" value={activeId} options={articles.map((article) => ({ label: article.label, value: article.id }))} onChange={(value) => selectArticle(value)} />
                         </div>
 
                         <article id="help-article" className="min-w-0 scroll-mt-4">
                             <ArticleHeader article={activeArticle} />
 
                             <section className="mt-7 sm:mt-8">
-                                <SectionHeading title="完整流程" description="先看清各阶段，再进入逐步操作。" />
+                                <SectionHeading title={t("flowTitle")} description={t("flowDescription")} />
                                 <HelpFlow steps={activeArticle.flow} />
                             </section>
 
                             <section className="mt-8 sm:mt-10">
-                                <SectionHeading title="详细教程" description="按顺序完成，每一步都包含检查项。" />
+                                <SectionHeading title={t("guideTitle")} description={t("guideDescription")} />
                                 <HelpGuideSteps steps={activeArticle.steps} />
                             </section>
 
                             <section className="mt-8 pb-8 sm:mt-10 sm:pb-12">
-                                <SectionHeading title="常见问题" description="优先按当前功能的真实状态处理。" />
+                                <SectionHeading title={t("faqTitle")} description={t("faqDescription")} />
                                 <HelpFaqList faqs={activeArticle.faqs} />
                             </section>
                         </article>
@@ -166,7 +173,7 @@ export default function HelpPage() {
     );
 }
 
-function ArticleHeader({ article }: { article: (typeof helpArticles)[number] }) {
+function ArticleHeader({ article }: { article: HelpArticle }) {
     const Icon = icons[article.id];
     return (
         <header className="border-b border-border pb-6">

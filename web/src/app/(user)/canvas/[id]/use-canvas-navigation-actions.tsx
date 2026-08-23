@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { useTranslations } from "next-intl";
 
 import { resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
@@ -11,6 +12,7 @@ import { CanvasHistoryEntry } from "./canvas-page-elements";
 import type { CanvasPageState } from "./use-canvas-page-state";
 
 export function useCanvasNavigationActions({ state }: { state: CanvasPageState }) {
+    const t = useTranslations("canvas");
     const siteTitle = usePublicSessionStore((current) => resolveSiteTitle(current.payload?.settings?.site?.title));
     const {
         message,
@@ -113,21 +115,21 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
 
     const createAndOpenProject = useCallback(async () => {
         try {
-            const id = await createProject(`${siteTitle} 画布 ${useCanvasStore.getState().summaries.length + 1}`);
+            const id = await createProject(t("defaultProjectName", { site: siteTitle, number: useCanvasStore.getState().summaries.length + 1 }));
             router.push(`/canvas/${id}`);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "画布创建失败");
+        } catch {
+            message.error(t("createFailed"));
         }
-    }, [createProject, message, router, siteTitle]);
+    }, [createProject, message, router, siteTitle, t]);
 
     const deleteCurrentProject = useCallback(async () => {
         try {
             await deleteProjects([projectId]);
             router.push("/canvas");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "画布删除失败");
+        } catch {
+            message.error(t("deleteFailed"));
         }
-    }, [deleteProjects, message, projectId, router]);
+    }, [deleteProjects, message, projectId, router, t]);
     return {
         resetViewport,
         locateCanvasNode,

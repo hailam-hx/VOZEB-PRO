@@ -2,12 +2,15 @@
 
 import { Copy, FolderPlus } from "lucide-react";
 import { Button, Modal, Space, Tag } from "antd";
+import { useFormatter, useTranslations } from "next-intl";
 
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
 import { imagePreviewUrl } from "@/lib/media-image-url";
-import { formatPromptDate, type Prompt } from "@/services/api/prompts";
+import type { Prompt } from "@/services/api/prompts";
 
 export function PromptDetailDialog({ prompt, previewUrl, onClose, onCopy, onSaveAsset }: { prompt: Prompt | null; previewUrl?: string; onClose: () => void; onCopy: (prompt: string) => void; onSaveAsset?: (prompt: Prompt) => void }) {
+    const t = useTranslations("media.promptLibrary");
+    const format = useFormatter();
     return (
         <>
             <Modal title={prompt?.title} open={Boolean(prompt)} onCancel={onClose} footer={null} width={1000}>
@@ -38,15 +41,18 @@ export function PromptDetailDialog({ prompt, previewUrl, onClose, onCopy, onSave
                                 </div>
                                 <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-stone-800 dark:text-stone-300">{prompt.prompt}</p>
                                 <div className="mt-4 text-xs text-stone-500 dark:text-stone-400">
-                                    创建：{formatPromptDate(prompt.createdAt)} · 更新：{formatPromptDate(prompt.updatedAt)}
+                                    {t("dates", {
+                                        created: format.dateTime(new Date(prompt.createdAt), { year: "numeric", month: "2-digit", day: "2-digit" }),
+                                        updated: format.dateTime(new Date(prompt.updatedAt), { year: "numeric", month: "2-digit", day: "2-digit" }),
+                                    })}
                                 </div>
                                 <Space wrap className="mt-5">
                                     <Button type="primary" icon={<Copy className="size-4" />} onClick={() => onCopy(prompt.prompt)}>
-                                        复制提示词
+                                        {t("copyPrompt")}
                                     </Button>
                                     {onSaveAsset ? (
                                         <Button icon={<FolderPlus className="size-4" />} onClick={() => onSaveAsset(prompt)}>
-                                            加入我的素材
+                                            {t("addToAssets")}
                                         </Button>
                                     ) : null}
                                 </Space>

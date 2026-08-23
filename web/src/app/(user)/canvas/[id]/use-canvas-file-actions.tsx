@@ -1,6 +1,7 @@
 "use client";
 
 import { nanoid } from "nanoid";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect } from "react";
 
 import { clipboardImageFiles } from "@/lib/clipboard-image-files";
@@ -16,6 +17,7 @@ import type { CanvasInteractions } from "./use-canvas-interactions";
 import type { CanvasPageState } from "./use-canvas-page-state";
 
 export function useCanvasFileActions({ state, interactions }: { state: CanvasPageState; interactions: CanvasInteractions }) {
+    const t = useTranslations("canvas.fileActions");
     const {
         message,
         setNodes,
@@ -108,7 +110,7 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
 
             const node = {
                 ...createCanvasNode(CanvasNodeType.Text, getCanvasCenter(), { content: trimmed, status: NODE_STATUS_SUCCESS }),
-                title: trimmed.slice(0, 32) || "剪切板文本",
+                title: trimmed.slice(0, 32) || t("clipboardText"),
             };
 
             setNodes((prev) => [...prev, node]);
@@ -118,7 +120,7 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
             setDialogNodeId(node.id);
             return true;
         },
-        [getCanvasCenter],
+        [getCanvasCenter, t],
     );
 
     useEffect(() => {
@@ -133,20 +135,20 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
                 const center = getCanvasCenter();
                 void Promise.allSettled(images.map((file, index) => createImageFileNode(file, { x: center.x + index * CANVAS_DROP_NODE_OFFSET, y: center.y + index * CANVAS_DROP_NODE_OFFSET }, true, false))).then((results) => {
                     const failures = results.filter((result) => result.status === "rejected");
-                    if (failures.length) message.error(failures.length === images.length ? "剪切板图片添加失败" : `有 ${failures.length} 张剪切板图片添加失败`);
-                    if (failures.length < images.length) message.success(`已从剪切板添加 ${images.length - failures.length} 张图片`);
+                    if (failures.length) message.error(failures.length === images.length ? t("clipboardImagesFailed") : t("clipboardImagesPartial", { count: failures.length }));
+                    if (failures.length < images.length) message.success(t("clipboardImagesAdded", { count: images.length - failures.length }));
                 });
                 return;
             }
             const text = event.clipboardData?.getData("text/plain") || "";
             if (!text.trim()) return;
             event.preventDefault();
-            if (createTextNodeFromClipboard(text)) message.success("已从剪切板添加文本");
+            if (createTextNodeFromClipboard(text)) message.success(t("clipboardTextAdded"));
         };
 
         window.addEventListener("paste", handlePaste);
         return () => window.removeEventListener("paste", handlePaste);
-    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, setSelectedNodeIds]);
+    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, setSelectedNodeIds, t]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {

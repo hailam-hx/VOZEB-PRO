@@ -82,7 +82,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
                 set({ summaries: result.projects, summaryTotal: result.total, summaryPage: result.page, summaryPageSize: result.pageSize, hydrated: true, hydratedUserId: userId });
             })
             .catch((error) => {
-                if (isActiveHydrate(session, requestId)) set({ summaries: [], hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "画布项目加载失败" });
+                if (isActiveHydrate(session, requestId)) set({ summaries: [], hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "Canvas projects failed to load" });
             })
             .finally(() => {
                 if (hydrateRequest?.requestId === requestId) hydrateRequest = null;
@@ -116,7 +116,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         projectRequests.set(key, request);
         return request;
     },
-    createProject: async (title = "未命名画布") => {
+    createProject: async (title = "Untitled Canvas") => {
         const session = requireSession();
         const project = await createCanvasProject({ title });
         assertCurrent(session);
@@ -132,7 +132,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     },
     importProject: async (project, sourceHandoffId) => {
         const session = requireSession();
-        const created = await createCanvasProject({ title: project.title || "导入画布", sourceHandoffId, project });
+        const created = await createCanvasProject({ title: project.title || "Imported Canvas", sourceHandoffId, project });
         assertCurrent(session);
         set((state) => ({
             projects: [created, ...state.projects.filter((item) => item.id !== created.id)],
@@ -154,7 +154,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         void get()
             .loadProject(id)
             .then(() => mutateProject(id, (project) => (project.title === nextTitle ? project : { ...project, title: nextTitle })))
-            .catch((error) => set({ syncError: error instanceof Error ? error.message : "画布项目重命名失败" }));
+            .catch((error) => set({ syncError: error instanceof Error ? error.message : "Canvas project rename failed" }));
     },
     deleteProjects: async (ids) => {
         const session = requireSession();
@@ -246,7 +246,7 @@ function startProjectSave(session: ClientSessionStamp, project: CanvasProject, k
         if (!sessionEpoch.isCurrent(session)) return;
         try {
             const base = persistedProjectSnapshots.get(key);
-            if (!base) throw new Error("画布项目版本尚未加载，请刷新后重试");
+            if (!base) throw new Error("The Canvas project version is not loaded. Refresh and try again.");
             const mutationKey = `${project.id}:${project.updatedAt}`;
             const mutationId = mutationIdsByVersion.get(mutationKey) || nanoid();
             mutationIdsByVersion.set(mutationKey, mutationId);
@@ -267,7 +267,7 @@ function startProjectSave(session: ClientSessionStamp, project: CanvasProject, k
             if (!sessionEpoch.isCurrent(session)) return;
             const latest = useCanvasStore.getState().projects.find((item) => item.id === project.id);
             if (latest?.updatedAt === project.updatedAt) {
-                const message = error instanceof Error ? error.message : "画布项目保存失败";
+                const message = error instanceof Error ? error.message : "Canvas project save failed";
                 const status = error instanceof CanvasProjectRequestError && error.status === 409 ? "conflict" : "error";
                 useCanvasStore.setState((state) => ({ syncError: message, saveStateByProject: { ...state.saveStateByProject, [project.id]: { status, message } } }));
             }
@@ -319,7 +319,7 @@ async function saveProjectMutationWithRetry(session: ClientSessionStamp, project
             return keepalive ? await saveCanvasProjectMutation(projectId, mutation, { keepalive: true }) : await saveCanvasProjectMutation(projectId, mutation);
         } catch (error) {
             if (keepalive || !isRetryableSaveError(error) || attempt >= SAVE_RETRY_DELAYS.length) throw error;
-            setProjectSaveState(projectId, { status: "saving", message: "网络波动，正在重新保存" });
+            setProjectSaveState(projectId, { status: "saving", message: "The network is unstable. Saving again…" });
             if (!(await waitForProjectSaveRetry(session, projectId, SAVE_RETRY_DELAYS[attempt]))) return null;
             if (!sessionEpoch.isCurrent(session)) return null;
         }
@@ -360,12 +360,12 @@ function isActiveHydrate(session: ClientSessionStamp, requestId: number) {
 
 function requireSession() {
     const session = sessionEpoch.capture();
-    if (!session.userId) throw new Error("请先登录");
+    if (!session.userId) throw new Error("Sign in first");
     return session;
 }
 
 function assertCurrent(session: ClientSessionStamp) {
-    if (!sessionEpoch.isCurrent(session)) throw new Error("登录会话已变更，请重试");
+    if (!sessionEpoch.isCurrent(session)) throw new Error("The sign-in session changed. Try again.");
 }
 
 function invalidateSession() {

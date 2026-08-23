@@ -3,6 +3,7 @@
 import { App, Button, Drawer, Dropdown, Input, Modal, Popover, Segmented, Select, Tooltip } from "antd";
 import { ArrowUp, ChevronDown, History, ImagePlus, Link2, ListChecks, LoaderCircle, MessageSquarePlus, Pause, Play, RotateCcw, Square, X } from "lucide-react";
 import { nanoid } from "nanoid";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
@@ -11,7 +12,7 @@ import type { AgentMediaDownload } from "@/components/agent/agent-media-download
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
 import { AgentMarkdown } from "@/components/agent/agent-markdown";
-import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
+import { useAgentMessageFormatter } from "@/components/agent/agent-message-format";
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import { clipboardImageFiles } from "@/lib/clipboard-image-files";
 import type { CreativeAsset, CreativeConversation, CreativeMessage } from "@/lib/creative-runtime-contract";
@@ -37,7 +38,6 @@ import {
 import { deleteDramaAgentConversation } from "@/services/api/drama-projects";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { useDramaStore } from "../stores/use-drama-store";
-import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 import type { DramaProjectStage } from "./drama-project-sections";
 import { DramaAgentMentionPicker } from "./drama-agent-mention-picker";
 import { DramaAgentHistory } from "./drama-agent-history";
@@ -73,6 +73,7 @@ export function DramaAgentPanel({
     onConversationChange: (conversationId: string) => void;
     selectedShotId?: string;
 }) {
+    const t = useTranslations("drama.agent");
     const [activated, setActivated] = useState(open);
     const [desktop, setDesktop] = useState(false);
     const [width, setWidth] = useState(404);
@@ -122,7 +123,7 @@ export function DramaAgentPanel({
                 onClose={() => onOpenChange(false)}
                 rootClassName="drama-agent-drawer"
                 styles={{ wrapper: { maxWidth: "calc(100vw - 8px)" }, body: { padding: 0 } }}
-                aria-label="项目 Agent"
+                aria-label={t("panel")}
             >
                 {content}
             </Drawer>
@@ -135,8 +136,8 @@ export function DramaAgentPanel({
             data-drama-agent-panel-frame
             aria-hidden={!open}
         >
-            <aside className={`relative h-full min-w-0 shrink-0 border-l border-border ${resizing ? "" : "transition-transform duration-300 ease-out"} ${open ? "translate-x-0" : "translate-x-8"}`} style={{ width: "100%" }} aria-label="项目 Agent 面板">
-                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onMouseDown={startResize} aria-label="调整项目 Agent 面板宽度" />
+            <aside className={`relative h-full min-w-0 shrink-0 border-l border-border ${resizing ? "" : "transition-transform duration-300 ease-out"} ${open ? "translate-x-0" : "translate-x-8"}`} style={{ width: "100%" }} aria-label={t("panelAria")}>
+                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onMouseDown={startResize} aria-label={t("resizeAria")} />
                 {content}
             </aside>
         </div>
@@ -160,6 +161,8 @@ function DramaAgentContent({
     onConversationChange: (conversationId: string) => void;
     embedded?: boolean;
 }) {
+    const { formatMessage } = useAgentMessageFormatter();
+    const t = useTranslations("drama.agent");
     const { message, modal } = App.useApp();
     const replaceProject = useDramaStore((state) => state.replaceProject);
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { logoUrl: "/logo.svg" };
@@ -200,7 +203,13 @@ function DramaAgentContent({
     const mentionItems = useMemo(() => collectDramaAgentMentionItems(project, episode), [episode, project]);
     const mentionCandidates = useMemo(() => dramaAgentMentionCandidates(mentionItems, mentionQuery || ""), [mentionItems, mentionQuery]);
     const referencedProjectItems = useMemo(() => referencedDramaAgentItems(prompt, mentionItems), [mentionItems, prompt]);
-    const stageGuide = DRAMA_AGENT_STAGE_GUIDES[stage];
+    const stageGuide = useMemo(
+        () => ({
+            label: t(`guides.${stage}.label`),
+            prompts: STAGE_GUIDE_ACTIONS.map((action) => ({ label: t(`guides.actions.${action}`), prompt: t(`guides.${stage}.${action}`) })),
+        }),
+        [stage, t],
+    );
 
     useEffect(() => {
         if (project.creativeConversationId) activeConversationIdRef.current = project.creativeConversationId;
@@ -271,7 +280,7 @@ function DramaAgentContent({
 
     const ensureConversation = async () => {
         if (activeConversationIdRef.current) return activeConversationIdRef.current;
-        const conversation = await createCreativeConversation({ surface: "drama", source: "drama", projectId: project.id, title: "新对话" });
+        const conversation = await createCreativeConversation({ surface: "drama", source: "drama", projectId: project.id, title: t("history.newConversation") });
         activeConversationIdRef.current = conversation.id;
         onConversationChange(conversation.id);
         return conversation.id;
@@ -279,9 +288,9 @@ function DramaAgentContent({
 
     const uploadImages = async (files: File[]) => {
         const unsupported = files.find((file) => !isCreativeUploadMimeType(file.type) || !file.type.startsWith("image/"));
-        if (unsupported) return message.error(`${unsupported.name} 不是支持的图片格式`);
+        if (unsupported) return message.error(t("uploads.unsupported", { name: unsupported.name }));
         const oversized = files.find((file) => file.size > CREATIVE_UPLOAD_MAX_BYTES);
-        if (oversized) return message.error(`${oversized.name} 超过 20MB`);
+        if (oversized) return message.error(t("uploads.tooLarge", { name: oversized.name }));
         if (!files.length || uploading || loading) return;
         setUploading(true);
         try {
@@ -290,9 +299,9 @@ function DramaAgentContent({
             for (const file of files) uploaded.push(await uploadCreativeAsset(conversationId, file));
             setAssets((current) => [...current, ...uploaded.filter((asset) => !current.some((item) => item.id === asset.id))]);
             setSelectedAssetIds((current) => Array.from(new Set([...current, ...uploaded.map((asset) => asset.id)])));
-            message.success(`已上传 ${uploaded.length} 张参考图`);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "参考图上传失败");
+            message.success(t("uploads.success", { count: uploaded.length }));
+        } catch {
+            message.error(t("uploads.failed"));
         } finally {
             setUploading(false);
         }
@@ -318,14 +327,14 @@ function DramaAgentContent({
                     if (isCurrentRun()) setRunStatus(status);
                 },
                 onProjectHandoff: () => undefined,
-                onConnectionError: (text) => {
+                onConnectionError: () => {
                     if (!isCurrentRun()) return;
-                    updateAssistant(assistantMessageId, text);
+                    updateAssistant(assistantMessageId, t("errors.connectionFailed"), "failed");
                     streamRef.current = null;
                 },
                 onTerminal: (status, text) => {
                     if (!isCurrentRun()) return;
-                    updateAssistant(assistantMessageId, text, status === "completed" ? "completed" : status);
+                    updateAssistant(assistantMessageId, status === "completed" ? text : t("errors.requestFailed"), status === "completed" ? "completed" : status);
                     setSending(false);
                     submittingRef.current = false;
                     setRunId(undefined);
@@ -336,7 +345,7 @@ function DramaAgentContent({
             });
             return assistantMessageId;
         },
-        [refresh, refreshAssets, updateAssistant],
+        [refresh, refreshAssets, t, updateAssistant],
     );
 
     const openConversation = useCallback(
@@ -387,10 +396,10 @@ function DramaAgentContent({
         setRunStatus(undefined);
         let conversation: CreativeConversation;
         try {
-            conversation = await createCreativeConversation({ surface: "drama", source: "drama", projectId: project.id, title: "新对话" });
-        } catch (error) {
+            conversation = await createCreativeConversation({ surface: "drama", source: "drama", projectId: project.id, title: t("history.newConversation") });
+        } catch {
             if (requestId !== conversationLoadRef.current) return;
-            message.error(error instanceof Error ? error.message : "新建项目 Agent 对话失败");
+            message.error(t("errors.createConversationFailed"));
             if (previousConversationId) await openConversation(previousConversationId, false);
             else setLoading(false);
             return;
@@ -401,29 +410,29 @@ function DramaAgentContent({
         setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
         await openConversation(conversation.id);
         window.requestAnimationFrame(() => inputRef.current?.focus());
-    }, [message, openConversation, project.id]);
+    }, [message, openConversation, project.id, t]);
 
     const renameConversation = useCallback(
         async (conversationId: string, title: string) => {
             try {
                 const updated = await updateCreativeConversation(conversationId, { title });
                 setConversations((current) => current.map((item) => (item.id === conversationId ? updated : item)));
-                message.success("对话标题已修改");
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "对话标题修改失败");
+                message.success(t("history.renameSuccess"));
+            } catch {
+                message.error(t("errors.renameConversationFailed"));
             }
         },
-        [message],
+        [message, t],
     );
 
     const confirmDeleteConversation = useCallback(
         (conversation: CreativeConversation) => {
             modal.confirm({
-                title: "删除这条对话？",
-                content: `“${conversation.title || "新对话"}”的消息、任务和生成记录将永久删除。`,
-                okText: "删除",
+                title: t("history.deleteTitle"),
+                content: t("history.deleteDescription", { title: conversation.title || t("history.newConversation") }),
+                okText: t("history.delete"),
                 okButtonProps: { danger: true },
-                cancelText: "取消",
+                cancelText: t("history.cancel"),
                 centered: true,
                 onOk: async () => {
                     try {
@@ -433,15 +442,15 @@ function DramaAgentContent({
                             replaceProject(result.project);
                             await openConversation(result.activeConversationId, false);
                         }
-                        message.success("对话已删除");
+                        message.success(t("history.deleteSuccess"));
                     } catch (error) {
-                        message.error(error instanceof Error ? error.message : "对话删除失败");
+                        message.error(t("errors.deleteConversationFailed"));
                         throw error;
                     }
                 },
             });
         },
-        [message, modal, openConversation, project.id, replaceProject],
+        [message, modal, openConversation, project.id, replaceProject, t],
     );
 
     useEffect(() => {
@@ -458,24 +467,24 @@ function DramaAgentContent({
             await openConversation(conversationId, false);
             if (cancelled) return;
         };
-        void load().catch((error) => {
+        void load().catch(() => {
             if (cancelled) return;
             setLoading(false);
-            message.error(friendlyAgentError(error, "项目 Agent 任务恢复失败，请稍后重试。"));
+            message.error(t("errors.restoreTaskFailed"));
         });
         return () => {
             cancelled = true;
             streamRef.current?.();
             streamRef.current = null;
         };
-    }, [message, openConversation, project.id]);
+    }, [message, openConversation, project.id, t]);
 
     const setHistoryVisibility = (nextOpen: boolean) => {
         setHistoryOpen(nextOpen);
         if (!nextOpen) return;
         setHistoryLoading(true);
         void refreshHistory()
-            .catch((error) => message.error(error instanceof Error ? error.message : "历史对话读取失败"))
+            .catch(() => message.error(t("errors.loadHistoryFailed")))
             .finally(() => setHistoryLoading(false));
     };
 
@@ -483,7 +492,7 @@ function DramaAgentContent({
         if (historyLoadingMore || !historyHasMore) return;
         setHistoryLoadingMore(true);
         void refreshHistory(conversations.length)
-            .catch((error) => message.error(error instanceof Error ? error.message : "历史对话读取失败"))
+            .catch(() => message.error(t("errors.loadHistoryFailed")))
             .finally(() => setHistoryLoadingMore(false));
     };
 
@@ -502,10 +511,10 @@ function DramaAgentContent({
                 modelIds: submission.modelIds,
                 snapshot: submission.snapshot,
             });
-        } catch (error) {
+        } catch {
             if (!isCurrentView()) return false;
             failedSubmissionsRef.current.set(submission.temporaryAssistantId, submission);
-            const content = friendlyAgentError(error, "项目 Agent 请求失败，请稍后重试。");
+            const content = t("errors.requestFailed");
             setMessages((current) => current.map((item) => (item.id === submission.temporaryAssistantId ? { ...item, content, status: "failed", updatedAt: Date.now() } : item)));
             setSending(false);
             submittingRef.current = false;
@@ -562,7 +571,7 @@ function DramaAgentContent({
                 sequence: sequence + 1,
                 role: "assistant",
                 status: "running",
-                content: agentRequirementAcknowledgement(content, "drama", assetIds.length > 0),
+                content: t(assetIds.length > 0 ? "acknowledgementWithAssets" : "acknowledgement"),
                 metadata: {},
                 createdAt: now,
                 updatedAt: now,
@@ -579,7 +588,7 @@ function DramaAgentContent({
         if ((!submission && !failedMessage?.runId) || sending || submittingRef.current) return false;
         submittingRef.current = true;
         setSending(true);
-        setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, content: "正在重新提交创作请求", status: "running", updatedAt: Date.now() } : item)));
+        setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, content: t("retrying"), status: "running", updatedAt: Date.now() } : item)));
         if (failedMessage?.runId) {
             try {
                 const run = await getCreativeAgentRun(failedMessage.runId);
@@ -590,8 +599,8 @@ function DramaAgentContent({
                 await refresh(result.run.conversationId);
                 watchRun(result.run, result.run.assistantMessageId || assistantMessageId);
                 return true;
-            } catch (error) {
-                setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, content: friendlyAgentError(error, "项目 Agent 重试失败，请稍后重试。"), status: "failed", updatedAt: Date.now() } : item)));
+            } catch {
+                setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, content: t("errors.retryFailed"), status: "failed", updatedAt: Date.now() } : item)));
                 setSending(false);
                 submittingRef.current = false;
                 setRunStatus("failed");
@@ -611,8 +620,8 @@ function DramaAgentContent({
                 submittingRef.current = false;
                 setRunId(undefined);
             }
-        } catch (error) {
-            message.error(friendlyAgentError(error, "项目 Agent 控制失败，请稍后重试。"));
+        } catch {
+            message.error(t("errors.controlFailed"));
         }
     };
 
@@ -654,15 +663,15 @@ function DramaAgentContent({
                         <span className="truncate">{stageGuide.label}</span>
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5">
-                        <Tooltip title="新建对话">
+                        <Tooltip title={t("history.newConversation")}>
                             <Button
                                 type="text"
                                 shape="circle"
                                 className="!size-8 !min-w-8"
                                 icon={<MessageSquarePlus className="size-4" />}
                                 disabled={loading}
-                                onClick={() => void newConversation().catch((error) => message.error(error instanceof Error ? error.message : "新建对话失败"))}
-                                aria-label="新建项目 Agent 对话"
+                                onClick={() => void newConversation().catch(() => message.error(t("errors.createConversationFailed")))}
+                                aria-label={t("newConversationAria")}
                             />
                         </Tooltip>
                         <Popover
@@ -679,27 +688,20 @@ function DramaAgentContent({
                                     loading={historyLoading}
                                     hasMore={historyHasMore}
                                     loadingMore={historyLoadingMore}
-                                    onOpen={(conversationId) => void openConversation(conversationId).catch((error) => message.error(error instanceof Error ? error.message : "对话恢复失败"))}
+                                    onOpen={(conversationId) => void openConversation(conversationId).catch(() => message.error(t("errors.restoreConversationFailed")))}
                                     onRename={(conversationId, title) => void renameConversation(conversationId, title)}
                                     onDelete={confirmDeleteConversation}
                                     onLoadMore={loadMoreHistory}
                                 />
                             }
                         >
-                            <Tooltip title="历史对话">
-                                <Button
-                                    type="text"
-                                    shape="circle"
-                                    className={`!size-8 !min-w-8 ${historyOpen ? "!bg-primary/10 !text-primary" : ""}`}
-                                    icon={<History className="size-4" />}
-                                    aria-label="打开项目 Agent 历史对话"
-                                    aria-expanded={historyOpen}
-                                />
+                            <Tooltip title={t("history.title")}>
+                                <Button type="text" shape="circle" className={`!size-8 !min-w-8 ${historyOpen ? "!bg-primary/10 !text-primary" : ""}`} icon={<History className="size-4" />} aria-label={t("openHistoryAria")} aria-expanded={historyOpen} />
                             </Tooltip>
                         </Popover>
                         {!embedded ? (
-                            <Tooltip title="收起项目 Agent">
-                                <Button type="text" shape="circle" className="!size-8 !min-w-8" icon={<X className="size-4" />} onClick={onClose} aria-label="收起项目 Agent" />
+                            <Tooltip title={t("collapse")}>
+                                <Button type="text" shape="circle" className="!size-8 !min-w-8" icon={<X className="size-4" />} onClick={onClose} aria-label={t("collapse")} />
                             </Tooltip>
                         ) : null}
                     </div>
@@ -710,7 +712,7 @@ function DramaAgentContent({
                     <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground" data-drama-agent-loading>
                         <div className="flex items-center gap-2 text-sm font-medium">
                             <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
-                            正在恢复对话
+                            {t("restoringConversation")}
                         </div>
                     </div>
                 ) : null}
@@ -732,10 +734,10 @@ function DramaAgentContent({
                                 className="!flex !h-8 !items-center !justify-start !gap-1.5 !px-2.5 !text-xs !text-muted-foreground hover:!border-foreground/20 hover:!text-foreground"
                                 icon={<ListChecks className="size-3.5" aria-hidden />}
                                 disabled={sending}
-                                aria-label="打开本阶段 Agent 建议"
+                                aria-label={t("openSuggestionsAria")}
                             >
-                                <span className="min-w-0 flex-1 truncate text-left">本阶段建议</span>
-                                <span className="text-[11px] tabular-nums opacity-65">{stageGuide.prompts.length} 项</span>
+                                <span className="min-w-0 flex-1 truncate text-left">{t("suggestions")}</span>
+                                <span className="text-[11px] tabular-nums opacity-65">{t("suggestionCount", { count: stageGuide.prompts.length })}</span>
                                 <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden />
                             </Button>
                         </Dropdown>
@@ -744,7 +746,7 @@ function DramaAgentContent({
                 {messages.map((message) => {
                     const referencedAssets = message.role === "user" ? messageAssetIds(message).flatMap((id) => assetById.get(id) || []) : [];
                     const messageAssets = [...(assetsByRun.get(message.id) || []), ...(message.runId ? assetsByRun.get(message.runId) || [] : [])].filter((asset, index, list) => list.findIndex((item) => item.id === asset.id) === index);
-                    const displayContent = message.status === "failed" ? friendlyAgentError(message.content) : formatAgentMessageText(message.content);
+                    const displayContent = message.status === "failed" ? t("errors.requestFailed") : formatMessage(message.content);
                     return (
                         <div key={message.id} className={`group/message min-w-0 ${message.role === "user" ? "pl-8 text-right" : "pr-2"}`}>
                             {referencedAssets.length ? <DramaMessageReferences assets={referencedAssets} /> : null}
@@ -760,15 +762,15 @@ function DramaAgentContent({
                                     className="!mt-1 !h-7 !px-1.5 !text-xs !text-red-600 hover:!bg-red-50 hover:!text-red-700 dark:!text-red-300 dark:hover:!bg-red-950/30 dark:hover:!text-red-200"
                                     icon={<RotateCcw className="size-3.5" />}
                                     onClick={() => void retrySubmission(message.id)}
-                                    aria-label="重试本次项目 Agent 请求"
+                                    aria-label={t("retryAria")}
                                 >
-                                    重试
+                                    {t("retry")}
                                 </Button>
                             ) : null}
                             {message.status !== "running" ? (
                                 <AgentMessageActions
                                     text={displayContent}
-                                    downloads={agentAssetDownloads(messageAssets)}
+                                    downloads={agentAssetDownloads(messageAssets, { image: t("generatedImage"), video: t("generatedVideo") })}
                                     onEdit={
                                         message.role === "user" && !sending
                                             ? (text) => {
@@ -790,19 +792,19 @@ function DramaAgentContent({
                 {selectedSkill ? <CreativeAgentSkillCard skill={selectedSkill} onRemove={() => setSelectedSkillId(undefined)} className="pb-1" /> : null}
                 <div className="flex min-w-0 items-start gap-2" data-drama-agent-input-row>
                     {selectedAssets.length || !sending ? (
-                        <div className="hide-scrollbar flex max-w-[44%] shrink-0 items-start gap-1 overflow-x-auto overflow-y-hidden px-0.5 py-1" aria-label="本轮参考素材" aria-live="polite">
+                        <div className="hide-scrollbar flex max-w-[44%] shrink-0 items-start gap-1 overflow-x-auto overflow-y-hidden px-0.5 py-1" aria-label={t("turnReferences")} aria-live="polite">
                             {selectedAssets.map((asset) => {
                                 const url = asset.serverUrl || asset.remoteUrl || "";
                                 return (
                                     <div key={asset.id} className="group relative size-10 shrink-0 overflow-visible rounded-md border border-border bg-muted">
                                         <div className="size-full overflow-hidden rounded-[5px]">
-                                            {url ? <AgentMediaPreview type="image" url={url} title={asset.title || "参考图"} className="size-full" /> : <ImagePlus className="m-auto size-4 text-muted-foreground" />}
+                                            {url ? <AgentMediaPreview type="image" url={url} title={asset.title || t("referenceImage")} className="size-full" /> : <ImagePlus className="m-auto size-4 text-muted-foreground" />}
                                         </div>
                                         <button
                                             type="button"
                                             className="absolute right-0 top-0 z-10 flex size-7 items-start justify-end rounded-full bg-transparent p-0.5 text-muted-foreground transition hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
                                             onClick={() => setSelectedAssetIds((current) => current.filter((id) => id !== asset.id))}
-                                            aria-label={`移除参考图：${asset.title}`}
+                                            aria-label={t("removeReferenceAria", { title: asset.title || t("referenceImage") })}
                                         >
                                             <span className="grid size-4 place-items-center rounded-full border border-border bg-background/95 shadow-sm">
                                                 <X className="size-2" />
@@ -818,7 +820,7 @@ function DramaAgentContent({
                                 disabled={sending || loading}
                                 loading={uploading}
                                 onClick={() => fileInputRef.current?.click()}
-                                aria-label={selectedAssets.length ? "继续添加参考图" : "添加参考图"}
+                                aria-label={selectedAssets.length ? t("addMoreReferences") : t("addReference")}
                             />
                         </div>
                     ) : null}
@@ -838,7 +840,7 @@ function DramaAgentContent({
                             ref={inputRef}
                             value={prompt}
                             rows={3}
-                            placeholder="告诉 Agent 下一步要做什么"
+                            placeholder={t("composerPlaceholder")}
                             disabled={sending || loading}
                             className="hide-scrollbar min-h-20 min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-0 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
                             onChange={(event) => {
@@ -900,14 +902,14 @@ function DramaAgentContent({
                     {sending && runId ? (
                         <div className="flex items-center gap-1">
                             {runStatus === "paused" ? (
-                                <Button type="text" shape="circle" icon={<Play className="size-3.5" />} onClick={() => void controlRun("resume")} aria-label="继续项目 Agent" />
+                                <Button type="text" shape="circle" icon={<Play className="size-3.5" />} onClick={() => void controlRun("resume")} aria-label={t("resume")} />
                             ) : (
-                                <Button type="text" shape="circle" icon={<Pause className="size-3.5" />} onClick={() => void controlRun("pause")} aria-label="暂停项目 Agent" />
+                                <Button type="text" shape="circle" icon={<Pause className="size-3.5" />} onClick={() => void controlRun("pause")} aria-label={t("pause")} />
                             )}
-                            <Button danger shape="circle" icon={<Square className="size-3.5" />} onClick={() => void controlRun("cancel")} aria-label="停止项目 Agent" />
+                            <Button danger shape="circle" icon={<Square className="size-3.5" />} onClick={() => void controlRun("cancel")} aria-label={t("stop")} />
                         </div>
                     ) : (
-                        <Button type="primary" shape="circle" className="!size-10 !min-w-10 !shrink-0" icon={<ArrowUp className="size-4" />} disabled={!prompt.trim() || uploading || loading} onClick={() => void submit()} aria-label="发送给项目 Agent" />
+                        <Button type="primary" shape="circle" className="!size-10 !min-w-10 !shrink-0" icon={<ArrowUp className="size-4" />} disabled={!prompt.trim() || uploading || loading} onClick={() => void submit()} aria-label={t("send")} />
                     )}
                 </div>
             </div>
@@ -916,15 +918,16 @@ function DramaAgentContent({
 }
 
 function DramaMessageReferences({ assets }: { assets: CreativeAsset[] }) {
+    const t = useTranslations("drama.agent");
     let imageIndex = 0;
     return (
-        <div className="mb-1.5 flex max-w-full flex-wrap justify-end gap-1.5" aria-label="本轮参考素材">
+        <div className="mb-1.5 flex max-w-full flex-wrap justify-end gap-1.5" aria-label={t("turnReferences")}>
             {assets.flatMap((asset) => {
                 const url = asset.serverUrl || asset.remoteUrl || "";
                 if (asset.type !== "image" || !url) return [];
                 return (
-                    <div key={asset.id} className="relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted" title={asset.title || "参考图"}>
-                        <AgentMediaPreview type="image" url={url} title={asset.title || "参考图"} className="size-full" />
+                    <div key={asset.id} className="relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted" title={asset.title || t("referenceImage")}>
+                        <AgentMediaPreview type="image" url={url} title={asset.title || t("referenceImage")} className="size-full" />
                         <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{imageReferenceLabel(imageIndex++)}</span>
                     </div>
                 );
@@ -939,6 +942,7 @@ function messageAssetIds(message: CreativeMessage) {
 }
 
 function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[]; project: DramaProject; episode: DramaEpisode }) {
+    const t = useTranslations("drama.agent");
     const { message } = App.useApp();
     const updateShot = useDramaStore((state) => state.updateShot);
     const updateAsset = useDramaStore((state) => state.updateAsset);
@@ -979,7 +983,7 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
             audioUrl: undefined,
         });
         setReferenceAsset(undefined);
-        message.success(`已引用为${shot.title}的${frameKind === "start" ? "起始帧" : "结束帧"}`);
+        message.success(t("assets.referenceApplied", { title: shot.title, frame: t(`assets.frames.${frameKind}`) }));
     };
 
     const applyVisualAsset = () => {
@@ -991,30 +995,47 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
             url,
             storageKey: sourceAsset.storageKey,
             source: "generated",
-            label: sourceAsset.title || "Agent 生成图",
+            label: sourceAsset.title || t("generatedImage"),
             width: sourceAsset.width,
             height: sourceAsset.height,
             createdAt: new Date().toISOString(),
         };
         const selected = project[visualKind].find((item) => item.id === visualAssetId);
-        const name = newVisualAssetName.trim() || sourceAsset.title.trim() || `${visualKind === "characters" ? "角色" : visualKind === "scenes" ? "场景" : visualKind === "props" ? "道具" : "线索"}参考`;
+        const kindLabel = t(`assets.kinds.${visualKind}.label`);
+        const name = newVisualAssetName.trim() || sourceAsset.title.trim() || t("assets.defaultReferenceName", { kind: kindLabel });
         if (selected) {
             const references = [...(selected.references || []), reference];
             updateAsset(project.id, visualKind, selected.id, { references, primaryReferenceId: reference.id, referenceImageUrl: reference.url, referenceStorageKey: reference.storageKey });
-            message.success(`已加入${selected.name}的视觉参考图`);
+            message.success(t("assets.addedToExisting", { name: selected.name }));
         } else if (visualKind === "characters") {
-            addCharacter(project.id, { name, description: "来自项目 Agent 的视觉参考", profile: emptyAssetProfile(), references: [reference], primaryReferenceId: reference.id, referenceImageUrl: reference.url, referenceStorageKey: reference.storageKey });
-            message.success(`已创建角色“${name}”并加入参考图`);
+            addCharacter(project.id, {
+                name,
+                description: t("assets.generatedDescription"),
+                profile: emptyAssetProfile(),
+                references: [reference],
+                primaryReferenceId: reference.id,
+                referenceImageUrl: reference.url,
+                referenceStorageKey: reference.storageKey,
+            });
+            message.success(t("assets.created", { kind: kindLabel, name }));
         } else if (visualKind === "scenes") {
-            addScene(project.id, { name, description: "来自项目 Agent 的视觉参考", profile: emptyAssetProfile(), references: [reference], primaryReferenceId: reference.id, referenceImageUrl: reference.url, referenceStorageKey: reference.storageKey });
-            message.success(`已创建场景“${name}”并加入参考图`);
+            addScene(project.id, {
+                name,
+                description: t("assets.generatedDescription"),
+                profile: emptyAssetProfile(),
+                references: [reference],
+                primaryReferenceId: reference.id,
+                referenceImageUrl: reference.url,
+                referenceStorageKey: reference.storageKey,
+            });
+            message.success(t("assets.created", { kind: kindLabel, name }));
         } else if (visualKind === "props") {
-            addProp(project.id, { name, description: "来自项目 Agent 的视觉参考", profile: emptyAssetProfile(), references: [reference], primaryReferenceId: reference.id, referenceImageUrl: reference.url, referenceStorageKey: reference.storageKey });
-            message.success(`已创建道具“${name}”并加入参考图`);
+            addProp(project.id, { name, description: t("assets.generatedDescription"), profile: emptyAssetProfile(), references: [reference], primaryReferenceId: reference.id, referenceImageUrl: reference.url, referenceStorageKey: reference.storageKey });
+            message.success(t("assets.created", { kind: kindLabel, name }));
         } else {
             addClue(project.id, {
                 name,
-                description: "来自项目 Agent 的视觉参考",
+                description: t("assets.generatedDescription"),
                 payoff: "",
                 profile: emptyAssetProfile(),
                 references: [reference],
@@ -1022,7 +1043,7 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
                 referenceImageUrl: reference.url,
                 referenceStorageKey: reference.storageKey,
             });
-            message.success(`已创建线索“${name}”并加入参考图`);
+            message.success(t("assets.created", { kind: kindLabel, name }));
         }
         setVisualAsset(undefined);
         setVisualAssetId("");
@@ -1039,7 +1060,7 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
                         if (!url) return null;
                         return (
                             <div key={asset.id} className="min-w-0">
-                                <AgentMediaPreview type={asset.type} url={url} title={asset.title || "Agent 生成媒体"} className={asset.type === "image" ? "max-h-64 rounded-md" : asset.type === "video" ? "aspect-video rounded-md" : undefined} />
+                                <AgentMediaPreview type={asset.type} url={url} title={asset.title || t("generatedMedia")} className={asset.type === "image" ? "max-h-64 rounded-md" : asset.type === "video" ? "aspect-video rounded-md" : undefined} />
                                 {asset.type === "image" ? (
                                     <div className="mt-2 flex min-w-0 items-center rounded-lg border border-border/70 bg-muted/30 p-1">
                                         <Button
@@ -1050,7 +1071,7 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
                                             disabled={!episode.shots.length}
                                             onClick={() => setReferenceAsset(asset)}
                                         >
-                                            引用到分镜
+                                            {t("assets.referenceToShot")}
                                         </Button>
                                         <span className="h-4 w-px shrink-0 bg-border" />
                                         <Button
@@ -1060,7 +1081,7 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
                                             icon={<ImagePlus className="size-3.5" />}
                                             onClick={() => setVisualAsset(asset)}
                                         >
-                                            加入视觉资产
+                                            {t("assets.addVisualAsset")}
                                         </Button>
                                     </div>
                                 ) : null}
@@ -1068,41 +1089,52 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
                         );
                     })}
             </div>
-            <Modal title="引用图片到分镜" open={Boolean(referenceAsset)} width={420} centered destroyOnHidden okText="确认引用" cancelText="取消" okButtonProps={{ disabled: !shotId }} onCancel={() => setReferenceAsset(undefined)} onOk={applyReference}>
+            <Modal
+                title={t("assets.referenceModalTitle")}
+                open={Boolean(referenceAsset)}
+                width={420}
+                centered
+                destroyOnHidden
+                okText={t("assets.confirmReference")}
+                cancelText={t("history.cancel")}
+                okButtonProps={{ disabled: !shotId }}
+                onCancel={() => setReferenceAsset(undefined)}
+                onOk={applyReference}
+            >
                 <div className="grid gap-4 pt-2">
                     <label className="grid gap-1.5 text-sm">
-                        <span className="font-medium">目标镜头</span>
+                        <span className="font-medium">{t("assets.targetShot")}</span>
                         <Select
                             value={shotId || undefined}
-                            placeholder="选择要引用的镜头"
+                            placeholder={t("assets.selectShot")}
                             optionFilterProp="label"
                             options={episode.shots.map((shot) => ({ value: shot.id, label: `${String(shot.order).padStart(2, "0")} · ${shot.title}` }))}
                             onChange={setShotId}
                         />
                     </label>
                     <label className="grid gap-1.5 text-sm">
-                        <span className="font-medium">引用位置</span>
+                        <span className="font-medium">{t("assets.referencePosition")}</span>
                         <Segmented
                             block
                             value={frameKind}
                             options={[
-                                { label: "起始帧", value: "start" },
-                                { label: "结束帧", value: "end" },
+                                { label: t("assets.frames.start"), value: "start" },
+                                { label: t("assets.frames.end"), value: "end" },
                             ]}
                             onChange={(value) => setFrameKind(value as "start" | "end")}
                         />
                     </label>
-                    <p className="text-xs leading-5 text-muted-foreground">引用后会替换该位置现有图片；如镜头已有视频，需要重新生成以应用新画面。</p>
+                    <p className="text-xs leading-5 text-muted-foreground">{t("assets.referenceNotice")}</p>
                 </div>
             </Modal>
             <Modal
-                title="加入视觉资产"
+                title={t("assets.addVisualAsset")}
                 open={Boolean(visualAsset)}
                 width={460}
                 centered
                 destroyOnHidden
-                okText="保存到视觉资产"
-                cancelText="取消"
+                okText={t("assets.saveVisualAsset")}
+                cancelText={t("history.cancel")}
                 okButtonProps={{ disabled: !visualAsset || (!visualAssetId && !newVisualAssetName.trim()) }}
                 onCancel={() => {
                     setVisualAsset(undefined);
@@ -1112,13 +1144,13 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
                 onOk={applyVisualAsset}
             >
                 <div className="grid gap-4 pt-2">
-                    <p className="text-sm leading-6 text-muted-foreground">这张 Agent 图片会直接保存为角色、场景、道具或线索的参考图，不需要下载后重新上传。</p>
+                    <p className="text-sm leading-6 text-muted-foreground">{t("assets.visualAssetNotice")}</p>
                     <label className="grid gap-1.5 text-sm">
-                        <span className="font-medium">资产类型</span>
+                        <span className="font-medium">{t("assets.assetType")}</span>
                         <Segmented
                             block
                             value={visualKind}
-                            options={visualAssetKinds.map((item) => ({ label: item.label, value: item.value }))}
+                            options={VISUAL_ASSET_KINDS.map((kind) => ({ label: t(`assets.kinds.${kind}.label`), value: kind }))}
                             onChange={(value) => {
                                 setVisualKind(value as VisualAssetKind);
                                 setVisualAssetId("");
@@ -1126,11 +1158,11 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
                         />
                     </label>
                     <label className="grid gap-1.5 text-sm">
-                        <span className="font-medium">加入已有资产</span>
+                        <span className="font-medium">{t("assets.addToExisting")}</span>
                         <Select
                             allowClear
                             value={visualAssetId || undefined}
-                            placeholder="选择已有角色、场景、道具或线索"
+                            placeholder={t("assets.selectExisting")}
                             options={project[visualKind].map((item) => ({ value: item.id, label: item.name }))}
                             onChange={(value) => {
                                 setVisualAssetId(value || "");
@@ -1139,14 +1171,14 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
                         />
                     </label>
                     <label className="grid gap-1.5 text-sm">
-                        <span className="font-medium">或新建资产名称</span>
+                        <span className="font-medium">{t("assets.newAssetName")}</span>
                         <Input
                             value={newVisualAssetName}
                             onChange={(event) => {
                                 setNewVisualAssetName(event.target.value);
                                 if (event.target.value.trim()) setVisualAssetId("");
                             }}
-                            placeholder={`例如：${visualAssetKinds.find((item) => item.value === visualKind)?.placeholder || "关键资产"}`}
+                            placeholder={t("assets.example", { name: t(`assets.kinds.${visualKind}.placeholder`) })}
                         />
                     </label>
                 </div>
@@ -1157,51 +1189,8 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
 
 type VisualAssetKind = "characters" | "scenes" | "props" | "clues";
 
-const DRAMA_AGENT_STAGE_GUIDES: Record<DramaProjectStage, { label: string; prompts: Array<{ label: string; prompt: string }> }> = {
-    script: {
-        label: "剧本协作",
-        prompts: [
-            { label: "检查阶段完成度", prompt: "检查当前集剧本是否具备进入内容审核的条件，按已完成、待补充、阻塞项列出结果。" },
-            { label: "检查缺失资产", prompt: "从当前剧本中找出尚未登记的角色、场景、道具和线索，只给出资产清单与优先级。" },
-            { label: "检查一致性", prompt: "检查当前集的人物动机、时间线、冲突、情绪递进和结尾钩子是否一致，列出最小修改建议。" },
-            { label: "建议下一步", prompt: "根据当前剧本与项目状态，只建议一个最值得立即执行的下一步，并说明完成标准。" },
-        ],
-    },
-    review: {
-        label: "内容审核协作",
-        prompts: [
-            { label: "检查阶段完成度", prompt: "检查当前内容审核是否具备确认条件，按镜头列出已完成、待确认和阻塞项。" },
-            { label: "检查缺失资产", prompt: "检查审核结果是否遗漏角色、场景、道具、线索或对应稳定引用，列出缺失项。" },
-            { label: "检查一致性", prompt: "核对镜头与原剧本的对白、旁白、角色、场景、道具、线索和镜头边界，列出不一致项。" },
-            { label: "建议下一步", prompt: "根据当前审核状态，只建议一个最值得立即执行的下一步，并说明完成标准。" },
-        ],
-    },
-    storyboard: {
-        label: "分镜协作",
-        prompts: [
-            { label: "检查阶段完成度", prompt: "检查当前集分镜是否具备进入镜头生成的条件，按镜头列出完成、待补和阻塞项。" },
-            { label: "检查缺失资产", prompt: "检查分镜图片与视频提示词是否缺少稳定角色、场景、道具、线索或参考图引用。" },
-            { label: "检查一致性", prompt: "检查当前集分镜的景别、轴线、视线、动作承接、场景连续性和资产一致性，给出逐镜头建议。" },
-            { label: "建议下一步", prompt: "根据当前分镜状态，只建议一个最值得立即修正的镜头，并说明完成标准。" },
-        ],
-    },
-    generate: {
-        label: "生成协作",
-        prompts: [
-            { label: "检查阶段完成度", prompt: "检查当前集镜头、配音与整集合成的完成度，按可生成、生成中、失败和已完成分类。" },
-            { label: "检查缺失资产", prompt: "检查待生成镜头的提示词、参考资产、画幅、时长、首尾帧和配音依赖是否完整。" },
-            { label: "检查一致性", prompt: "检查当前生成结果的角色、场景、动作、镜头衔接、音画与字幕一致性，归纳需修正项。" },
-            { label: "建议下一步", prompt: "根据当前任务状态与错误信息，只建议一个最值得立即执行的下一步，不自动重试或生成。" },
-        ],
-    },
-};
-
-const visualAssetKinds: Array<{ value: VisualAssetKind; label: string; placeholder: string }> = [
-    { value: "characters", label: "角色", placeholder: "女主角" },
-    { value: "scenes", label: "场景", placeholder: "医院走廊" },
-    { value: "props", label: "道具", placeholder: "旧手机" },
-    { value: "clues", label: "线索", placeholder: "染血的手帕" },
-];
+const STAGE_GUIDE_ACTIONS = ["completion", "assets", "consistency", "next"] as const;
+const VISUAL_ASSET_KINDS: VisualAssetKind[] = ["characters", "scenes", "props", "clues"];
 
 function emptyAssetProfile() {
     return { visualIdentity: "", styling: "", colorPalette: "", consistencyRules: "" };
@@ -1295,9 +1284,9 @@ function dramaSnapshot(project: DramaProject, episode: DramaEpisode, stage: Dram
     };
 }
 
-function agentAssetDownloads(assets: CreativeAsset[]): AgentMediaDownload[] {
+function agentAssetDownloads(assets: CreativeAsset[], labels: { image: string; video: string }): AgentMediaDownload[] {
     return assets.flatMap((asset) => {
         const url = asset.serverUrl || asset.remoteUrl || "";
-        return url && (asset.type === "image" || asset.type === "video") ? [{ type: asset.type, url, title: asset.title || (asset.type === "video" ? "生成视频" : "生成图片"), mimeType: asset.mimeType }] : [];
+        return url && (asset.type === "image" || asset.type === "video") ? [{ type: asset.type, url, title: asset.title || labels[asset.type], mimeType: asset.mimeType }] : [];
     });
 }

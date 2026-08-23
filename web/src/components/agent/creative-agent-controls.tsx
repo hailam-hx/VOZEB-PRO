@@ -2,6 +2,7 @@
 
 import { Button, Popover, Tooltip } from "antd";
 import { Boxes, Check, FileAudio, FileVideo, ImageIcon, Lightbulb, Orbit, Sparkles, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { ModelIcon } from "@/components/model-picker";
@@ -14,6 +15,7 @@ export type CreativeAgentControlTheme = { panel: string; border: string; text: s
 export const creativeAgentModelCapabilities = ["image", "video", "audio"] as const;
 
 export function CreativeAgentSkillCard({ skill, onRemove, theme, className }: { skill: AgentSkillSummary; onRemove: () => void; theme?: CreativeAgentControlTheme; className?: string }) {
+    const t = useTranslations("create.sharedControls");
     return (
         <div className={cn("flex px-1 pt-0.5", className)}>
             <span
@@ -29,7 +31,7 @@ export function CreativeAgentSkillCard({ skill, onRemove, theme, className }: { 
                     className="grid size-5 shrink-0 place-items-center rounded text-stone-500 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-white"
                     style={theme ? { color: theme.muted } : undefined}
                     onClick={onRemove}
-                    aria-label={`移除 Skill ${skill.name}`}
+                    aria-label={t("removeSkill", { name: skill.name })}
                 >
                     <X className="size-3" />
                 </button>
@@ -75,6 +77,7 @@ export function CreativeAgentControls({
     defaultModelCapability?: CreativeAgentModelOption["capability"];
     modelCapabilities?: readonly CreativeAgentModelOption["capability"][];
 }) {
+    const t = useTranslations("create.sharedControls");
     const [skillOpen, setSkillOpen] = useState(false);
     const [modelOpen, setModelOpen] = useState(false);
     const [capability, setCapability] = useState<CreativeAgentModelOption["capability"]>(defaultModelCapability);
@@ -93,8 +96,8 @@ export function CreativeAgentControls({
     const skillContent = (
         <div className="w-[calc(100vw-48px)] max-w-[320px] p-1 sm:w-80">
             <div className="px-2 pb-2 pt-1">
-                <p className="text-sm font-semibold text-stone-900 dark:text-stone-100">选择创作 Skill</p>
-                <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">Skill 作为执行能力提交，不会改写输入内容。</p>
+                <p className="text-sm font-semibold text-stone-900 dark:text-stone-100">{t("chooseSkill")}</p>
+                <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">{t("skillDescription")}</p>
             </div>
             <div className="thin-scrollbar max-h-60 space-y-1 overflow-y-auto">
                 {skills.map((skill) => {
@@ -123,8 +126,8 @@ export function CreativeAgentControls({
                         </button>
                     );
                 })}
-                {skillsLoading ? <p className="px-2 py-5 text-center text-xs text-stone-500 dark:text-stone-400">正在加载 Skill...</p> : null}
-                {!skillsLoading && !skills.length ? <p className="px-2 py-5 text-center text-xs text-stone-500 dark:text-stone-400">暂无可用 Skill</p> : null}
+                {skillsLoading ? <p className="px-2 py-5 text-center text-xs text-stone-500 dark:text-stone-400">{t("loadingSkills")}</p> : null}
+                {!skillsLoading && !skills.length ? <p className="px-2 py-5 text-center text-xs text-stone-500 dark:text-stone-400">{t("noSkills")}</p> : null}
             </div>
         </div>
     );
@@ -132,16 +135,16 @@ export function CreativeAgentControls({
         <div className={cn("w-[calc(100vw-48px)]", compact ? "max-w-[280px]" : "max-w-[330px] p-1 sm:w-[340px]")} data-creative-agent-model-picker={compact ? "compact" : "default"}>
             <div className={cn("flex items-center justify-between", compact ? "gap-2 px-1 pb-1.5" : "gap-3 px-2 pb-2 pt-1")}>
                 <div className="min-w-0">
-                    <p className={cn("font-semibold text-stone-900 dark:text-stone-100", compact ? "text-[13px] leading-5" : "text-sm")}>选择生成模型</p>
+                    <p className={cn("font-semibold text-stone-900 dark:text-stone-100", compact ? "text-[13px] leading-5" : "text-sm")}>{t("chooseModels")}</p>
                     <p className={cn("truncate text-stone-500 dark:text-stone-400", compact ? "text-[10px] leading-4" : "mt-0.5 text-[11px]")}>
-                        {selectedModels.length ? `已选择 ${selectedModels.length} 个，最多 ${CREATIVE_RUN_MODEL_LIMIT} 个` : smartPlanning ? "默认由智能规划自动匹配" : "手动模式需要选择生成模型"}
+                        {selectedModels.length ? t("selectedModels", { count: selectedModels.length, limit: CREATIVE_RUN_MODEL_LIMIT }) : smartPlanning ? t("smartPlanningDefault") : t("manualModelRequired")}
                     </p>
                 </div>
                 <button
                     type="button"
                     role="switch"
                     aria-checked={smartPlanning}
-                    aria-label={smartPlanning ? "关闭智能规划" : "开启智能规划"}
+                    aria-label={smartPlanning ? t("disableSmartPlanning") : t("enableSmartPlanning")}
                     className={cn(
                         "flex shrink-0 items-center rounded-lg text-xs font-medium transition",
                         compact ? "gap-1.5 px-1 py-0.5" : "gap-2 px-1.5 py-1",
@@ -149,7 +152,7 @@ export function CreativeAgentControls({
                     )}
                     onClick={() => onSmartPlanningChange(!smartPlanning)}
                 >
-                    <span>{smartPlanning ? (compact ? "开启" : "已开启") : compact ? "关闭" : "已关闭"}</span>
+                    <span>{smartPlanning ? t(compact ? "on" : "enabled") : t(compact ? "off" : "disabled")}</span>
                     <span
                         className={cn(
                             "relative rounded-full border transition",
@@ -163,9 +166,9 @@ export function CreativeAgentControls({
             </div>
             {selectedModels.length ? (
                 <div className={cn("flex items-center justify-between border-y border-stone-200/80 text-xs dark:border-stone-700", compact ? "mb-1.5 px-1 py-1.5" : "mb-2 px-2 py-2")}>
-                    <span className="text-stone-500 dark:text-stone-400">手动模型会关闭智能规划</span>
+                    <span className="text-stone-500 dark:text-stone-400">{t("manualDisablesPlanning")}</span>
                     <button type="button" className="font-medium text-stone-600 hover:text-stone-950 dark:text-stone-300 dark:hover:text-white" onClick={onClearModels}>
-                        清空并恢复智能规划
+                        {t("clearAndRestorePlanning")}
                     </button>
                 </div>
             ) : null}
@@ -174,7 +177,7 @@ export function CreativeAgentControls({
                     className={cn("grid gap-1 bg-stone-100 p-1 dark:bg-stone-800", compact ? "mb-1.5 rounded-md" : "mb-2 rounded-lg")}
                     style={{ gridTemplateColumns: `repeat(${visibleCapabilities.length}, minmax(0, 1fr))` }}
                     role="tablist"
-                    aria-label="模型能力分类"
+                    aria-label={t("capabilityCategories")}
                 >
                     {visibleCapabilities.map((item) => {
                         const Icon = item === "image" ? ImageIcon : item === "video" ? FileVideo : FileAudio;
@@ -193,7 +196,7 @@ export function CreativeAgentControls({
                                 onClick={() => setCapability(item)}
                             >
                                 <Icon className="size-3.5 shrink-0" />
-                                <span className="truncate">{capabilityLabel(item)}</span>
+                                <span className="truncate">{t(`capabilities.${item}`)}</span>
                                 {count ? <span className="shrink-0">· {count}</span> : null}
                             </button>
                         );
@@ -224,7 +227,7 @@ export function CreativeAgentControls({
                         </button>
                     );
                 })}
-                {!visibleModels.length ? <p className={cn("px-2 text-center text-xs leading-5 text-stone-500 dark:text-stone-400", compact ? "py-3" : "py-5")}>当前未配置可用的{capabilityLabel(activeCapability)}模型</p> : null}
+                {!visibleModels.length ? <p className={cn("px-2 text-center text-xs leading-5 text-stone-500 dark:text-stone-400", compact ? "py-3" : "py-5")}>{t("noCapabilityModels", { capability: t(`capabilities.${activeCapability}`) })}</p> : null}
             </div>
         </div>
     );
@@ -239,12 +242,12 @@ export function CreativeAgentControls({
                     className={cn("!shrink-0 !gap-1.5", compact ? "!h-9 !w-9 !min-w-9 !rounded-lg !p-0" : "!h-8 !min-w-8 !px-2", selectedSkill && !theme && "!bg-amber-50 !text-amber-800 dark:!bg-amber-400/10 dark:!text-amber-300")}
                     style={selectedSkill ? activeStyle : mutedStyle}
                     icon={<Boxes className="size-4" />}
-                    aria-label={selectedSkill ? `当前 Skill：${selectedSkill.name}` : "选择创作 Skill"}
+                    aria-label={selectedSkill ? t("currentSkill", { name: selectedSkill.name }) : t("chooseSkill")}
                 >
                     {compact ? null : <span className="text-xs">Skill</span>}
                 </Button>
             </Popover>
-            <Tooltip title={smartPlanning ? "智能规划：已开启" : "智能规划：已关闭"}>
+            <Tooltip title={smartPlanning ? t("planningEnabled") : t("planningDisabled")}>
                 <Button
                     type="text"
                     className={cn(
@@ -258,21 +261,21 @@ export function CreativeAgentControls({
                         onSmartPlanningChange(!smartPlanning);
                         if (smartPlanning) setModelOpen(true);
                     }}
-                    aria-label={smartPlanning ? "智能规划已开启，点击关闭" : "智能规划已关闭，点击开启"}
+                    aria-label={smartPlanning ? t("planningEnabledClick") : t("planningDisabledClick")}
                     aria-pressed={smartPlanning}
                 >
-                    {compact ? null : <span className="text-xs">智能</span>}
+                    {compact ? null : <span className="text-xs">{t("smart")}</span>}
                 </Button>
             </Tooltip>
             <Popover trigger="click" placement="top" open={modelOpen} onOpenChange={setModelOpen} content={modelContent} styles={compact ? { container: { padding: 8, borderRadius: 12 } } : undefined}>
-                <Tooltip title={selectedModels.length ? `已选择 ${selectedModels.length} 个模型` : "选择生成模型"}>
+                <Tooltip title={selectedModels.length ? t("selectedModelCount", { count: selectedModels.length }) : t("chooseModels")}>
                     <Button
                         type="text"
                         shape="circle"
                         className={cn("relative !shrink-0 !p-0", compact ? "!h-9 !w-9 !min-w-9 !rounded-lg" : "!h-8 !w-8 !min-w-8", selectedModels.length && !theme && "!bg-stone-100 !text-stone-950 dark:!bg-stone-800 dark:!text-white")}
                         style={selectedModels.length ? activeStyle : mutedStyle}
                         icon={<Orbit className="size-4" />}
-                        aria-label={selectedModels.length ? `已选择 ${selectedModels.length} 个模型` : "选择生成模型"}
+                        aria-label={selectedModels.length ? t("selectedModelCount", { count: selectedModels.length }) : t("chooseModels")}
                     >
                         {selectedModels.length ? (
                             <span className="absolute right-0 top-0 grid size-3.5 place-items-center rounded-full bg-stone-900 text-[8px] font-semibold text-white dark:bg-white dark:text-stone-950">{selectedModels.length}</span>
@@ -283,10 +286,6 @@ export function CreativeAgentControls({
             {middle ? <div className={cn("min-w-0", compact && "pl-1")}>{middle}</div> : null}
         </div>
     );
-}
-
-function capabilityLabel(capability: CreativeAgentModelOption["capability"]) {
-    return capability === "image" ? "图片" : capability === "video" ? "视频" : "音频";
 }
 
 export function groupCreativeAgentModels(models: CreativeAgentModelOption[]) {

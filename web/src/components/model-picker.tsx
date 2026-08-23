@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useState } from "react";
 import { Cpu } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,9 @@ type ModelPickerProps = {
     onMissingConfig?: () => void;
 };
 
-export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder, onMissingConfig }: ModelPickerProps) {
+    const t = useTranslations("common.modelPicker");
+    const resolvedPlaceholder = placeholder || t("placeholder");
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const configuredOptions = useMemo(() => selectableModelsByCapability(config, capability), [capability, config]);
@@ -61,10 +64,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 )}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
-                title={current ? modelOptionLabel(config, current) : placeholder}
+                title={current ? modelOptionLabel(config, current) : resolvedPlaceholder}
             >
                 <ModelIcon model={current} />
-                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current) : placeholder}</span>
+                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current) : resolvedPlaceholder}</span>
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
@@ -84,18 +87,12 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                     ))
                 ) : (
                     <SelectItem value="__empty__" disabled>
-                        {emptyModelLabel(config, capability)}
+                        {config.models.length ? t("noMatching", { capability: capability ? t(`capabilities.${capability}`) : "" }) : t("missingConfiguration")}
                     </SelectItem>
                 )}
             </SelectContent>
         </Select>
     );
-}
-
-function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
-    const label = capability === "image" ? "生图" : capability === "video" ? "视频" : capability === "text" ? "文本" : capability === "audio" ? "音频" : "";
-    if (capability && config.models.length) return `暂无匹配的${label}模型`;
-    return config.models.length ? `暂无匹配的${label}模型` : "请联系管理员在后台配置渠道和模型";
 }
 
 function ModelLabel({ config, model }: { config: AiConfig; model: string }) {

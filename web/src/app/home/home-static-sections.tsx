@@ -1,4 +1,5 @@
 import { Cloud, Grid2X2, History, Layers3, Network, PencilLine, Rocket, Share2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { HOME_ADVANTAGES, HOME_STEPS } from "./home-data";
 import styles from "./home.module.css";
@@ -7,9 +8,10 @@ const stepIcons = { grid: Grid2X2, edit: PencilLine, rocket: Rocket, share: Shar
 const advantageIcons = { layers: Layers3, network: Network, history: History, cloud: Cloud } as const;
 
 export function HomeStepsSection() {
+    const t = useTranslations("home");
     return (
         <section className={styles.section} aria-labelledby="home-steps-title">
-            <SectionHeading id="home-steps-title" title="简单四步，创意即刻落地" subtitle="AI 赋能每一步，只需四个简单步骤" />
+            <SectionHeading id="home-steps-title" title={t("stepsTitle")} subtitle={t("stepsSubtitle")} />
             <div className={styles.stepsGrid}>
                 {HOME_STEPS.map((step) => {
                     const Icon = stepIcons[step.icon];
@@ -17,8 +19,8 @@ export function HomeStepsSection() {
                         <article key={step.number} className={styles.stepCard}>
                             <span className={styles.stepNumber}>{step.number}</span>
                             <div>
-                                <h3>{step.title}</h3>
-                                <p>{step.description}</p>
+                                <h3>{t(step.titleKey)}</h3>
+                                <p>{t(step.descriptionKey)}</p>
                             </div>
                             <Icon aria-hidden="true" />
                         </article>
@@ -30,18 +32,19 @@ export function HomeStepsSection() {
 }
 
 export function HomeAdvantagesSection() {
+    const t = useTranslations("home");
     return (
-        <section className={styles.advantages} aria-label="平台优势">
+        <section className={styles.advantages} aria-label={t("advantages")}>
             {HOME_ADVANTAGES.map((advantage) => {
                 const Icon = advantageIcons[advantage.icon];
                 return (
-                    <article key={advantage.title}>
+                    <article key={advantage.titleKey}>
                         <span>
                             <Icon aria-hidden="true" />
                         </span>
                         <div>
-                            <h3>{advantage.title}</h3>
-                            <p>{advantage.description}</p>
+                            <h3>{t(advantage.titleKey)}</h3>
+                            <p>{t(advantage.descriptionKey)}</p>
                         </div>
                     </article>
                 );

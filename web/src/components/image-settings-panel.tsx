@@ -2,17 +2,13 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
+import { useTranslations } from "next-intl";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { parseImageDimensions } from "@/lib/image-size";
 import type { AiConfig } from "@/stores/use-config-store";
 
-const qualityOptions = [
-    { value: "auto", label: "自动" },
-    { value: "high", label: "高" },
-    { value: "medium", label: "中" },
-    { value: "low", label: "低" },
-];
+const qualityOptions = ["auto", "high", "medium", "low"];
 const DIMENSION_STEP = 16;
 
 const aspectOptions = [
@@ -43,6 +39,7 @@ type ImageSettingsPanelProps = {
 };
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10, showSizeControls = true }: ImageSettingsPanelProps) {
+    const t = useTranslations("create.sharedSettings");
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
 
@@ -57,24 +54,24 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     if (document.activeElement instanceof HTMLInputElement && event.currentTarget.contains(document.activeElement)) document.activeElement.blur();
                 }}
             >
-                {showTitle ? <div className="text-lg font-semibold">图像设置</div> : null}
+                {showTitle ? <div className="text-lg font-semibold">{t("imageSettings")}</div> : null}
                 <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>质量</SettingTitle>
+                    <SettingTitle color={theme.node.muted}>{t("quality")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
                         {qualityOptions.map((item) => (
-                            <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
-                                {item.label}
+                            <OptionPill key={item} selected={quality === item} theme={theme} onClick={() => onConfigChange("quality", item)}>
+                                {t(item)}
                             </OptionPill>
                         ))}
                     </div>
                 </div>
                 {showSizeControls ? <ImageSizeControls size={config.size || "auto"} onChange={(value) => onConfigChange("size", value)} theme={theme} /> : null}
                 <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
+                    <SettingTitle color={theme.node.muted}>{t("generationCount")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
                         {Array.from({ length: quickCount }, (_, index) => index + 1).map((value) => (
                             <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
-                                {value} 张
+                                {t("imageCount", { count: value })}
                             </OptionPill>
                         ))}
                         <CountInput value={count} max={maxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
@@ -86,6 +83,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
 }
 
 export function ImageSizeControls({ size, onChange, theme, compact = false }: { size: string; onChange: (value: string) => void; theme: CanvasTheme; compact?: boolean }) {
+    const t = useTranslations("create.sharedSettings");
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
     const activeSize = size || "auto";
     const selectedAspect = aspectOptions.find((item) => imagePresetSize(item.value) === activeSize || item.value === activeSize);
@@ -101,12 +99,12 @@ export function ImageSizeControls({ size, onChange, theme, compact = false }: { 
         <div className="space-y-3">
             <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
-                    <SettingTitle color={theme.node.muted}>尺寸</SettingTitle>
+                    <SettingTitle color={theme.node.muted}>{t("size")}</SettingTitle>
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
-                            16倍数对齐
+                            {t("alignTo16")}
                         </span>
-                        <span title="输入完成后自动向上补成 16 的倍数" onMouseDown={(event) => event.stopPropagation()}>
+                        <span title={t("alignTo16Hint")} onMouseDown={(event) => event.stopPropagation()}>
                             <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
                         </span>
                     </div>
@@ -118,7 +116,7 @@ export function ImageSizeControls({ size, onChange, theme, compact = false }: { 
                 </div>
             </div>
             <div className="space-y-2.5">
-                <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
+                <SettingTitle color={theme.node.muted}>{t("aspectRatio")}</SettingTitle>
                 <div className={compact ? "grid grid-cols-4 gap-2" : "grid grid-cols-4 gap-2.5"}>
                     {aspectOptions.map((item) => (
                         <button
@@ -154,14 +152,6 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
             {children}
         </ConfigProvider>
     );
-}
-
-export function imageQualityLabel(value: string) {
-    return ({ auto: "自动", high: "高", medium: "中", low: "低" } as Record<string, string>)[value] || value;
-}
-
-export function imageSizeLabel(size: string) {
-    return aspectOptions.find((item) => (item.size || item.value) === size || item.value === size)?.label || size;
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
@@ -48,6 +49,7 @@ export function CreativeResultSwitcher({
     onSelect: (index: number) => void;
     className?: string;
 }) {
+    const t = useTranslations("create");
     const stripRef = useRef<HTMLDivElement>(null);
     const selectedRef = useRef<HTMLButtonElement>(null);
     const [scrollState, setScrollState] = useState({ axis: "horizontal" as "horizontal" | "vertical", overflow: false, previous: false, next: false });
@@ -113,11 +115,11 @@ export function CreativeResultSwitcher({
             style={style}
         >
             <div className={cn("mb-2 flex h-8 items-center justify-between gap-3 sm:shrink-0 sm:gap-1", scrollState.overflow ? "sm:grid sm:h-10 sm:grid-cols-[minmax(0,1fr)_20px] sm:grid-rows-2 sm:gap-x-1 sm:gap-y-0" : "sm:h-6")}>
-                <span className="whitespace-nowrap text-xs font-medium leading-5 text-[#7b8491] dark:text-[#8f99a6] sm:col-start-1 sm:row-start-1">更多</span>
+                <span className="whitespace-nowrap text-xs font-medium leading-5 text-[#7b8491] dark:text-[#8f99a6] sm:col-start-1 sm:row-start-1">{t("more")}</span>
                 <span
                     data-testid="creative-result-position"
                     className="mr-auto whitespace-nowrap text-[10px] tabular-nums leading-4 text-[#98a2b3] dark:text-[#7f8996] sm:col-start-1 sm:row-start-2"
-                    aria-label={`第 ${selectedIndex + 1} 项，共 ${results.length} 项`}
+                    aria-label={t("resultPosition", { current: selectedIndex + 1, total: results.length })}
                 >
                     {selectedIndex + 1} / {results.length}
                 </span>
@@ -128,7 +130,7 @@ export function CreativeResultSwitcher({
                             className="grid size-8 place-items-center rounded-lg border border-[#e4e7ec] bg-white text-[#667085] transition hover:border-[#cfd4dc] hover:bg-[#f8f9fb] disabled:cursor-not-allowed disabled:opacity-35 dark:border-[#343a43] dark:bg-[#181b20] dark:text-[#aab2bc] dark:hover:bg-[#22262c] sm:col-start-2 sm:row-start-1 sm:size-5 sm:rounded-md"
                             disabled={!scrollState.previous}
                             onClick={() => scroll(-1)}
-                            aria-label="查看上一组生成结果"
+                            aria-label={t("previousResultGroup")}
                         >
                             <PreviousIcon className="size-4 sm:size-3.5" />
                         </button>
@@ -137,14 +139,19 @@ export function CreativeResultSwitcher({
                             className="grid size-8 place-items-center rounded-lg border border-[#e4e7ec] bg-white text-[#667085] transition hover:border-[#cfd4dc] hover:bg-[#f8f9fb] disabled:cursor-not-allowed disabled:opacity-35 dark:border-[#343a43] dark:bg-[#181b20] dark:text-[#aab2bc] dark:hover:bg-[#22262c] sm:col-start-2 sm:row-start-2 sm:size-5 sm:rounded-md"
                             disabled={!scrollState.next}
                             onClick={() => scroll(1)}
-                            aria-label="查看更多生成结果"
+                            aria-label={t("nextResultGroup")}
                         >
                             <NextIcon className="size-4 sm:size-3.5" />
                         </button>
                     </div>
                 ) : null}
             </div>
-            <div ref={stripRef} className="hide-scrollbar flex max-w-full gap-2 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:overflow-x-hidden sm:overflow-y-auto sm:pb-0 sm:pr-1" aria-label="更多生成结果" onKeyDown={selectFromKeyboard}>
+            <div
+                ref={stripRef}
+                className="hide-scrollbar flex max-w-full gap-2 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:overflow-x-hidden sm:overflow-y-auto sm:pb-0 sm:pr-1"
+                aria-label={t("moreGeneratedResults")}
+                onKeyDown={selectFromKeyboard}
+            >
                 {results.map((result, index) => {
                     const selected = index === selectedIndex;
                     return (
@@ -157,7 +164,7 @@ export function CreativeResultSwitcher({
                                 selected ? "border-transparent" : "border-[#e4e7ec] hover:border-[#b8bdc7] dark:border-[#383e47] dark:hover:border-[#59616c]",
                             )}
                             onClick={() => onSelect(index)}
-                            aria-label={`查看生成结果 ${index + 1}`}
+                            aria-label={t("viewGeneratedResult", { number: index + 1 })}
                             aria-pressed={selected}
                         >
                             <span data-thumbnail-content className={cn("absolute overflow-hidden", selected ? "inset-[2px] rounded-[6px]" : "inset-0 rounded-[inherit]")}>

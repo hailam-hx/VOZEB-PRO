@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { AudioLines, Image as ImageIcon, Lightbulb, Paperclip, Send, Video } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { HOME_CREATION_MODES, type HomeCreationMode } from "./home-data";
 import { useHomeActions } from "./home-actions";
@@ -15,6 +16,7 @@ const modeIcons = {
 } as const;
 
 export function HomeAgentHero() {
+    const t = useTranslations("home");
     const [prompt, setPrompt] = useState("");
     const [mode, setMode] = useState<HomeCreationMode>("agent");
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -53,9 +55,9 @@ export function HomeAgentHero() {
             </span>
             <div className={styles.heroContent}>
                 <h1 id="home-hero-title" className={styles.heroTitle}>
-                    一个入口 完成所有 <span>AI 创作</span>
+                    {t("heroTitleLead")} <span>{t("heroTitleAccent")}</span>
                 </h1>
-                <p className={styles.heroSubtitle}>从图片、视频、音频到 Agent 编排，让每个想法直接进入完整创作流程</p>
+                <p className={styles.heroSubtitle}>{t("heroSubtitle")}</p>
 
                 <div className={styles.agentStage}>
                     <div className={styles.agentRing} data-testid="home-agent-halo" aria-hidden="true">
@@ -67,7 +69,7 @@ export function HomeAgentHero() {
                     <div className={styles.agentCard} data-testid="home-agent-card">
                         <div className={styles.inputArea}>
                             <label htmlFor="home-agent-prompt" className={styles.srOnly}>
-                                描述你想创作的内容
+                                {t("promptLabel")}
                             </label>
                             <textarea
                                 ref={textareaRef}
@@ -78,38 +80,42 @@ export function HomeAgentHero() {
                                     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") submit();
                                 }}
                                 className={styles.agentTextarea}
-                                placeholder="描述你想创作的内容，比如："
+                                placeholder={t("promptPlaceholder")}
                                 rows={3}
                             />
                         </div>
 
-                        <div className={styles.promptExamples} aria-label="示例提示词">
-                            {currentMode.examples.map((example) => (
-                                <button key={example} type="button" onClick={() => setPrompt(example)}>
-                                    {example}
-                                </button>
-                            ))}
+                        <div className={styles.promptExamples} aria-label={t("promptExamples")}>
+                            {currentMode.exampleKeys.map((key) => {
+                                const example = t(key);
+                                return (
+                                    <button key={key} type="button" onClick={() => setPrompt(example)}>
+                                        {example}
+                                    </button>
+                                );
+                            })}
                         </div>
 
                         <div className={styles.agentToolbar}>
-                            <div className={styles.creationModes} role="group" aria-label="创作模式">
+                            <div className={styles.creationModes} role="group" aria-label={t("creationModes")}>
                                 {HOME_CREATION_MODES.map((item) => {
                                     const Icon = modeIcons[item.icon];
+                                    const label = t(item.labelKey);
                                     return (
-                                        <button key={item.id} type="button" className={mode === item.id ? styles.modeActive : undefined} onClick={() => setMode(item.id)} aria-label={item.label} title={item.label} aria-pressed={mode === item.id}>
+                                        <button key={item.id} type="button" className={mode === item.id ? styles.modeActive : undefined} onClick={() => setMode(item.id)} aria-label={label} title={label} aria-pressed={mode === item.id}>
                                             <span className={styles.modeIcon}>
                                                 <Icon aria-hidden="true" />
                                             </span>
-                                            <span className={styles.modeLabel}>{item.label}</span>
+                                            <span className={styles.modeLabel}>{label}</span>
                                         </button>
                                     );
                                 })}
                             </div>
                             <div className={styles.agentTools}>
-                                <button type="button" aria-label="进入创作页添加参考素材" title="进入创作页添加参考素材" onClick={() => startCreating(prompt, mode)}>
+                                <button type="button" aria-label={t("addReference")} title={t("addReference")} onClick={() => startCreating(prompt, mode)}>
                                     <Paperclip aria-hidden="true" />
                                 </button>
-                                <button type="button" className={styles.sendButton} aria-label="开始创作" title="开始创作" onClick={submit}>
+                                <button type="button" className={styles.sendButton} aria-label={t("startCreating")} title={t("startCreating")} onClick={submit}>
                                     <Send aria-hidden="true" />
                                 </button>
                             </div>

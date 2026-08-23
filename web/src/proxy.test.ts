@@ -29,6 +29,16 @@ describe("application proxy security", () => {
         expect(policy).not.toMatch(/connect-src[^;]*http:/);
         expect(policy).toContain("upgrade-insecure-requests");
     });
+
+    it("overwrites the pathname header used to isolate Chinese-only interfaces", () => {
+        const response = proxy(
+            new NextRequest("https://app.example.com/create", {
+                headers: { "x-vozeb-pathname": "/admin" },
+            }),
+        );
+
+        expect(response.headers.get("x-middleware-request-x-vozeb-pathname")).toBe("/create");
+    });
 });
 
 function writeRequest(headers: Record<string, string>) {

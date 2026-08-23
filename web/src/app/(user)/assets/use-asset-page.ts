@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import type { Asset, AssetKind } from "@/lib/library-asset-contract";
 import { listLibraryAssetPage } from "@/services/api/library-assets";
 
 export function useAssetPage(input: { userId: string; page: number; pageSize: number; kind: AssetKind | "all"; keyword: string }) {
+    const t = useTranslations("media.assetsPage");
     const [assets, setAssets] = useState<Asset[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
@@ -46,13 +48,13 @@ export function useAssetPage(input: { userId: string; page: number; pageSize: nu
                 if (reason instanceof DOMException && reason.name === "AbortError") return;
                 setAssets([]);
                 setTotal(0);
-                setError(reason instanceof Error ? reason.message : "素材加载失败");
+                setError(t("loadFailed"));
             })
             .finally(() => {
                 if (!controller.signal.aborted) setLoading(false);
             });
         return () => controller.abort();
-    }, [input.kind, input.page, input.pageSize, input.userId, keyword, reloadToken]);
+    }, [input.kind, input.page, input.pageSize, input.userId, keyword, reloadToken, t]);
 
     const reload = useCallback(() => setReloadToken((value) => value + 1), []);
     return { assets, total, loading, error, reload };

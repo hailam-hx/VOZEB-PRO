@@ -1,10 +1,12 @@
 import { ArrowDown, ArrowRight, Check, Lightbulb } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import type { HelpArticle } from "./help-content";
 
 export function HelpFlow({ steps }: { steps: HelpArticle["flow"] }) {
+    const t = useTranslations("public.help");
     return (
-        <ol className="flex flex-col gap-2 lg:flex-row lg:items-stretch" aria-label="操作流程">
+        <ol className="flex flex-col gap-2 lg:flex-row lg:items-stretch" aria-label={t("flowAria")}>
             {steps.map((step, index) => (
                 <li key={step.title} className="contents">
                     <div className="min-w-0 flex-1 rounded-lg border border-border bg-card p-3 text-card-foreground sm:p-4">

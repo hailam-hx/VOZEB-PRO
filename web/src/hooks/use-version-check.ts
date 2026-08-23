@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { App } from "antd";
 import { APP_VERSION } from "@/constant/env";
 import { parseChangelog, type ReleaseInfo } from "@/lib/release";
+import { useTranslations } from "next-intl";
 
 const latestVersionUrl = "https://raw.githubusercontent.com/csyqlz/VOZEB-PRO/main/VERSION";
 const latestChangelogUrl = "https://raw.githubusercontent.com/csyqlz/VOZEB-PRO/main/CHANGELOG.md";
@@ -56,6 +57,7 @@ function filterCurrentReleaseLine(releases: ReleaseInfo[]) {
 }
 
 export function useVersionCheck() {
+    const t = useTranslations("common.version");
     const currentVersion = APP_VERSION;
     const { message } = App.useApp();
     const localReleases = useMemo(readLocalReleases, []);
@@ -83,26 +85,25 @@ export function useVersionCheck() {
             setChecking(true);
             try {
                 const [versionResponse, changelogResponse] = await Promise.all([fetch(latestVersionUrl), fetch(latestChangelogUrl)]);
-                if (!versionResponse.ok) throw new Error("版本读取失败");
-                if (!changelogResponse.ok) throw new Error("更新日志读取失败");
+                if (!versionResponse.ok || !changelogResponse.ok) throw new Error("release-check-failed");
                 const [version, changelog] = await Promise.all([versionResponse.text(), changelogResponse.text()]);
                 const remoteVersion = version.trim() || currentVersion;
                 const remoteReleases = changelog.trim() ? filterCurrentReleaseLine(parseChangelog(changelog)) : [];
                 const remoteIsNewer = compareVersions(remoteVersion, currentVersion) > 0;
                 setLatestVersion(remoteIsNewer ? remoteVersion : currentVersion);
                 setReleases(remoteIsNewer ? mergeReleases(remoteReleases, localReleases) : mergeReleases(localReleases, remoteReleases));
-                if (showMessage) message.success("已获取最新版本信息");
+                if (showMessage) message.success(t("checkSuccess"));
                 return true;
             } catch {
                 setLatestVersion(currentVersion);
                 setReleases(localReleases);
-                if (showMessage) message.warning("GitHub 暂不可访问或仓库尚未公开，已显示本地版本记录");
+                if (showMessage) message.warning(t("checkFallback"));
                 return false;
             } finally {
                 setChecking(false);
             }
         },
-        [currentVersion, localReleases, message],
+        [currentVersion, localReleases, message, t],
     );
 
     useEffect(() => {

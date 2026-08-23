@@ -3,6 +3,7 @@
 import { Button, Input, Popover, Tooltip } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import { ArrowUp, AtSign, Boxes, Check, ChevronDown, ChevronLeft, ChevronRight, FileAudio, FileVideo, ImageIcon, Plus, Sparkles, Square, WandSparkles, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState, type MouseEventHandler, type PointerEventHandler, type RefObject, type WheelEvent } from "react";
 
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
@@ -109,6 +110,7 @@ export function CreativeComposer({
     compact?: boolean;
     onExpand?: () => void;
 }) {
+    const t = useTranslations("create");
     const [ready, setReady] = useState(false);
     const [skillPickerOpen, setSkillPickerOpen] = useState(false);
     const [modePickerOpen, setModePickerOpen] = useState(false);
@@ -118,9 +120,21 @@ export function CreativeComposer({
     const mentionHighlightRef = useRef<HTMLDivElement>(null);
     const { scrollRef: skillCategoryScrollRef, dragScrollProps: skillCategoryDragScrollProps } = useHorizontalMouseDragScroll<HTMLDivElement>();
 
-    const skillCategories = skillCategoryOptions(skills);
+    const skillCategories = skillCategoryOptions(skills, {
+        all: t("skillCategoryAll"),
+        image: t("skillCategoryImage"),
+        video: t("skillCategoryVideo"),
+        canvas: t("skillCategoryCanvas"),
+        drama: t("skillCategoryDrama"),
+        edit: t("skillCategoryEdit"),
+    });
     const visibleSkills = skills.filter((skill) => matchesSkillCategory(skill, skillCategory));
-    const currentMode = creativeModeOptions.find((option) => option.value === creationMode) || creativeModeOptions[0];
+    const localizedModeOptions = creativeModeOptions.map((option) => ({
+        ...option,
+        label: t(creativeModeMessageKeys[option.value].label),
+        description: t(creativeModeMessageKeys[option.value].description),
+    }));
+    const currentMode = localizedModeOptions.find((option) => option.value === creationMode) || localizedModeOptions[0];
     const videoPreference = generationPreferences.video;
     const frameMode = videoPreference?.referenceMode || "reference";
     const showVideoFrames = shouldShowVideoFrameControls(creationMode, generationPreferences);
@@ -212,7 +226,7 @@ export function CreativeComposer({
                         "creative-composer-input relative z-[1] min-w-0 !border-0 !bg-transparent !px-1 !py-1 !text-[15px] !leading-7 !shadow-none !outline-none sm:!px-2",
                         hasMentionReferences && "!text-transparent caret-[#20242a] dark:caret-[#f3f5f7]",
                     )}
-                    placeholder={compactMode ? "输入你的创作想法" : "输入你的创作想法、脚本或画面要求"}
+                    placeholder={compactMode ? t("composerPlaceholderCompact") : t("composerPlaceholder")}
                     onFocus={() => {
                         if (compactMode) onExpand?.();
                     }}
@@ -281,7 +295,7 @@ export function CreativeComposer({
                         {allMediaAttachments.map((asset) => (
                             <ComposerMediaThumbnail key={asset.id} asset={asset} compact onRemove={onRemoveAttachment} />
                         ))}
-                        <Tooltip title={allMediaAttachments.length ? "继续添加参考素材" : "添加素材"}>
+                        <Tooltip title={allMediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}>
                             <Button
                                 type="text"
                                 className="!size-11 !min-w-11 !shrink-0 !rounded-xl !border !border-[#dedcff] !bg-[#f8f7ff] !text-[#5f61d8] hover:!border-[#cbc7ff] hover:!bg-[#f1efff] hover:!text-[#4f52c4] dark:!border-[#45416d] dark:!bg-[#29263d] dark:!text-[#aaa6ff] dark:hover:!border-[#5b558c] dark:hover:!bg-[#302d47] dark:hover:!text-white"
@@ -291,12 +305,12 @@ export function CreativeComposer({
                                     onAttachment();
                                 }}
                                 loading={uploading}
-                                aria-label={allMediaAttachments.length ? "继续添加参考素材" : "添加素材"}
+                                aria-label={allMediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}
                             />
                         </Tooltip>
                     </div>
                     {composerInput(true)}
-                    <Tooltip title="引用当前对话资产">
+                    <Tooltip title={t("referenceConversationAssets")}>
                         <Button
                             type="text"
                             className="!size-11 !min-w-11 !shrink-0 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white"
@@ -306,10 +320,10 @@ export function CreativeComposer({
                                 event.stopPropagation();
                                 openAssetMention();
                             }}
-                            aria-label="引用当前对话资产"
+                            aria-label={t("referenceConversationAssets")}
                         />
                     </Tooltip>
-                    <Tooltip title="优化提示词">
+                    <Tooltip title={t("optimizePrompt")}>
                         <Button
                             type="text"
                             className="!size-11 !min-w-11 !shrink-0 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] disabled:!bg-transparent disabled:!text-[#b3bac4] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white dark:disabled:!text-[#5f6873]"
@@ -320,10 +334,10 @@ export function CreativeComposer({
                                 event.stopPropagation();
                                 onOptimize();
                             }}
-                            aria-label={optimizing ? "正在优化提示词" : "优化提示词"}
+                            aria-label={optimizing ? t("optimizingPrompt") : t("optimizePrompt")}
                         />
                     </Tooltip>
-                    <Tooltip title={busy ? "停止生成" : "发送"}>
+                    <Tooltip title={busy ? t("stopGeneration") : t("send")}>
                         <Button
                             type="primary"
                             shape="circle"
@@ -331,7 +345,7 @@ export function CreativeComposer({
                             icon={busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
                             disabled={!busy && !value.trim()}
                             onClick={busy ? onCancel : onSubmit}
-                            aria-label={busy ? "停止生成" : "发送"}
+                            aria-label={busy ? t("stopGeneration") : t("send")}
                         />
                     </Tooltip>
                 </div>
@@ -358,8 +372,8 @@ export function CreativeComposer({
                                     type="button"
                                     className="grid size-5 shrink-0 place-items-center rounded-md text-[#7c8795] transition hover:bg-[#dfe5ec] hover:text-[#263141] dark:text-[#aab3bf] dark:hover:bg-[#343c46] dark:hover:text-white"
                                     onClick={onRemoveSkill}
-                                    aria-label={`移除 Skill ${selectedSkill.name}`}
-                                    title="移除 Skill"
+                                    aria-label={t("removeSkillNamed", { name: selectedSkill.name })}
+                                    title={t("removeSkill")}
                                 >
                                     <X className="size-3" />
                                 </button>
@@ -375,7 +389,7 @@ export function CreativeComposer({
                                         type="button"
                                         className="grid size-5 shrink-0 place-items-center rounded text-stone-400 hover:bg-stone-200 hover:text-stone-800 dark:hover:bg-stone-700 dark:hover:text-white"
                                         onClick={() => onRemoveAttachment(asset.id)}
-                                        aria-label={`移除${asset.title}`}
+                                        aria-label={t("removeNamedAsset", { name: asset.title })}
                                     >
                                         <X className="size-3" />
                                     </button>
@@ -403,7 +417,7 @@ export function CreativeComposer({
                                 {mediaAttachments.map((asset) => {
                                     return <ComposerMediaThumbnail key={asset.id} asset={asset} onRemove={onRemoveAttachment} />;
                                 })}
-                                <Tooltip title={mediaAttachments.length ? "继续添加参考素材" : "添加素材"}>
+                                <Tooltip title={mediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}>
                                     <Button
                                         type="text"
                                         className={cn(
@@ -413,7 +427,7 @@ export function CreativeComposer({
                                         icon={<Plus className="size-5" />}
                                         onClick={onAttachment}
                                         loading={uploading}
-                                        aria-label={mediaAttachments.length ? "继续添加参考素材" : "添加素材"}
+                                        aria-label={mediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}
                                     />
                                 </Tooltip>
                             </>
@@ -432,9 +446,9 @@ export function CreativeComposer({
                             onOpenChange={setModePickerOpen}
                             content={
                                 <div className="hide-scrollbar max-h-[calc(100vh-160px)] w-[calc(100vw-56px)] max-w-[300px] overflow-y-auto py-1 sm:w-72 sm:max-w-none">
-                                    <p className="px-2 pb-2 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">创作类型</p>
+                                    <p className="px-2 pb-2 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">{t("creationType")}</p>
                                     <div className="space-y-1">
-                                        {creativeModeOptions.map((option) => {
+                                        {localizedModeOptions.map((option) => {
                                             const selected = option.value === creationMode;
                                             return (
                                                 <button
@@ -473,7 +487,7 @@ export function CreativeComposer({
                                 type="text"
                                 className={creativeComposerToolButtonClass(modePickerOpen)}
                                 icon={<CreativeModeIcon mode={creationMode} />}
-                                aria-label={`当前创作类型：${currentMode.label}`}
+                                aria-label={t("currentCreationType", { type: currentMode.label })}
                                 aria-haspopup="menu"
                                 aria-expanded={modePickerOpen}
                             >
@@ -494,16 +508,16 @@ export function CreativeComposer({
                             onCapabilityChange={onChangeGenerationCapability}
                             onChangeGenerationPreference={onChangeGenerationPreference}
                         />
-                        <Tooltip title="引用当前对话资产">
+                        <Tooltip title={t("referenceConversationAssets")}>
                             <Button
                                 type="text"
                                 className={creativeComposerToolButtonClass(mentionQuery !== null)}
                                 icon={<AtSign className="size-4" />}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={openAssetMention}
-                                aria-label="引用当前对话资产"
+                                aria-label={t("referenceConversationAssets")}
                             >
-                                <span className="hidden text-xs font-medium sm:inline">引用</span>
+                                <span className="hidden text-xs font-medium sm:inline">{t("reference")}</span>
                             </Button>
                         </Tooltip>
                         <Popover
@@ -515,16 +529,16 @@ export function CreativeComposer({
                             onOpenChange={setSkillPickerOpen}
                             content={
                                 <div className="w-[calc(100vw-56px)] max-w-[300px] py-1 sm:w-80 sm:max-w-none">
-                                    <p className="px-2 pb-2 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">选择创作 Skill</p>
-                                    {skillsLoading ? <p className="px-2 py-3 text-xs text-[#8b949f] dark:text-[#7f8996]">正在加载...</p> : null}
-                                    {!skillsLoading && !skills.length ? <p className="px-2 py-3 text-xs text-[#8b949f] dark:text-[#7f8996]">暂无可用 Skill</p> : null}
+                                    <p className="px-2 pb-2 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">{t("chooseSkill")}</p>
+                                    {skillsLoading ? <p className="px-2 py-3 text-xs text-[#8b949f] dark:text-[#7f8996]">{t("loading")}</p> : null}
+                                    {!skillsLoading && !skills.length ? <p className="px-2 py-3 text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noSkills")}</p> : null}
                                     {skills.length ? (
                                         <div className="mb-2 grid grid-cols-[28px_minmax(0,1fr)_28px] items-center gap-1">
                                             <button
                                                 type="button"
                                                 className="grid size-7 place-items-center rounded-md text-[#7c8794] transition hover:bg-[#eef1f4] hover:text-[#20242a] disabled:cursor-default disabled:opacity-30 dark:text-[#929ca8] dark:hover:bg-[#292f37] dark:hover:text-white"
                                                 onClick={() => skillCategoryScrollRef.current?.scrollBy({ left: -180, behavior: "smooth" })}
-                                                aria-label="向左查看更多 Skill 分类"
+                                                aria-label={t("previousSkillCategories")}
                                             >
                                                 <ChevronLeft className="size-4" />
                                             </button>
@@ -534,7 +548,7 @@ export function CreativeComposer({
                                                 onWheel={scrollHorizontalCategories}
                                                 {...skillCategoryDragScrollProps}
                                                 role="tablist"
-                                                aria-label="Skill 分类，可左右滑动查看更多"
+                                                aria-label={t("skillCategories")}
                                             >
                                                 {skillCategories.map((category) => (
                                                     <button
@@ -558,7 +572,7 @@ export function CreativeComposer({
                                                 type="button"
                                                 className="grid size-7 place-items-center rounded-md text-[#7c8794] transition hover:bg-[#eef1f4] hover:text-[#20242a] dark:text-[#929ca8] dark:hover:bg-[#292f37] dark:hover:text-white"
                                                 onClick={() => skillCategoryScrollRef.current?.scrollBy({ left: 180, behavior: "smooth" })}
-                                                aria-label="向右查看更多 Skill 分类"
+                                                aria-label={t("nextSkillCategories")}
                                             >
                                                 <ChevronRight className="size-4" />
                                             </button>
@@ -566,7 +580,7 @@ export function CreativeComposer({
                                     ) : null}
                                     <div className="relative">
                                         <div className="hide-scrollbar max-h-[142px] space-y-1 overflow-y-auto overscroll-contain [scrollbar-width:none] sm:max-h-[154px] [&::-webkit-scrollbar]:hidden">
-                                            {!skillsLoading && skills.length && !visibleSkills.length ? <p className="px-2 py-5 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">当前分类暂无可用 Skill</p> : null}
+                                            {!skillsLoading && skills.length && !visibleSkills.length ? <p className="px-2 py-5 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noSkillsInCategory")}</p> : null}
                                             {visibleSkills.map((skill) => {
                                                 const selected = selectedSkill?.id === skill.id;
                                                 const visual = skillOptionVisual(skill);
@@ -600,11 +614,11 @@ export function CreativeComposer({
                                 </div>
                             }
                         >
-                            <Button type="text" className={creativeComposerToolButtonClass(skillPickerOpen)} icon={<Boxes className="size-4" />} aria-label="选择创作 Skill" aria-haspopup="menu" aria-expanded={skillPickerOpen}>
-                                <span className="hidden text-xs font-medium sm:inline">使用 Skill</span>
+                            <Button type="text" className={creativeComposerToolButtonClass(skillPickerOpen)} icon={<Boxes className="size-4" />} aria-label={t("chooseSkill")} aria-haspopup="menu" aria-expanded={skillPickerOpen}>
+                                <span className="hidden text-xs font-medium sm:inline">{t("useSkillTool")}</span>
                             </Button>
                         </Popover>
-                        <Tooltip title="优化提示词">
+                        <Tooltip title={t("optimizePrompt")}>
                             <Button
                                 type="text"
                                 className={creativeComposerToolButtonClass(false)}
@@ -612,13 +626,13 @@ export function CreativeComposer({
                                 loading={optimizing}
                                 disabled={busy || !value.trim()}
                                 onClick={onOptimize}
-                                aria-label={optimizing ? "正在优化提示词" : "优化提示词"}
+                                aria-label={optimizing ? t("optimizingPrompt") : t("optimizePrompt")}
                             >
-                                <span className="hidden text-xs font-medium sm:inline">优化</span>
+                                <span className="hidden text-xs font-medium sm:inline">{t("optimize")}</span>
                             </Button>
                         </Tooltip>
                     </div>
-                    <Tooltip title={busy ? "停止生成" : "发送"}>
+                    <Tooltip title={busy ? t("stopGeneration") : t("send")}>
                         <Button
                             type="primary"
                             shape="circle"
@@ -626,7 +640,7 @@ export function CreativeComposer({
                             icon={busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
                             disabled={!busy && !value.trim()}
                             onClick={busy ? onCancel : onSubmit}
-                            aria-label={busy ? "停止生成" : "发送"}
+                            aria-label={busy ? t("stopGeneration") : t("send")}
                         />
                     </Tooltip>
                 </div>
@@ -668,11 +682,12 @@ function ComposerMentionPreview({ segments, assetsById, previewRef }: { segments
 }
 
 function ComposerMediaThumbnail({ asset, compact = false, onRemove }: { asset: CreativeAsset; compact?: boolean; onRemove: (id: string) => void }) {
+    const t = useTranslations("create");
     const previewUrl = asset.serverUrl || asset.remoteUrl || "";
     return (
         <div
             className={cn("relative shrink-0 border border-[#dfe4e8] bg-[#f4f6f8] shadow-[0_2px_8px_rgba(38,49,65,0.08)] dark:border-[#3b434d] dark:bg-[#242930] dark:shadow-black/20", compact ? "size-11 rounded-lg" : "size-12 rounded-lg")}
-            aria-label={`已上传${asset.type === "image" ? "图片" : "视频"} ${asset.title}`}
+            aria-label={t(asset.type === "image" ? "uploadedImage" : "uploadedVideo", { name: asset.title })}
             title={asset.title}
         >
             <div className="size-full overflow-hidden rounded-[7px]">
@@ -689,8 +704,8 @@ function ComposerMediaThumbnail({ asset, compact = false, onRemove }: { asset: C
                     event.stopPropagation();
                     onRemove(asset.id);
                 }}
-                aria-label={`移除${asset.title}`}
-                title="删除素材"
+                aria-label={t("removeNamedAsset", { name: asset.title })}
+                title={t("deleteMaterial")}
             >
                 <span
                     data-delete-indicator
@@ -759,17 +774,17 @@ function useHorizontalMouseDragScroll<T extends HTMLElement>() {
     };
 }
 
-function skillCategoryOptions(skills: SkillOption[]) {
-    const categories: Array<{ id: SkillCategory; label: string }> = [
-        { id: "all", label: "全部" },
-        { id: "image", label: "图片" },
-        { id: "video", label: "视频" },
-        { id: "canvas", label: "画布" },
-        { id: "drama", label: "短剧" },
-        { id: "edit", label: "编辑" },
-    ];
+function skillCategoryOptions(skills: SkillOption[], labels: Record<SkillCategory, string>) {
+    const categories: Array<{ id: SkillCategory; label: string }> = (Object.keys(labels) as SkillCategory[]).map((id) => ({ id, label: labels[id] }));
     return categories.map((category) => ({ ...category, count: skills.filter((skill) => matchesSkillCategory(skill, category.id)).length })).filter((category) => category.id === "all" || category.count > 0);
 }
+
+const creativeModeMessageKeys = {
+    agent: { label: "modeAgent", description: "modeAgentDescription" },
+    image: { label: "modeImage", description: "modeImageDescription" },
+    video: { label: "modeVideo", description: "modeVideoDescription" },
+    audio: { label: "modeAudio", description: "modeAudioDescription" },
+} as const;
 
 function matchesSkillCategory(skill: SkillOption, category: SkillCategory) {
     if (category === "all") return true;

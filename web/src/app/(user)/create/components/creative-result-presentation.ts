@@ -1,8 +1,13 @@
-export function formatCreativeMessageTime(value: number) {
+import type { AppLocale } from "@/i18n/config";
+
+export function formatCreativeMessageTime(value: number, locale: AppLocale = "zh-CN") {
     const date = new Date(value);
     if (!Number.isFinite(date.getTime())) return "";
     const now = new Date();
-    const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
-    if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()) return `今天 ${time}`;
-    return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+    if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()) {
+        const today = new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(0, "day");
+        const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+        return `${today} ${time}`;
+    }
+    return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 }

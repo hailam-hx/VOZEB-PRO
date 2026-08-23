@@ -5,6 +5,7 @@ import type { TextAreaRef } from "antd/es/input/TextArea";
 import { ChevronsDown, Clapperboard, FolderOpen, History, Play, Plus, ScanFace, ShoppingBag, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 import { CREATIVE_UPLOAD_ACCEPT, CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { CreateOverviewAsset } from "@/lib/create-workbench-overview";
@@ -39,6 +40,7 @@ const SKILL_VISUALS = [
 ] as const;
 
 export default function CreatePage() {
+    const t = useTranslations("create");
     const { message } = App.useApp();
     const router = useRouter();
     const screens = Grid.useBreakpoint();
@@ -106,11 +108,11 @@ export default function CreatePage() {
         initialConversationRestoredRef.current = true;
         const conversationId = createConversationIdFromSearch(window.location.search);
         if (!conversationId) return;
-        void openAgentConversation(conversationId).catch((error) => {
-            message.error(error instanceof Error ? error.message : "恢复对话失败");
+        void openAgentConversation(conversationId).catch(() => {
+            message.error(t("restoreConversationFailed"));
             router.replace("/create");
         });
-    }, [message, openAgentConversation, router]);
+    }, [message, openAgentConversation, router, t]);
 
     useEffect(() => {
         if (initialPromptRestoredRef.current) return;
@@ -124,8 +126,8 @@ export default function CreatePage() {
         }
         router.replace("/create");
         window.requestAnimationFrame(() => inputRef.current?.focus());
-        message.success(incomingDraft.prompt ? "已填入创作需求" : "已选择创作类型");
-    }, [message, router, updatePrompt]);
+        message.success(incomingDraft.prompt ? t("draftPromptFilled") : t("creationModeSelected"));
+    }, [message, router, t, updatePrompt]);
 
     useEffect(() => {
         if (!agent.conversationId || createConversationIdFromSearch(window.location.search) === agent.conversationId) return;
@@ -167,8 +169,8 @@ export default function CreatePage() {
 
     const openConversation = (id: string) => {
         router.push(createConversationHref(id));
-        void openAgentConversation(id).catch((error) => {
-            message.error(error instanceof Error ? error.message : "打开对话失败");
+        void openAgentConversation(id).catch(() => {
+            message.error(t("openConversationFailed"));
             router.replace("/create");
         });
     };
@@ -180,22 +182,22 @@ export default function CreatePage() {
 
     const submit = async () => {
         if (!prompt.trim()) {
-            message.warning("请先描述你的创作需求");
+            message.warning(t("describeRequirement"));
             inputRef.current?.focus();
             return;
         }
         if (!smartPlanning && !selectedModelIds.length) {
-            message.warning("请选择至少一个模型，或重新开启智能规划");
+            message.warning(t("selectModelOrSmart"));
             return;
         }
         const videoPreference = generationPreferences.video;
         const videoFrameModeActive = shouldShowVideoFrameControls(creationMode, generationPreferences);
         if (videoFrameModeActive && videoPreference?.referenceMode === "first_frame" && !videoPreference.firstFrameAssetId) {
-            message.warning("请先选择视频首帧图片");
+            message.warning(t("selectFirstFrame"));
             return;
         }
         if (videoFrameModeActive && videoPreference?.referenceMode === "first_last" && (!videoPreference.firstFrameAssetId || !videoPreference.lastFrameAssetId)) {
-            message.warning("请先同时选择视频首帧和尾帧图片");
+            message.warning(t("selectFirstLastFrame"));
             return;
         }
         promptRevisionRef.current += 1;
@@ -213,8 +215,8 @@ export default function CreatePage() {
                 setSelectedSkillId(undefined);
                 setGenerationPreferences((current) => (current.video ? { ...current, video: { ...current.video, firstFrameAssetId: undefined, lastFrameAssetId: undefined } } : current));
             }
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "素材上传失败");
+        } catch {
+            message.error(t("uploadFailed"));
         }
     };
 
@@ -231,8 +233,8 @@ export default function CreatePage() {
             }
             await agent.retryRun(run.id);
             return true;
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "重试失败");
+        } catch {
+            message.error(t("retryFailed"));
             return false;
         }
     };
@@ -240,20 +242,20 @@ export default function CreatePage() {
     const uploadAttachments = async (files: File[], successMessage?: string) => {
         const unsupported = files.find((file) => !isCreativeUploadMimeType(file.type));
         if (unsupported) {
-            message.error(`${unsupported.name} 不是支持的图片、视频或音频格式`);
+            message.error(t("unsupportedFile", { name: unsupported.name }));
             return [] as CreativeAsset[];
         }
         const oversized = files.find((file) => file.size > CREATIVE_UPLOAD_MAX_BYTES);
         if (oversized) {
-            message.error(`${oversized.name} 超过 20MB`);
+            message.error(t("fileTooLarge", { name: oversized.name }));
             return [] as CreativeAsset[];
         }
         try {
             const items = await agent.uploadAttachments(files);
-            if (items.length) message.success(successMessage || `已添加 ${items.length} 份素材`);
+            if (items.length) message.success(successMessage || t("assetsAdded", { count: items.length }));
             return items;
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "素材上传失败");
+        } catch {
+            message.error(t("uploadFailed"));
             return [] as CreativeAsset[];
         }
     };
@@ -261,7 +263,7 @@ export default function CreatePage() {
     const usePublicPrompt = (value: string) => {
         updatePrompt(value);
         window.requestAnimationFrame(() => inputRef.current?.focus());
-        message.success("已填入公开提示词");
+        message.success(t("publicPromptFilled"));
     };
 
     const optimizeCurrentPrompt = async () => {
@@ -273,14 +275,14 @@ export default function CreatePage() {
         try {
             const optimized = await optimizePrompt({ requestId: `prompt-${crypto.randomUUID()}`, prompt: source, mode: creationMode });
             if (promptRevisionRef.current !== revision) {
-                message.info("输入内容已变化，未覆盖当前提示词");
+                message.info(t("inputChanged"));
                 return;
             }
             updatePrompt(optimized);
             window.requestAnimationFrame(() => inputRef.current?.focus());
-            message.success("提示词已优化");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "提示词优化失败");
+            message.success(t("promptOptimized"));
+        } catch {
+            message.error(t("promptOptimizationFailed"));
         } finally {
             optimizingRef.current = false;
             setOptimizingPrompt(false);
@@ -290,15 +292,15 @@ export default function CreatePage() {
     const importReferenceMedia = async (input: { url: string; mimeType?: string; fileStem: string }) => {
         try {
             const response = await fetch(input.url);
-            if (!response.ok) throw new Error("读取参考素材失败");
+            if (!response.ok) throw new Error(t("readReferenceFailed"));
             const blob = await response.blob();
             const mimeType = blob.type || input.mimeType || "";
-            if (!isCreativeUploadMimeType(mimeType)) throw new Error("该媒体格式暂不支持作为参考素材");
+            if (!isCreativeUploadMimeType(mimeType)) throw new Error(t("unsupportedReference"));
             const extension = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
-            const referenced = await uploadAttachments([new File([blob], `${input.fileStem}.${extension}`, { type: mimeType })], "已引用到 Agent 输入框");
+            const referenced = await uploadAttachments([new File([blob], `${input.fileStem}.${extension}`, { type: mimeType })], t("referencedToInput"));
             if (referenced.length) window.requestAnimationFrame(() => inputRef.current?.focus());
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "引用素材失败");
+        } catch {
+            message.error(t("referenceFailed"));
         }
     };
 
@@ -366,7 +368,7 @@ export default function CreatePage() {
     const selectVideoFrame = (role: FrameRole, assetId: string) => {
         const otherId = role === "first_frame" ? generationPreferences.video?.lastFrameAssetId : generationPreferences.video?.firstFrameAssetId;
         if (otherId === assetId) {
-            message.warning("首帧和尾帧不能使用同一张图片");
+            message.warning(t("sameVideoFrames"));
             return;
         }
         setGenerationPreferences((current) => {
@@ -472,7 +474,7 @@ export default function CreatePage() {
             onChange={updatePrompt}
             onOptimize={() => void optimizeCurrentPrompt()}
             onSubmit={() => void submit()}
-            onCancel={() => void agent.cancel().catch((error) => message.error(error instanceof Error ? error.message : "停止任务失败"))}
+            onCancel={() => void agent.cancel().catch(() => message.error(t("stopFailed")))}
             attachments={agent.selectedAssets}
             skills={skills}
             skillsLoading={skillsLoading}
@@ -523,8 +525,8 @@ export default function CreatePage() {
         <div className="flex h-full min-h-0 flex-col bg-white dark:bg-[#181b20]">
             <div className="hidden h-14 shrink-0 items-center gap-2 border-b border-[#eceef1] px-4 lg:flex dark:border-[#2b3036]">
                 <History className="size-4 text-[#5b61cf] dark:text-[#b4b7ff]" />
-                <h2 className="min-w-0 flex-1 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">创作历史</h2>
-                <Button type="text" shape="circle" icon={<X className="size-4" />} onClick={() => setHistoryOpen(false)} aria-label="关闭创作历史" title="关闭创作历史" />
+                <h2 className="min-w-0 flex-1 text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">{t("history")}</h2>
+                <Button type="text" shape="circle" icon={<X className="size-4" />} onClick={() => setHistoryOpen(false)} aria-label={t("closeHistory")} title={t("closeHistory")} />
             </div>
             <div className="min-h-0 flex-1">
                 <CreativeConversationList
@@ -545,18 +547,18 @@ export default function CreatePage() {
                     onRename={async (id, title) => {
                         try {
                             await agent.renameConversation(id, title);
-                            message.success("标题已更新");
+                            message.success(t("titleUpdated"));
                         } catch (error) {
-                            message.error(error instanceof Error ? error.message : "修改标题失败");
+                            message.error(t("updateTitleFailed"));
                             throw error;
                         }
                     }}
                     onDelete={async (ids) => {
                         try {
                             await agent.deleteConversations(ids);
-                            message.success(ids.length > 1 ? `已删除 ${ids.length} 条对话` : "对话已删除");
+                            message.success(ids.length > 1 ? t("conversationsDeleted", { count: ids.length }) : t("conversationDeleted"));
                         } catch (error) {
-                            message.error(error instanceof Error ? error.message : "删除对话失败");
+                            message.error(t("deleteConversationFailed"));
                             throw error;
                         }
                     }}
@@ -578,8 +580,8 @@ export default function CreatePage() {
                                 className="pointer-events-auto !size-9 !min-w-9 !text-[#68727e] hover:!bg-[#f1f3f5] hover:!text-[#20242a] dark:!text-[#aab2bc] dark:hover:!bg-[#262b31] dark:hover:!text-white"
                                 icon={<Plus className="size-4" />}
                                 onClick={newConversation}
-                                aria-label="新建对话"
-                                title="新建对话"
+                                aria-label={t("newConversation")}
+                                title={t("newConversation")}
                             />
                         ) : null}
                         <Button
@@ -595,9 +597,9 @@ export default function CreatePage() {
                                 setHistoryOpen((current) => !current);
                                 setAssetsOpen(false);
                             }}
-                            aria-label={historyOpen ? "关闭创作历史" : "打开创作历史"}
+                            aria-label={historyOpen ? t("closeHistory") : t("openHistory")}
                             aria-expanded={historyOpen}
-                            title="创作历史"
+                            title={t("history")}
                         />
                         <Button
                             type="text"
@@ -612,9 +614,9 @@ export default function CreatePage() {
                                 setAssetsOpen((current) => !current);
                                 setHistoryOpen(false);
                             }}
-                            aria-label={assetsOpen ? "关闭资产面板" : "打开资产面板"}
+                            aria-label={assetsOpen ? t("closeAssets") : t("openAssets")}
                             aria-expanded={assetsOpen}
-                            title="资产"
+                            title={t("assets")}
                         />
                     </div>
 
@@ -651,12 +653,12 @@ export default function CreatePage() {
                         ) : (
                             <div className="mx-auto flex min-h-full w-full min-w-0 max-w-[1240px] flex-col items-center px-2.5 pb-3 pt-5 sm:px-8 sm:pb-8 sm:pt-14 lg:pt-[10vh]">
                                 <div className="text-center">
-                                    <h1 className="text-[23px] font-semibold leading-tight sm:text-[31px]">{siteTitle} 创作 Agent</h1>
-                                    <p className="mt-2 text-sm text-[#8b949f] dark:text-[#7f8996]">从一个想法开始</p>
+                                    <h1 className="text-[23px] font-semibold leading-tight sm:text-[31px]">{t("siteAgentTitle", { site: siteTitle })}</h1>
+                                    <p className="mt-2 text-sm text-[#8b949f] dark:text-[#7f8996]">{t("startFromIdea")}</p>
                                 </div>
                                 <div className="mt-5 w-full sm:mt-8">{composer}</div>
                                 <div className="mt-2 flex w-full min-w-0 flex-wrap justify-center gap-1.5 sm:mt-3 sm:gap-2">
-                                    {skillsLoading ? <span className="px-2 py-2 text-xs text-[#9aa2ad]">正在加载创作 Skill...</span> : null}
+                                    {skillsLoading ? <span className="px-2 py-2 text-xs text-[#9aa2ad]">{t("loadingSkills")}</span> : null}
                                     {skills.map((skill, index) => {
                                         const visual = skillVisual(skill, index);
                                         const Icon = visual.icon;
@@ -664,7 +666,7 @@ export default function CreatePage() {
                                             <button
                                                 key={skill.id}
                                                 type="button"
-                                                aria-label={`使用 ${skill.name} Skill`}
+                                                aria-label={t("useSkill", { name: skill.name })}
                                                 title={skill.description}
                                                 className="inline-flex h-9 items-center gap-2 rounded-full border border-[#e3e7eb] bg-white px-3 text-sm font-medium text-[#343b44] transition hover:border-[#cfd6dd] hover:bg-[#f7f8fa] dark:border-[#343a42] dark:bg-[#181b20] dark:text-[#dce1e7] dark:hover:border-[#4a525d] dark:hover:bg-[#20242a]"
                                                 onClick={() => selectSkill(skill)}
@@ -690,7 +692,7 @@ export default function CreatePage() {
                                     className="!pointer-events-auto !absolute !-top-11 !left-1/2 !z-20 !h-9 !-translate-x-1/2 !rounded-lg !border !border-[#e1e5e9] !bg-white !px-3 !text-sm !font-medium !text-[#596572] !shadow-[0_6px_20px_rgba(32,36,42,0.08)] hover:!bg-[#f4f6f8] hover:!text-[#20242a] dark:!border-[#343a42] dark:!bg-[#1c2025] dark:!text-[#b7c0ca] dark:!shadow-black/25 dark:hover:!bg-[#272c33] dark:hover:!text-white"
                                     onClick={scrollToLatest}
                                 >
-                                    回到底部
+                                    {t("backToBottom")}
                                 </Button>
                             ) : null}
                             {composer}
@@ -706,7 +708,7 @@ export default function CreatePage() {
                     onUsePrompt={(value) => {
                         updatePrompt(value);
                         window.requestAnimationFrame(() => inputRef.current?.focus());
-                        message.success("已填入提示词");
+                        message.success(t("promptFilled"));
                     }}
                     onClose={() => setAssetsOpen(false)}
                 />
@@ -740,7 +742,7 @@ export default function CreatePage() {
                 }}
             />
 
-            <Drawer title="创作历史" placement="right" size="min(92vw, 380px)" open={historyOpen && screens.lg !== true} onClose={() => setHistoryOpen(false)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
+            <Drawer title={t("history")} placement="right" size="min(92vw, 380px)" open={historyOpen && screens.lg !== true} onClose={() => setHistoryOpen(false)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
                 {screens.lg !== true ? historyPanel : null}
             </Drawer>
         </main>

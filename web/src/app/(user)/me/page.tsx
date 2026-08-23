@@ -4,6 +4,7 @@ import { App, Button, Input, Modal, Pagination, Spin } from "antd";
 import { ExternalLink, Grid3X3, Heart, ImageIcon, Share2, UserPlus, UserRoundPen, Users } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { ProfileAvatarUploader } from "@/components/profile/profile-avatar-uploader";
@@ -22,6 +23,7 @@ type ProfileTab = "published" | "likes";
 type LikedWorksPage = Extract<CommunityActivityPage, { view: "likes" }>;
 
 export default function MyCreatorPage() {
+    const t = useTranslations("public.myPage");
     const { message } = App.useApp();
     const copyText = useCopyText();
     const user = useUserStore((state) => state.user);
@@ -56,7 +58,7 @@ export default function MyCreatorPage() {
             .then(([summaryResult, publishedResult]) => {
                 if (!active) return;
                 if (summaryResult.status === "fulfilled" && summaryResult.value.view === "summary") setSummary(summaryResult.value);
-                else message.error(summaryResult.status === "rejected" && summaryResult.reason instanceof Error ? summaryResult.reason.message : "主页摘要加载失败");
+                else message.error(t("errors.summary"));
 
                 if (publishedResult.status === "fulfilled") setPublishedPage(publishedResult.value);
                 else setPublishedPage(undefined);
@@ -67,7 +69,7 @@ export default function MyCreatorPage() {
         return () => {
             active = false;
         };
-    }, [message, user?.username]);
+    }, [message, t, user?.username]);
 
     useEffect(() => {
         if (activeTab !== "likes") return;
@@ -77,8 +79,8 @@ export default function MyCreatorPage() {
             .then((result) => {
                 if (active && result.view === "likes") setLikedPage(result);
             })
-            .catch((error) => {
-                if (active) message.error(error instanceof Error ? error.message : "喜欢的作品加载失败");
+            .catch(() => {
+                if (active) message.error(t("errors.likes"));
             })
             .finally(() => {
                 if (active) setLikedLoading(false);
@@ -86,7 +88,7 @@ export default function MyCreatorPage() {
         return () => {
             active = false;
         };
-    }, [activeTab, likedPageNumber, message]);
+    }, [activeTab, likedPageNumber, message, t]);
 
     const loadMorePublished = useCallback(async () => {
         const cursor = publishedPage?.nextCursor;
@@ -99,16 +101,16 @@ export default function MyCreatorPage() {
                 const known = new Set(current.items.map((item) => item.slug));
                 return { profile: nextPage.profile, items: [...current.items, ...nextPage.items.filter((item) => !known.has(item.slug))], nextCursor: nextPage.nextCursor };
             });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "更多作品加载失败");
+        } catch {
+            message.error(t("errors.moreWorks"));
         } finally {
             setPublishedMoreLoading(false);
         }
-    }, [message, publishedMoreLoading, publishedPage?.nextCursor, user?.username]);
+    }, [message, publishedMoreLoading, publishedPage?.nextCursor, t, user?.username]);
 
     const shareProfile = () => {
         if (!user?.username || !summary?.publicProfileAvailable) return;
-        copyText(new URL(`/u/${encodeURIComponent(user.username)}`, window.location.origin).toString(), "主页链接已复制");
+        copyText(new URL(`/u/${encodeURIComponent(user.username)}`, window.location.origin).toString(), t("linkCopied"));
     };
 
     const syncVisibleProfile = useCallback((nextUser: LocalUser) => {
@@ -120,8 +122,8 @@ export default function MyCreatorPage() {
             .then((result) => {
                 if (result.view === "summary") setSummary(result);
             })
-            .catch((error) => message.error(error instanceof Error ? error.message : "主页摘要加载失败"));
-    }, [message]);
+            .catch(() => message.error(t("errors.summary")));
+    }, [message, t]);
 
     const saveProfile = async () => {
         if (!draftDisplayName.trim() || savingProfile) return;
@@ -133,13 +135,13 @@ export default function MyCreatorPage() {
                 body: JSON.stringify({ displayName: draftDisplayName.trim(), bio: draftBio.trim() }),
             });
             const payload = (await response.json().catch(() => null)) as { user?: LocalUser; error?: string } | null;
-            if (!response.ok || !payload?.user) throw new Error(payload?.error || "个人资料更新失败");
+            if (!response.ok || !payload?.user) throw new Error(payload?.error || t("errors.updateProfile"));
             setUser(payload.user);
             syncVisibleProfile(payload.user);
             setEditOpen(false);
-            message.success("个人资料已更新");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "个人资料更新失败");
+            message.success(t("profileUpdated"));
+        } catch {
+            message.error(t("errors.updateProfile"));
         } finally {
             setSavingProfile(false);
         }
@@ -179,8 +181,8 @@ export default function MyCreatorPage() {
                         <button
                             type="button"
                             className="grid size-6 -translate-y-1.5 shrink-0 place-items-center self-center text-muted-foreground transition hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            aria-label="编辑个人资料"
-                            title="编辑个人资料"
+                            aria-label={t("editProfile")}
+                            title={t("editProfile")}
                             aria-haspopup="dialog"
                             onClick={() => setEditOpen(true)}
                         >
@@ -188,38 +190,38 @@ export default function MyCreatorPage() {
                         </button>
                     </div>
                     {bio ? <p className="mt-2 max-w-xl whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">{bio}</p> : null}
-                    <div className="mt-4 grid w-full max-w-md grid-cols-4 divide-x divide-border" role="group" aria-label="主页统计">
-                        <ProfileMetric label="作品" value={metrics.published} />
-                        <ProfileMetric label="获赞" value={metrics.liked} onClick={() => setActivityView("likes")} />
-                        <ProfileMetric label="关注" value={metrics.following} onClick={() => setActivityView("following")} />
-                        <ProfileMetric label="粉丝" value={metrics.followers} onClick={() => setActivityView("followers")} />
+                    <div className="mt-4 grid w-full max-w-md grid-cols-4 divide-x divide-border" role="group" aria-label={t("statsAria")}>
+                        <ProfileMetric kind="works" label={t("metrics.works")} value={metrics.published} />
+                        <ProfileMetric kind="likes" label={t("metrics.likes")} value={metrics.liked} onClick={() => setActivityView("likes")} />
+                        <ProfileMetric kind="following" label={t("metrics.following")} value={metrics.following} onClick={() => setActivityView("following")} />
+                        <ProfileMetric kind="followers" label={t("metrics.followers")} value={metrics.followers} onClick={() => setActivityView("followers")} />
                     </div>
                     <Button
                         className="mt-6 !h-10 !min-w-48 !rounded-md !border-stone-950 !bg-stone-950 !px-6 !text-base !font-semibold !text-white !shadow-none hover:!border-black hover:!bg-black hover:!text-white disabled:!border-border disabled:!bg-muted disabled:!text-muted-foreground dark:!border-white dark:!bg-white dark:!text-stone-950 dark:hover:!border-stone-100 dark:hover:!bg-stone-100 dark:hover:!text-stone-950"
                         icon={<Share2 className="size-4" />}
                         disabled={!summary?.publicProfileAvailable}
                         onClick={shareProfile}
-                        title={summary?.publicProfileAvailable ? "复制公开主页链接" : "使用资料身份发布作品后可分享主页"}
+                        title={summary?.publicProfileAvailable ? t("copyPublicLink") : t("shareUnavailableHint")}
                     >
-                        {summary?.publicProfileAvailable ? "分享主页" : "主页尚未公开"}
+                        {summary?.publicProfileAvailable ? t("shareProfile") : t("notPublic")}
                     </Button>
                 </section>
 
-                <section className="min-w-0 pt-4 sm:pt-5" aria-label="个人主页作品">
-                    <div className="flex items-center gap-5 border-b border-border" role="tablist" aria-label="主页内容">
-                        <ProfileTabButton active={activeTab === "published"} icon={<Grid3X3 className="size-4" />} label="已发布" count={metrics.published} onClick={() => setActiveTab("published")} />
-                        <ProfileTabButton active={activeTab === "likes"} icon={<Heart className="size-4" />} label="我的喜欢" count={summary?.likedWorkCount || 0} onClick={() => setActiveTab("likes")} />
+                <section className="min-w-0 pt-4 sm:pt-5" aria-label={t("worksAria")}>
+                    <div className="flex items-center gap-5 border-b border-border" role="tablist" aria-label={t("contentAria")}>
+                        <ProfileTabButton active={activeTab === "published"} icon={<Grid3X3 className="size-4" />} label={t("tabs.published")} count={metrics.published} onClick={() => setActiveTab("published")} />
+                        <ProfileTabButton active={activeTab === "likes"} icon={<Heart className="size-4" />} label={t("tabs.likes")} count={summary?.likedWorkCount || 0} onClick={() => setActiveTab("likes")} />
                     </div>
 
                     {activeTab === "published" ? (
                         <WorkCollection
                             loading={publishedLoading}
                             items={publishedPage?.items || []}
-                            emptyTitle="暂未发布公开作品"
-                            emptyDescription="使用资料身份发布并通过审核后，作品会显示在这里。"
+                            emptyTitle={t("publishedEmpty.title")}
+                            emptyDescription={t("publishedEmpty.description")}
                             emptyAction={
                                 <Link href="/works" className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium transition hover:bg-muted">
-                                    <ImageIcon className="size-4" /> 发布作品
+                                    <ImageIcon className="size-4" /> {t("publishWork")}
                                 </Link>
                             }
                             onOpen={setPreviewSlug}
@@ -229,11 +231,11 @@ export default function MyCreatorPage() {
                         <WorkCollection
                             loading={likedLoading}
                             items={likedPage?.items || []}
-                            emptyTitle="暂未喜欢作品"
-                            emptyDescription="你在作品广场点赞的公开作品会显示在这里，仅自己可见。"
+                            emptyTitle={t("likedEmpty.title")}
+                            emptyDescription={t("likedEmpty.description")}
                             emptyAction={
                                 <Link href="/community" className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium transition hover:bg-muted">
-                                    <ExternalLink className="size-4" /> 浏览作品广场
+                                    <ExternalLink className="size-4" /> {t("browseGallery")}
                                 </Link>
                             }
                             onOpen={setPreviewSlug}
@@ -244,7 +246,7 @@ export default function MyCreatorPage() {
                     {activeTab === "published" && publishedPage?.nextCursor ? (
                         <div className="flex justify-center pt-3 sm:pt-5">
                             <Button className="min-w-28" loading={publishedMoreLoading} disabled={publishedMoreLoading} onClick={() => void loadMorePublished()}>
-                                加载更多
+                                {t("loadMore")}
                             </Button>
                         </div>
                     ) : null}
@@ -257,10 +259,10 @@ export default function MyCreatorPage() {
             <PublicCreatorModal username={creatorUsername || undefined} nextPath="/me" onClose={() => setCreatorUsername("")} />
             <CommunityActivityModal key={activityView || "closed"} view={activityView} onClose={() => setActivityView(undefined)} onChanged={refreshCommunitySummary} onOpenCreator={setCreatorUsername} onOpenWork={setPreviewSlug} />
             <Modal
-                title="编辑个人主页"
+                title={t("editModal.title")}
                 open={editOpen}
-                okText="保存"
-                cancelText="取消"
+                okText={t("editModal.save")}
+                cancelText={t("editModal.cancel")}
                 confirmLoading={savingProfile}
                 okButtonProps={{ disabled: !draftDisplayName.trim() }}
                 destroyOnHidden
@@ -270,12 +272,12 @@ export default function MyCreatorPage() {
                 <div className="pt-2">
                     <ProfileAvatarUploader onUpdated={syncVisibleProfile} />
                     <label className="mt-4 block pb-4">
-                        <span className="text-sm font-medium text-foreground">昵称</span>
-                        <Input className="mt-2" value={draftDisplayName} maxLength={40} showCount placeholder="输入主页显示昵称" onChange={(event) => setDraftDisplayName(event.target.value)} onPressEnter={() => void saveProfile()} />
+                        <span className="text-sm font-medium text-foreground">{t("editModal.nickname")}</span>
+                        <Input className="mt-2" value={draftDisplayName} maxLength={40} showCount placeholder={t("editModal.nicknamePlaceholder")} onChange={(event) => setDraftDisplayName(event.target.value)} onPressEnter={() => void saveProfile()} />
                     </label>
                     <label className="mt-4 block">
-                        <span className="text-sm font-medium text-foreground">个人简介</span>
-                        <Input.TextArea className="mt-2" value={draftBio} maxLength={160} showCount autoSize={{ minRows: 3, maxRows: 5 }} placeholder="介绍你的创作方向、擅长领域或常用风格" onChange={(event) => setDraftBio(event.target.value)} />
+                        <span className="text-sm font-medium text-foreground">{t("editModal.bio")}</span>
+                        <Input.TextArea className="mt-2" value={draftBio} maxLength={160} showCount autoSize={{ minRows: 3, maxRows: 5 }} placeholder={t("editModal.bioPlaceholder")} onChange={(event) => setDraftBio(event.target.value)} />
                     </label>
                 </div>
             </Modal>
@@ -283,8 +285,8 @@ export default function MyCreatorPage() {
     );
 }
 
-function ProfileMetric({ label, value, onClick }: { label: string; value: number; onClick?: () => void }) {
-    const Icon = label === "作品" ? ImageIcon : label === "获赞" ? Heart : label === "粉丝" ? Users : UserPlus;
+function ProfileMetric({ kind, label, value, onClick }: { kind: "works" | "likes" | "following" | "followers"; label: string; value: number; onClick?: () => void }) {
+    const Icon = kind === "works" ? ImageIcon : kind === "likes" ? Heart : kind === "followers" ? Users : UserPlus;
     const content = (
         <>
             <span className="block text-sm font-semibold tabular-nums sm:text-base">{value}</span>
@@ -361,7 +363,7 @@ function WorkCollection({
         );
     }
     return (
-        <ResponsiveMasonryGrid className="mt-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" ariaLabel="个人作品列表">
+        <ResponsiveMasonryGrid className="mt-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" ariaLabel={emptyTitle}>
             {items.map((item) => (
                 <PublicWorkGalleryCard key={item.slug} item={item} nextPath="/me" onOpen={() => onOpen(item.slug)} onOpenAuthor={onOpenAuthor} />
             ))}

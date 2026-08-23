@@ -1,7 +1,7 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { renderWithI18n } from "@/test/render-with-i18n";
 import { AgentChatComposer } from "./canvas-agent-chat-ui";
 
 const baseProps = {
@@ -14,7 +14,7 @@ const baseProps = {
 
 describe("Canvas Agent image attachments", () => {
     it("renders the add-reference slot inside the input row instead of the bottom toolbar", () => {
-        const markup = renderToStaticMarkup(<AgentChatComposer {...baseProps} onAddFiles={vi.fn()} />);
+        const markup = renderWithI18n(<AgentChatComposer {...baseProps} onAddFiles={vi.fn()} />);
 
         expect(markup).toContain("data-canvas-agent-input-row");
         expect(markup).toContain('aria-label="添加参考素材"');
@@ -23,7 +23,7 @@ describe("Canvas Agent image attachments", () => {
     });
 
     it("shows an immediate upload preview and blocks submission until it is ready", () => {
-        const markup = renderToStaticMarkup(<AgentChatComposer {...baseProps} attachments={[{ id: "upload", name: "clipboard-image.png", url: "blob:preview", status: "uploading" }]} onAddFiles={vi.fn()} onRemoveAttachment={vi.fn()} />);
+        const markup = renderWithI18n(<AgentChatComposer {...baseProps} attachments={[{ id: "upload", name: "clipboard-image.png", url: "blob:preview", status: "uploading" }]} onAddFiles={vi.fn()} onRemoveAttachment={vi.fn()} />);
 
         expect(markup).toContain('aria-label="clipboard-image.png 上传中"');
         expect(markup).toContain('aria-label="正在上传图片"');
@@ -32,7 +32,7 @@ describe("Canvas Agent image attachments", () => {
     });
 
     it("keeps a failed preview in place with retry and remove actions", () => {
-        const markup = renderToStaticMarkup(
+        const markup = renderWithI18n(
             <AgentChatComposer {...baseProps} attachments={[{ id: "failed", name: "reference.png", url: "blob:failed", status: "failed", error: "上传失败" }]} onAddFiles={vi.fn()} onRetryAttachment={vi.fn()} onRemoveAttachment={vi.fn()} />,
         );
 
@@ -44,7 +44,7 @@ describe("Canvas Agent image attachments", () => {
 
     it.each(["light", "dark"] as const)("uses a compact themed remove badge in %s mode", (themeName) => {
         const theme = canvasThemes[themeName];
-        const markup = renderToStaticMarkup(<AgentChatComposer {...baseProps} theme={theme} attachments={[{ id: "ready", name: "reference.png", url: "blob:ready", status: "ready" }]} onRemoveAttachment={vi.fn()} />);
+        const markup = renderWithI18n(<AgentChatComposer {...baseProps} theme={theme} attachments={[{ id: "ready", name: "reference.png", url: "blob:ready", status: "ready" }]} onRemoveAttachment={vi.fn()} />);
 
         expect(markup).toContain("right-0 top-0");
         expect(markup).toContain("size-7");

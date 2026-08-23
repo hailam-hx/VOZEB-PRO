@@ -1,6 +1,7 @@
 "use client";
 
 import { nanoid } from "nanoid";
+import { useTranslations } from "next-intl";
 import { useCallback } from "react";
 
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
@@ -14,6 +15,7 @@ import type { CanvasPageState } from "./use-canvas-page-state";
 import type { CanvasInteractionCore } from "./use-canvas-interaction-core";
 
 export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; core: CanvasInteractionCore }) {
+    const t = useTranslations("canvas.nodeTitles");
     const {
         clipboardRef,
         projectId,
@@ -56,14 +58,14 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
                           count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count),
                       }
                     : undefined;
-            const newNode = createCanvasNode(type, targetPosition, configMetadata);
+            const newNode = createCanvasNode(type, targetPosition, configMetadata, t(type));
 
             setNodes((prev) => [...prev, newNode]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
             if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
         },
-        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, getCanvasCenter],
+        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, getCanvasCenter, t],
     );
 
     const deleteNodes = useCallback((ids: Set<string>) => {

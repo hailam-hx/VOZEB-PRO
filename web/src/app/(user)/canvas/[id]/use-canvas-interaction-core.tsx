@@ -3,6 +3,7 @@
 import { useCallback, useMemo } from "react";
 
 import { nanoid } from "nanoid";
+import { useTranslations } from "next-intl";
 import { buildNodeGenerationInputs, type NodeGenerationInput } from "../components/canvas-node-generation";
 import { CanvasNodeType, type ConnectionHandle } from "../types";
 import { useCanvasLocalAgentBridge } from "../use-canvas-local-agent-bridge";
@@ -15,6 +16,7 @@ import { getGenerationCount, normalizeConnection } from "./canvas-page-utils";
 import type { CanvasPageState } from "./use-canvas-page-state";
 
 export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) {
+    const t = useTranslations("canvas");
     const {
         message,
         projectId,
@@ -99,7 +101,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
 
             const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
             if (!connection) {
-                message.warning("配置节点之间不能连接");
+                message.warning(t("connectionNotAllowed"));
                 return;
             }
             const { fromNodeId, toNodeId } = connection;
@@ -109,16 +111,16 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
             }
             setContextMenu(null);
         },
-        [message],
+        [message, t],
     );
 
     const createConnectedNode = useCallback(
         (type: CanvasCreatableNodeType, pending: PendingConnectionCreate) => {
             const metadata = type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) } : undefined;
-            const newNode = createCanvasNode(type, pending.position, metadata);
+            const newNode = createCanvasNode(type, pending.position, metadata, t(`nodeTitles.${type}`));
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {
-                message.warning("配置节点之间不能连接");
+                message.warning(t("connectionNotAllowed"));
                 return;
             }
             setNodes((prev) => [...prev, newNode]);
@@ -128,7 +130,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
             if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
             setPendingConnectionCreate(null);
         },
-        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message],
+        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, t],
     );
 
     const cancelPendingConnectionCreate = useCallback(() => {
@@ -192,23 +194,28 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         return map;
     }, [connections, nodes]);
     const resourceContextNodeId = dialogNodeId || activeNodeId;
-    const canvasResourceReferences = useMemo(() => buildCanvasResourceReferences(nodes, connections, resourceContextNodeId), [connections, nodes, resourceContextNodeId]);
+    const canvasResourceReferences = useMemo(() => buildCanvasResourceReferences(nodes, connections, resourceContextNodeId, (kind, index) => t(`resourceLabels.${kind}`, { index: index + 1 })), [connections, nodes, resourceContextNodeId, t]);
     const resourceReferenceByNodeId = useMemo(() => new Map(canvasResourceReferences.map((reference) => [reference.nodeId, reference])), [canvasResourceReferences]);
     const mentionReferencesByNodeId = useMemo(() => {
         const map = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
-        nodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, nodes, connections)));
+        nodes.forEach((node) =>
+            map.set(
+                node.id,
+                buildNodeMentionReferences(node, nodes, connections, (kind, index) => t(`resourceLabels.${kind}`, { index: index + 1 })),
+            ),
+        );
         return map;
-    }, [connections, nodes]);
+    }, [connections, nodes, t]);
     const agentSnapshot = useMemo<CanvasAgentSnapshot>(
-        () => ({ projectId, title: currentProject?.title || "未命名画布", imageSize: effectiveConfig.size, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
-        [connections, currentProject?.title, effectiveConfig.size, nodes, projectId, selectedNodeIds, viewport],
+        () => ({ projectId, title: currentProject?.title || t("untitled"), imageSize: effectiveConfig.size, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
+        [connections, currentProject?.title, effectiveConfig.size, nodes, projectId, selectedNodeIds, t, viewport],
     );
     const applyAgentOps = useCallback(
         (ops?: CanvasAgentOp[]) => {
             const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
             const before = {
                 projectId,
-                title: currentProject?.title || "未命名画布",
+                title: currentProject?.title || t("untitled"),
                 imageSize: effectiveConfig.size,
                 nodes: nodesRef.current,
                 connections: connectionsRef.current,
@@ -239,9 +246,9 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
                     }),
                 );
             }
-            return { ...next, projectId, title: currentProject?.title || "未命名画布" };
+            return { ...next, projectId, title: currentProject?.title || t("untitled") };
         },
-        [currentProject?.title, effectiveConfig.size, projectId],
+        [currentProject?.title, effectiveConfig.size, projectId, t],
     );
     useCanvasLocalAgentBridge({ snapshot: agentSnapshot, onApplyOps: applyAgentOps });
     return {

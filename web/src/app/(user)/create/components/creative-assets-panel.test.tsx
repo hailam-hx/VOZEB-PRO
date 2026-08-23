@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithI18n as renderToStaticMarkup } from "@/test/render-with-i18n";
 import { describe, expect, it } from "vitest";
 
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";

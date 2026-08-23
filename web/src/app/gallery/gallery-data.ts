@@ -1,8 +1,8 @@
 import "server-only";
 
 import { WORK_CATEGORY_OPTIONS } from "@/lib/work-publication-options";
-import { listPublicGallery, WorkGovernanceServiceError } from "@/lib/server/work-governance-service";
-import { listCommunityRanking, WorkCommunityServiceError } from "@/lib/server/work-community-service";
+import { listPublicGallery } from "@/lib/server/work-governance-service";
+import { listCommunityRanking } from "@/lib/server/work-community-service";
 
 export type GalleryFilters = {
     keyword: string;
@@ -34,8 +34,8 @@ export async function loadGallery(filters: GalleryFilters): Promise<GalleryResul
             return { items: ranking.items as GalleryItem[], nextCursor: ranking.nextCursor, error: "" };
         }
         return { ...(await listPublicGallery({ ...filters, limit: 12 })), error: "" };
-    } catch (error) {
-        return { items: [], error: error instanceof WorkGovernanceServiceError || error instanceof WorkCommunityServiceError ? error.message : "请稍后重试" };
+    } catch {
+        return { items: [], error: "galleryUnavailable" };
     }
 }
 

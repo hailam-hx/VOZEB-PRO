@@ -1,8 +1,7 @@
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 
 type CanvasResourceKind = "image" | "video" | "audio" | "text";
+export type CanvasResourceLabel = (kind: CanvasResourceKind, index: number) => string;
 
 export type CanvasResourceReference = {
     id: string;
@@ -23,15 +22,15 @@ export type CanvasResourceReference = {
     active: boolean;
 };
 
-export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connections: CanvasConnection[], contextNodeId?: string | null) {
+export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connections: CanvasConnection[], contextNodeId?: string | null, labelForKind: CanvasResourceLabel = defaultResourceLabel) {
     const contextNodes = contextNodeId ? getMentionResourceNodes(contextNodeId, nodes, connections) : [];
-    const globalReferences = labelResourceNodes(nodes.filter(isResourceNode), false);
-    const activeByNodeId = new Map(labelResourceNodes(contextNodes, true).map((reference) => [reference.nodeId, reference]));
+    const globalReferences = labelResourceNodes(nodes.filter(isResourceNode), false, labelForKind);
+    const activeByNodeId = new Map(labelResourceNodes(contextNodes, true, labelForKind).map((reference) => [reference.nodeId, reference]));
     return globalReferences.map((reference) => activeByNodeId.get(reference.nodeId) || reference);
 }
 
-export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true);
+export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[], labelForKind: CanvasResourceLabel = defaultResourceLabel) {
+    return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true, labelForKind);
 }
 
 function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
@@ -64,7 +63,7 @@ function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[]
     return getContextResourceNodes(configConnection.toNodeId, nodes, connections).filter((node) => node.id !== nodeId);
 }
 
-function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
+function labelResourceNodes(nodes: CanvasNodeData[], active: boolean, labelForKind: CanvasResourceLabel) {
     const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
     return nodes.flatMap((node): CanvasResourceReference[] => {
         const kind = resourceKind(node);
@@ -94,11 +93,9 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
     });
 }
 
-function labelForKind(kind: CanvasResourceKind, index: number) {
-    if (kind === "image") return imageReferenceLabel(index);
-    if (kind === "video") return seedanceReferenceLabel("video", index);
-    if (kind === "audio") return seedanceReferenceLabel("audio", index);
-    return `文本${index + 1}`;
+function defaultResourceLabel(kind: CanvasResourceKind, index: number) {
+    const label = kind === "image" ? "Image" : kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Text";
+    return `${label} ${index + 1}`;
 }
 
 function isResourceNode(node: CanvasNodeData) {

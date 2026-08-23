@@ -1,6 +1,7 @@
 "use client";
 
 import { nanoid } from "nanoid";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { CanvasAgentChatAttachment } from "./canvas-agent-chat-ui";
@@ -11,6 +12,7 @@ type CanvasAgentUpload = CanvasAgentChatAttachment & {
 };
 
 export function useCanvasAgentAttachments(onUpload: (file: File) => Promise<string>, readyReferenceIds: string[]) {
+    const t = useTranslations("canvas.attachments");
     const [uploads, setUploads] = useState<CanvasAgentUpload[]>([]);
     const uploadsRef = useRef<CanvasAgentUpload[]>([]);
 
@@ -47,24 +49,24 @@ export function useCanvasAgentAttachments(onUpload: (file: File) => Promise<stri
             try {
                 const nodeId = await onUpload(file);
                 setUploads((current) => current.map((upload) => (upload.id === id ? { ...upload, status: "ready", nodeId, error: undefined } : upload)));
-            } catch (error) {
-                const message = error instanceof Error ? error.message : "图片上传失败";
+            } catch {
+                const message = t("uploadFailed");
                 setUploads((current) => current.map((upload) => (upload.id === id ? { ...upload, status: "failed", error: message } : upload)));
             }
         },
-        [onUpload],
+        [onUpload, t],
     );
 
     const addFiles = useCallback(
         async (files: FileList | File[] | null) => {
             const pending = Array.from(files || [])
                 .filter((file) => file.type.startsWith("image/"))
-                .map((file) => ({ id: nanoid(), name: file.name || "粘贴图片", url: URL.createObjectURL(file), status: "uploading" as const, file }));
+                .map((file) => ({ id: nanoid(), name: file.name || t("pastedImage"), url: URL.createObjectURL(file), status: "uploading" as const, file }));
             if (!pending.length) return;
             setUploads((current) => [...current, ...pending]);
             await Promise.all(pending.map((upload) => uploadOne(upload.id, upload.file)));
         },
-        [uploadOne],
+        [t, uploadOne],
     );
 
     const retryUpload = useCallback(

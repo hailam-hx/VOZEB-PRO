@@ -2,6 +2,7 @@
 
 import { ChevronDown, ChevronUp, FileVideo, ImageIcon, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useTranslations } from "next-intl";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { imagePreviewUrl } from "@/lib/media-image-url";
@@ -9,6 +10,7 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import type { CanvasAgentMentionAsset, CanvasAgentMentionSegment } from "./canvas-agent-mention";
 
 export function CanvasAgentMentionPicker({ assets, selectedNodeIds, theme, onSelect }: { assets: CanvasAgentMentionAsset[]; selectedNodeIds: string[]; theme: CanvasTheme; onSelect: (asset: CanvasAgentMentionAsset) => void }) {
+    const t = useTranslations("canvas.mentionPicker");
     const [activeType, setActiveType] = useState<"image" | "video">("image");
     const gridRef = useRef<HTMLDivElement>(null);
     const [scrollEdges, setScrollEdges] = useState({ previous: false, next: false });
@@ -44,7 +46,7 @@ export function CanvasAgentMentionPicker({ assets, selectedNodeIds, theme, onSel
     if (!visibleType) {
         return (
             <p className="w-64 px-3 py-5 text-center text-xs" style={{ color: theme.node.muted }}>
-                没有匹配的图片或视频
+                {t("empty")}
             </p>
         );
     }
@@ -52,7 +54,7 @@ export function CanvasAgentMentionPicker({ assets, selectedNodeIds, theme, onSel
     return (
         <div className="flex w-[min(14rem,calc(100vw-2rem))] min-w-0 flex-col overflow-hidden p-1" data-testid="canvas-agent-mention-picker">
             {images.length && videos.length ? (
-                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg border p-1" style={{ borderColor: theme.toolbar.border, background: theme.node.fill }} role="tablist" aria-label="引用素材类型">
+                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg border p-1" style={{ borderColor: theme.toolbar.border, background: theme.node.fill }} role="tablist" aria-label={t("typeAria")}>
                     <MentionTypeTab type="image" count={images.length} active={visibleType === "image"} theme={theme} onClick={() => setActiveType("image")} />
                     <MentionTypeTab type="video" count={videos.length} active={visibleType === "video"} theme={theme} onClick={() => setActiveType("video")} />
                 </div>
@@ -72,7 +74,7 @@ export function CanvasAgentMentionPicker({ assets, selectedNodeIds, theme, onSel
                             }}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => onSelect(asset)}
-                            aria-label={`引用${asset.title}`}
+                            aria-label={t("referenceNamed", { title: asset.title })}
                             title={asset.title}
                         >
                             <MentionAssetPreview asset={asset} />
@@ -115,6 +117,7 @@ export function CanvasAgentMentionPreview({ segments, assetsById, previewRef, th
 }
 
 function MentionTypeTab({ type, count, active, theme, onClick }: { type: "image" | "video"; count: number; active: boolean; theme: CanvasTheme; onClick: () => void }) {
+    const t = useTranslations("canvas.mentionPicker");
     const Icon = type === "image" ? ImageIcon : FileVideo;
     return (
         <button
@@ -127,7 +130,7 @@ function MentionTypeTab({ type, count, active, theme, onClick }: { type: "image"
             onClick={onClick}
         >
             <Icon className="size-3.5 shrink-0" aria-hidden="true" />
-            <span>{type === "image" ? "图片" : "视频"}</span>
+            <span>{t(type)}</span>
             <span className="text-[10px] font-normal tabular-nums opacity-55">{count}</span>
         </button>
     );

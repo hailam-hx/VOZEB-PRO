@@ -1,6 +1,7 @@
 "use client";
 
 import { Film, LoaderCircle, Maximize2, Pause, Play, RotateCw, Volume2, VolumeX } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 
 import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";
@@ -24,6 +25,7 @@ export function CreativeVideoResult({
     fallbackRatio?: string;
     renderActions?: (activeAsset: CreativeAsset) => ReactNode;
 }) {
+    const t = useTranslations("create");
     const videos = useMemo(() => assets.filter((asset) => asset.status === "ready" && asset.type === "video" && assetUrl(asset)), [assets]);
     const { selectedResult: activeAsset, selectedIndex, selectResult } = useSelectedCreativeResult(videos);
     const [loadedDimensions, setLoadedDimensions] = useState<Record<string, { width: number; height: number }>>({});
@@ -79,7 +81,7 @@ export function CreativeVideoResult({
                             {posterUrl ? (
                                 <img src={posterUrl} alt="" loading="lazy" className="size-full object-cover" />
                             ) : (
-                                <span className="grid size-full place-items-center text-white/70" aria-label={video.title || `生成视频 ${index + 1}`}>
+                                <span className="grid size-full place-items-center text-white/70" aria-label={video.title || t("generatedVideoNumber", { number: index + 1 })}>
                                     <Film className="size-5" />
                                 </span>
                             )}
@@ -99,6 +101,7 @@ export function CreativeVideoResult({
 }
 
 function CreativeVideoPlayer({ asset, coverUrl, resolution, onDimensions }: { asset: CreativeAsset; coverUrl?: string; resolution?: string; onDimensions: (width: number, height: number) => void }) {
+    const t = useTranslations("create");
     const playback = useVideoPlayback(asset);
     const posterUrl = coverUrl ? imagePreviewUrl(coverUrl, 1440) : undefined;
     return (
@@ -117,7 +120,7 @@ function CreativeVideoPlayer({ asset, coverUrl, resolution, onDimensions }: { as
                 playsInline
                 preload="metadata"
                 className="size-full cursor-pointer object-contain"
-                aria-label={asset.title || "生成视频"}
+                aria-label={asset.title || t("generatedVideo")}
                 onClick={() => void playback.togglePlayback()}
                 onLoadedMetadata={(event) => {
                     const video = event.currentTarget;
@@ -137,7 +140,7 @@ function CreativeVideoPlayer({ asset, coverUrl, resolution, onDimensions }: { as
                 }}
             />
             {playback.loading && !playback.failed ? (
-                <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/10" aria-label="正在加载视频">
+                <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/10" aria-label={t("loadingVideo")}>
                     <LoaderCircle className="size-5 animate-spin text-white/85" />
                 </span>
             ) : null}
@@ -146,7 +149,7 @@ function CreativeVideoPlayer({ asset, coverUrl, resolution, onDimensions }: { as
                     type="button"
                     className="absolute left-1/2 top-1/2 grid size-14 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-white/55 bg-black/40 text-white backdrop-blur-[4px] transition-colors hover:bg-black/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/75 sm:size-16"
                     onClick={() => void playback.togglePlayback()}
-                    aria-label="开始播放视频"
+                    aria-label={t("startVideoPlayback")}
                 >
                     <Play className="ml-1 size-6 fill-current sm:size-7" />
                 </button>
@@ -234,10 +237,11 @@ function useVideoPlayback(asset: CreativeAsset) {
 type VideoPlayback = ReturnType<typeof useVideoPlayback>;
 
 function VideoFailure({ playback }: { playback: VideoPlayback }) {
+    const t = useTranslations("create");
     return (
         <div className="absolute inset-0 z-10 grid place-items-center bg-black/70 px-4 text-center">
             <div>
-                <p className="text-sm font-medium">视频加载失败</p>
+                <p className="text-sm font-medium">{t("videoLoadFailed")}</p>
                 <button
                     type="button"
                     className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/35 px-3 text-xs font-medium text-white transition-colors hover:bg-white/10"
@@ -247,7 +251,7 @@ function VideoFailure({ playback }: { playback: VideoPlayback }) {
                         playback.videoRef.current?.load();
                     }}
                 >
-                    <RotateCw className="size-3.5" /> 重试
+                    <RotateCw className="size-3.5" /> {t("retry")}
                 </button>
             </div>
         </div>
@@ -255,9 +259,10 @@ function VideoFailure({ playback }: { playback: VideoPlayback }) {
 }
 
 function VideoControls({ resolution, playback }: { resolution?: string; playback: VideoPlayback }) {
+    const t = useTranslations("create");
     return (
         <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-b from-transparent via-black/35 to-black/75 px-2.5 pb-2.5 pt-8 text-white sm:gap-2 sm:px-3 sm:pb-3">
-            <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md hover:bg-white/10" onClick={() => void playback.togglePlayback()} aria-label={playback.playing ? "暂停视频" : "播放视频"}>
+            <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md hover:bg-white/10" onClick={() => void playback.togglePlayback()} aria-label={playback.playing ? t("pauseVideo") : t("playVideo")}>
                 {playback.playing ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}
             </button>
             <span className="shrink-0 text-[10px] font-medium tabular-nums text-white/95 sm:text-[11px]">
@@ -270,15 +275,15 @@ function VideoControls({ resolution, playback }: { resolution?: string; playback
                 step={0.01}
                 value={Math.min(playback.currentTime, Math.max(playback.safeDuration, 0.01))}
                 onChange={(event) => playback.seekTo(Number(event.currentTarget.value))}
-                aria-label="视频播放进度"
+                aria-label={t("videoPlaybackProgress")}
                 className="h-1 min-w-8 flex-1 cursor-pointer appearance-none rounded-full bg-white/30 [&::-moz-range-thumb]:size-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
                 style={{ background: `linear-gradient(90deg, #ffffff 0%, #ffffff ${playback.progress}%, rgba(255,255,255,.3) ${playback.progress}%, rgba(255,255,255,.3) 100%)` }}
             />
             {resolution ? <span className="hidden shrink-0 text-[11px] font-semibold @min-[280px]:inline">{resolution}</span> : null}
-            <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md hover:bg-white/10" onClick={() => playback.setMuted((value) => !value)} aria-label={playback.muted ? "打开声音" : "静音"}>
+            <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md hover:bg-white/10" onClick={() => playback.setMuted((value) => !value)} aria-label={playback.muted ? t("unmute") : t("mute")}>
                 {playback.muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
             </button>
-            <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md hover:bg-white/10" onClick={() => void playback.toggleFullscreen()} aria-label="全屏播放">
+            <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md hover:bg-white/10" onClick={() => void playback.toggleFullscreen()} aria-label={t("fullscreenPlayback")}>
                 <Maximize2 className="size-4" />
             </button>
         </div>

@@ -2,6 +2,7 @@
 
 import { Button, Popover } from "antd";
 import { ArrowLeftRight, ImagePlus, Upload, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
@@ -33,16 +34,27 @@ export function CreativeVideoFrameControls({
     onUpload: (role: FrameRole) => void;
     onRemove: (role: FrameRole) => void;
 }) {
+    const t = useTranslations("create");
     if (mode === "reference") return null;
     return (
-        <div className="flex shrink-0 items-start gap-1" aria-label={mode === "first_last" ? "视频首尾帧" : "视频首帧"}>
-            <FrameSlot role="first_frame" label="首帧" assetId={firstFrameAssetId} images={images} uploading={uploading} placement={placement === "bottomLeft" ? "bottomLeft" : "topLeft"} onSelect={onSelect} onUpload={onUpload} onRemove={onRemove} />
+        <div className="flex shrink-0 items-start gap-1" aria-label={mode === "first_last" ? t("videoFirstAndLastFrames") : t("videoFirstFrame")}>
+            <FrameSlot
+                role="first_frame"
+                label={t("firstFrame")}
+                assetId={firstFrameAssetId}
+                images={images}
+                uploading={uploading}
+                placement={placement === "bottomLeft" ? "bottomLeft" : "topLeft"}
+                onSelect={onSelect}
+                onUpload={onUpload}
+                onRemove={onRemove}
+            />
             {mode === "first_last" ? (
                 <>
                     <ArrowLeftRight className="mt-7 size-3.5 shrink-0 text-[#9aa3ad] dark:text-[#7d8793]" aria-hidden="true" />
                     <FrameSlot
                         role="last_frame"
-                        label="尾帧"
+                        label={t("lastFrame")}
                         assetId={lastFrameAssetId}
                         images={images}
                         uploading={uploading}
@@ -78,6 +90,7 @@ function FrameSlot({
     onUpload: (role: FrameRole) => void;
     onRemove: (role: FrameRole) => void;
 }) {
+    const t = useTranslations("create");
     const [open, setOpen] = useState(false);
     const asset = images.find((item) => item.id === assetId);
     const url = assetUrl(asset);
@@ -92,7 +105,7 @@ function FrameSlot({
                 onOpenChange={setOpen}
                 content={
                     <div className="w-64 max-w-[calc(100vw-40px)] py-0.5 sm:w-80">
-                        <p className="px-1 pb-2 text-xs font-semibold text-[#303943] dark:text-[#eef1f4]">选择{label}图片</p>
+                        <p className="px-1 pb-2 text-xs font-semibold text-[#303943] dark:text-[#eef1f4]">{t("selectFrameImage", { frame: label })}</p>
                         <div className="hide-scrollbar grid max-h-52 grid-cols-3 gap-1.5 overflow-y-auto">
                             {images.map((item) => {
                                 const itemUrl = assetUrl(item);
@@ -110,14 +123,14 @@ function FrameSlot({
                                             onSelect(role, item.id);
                                             setOpen(false);
                                         }}
-                                        aria-label={`设为${label}：${item.title}`}
+                                        aria-label={t("setAsFrame", { frame: label, name: item.title })}
                                     >
                                         {itemUrl ? <img src={imagePreviewUrl(itemUrl, 320)} alt="" className="size-full object-cover" /> : <ImagePlus className="absolute inset-0 m-auto size-4 text-[#9aa3ad]" />}
                                     </button>
                                 );
                             })}
                         </div>
-                        {!images.length ? <p className="py-4 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">本轮还没有图片素材</p> : null}
+                        {!images.length ? <p className="py-4 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noImageMaterialThisRound")}</p> : null}
                         <Button
                             type="text"
                             block
@@ -129,7 +142,7 @@ function FrameSlot({
                                 onUpload(role);
                             }}
                         >
-                            上传新图片
+                            {t("uploadNewImage")}
                         </Button>
                     </div>
                 }
@@ -140,7 +153,7 @@ function FrameSlot({
                         "relative grid size-14 place-items-center overflow-hidden rounded-lg border border-[#dfe4e8] bg-[#f1f3f5] text-[#84909c] shadow-[0_2px_8px_rgba(38,49,65,0.08)] transition hover:border-[#aeb8c2] hover:text-[#3f4a55] dark:border-[#3c444d] dark:bg-[#191c20] dark:text-[#9ea8b3] dark:hover:border-[#626d78] dark:hover:text-white",
                         role === "first_frame" ? "rotate-[-3deg]" : "rotate-[3deg]",
                     )}
-                    aria-label={asset ? `更换视频${label}` : `添加视频${label}`}
+                    aria-label={asset ? t("replaceVideoFrame", { frame: label }) : t("addVideoFrame", { frame: label })}
                 >
                     {url ? (
                         <img src={imagePreviewUrl(url, 320)} alt={asset?.title || label} className="size-full object-cover" />
@@ -149,7 +162,7 @@ function FrameSlot({
                             <ImagePlus className="size-5" />
                         </span>
                     )}
-                    <span className="absolute inset-x-0 bottom-0 bg-black/45 px-1 py-0.5 text-center text-[9px] font-medium text-white">{asset ? label : `添加${label}`}</span>
+                    <span className="absolute inset-x-0 bottom-0 bg-black/45 px-1 py-0.5 text-center text-[9px] font-medium text-white">{asset ? label : t("addFrame", { frame: label })}</span>
                 </button>
             </Popover>
             {asset ? (
@@ -157,7 +170,7 @@ function FrameSlot({
                     type="button"
                     className="absolute -right-1 -top-1 z-10 grid size-5 place-items-center rounded-full border border-white bg-black/60 text-white transition hover:bg-black/80 dark:border-[#181b20]"
                     onClick={() => onRemove(role)}
-                    aria-label={`移除视频${label}`}
+                    aria-label={t("removeVideoFrame", { frame: label })}
                 >
                     <X className="size-3.5" />
                 </button>

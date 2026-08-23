@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithI18n as renderToStaticMarkup } from "@/test/render-with-i18n";
 import { describe, expect, it } from "vitest";
 
 import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";

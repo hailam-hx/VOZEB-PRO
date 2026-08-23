@@ -369,7 +369,7 @@ test("failed image and video generations expose only in-place retry", async ({ p
         const round = page.getByTestId("creative-media-round");
         await expect(round).toBeVisible({ timeout: 45_000 });
         await expect(round.getByTestId("creative-generation-failure")).toBeVisible();
-        await expect(round.getByText("当前模型暂不可用，请切换模型或稍后重试。", { exact: true })).toBeVisible();
+        await expect(round.getByText("创作任务执行失败", { exact: true })).toBeVisible();
         await expect(round.getByRole("button", { name: "直接重试本次创作" })).toHaveText("直接重试");
         await expect(round.getByTestId("creative-primary-result")).toHaveCount(0);
         await expect(round.getByRole("button", { name: /编辑.*重试/ })).toHaveCount(0);

@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { Button, Modal } from "antd";
 import { imagePreviewUrl } from "@/lib/media-image-url";
@@ -41,6 +42,7 @@ export default function CanvasPage() {
 import { useCanvasPageController } from "./use-canvas-page-controller";
 
 function VozebProCanvasPage() {
+    const t = useTranslations("canvas");
     const [nodeCreatePosition, setNodeCreatePosition] = useState<Position | null>(null);
     const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>("pan");
     const controller = useCanvasPageController();
@@ -264,7 +266,7 @@ function VozebProCanvasPage() {
             <CanvasAssetsPanel
                 open={assetPickerOpen}
                 projectId={projectId}
-                projectTitle={currentProject?.title || "未命名画布"}
+                projectTitle={currentProject?.title || t("untitled")}
                 nodes={nodes}
                 onOpenProject={(id) => router.push(`/canvas/${id}`)}
                 onOpenProjects={() => router.push("/canvas")}
@@ -276,7 +278,7 @@ function VozebProCanvasPage() {
             />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
-                    title={currentProject?.title || "未命名画布"}
+                    title={currentProject?.title || t("untitled")}
                     titleDraft={titleDraft}
                     isTitleEditing={titleEditing}
                     onTitleDraftChange={setTitleDraft}
@@ -470,7 +472,7 @@ function VozebProCanvasPage() {
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
-                    onSaveAsset={(node) => void saveNodeAsset(node).catch((error) => message.error(error instanceof Error ? error.message : "素材保存失败"))}
+                    onSaveAsset={(node) => void saveNodeAsset(node).catch(() => message.error(t("errors.assetSaveFailed")))}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
@@ -539,12 +541,7 @@ function VozebProCanvasPage() {
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
 
                 {cropNode?.metadata?.content ? (
-                    <CanvasNodeCropDialog
-                        dataUrl={cropNode.metadata.content}
-                        open={Boolean(cropNode)}
-                        onClose={() => setCropNodeId(null)}
-                        onConfirm={(crop) => void cropImageNode(cropNode!, crop).catch((error) => message.error(error instanceof Error ? error.message : "图片裁剪失败"))}
-                    />
+                    <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop).catch(() => message.error(t("errors.cropFailed")))} />
                 ) : null}
 
                 {maskEditNode?.metadata?.content ? (
@@ -556,7 +553,7 @@ function VozebProCanvasPage() {
                         dataUrl={splitNode.metadata.content}
                         open={Boolean(splitNode)}
                         onClose={() => setSplitNodeId(null)}
-                        onConfirm={(params) => void splitImageNode(splitNode!, params).catch((error) => message.error(error instanceof Error ? error.message : "图片切分失败"))}
+                        onConfirm={(params) => void splitImageNode(splitNode!, params).catch(() => message.error(t("errors.splitFailed")))}
                     />
                 ) : null}
 
@@ -565,14 +562,14 @@ function VozebProCanvasPage() {
                         dataUrl={upscaleNode.metadata.content}
                         open={Boolean(upscaleNode)}
                         onClose={() => setUpscaleNodeId(null)}
-                        onConfirm={(params) => void upscaleImageNode(upscaleNode!, params).catch((error) => message.error(error instanceof Error ? error.message : "图片放大失败"))}
+                        onConfirm={(params) => void upscaleImageNode(upscaleNode!, params).catch(() => message.error(t("errors.upscaleFailed")))}
                     />
                 ) : null}
 
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
 
                 <Modal
-                    title="图片详情"
+                    title={t("imageDetails")}
                     open={Boolean(previewNode?.metadata?.content)}
                     centered
                     onCancel={() => setPreviewNodeId(null)}
@@ -580,24 +577,24 @@ function VozebProCanvasPage() {
                     width="auto"
                     styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
                 >
-                    {previewNode?.metadata?.content ? <img src={imagePreviewUrl(previewNode.metadata.content, 1920)} alt={previewNode.title || "图片"} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
+                    {previewNode?.metadata?.content ? <img src={imagePreviewUrl(previewNode.metadata.content, 1920)} alt={previewNode.title || t("image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
                 </Modal>
 
                 <Modal
-                    title="清空画布？"
+                    title={t("clearDialog.title")}
                     open={clearConfirmOpen}
                     centered
                     onCancel={() => setClearConfirmOpen(false)}
                     footer={
                         <>
-                            <Button onClick={() => setClearConfirmOpen(false)}>取消</Button>
+                            <Button onClick={() => setClearConfirmOpen(false)}>{t("cancel")}</Button>
                             <Button danger type="primary" onClick={clearCanvas}>
-                                清空
+                                {t("clearDialog.confirm")}
                             </Button>
                         </>
                     }
                 >
-                    <p className="text-sm opacity-60">这会删除当前画布上的所有节点和连线。</p>
+                    <p className="text-sm opacity-60">{t("clearDialog.description")}</p>
                 </Modal>
             </section>
             {assistantMounted ? (

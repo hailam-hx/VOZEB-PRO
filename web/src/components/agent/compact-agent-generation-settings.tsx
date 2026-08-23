@@ -1,6 +1,7 @@
 "use client";
 
 import { SlidersHorizontal } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { CreativeGenerationPreferences as GenerationPreferencesControl, type CreativeGenerationPreferencePatch, type MediaCapability } from "@/components/creative-generation-preferences";
 import type { CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
@@ -9,6 +10,7 @@ import { cn } from "@/lib/utils";
 type AgentMediaCapability = Extract<MediaCapability, "image" | "video">;
 
 export function CompactAgentGenerationSettings({ preferences, onChange }: { preferences: CreativeGenerationPreferences; onChange: (preferences: CreativeGenerationPreferences) => void }) {
+    const t = useTranslations("create.sharedSettings");
     const capability: AgentMediaCapability = preferences.mode === "video" ? "video" : "image";
 
     return (
@@ -16,8 +18,8 @@ export function CompactAgentGenerationSettings({ preferences, onChange }: { pref
             capability={capability}
             capabilities={["image", "video"]}
             preferences={preferences}
-            triggerLabel={compactAgentPreferenceSummary(capability, preferences)}
-            triggerAriaLabel={`生成参数：${agentPreferenceSummary(capability, preferences)}`}
+            triggerLabel={compactAgentPreferenceSummary(capability, preferences, t)}
+            triggerAriaLabel={t("generationParameters", { summary: agentPreferenceSummary(capability, preferences, t) })}
             triggerIcon={<SlidersHorizontal className="size-4" />}
             triggerLabelClassName="min-w-0 flex-1 whitespace-nowrap text-left !overflow-visible !text-clip"
             panelClassName="!w-[280px]"
@@ -35,28 +37,39 @@ export function CompactAgentGenerationSettings({ preferences, onChange }: { pref
     );
 }
 
-export function compactAgentPreferenceSummary(capability: AgentMediaCapability, preferences: CreativeGenerationPreferences) {
+type SummaryTranslator = (key: string, values?: Record<string, string | number>) => string;
+
+const defaultSummaryTranslator: SummaryTranslator = (key, values) => {
+    const defaults: Record<string, string> = { smart: "Smart", smartParameters: "Smart parameters", high: "High", medium: "Medium", low: "Low" };
+    if (key === "secondsCompact") return `${values?.value}s`;
+    if (key === "imageCount") return `${values?.count} images`;
+    return defaults[key] || key;
+};
+
+export function compactAgentPreferenceSummary(capability: AgentMediaCapability, preferences: CreativeGenerationPreferences, translate: SummaryTranslator = defaultSummaryTranslator) {
     if (capability === "video") {
         const video = preferences.video;
-        const size = video?.size && video.size !== "auto" ? video.size.replace("x", "×") : "智能";
-        return isExactSize(video?.size) ? size : `${size} · ${video?.seconds || 5}秒`;
+        const size = video?.size && video.size !== "auto" ? video.size.replace("x", "×") : translate("smart");
+        return isExactSize(video?.size) ? size : `${size} · ${translate("secondsCompact", { value: video?.seconds || 5 })}`;
     }
     const image = preferences.image;
-    const size = image?.size && image.size !== "auto" ? image.size.replace("x", "×") : "智能";
-    return isExactSize(image?.size) ? size : `${size} · ${image?.count || 1}张`;
+    const size = image?.size && image.size !== "auto" ? image.size.replace("x", "×") : translate("smart");
+    return isExactSize(image?.size) ? size : `${size} · ${translate("imageCount", { count: image?.count || 1 })}`;
 }
 
-function agentPreferenceSummary(capability: AgentMediaCapability, preferences: CreativeGenerationPreferences) {
+function agentPreferenceSummary(capability: AgentMediaCapability, preferences: CreativeGenerationPreferences, translate: SummaryTranslator) {
     if (capability === "video") {
         const video = preferences.video;
-        const size = video?.size && video.size !== "auto" ? video.size.replace("x", "×") : "智能";
-        const quality = video?.quality && video.quality !== "auto" ? `${video.quality.replace(/p$/i, "")}P` : "智能";
-        return size === "智能" && quality === "智能" ? "智能参数" : `${size} · ${quality} · ${video?.seconds || 5}秒`;
+        const smart = translate("smart");
+        const size = video?.size && video.size !== "auto" ? video.size.replace("x", "×") : smart;
+        const quality = video?.quality && video.quality !== "auto" ? `${video.quality.replace(/p$/i, "")}P` : smart;
+        return size === smart && quality === smart ? translate("smartParameters") : `${size} · ${quality} · ${translate("secondsCompact", { value: video?.seconds || 5 })}`;
     }
     const image = preferences.image;
-    const size = image?.size && image.size !== "auto" ? image.size.replace("x", "×") : "智能";
-    const quality = ({ high: "高", medium: "中", low: "低", auto: "智能" } as const)[image?.quality || "auto"];
-    return size === "智能" && quality === "智能" && (image?.count || 1) === 1 ? "智能参数" : `${size} · ${quality}${(image?.count || 1) > 1 ? ` · ${image?.count}张` : ""}`;
+    const smart = translate("smart");
+    const size = image?.size && image.size !== "auto" ? image.size.replace("x", "×") : smart;
+    const quality = translate(!image?.quality || image.quality === "auto" ? "smart" : image.quality);
+    return size === smart && quality === smart && (image?.count || 1) === 1 ? translate("smartParameters") : `${size} · ${quality}${(image?.count || 1) > 1 ? ` · ${translate("imageCount", { count: image?.count || 1 })}` : ""}`;
 }
 
 export function updateAgentGenerationPreferences(preferences: CreativeGenerationPreferences, capability: AgentMediaCapability, patch: CreativeGenerationPreferencePatch): CreativeGenerationPreferences {

@@ -1,13 +1,13 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { BillingPlanGrid } from "@/components/billing/billing-plan-grid";
 import type { BillingProduct } from "@/services/api/billing";
+import { renderWithI18n } from "@/test/render-with-i18n";
 
 describe("BillingPlanGrid", () => {
     it("keeps eight modal plans compact and reachable on desktop and mobile", () => {
         const products = Array.from({ length: 8 }, (_, index) => product(index + 1));
-        const markup = renderToStaticMarkup(<BillingPlanGrid products={products} variant="modal" onSelect={vi.fn()} />);
+        const markup = renderWithI18n(<BillingPlanGrid products={products} variant="modal" onSelect={vi.fn()} />);
 
         expect(markup.match(/data-billing-plan-card=/g)).toHaveLength(9);
         expect(markup.match(/role="tab"/g)).toHaveLength(8);

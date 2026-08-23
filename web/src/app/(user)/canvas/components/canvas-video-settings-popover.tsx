@@ -1,8 +1,9 @@
 "use client";
 
 import { SlidersHorizontal } from "lucide-react";
+import { useTranslations } from "next-intl";
 
-import { CreativeGenerationPreferences, generationPreferenceSummary, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
+import { CreativeGenerationPreferences, useGenerationPreferenceSummary, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
 import { useCreativeComposerPopoverPlacement, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CreativeGenerationPreferences as GenerationPreferences } from "@/lib/creative-runtime-contract";
@@ -12,7 +13,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 
 import type { CanvasNodeMetadata } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
-import { canvasVideoReferenceModeLabel, normalizeCanvasVideoReferenceMode } from "../utils/canvas-video-references";
+import { normalizeCanvasVideoReferenceMode } from "../utils/canvas-video-references";
 import { CanvasVideoReferenceSettings } from "./canvas-video-reference-settings";
 
 type CanvasVideoSettingsPopoverProps = {
@@ -26,6 +27,8 @@ type CanvasVideoSettingsPopoverProps = {
 };
 
 export function CanvasVideoSettingsPopover({ config, metadata, references, onConfigChange, onMetadataChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
+    const t = useTranslations("canvas");
+    const createT = useTranslations("create");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const responsivePlacement = useCreativeComposerPopoverPlacement(placement);
     const preferences: GenerationPreferences = {
@@ -39,16 +42,16 @@ export function CanvasVideoSettingsPopover({ config, metadata, references, onCon
             referenceMode: normalizeCanvasVideoReferenceMode(metadata?.videoReferenceMode),
         },
     };
-    const summary = canvasVideoPreferenceSummary(preferences);
-    const fullSummary = generationPreferenceSummary("video", preferences);
-    const referenceLabel = canvasVideoReferenceModeLabel(metadata?.videoReferenceMode);
+    const summary = canvasVideoPreferenceSummary(preferences, { autoSize: createT("smartRatio"), autoQuality: createT("smartClarity") });
+    const fullSummary = useGenerationPreferenceSummary("video", preferences);
+    const referenceLabel = t(`videoReferences.modes.${normalizeCanvasVideoReferenceMode(metadata?.videoReferenceMode)}.label`);
 
     return (
         <CreativeGenerationPreferences
             capability="video"
             preferences={preferences}
             triggerLabel={summary}
-            triggerAriaLabel={`视频设置：${referenceLabel} · ${fullSummary}`}
+            triggerAriaLabel={t("videoSettingsAria", { summary: `${referenceLabel} · ${fullSummary}` })}
             triggerIcon={<SlidersHorizontal className="size-4" />}
             triggerClassName={buttonClassName}
             triggerLabelClassName="whitespace-nowrap text-left !overflow-visible !text-clip"
@@ -61,11 +64,11 @@ export function CanvasVideoSettingsPopover({ config, metadata, references, onCon
     );
 }
 
-export function canvasVideoPreferenceSummary(preferences: GenerationPreferences) {
+export function canvasVideoPreferenceSummary(preferences: GenerationPreferences, labels: { autoSize: string; autoQuality: string }) {
     const video = preferences.video;
-    const size = !video?.size || video.size === "auto" ? "智能" : video.size.replace("x", "×");
+    const size = !video?.size || video.size === "auto" ? labels.autoSize : video.size.replace("x", "×");
     if (/^\d+x\d+$/i.test(video?.size || "")) return size;
-    const quality = !video?.quality || video.quality === "auto" ? "智能" : `${video.quality.replace(/p$/i, "")}P`;
+    const quality = !video?.quality || video.quality === "auto" ? labels.autoQuality : `${video.quality.replace(/p$/i, "")}P`;
     return `${size} · ${quality}`;
 }
 

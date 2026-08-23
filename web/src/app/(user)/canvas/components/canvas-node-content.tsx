@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Clock3, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
+import { useFormatter, useTranslations } from "next-intl";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -60,27 +61,28 @@ export const nodeContentRenderers = {
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
 export function BriefNodeContent({ node, theme }: NodeContentRendererProps) {
+    const t = useTranslations("canvas");
     const brief = node.metadata?.agentBrief;
     return (
         <div className="flex h-full flex-col gap-4 overflow-y-auto p-5" style={{ color: theme.node.text }}>
             <div className="flex items-center gap-2 text-xs font-semibold">
                 <BriefcaseBusiness className="size-4" style={{ color: theme.node.activeStroke }} />
-                创作目标
+                {t("node.creativeObjective")}
             </div>
-            <p className="text-sm leading-6">{brief?.objective || "等待 Agent 整理创作目标"}</p>
+            <p className="text-sm leading-6">{brief?.objective || t("node.waitingForObjective")}</p>
             {brief?.audience ? (
                 <div className="text-xs" style={{ color: theme.node.placeholder }}>
-                    受众：{brief.audience}
+                    {t("node.audience", { value: brief.audience })}
                 </div>
             ) : null}
             {brief?.usage ? (
                 <div className="text-xs" style={{ color: theme.node.placeholder }}>
-                    场景：{brief.usage}
+                    {t("node.usage", { value: brief.usage })}
                 </div>
             ) : null}
             {brief?.coreMessage ? (
                 <p className="text-xs leading-5" style={{ color: theme.node.placeholder }}>
-                    核心信息：{brief.coreMessage}
+                    {t("node.coreMessage", { value: brief.coreMessage })}
                 </p>
             ) : null}
             <div className="flex flex-wrap gap-2">
@@ -96,6 +98,7 @@ export function BriefNodeContent({ node, theme }: NodeContentRendererProps) {
 }
 
 export function TaskNodeContent({ node, theme }: NodeContentRendererProps) {
+    const t = useTranslations("canvas");
     const status = node.metadata?.agentTaskStatus || "pending";
     const statusTheme = taskStatusTheme(status, theme);
     return (
@@ -105,7 +108,7 @@ export function TaskNodeContent({ node, theme }: NodeContentRendererProps) {
                     <ListChecks className="size-5" style={{ color: theme.node.activeStroke }} />
                     <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium" style={{ background: statusTheme.surface, borderColor: statusTheme.border, color: statusTheme.text }}>
                         <span className="size-1.5 rounded-full" style={{ background: statusTheme.text }} aria-hidden="true" />
-                        {TASK_STATUS_LABELS[status]}
+                        {t(`node.status.${TASK_STATUS_LABELS[status]}`)}
                     </span>
                 </div>
                 <p className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pr-1 text-sm leading-6" onWheel={(event) => event.stopPropagation()}>
@@ -113,10 +116,10 @@ export function TaskNodeContent({ node, theme }: NodeContentRendererProps) {
                 </p>
             </div>
             <div className="mt-3 flex shrink-0 items-center justify-between text-xs" style={{ color: theme.node.placeholder }}>
-                <span>{node.metadata?.agentTaskType || "任务"}</span>
+                <span>{node.metadata?.agentTaskType || t("node.task")}</span>
                 <span className="flex items-center gap-1">
                     <CircleCheck className="size-3.5" />
-                    尝试 {node.metadata?.agentTaskAttempts || 0}/2
+                    {t("node.attempts", { current: node.metadata?.agentTaskAttempts || 0, total: 2 })}
                 </span>
             </div>
         </div>
@@ -124,22 +127,24 @@ export function TaskNodeContent({ node, theme }: NodeContentRendererProps) {
 }
 
 export function BrandKitNodeContent({ node, theme }: NodeContentRendererProps) {
+    const t = useTranslations("canvas");
+    const format = useFormatter();
     const kit = node.metadata?.brandKit;
     return (
         <div className="flex h-full flex-col gap-4 overflow-y-auto p-5" style={{ color: theme.node.text }}>
             <div className="flex items-center gap-2 text-xs font-semibold">
                 <Palette className="size-4" style={{ color: theme.node.activeStroke }} />
-                灵感与视觉方向
+                {t("node.visualDirection")}
             </div>
-            <p className="text-sm leading-6">{kit?.summary || "等待补充品牌与视觉方向"}</p>
+            <p className="text-sm leading-6">{kit?.summary || t("node.waitingForVisualDirection")}</p>
             {kit?.composition ? (
                 <p className="text-xs leading-5" style={{ color: theme.node.placeholder }}>
-                    构图：{kit.composition}
+                    {t("node.composition", { value: kit.composition })}
                 </p>
             ) : null}
             {kit?.lighting ? (
                 <p className="text-xs leading-5" style={{ color: theme.node.placeholder }}>
-                    光线：{kit.lighting}
+                    {t("node.lighting", { value: kit.lighting })}
                 </p>
             ) : null}
             <div className="flex gap-2">
@@ -156,7 +161,7 @@ export function BrandKitNodeContent({ node, theme }: NodeContentRendererProps) {
             </div>
             {kit?.avoid?.length ? (
                 <p className="text-xs leading-5" style={{ color: theme.node.placeholder }}>
-                    避免：{kit.avoid.join("；")}
+                    {t("node.avoid", { value: format.list(kit.avoid) })}
                 </p>
             ) : null}
         </div>
@@ -164,19 +169,21 @@ export function BrandKitNodeContent({ node, theme }: NodeContentRendererProps) {
 }
 
 export function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+    const t = useTranslations("canvas");
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <span className="text-[10px] tracking-[0.2em]">生成中</span>
+            <span className="text-[10px] tracking-[0.2em]">{t("node.generating")}</span>
         </div>
     );
 }
 
 export function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
+    const t = useTranslations("canvas");
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 overflow-hidden px-5 py-4 text-center">
             <div className="max-h-[60%] max-w-[260px] overflow-y-auto text-xs leading-5" style={{ color: theme.node.danger }}>
-                {node.metadata?.errorDetails || "生成失败"}
+                {t("node.generationFailed")}
             </div>
             <button
                 type="button"
@@ -189,18 +196,19 @@ export function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererP
                 onMouseDown={(event) => event.stopPropagation()}
             >
                 <RefreshCw className="size-3.5" />
-                重试
+                {t("node.retry")}
             </button>
         </div>
     );
 }
 
 export function ReviewContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
+    const t = useTranslations("canvas");
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 overflow-hidden px-5 py-4 text-center">
             <Clock3 className="size-6 shrink-0" style={{ color: theme.node.warningText }} />
             <div className="max-h-[55%] max-w-[280px] overflow-y-auto text-xs leading-5" style={{ color: theme.node.text }}>
-                {node.metadata?.errorDetails || "任务创建结果待管理员确认，系统未重复提交。"}
+                {t("node.reviewRequired")}
             </div>
             <button
                 type="button"
@@ -213,30 +221,33 @@ export function ReviewContent({ node, theme, onRetry }: Pick<NodeContentRenderer
                 onMouseDown={(event) => event.stopPropagation()}
             >
                 <RefreshCw className="size-3.5" />
-                检查状态
+                {t("node.checkStatus")}
             </button>
         </div>
     );
 }
 
 export function CancelledContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+    const t = useTranslations("canvas");
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-5 py-4 text-center" style={{ color: theme.node.placeholder }}>
             <CircleX className="size-6" />
-            <span className="text-xs">任务已取消</span>
+            <span className="text-xs">{t("node.cancelled")}</span>
         </div>
     );
 }
 
 export function UnknownNodeContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+    const t = useTranslations("canvas");
     return (
         <div className="flex h-full w-full items-center justify-center text-sm" style={{ color: theme.node.placeholder }}>
-            未知节点
+            {t("node.unknown")}
         </div>
     );
 }
 
 export function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, onContentChange, onStopEditing, onGenerateImage }: NodeContentRendererProps) {
+    const t = useTranslations("canvas");
     const fontSize = node.metadata?.fontSize || 14;
     const textStyle = { fontSize: `${fontSize}px`, lineHeight: `${Math.round(fontSize * 1.65)}px`, color: theme.node.text, boxSizing: "border-box" } as React.CSSProperties;
 
@@ -252,11 +263,11 @@ export function TextContent({ node, theme, isEditingContent, textareaRef, mentio
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
-                title="用文本生图"
-                aria-label="用文本生图"
+                title={t("node.generateFromText")}
+                aria-label={t("node.generateFromText")}
             >
                 <ImageIcon className="size-3.5" />
-                生图
+                {t("node.generateImage")}
             </button>
             {isEditingContent ? (
                 <CanvasResourceMentionTextarea
@@ -277,7 +288,7 @@ export function TextContent({ node, theme, isEditingContent, textareaRef, mentio
                 />
             ) : (
                 <div className="thin-scrollbar block h-full w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent pl-4 pr-14 pt-0 pb-4 font-mono" style={textStyle} onWheel={(event) => event.stopPropagation()}>
-                    {node.metadata?.content || <span style={{ color: theme.node.placeholder }}>点击编辑文字</span>}
+                    {node.metadata?.content || <span style={{ color: theme.node.placeholder }}>{t("node.clickToEditText")}</span>}
                 </div>
             )}
         </div>
@@ -328,12 +339,13 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
 }
 
 export function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batchOpening, batchRecovering, onToggleBatch }: NodeContentRendererProps) {
+    const t = useTranslations("canvas");
     const content = (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
             <div className="flex size-14 items-center justify-center rounded-2xl border" style={{ background: theme.node.subtleSurface, borderColor: theme.node.subtleBorder, color: theme.node.subtleText }}>
                 <ImageIcon className="size-6 opacity-30" />
             </div>
-            <span className="text-[10px] tracking-[0.18em] opacity-50">空图片节点</span>
+            <span className="text-[10px] tracking-[0.18em] opacity-50">{t("node.emptyImage")}</span>
         </div>
     );
     if (isBatchRoot)
@@ -346,41 +358,44 @@ export function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpande
 }
 
 export function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
+    const t = useTranslations("canvas");
     if (!node.metadata?.content)
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
                 <Video className="size-7 opacity-35" />
-                <span className="text-sm">空视频节点</span>
+                <span className="text-sm">{t("node.emptyVideo")}</span>
             </div>
         );
     return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
 }
 
 export function PanoramaNodeContent({ node, theme }: NodeContentRendererProps) {
+    const t = useTranslations("canvas");
     if (!node.metadata?.content)
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.placeholder }}>
                 <Globe2 className="size-7 opacity-35" />
-                <span className="text-sm">空全景节点</span>
+                <span className="text-sm">{t("node.emptyPanorama")}</span>
                 <span className="text-[10px] opacity-55">360° · 2:1</span>
             </div>
         );
-    return <CanvasPanoramaViewer src={node.metadata.content} alt={node.title || "全景图"} />;
+    return <CanvasPanoramaViewer src={node.metadata.content} alt={node.title || t("panoramaLabel")} />;
 }
 
 export function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
+    const t = useTranslations("canvas");
     if (!node.metadata?.content)
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.placeholder }}>
                 <Music2 className="size-7 opacity-35" />
-                <span className="text-sm">空音频节点</span>
+                <span className="text-sm">{t("node.emptyAudio")}</span>
             </div>
         );
     return (
         <div className="flex h-full w-full flex-col justify-center gap-3 px-4" style={{ background: theme.node.fill, color: theme.node.text }}>
             <div className="flex min-w-0 items-center gap-2 text-sm opacity-70">
                 <Music2 className="size-4 shrink-0" />
-                <span className="truncate">{node.title || "音频"}</span>
+                <span className="truncate">{node.title || t("audio")}</span>
             </div>
             <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
         </div>
@@ -408,6 +423,7 @@ export function ImageContent({
     onSetBatchPrimary?: () => void;
     onImageDimensions?: (nodeId: string, naturalWidth: number, naturalHeight: number) => void;
 }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
     const imageRef = useRef<HTMLImageElement>(null);
@@ -441,7 +457,7 @@ export function ImageContent({
                     type="button"
                     className="absolute right-2.5 top-2.5 z-30 flex h-8 items-center justify-center gap-1 rounded-full border px-2.5 text-xs font-semibold shadow-[0_6px_18px_rgba(15,23,42,.10)] backdrop-blur-md transition hover:scale-[1.02]"
                     style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
-                    aria-label={batchExpanded ? "图片组已展开" : "图片组已收起"}
+                    aria-label={batchExpanded ? t("node.imageGroupExpanded") : t("node.imageGroupCollapsed")}
                     onClick={(event) => {
                         event.stopPropagation();
                         onToggleBatch?.();
@@ -466,7 +482,7 @@ export function ImageContent({
                     onPointerDown={(event) => event.stopPropagation()}
                 >
                     <Star className="size-3.5 text-[#2f80ff]" />
-                    设为主图
+                    {t("node.setAsPrimary")}
                 </button>
             ) : null}
         </BatchFrame>
@@ -551,12 +567,13 @@ export function ResizeHandle({ corner, onMouseDown }: { corner: ResizeCorner; on
 }
 
 export function ConnectionHandleDot({ side, visible, onConnectStart }: { side: "left" | "right"; visible: boolean; onConnectStart: (event: React.MouseEvent | React.PointerEvent) => void }) {
+    const t = useTranslations("canvas");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
         <div
             data-canvas-handle={side === "left" ? "target" : "source"}
-            aria-label={side === "left" ? "输入连接点" : "输出连接点"}
+            aria-label={side === "left" ? t("node.inputConnection") : t("node.outputConnection")}
             className={`absolute top-1/2 z-30 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${
                 side === "left" ? "-left-6" : "-right-6"
             } ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
@@ -572,14 +589,14 @@ export function ConnectionHandleDot({ side, visible, onConnectStart }: { side: "
 }
 
 const TASK_STATUS_LABELS = {
-    ready: "等待执行",
-    pending: "等待执行",
-    running: "执行中",
-    paused: "已暂停",
-    waiting_user: "等待确认",
-    completed: "已完成",
-    failed: "失败",
-    cancelled: "已取消",
+    ready: "ready",
+    pending: "pending",
+    running: "running",
+    paused: "paused",
+    waiting_user: "waitingUser",
+    completed: "completed",
+    failed: "failed",
+    cancelled: "cancelled",
 } as const;
 
 function taskStatusTheme(status: keyof typeof TASK_STATUS_LABELS, theme: NodeContentRendererProps["theme"]) {

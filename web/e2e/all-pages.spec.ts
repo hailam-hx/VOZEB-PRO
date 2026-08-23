@@ -14,6 +14,7 @@ const FILE_PROVIDER_LIMITATIONS = new Map([
     ["/api/notifications/interactions", 409],
     ["/api/admin/referrals", 501],
     ["/api/admin/billing/summary", 501],
+    ["/api/admin/billing/products", 501],
 ]);
 
 type RouteCase = { path: string; expectedPath?: RegExp; expectedStatus?: number; readyHeading?: string; readyText?: string };
@@ -26,7 +27,7 @@ test("all authenticated pages reach their real routes and stay usable", async ({
         { path: "/", readyHeading: "一个入口 完成所有 AI 创作" },
         { path: "/gallery", readyHeading: "灵感发现" },
         { path: "/community", readyHeading: "灵感发现" },
-        { path: "/announcements", readyHeading: "网站公告" },
+        { path: "/announcements", readyHeading: "公告" },
         { path: "/create" },
         { path: "/image", expectedPath: /\/create$/ },
         { path: "/video", expectedPath: /\/create$/ },
@@ -43,8 +44,8 @@ test("all authenticated pages reach their real routes and stay usable", async ({
         USES_POSTGRES ? { path: `/u/${E2E_ADMIN.username}`, expectedStatus: 404, readyText: "404" } : { path: `/u/${E2E_ADMIN.username}`, readyHeading: "创作者主页暂不可用" },
         { path: "/billing", expectedPath: /\/profile\?section=billing$/ },
         { path: "/billing/checkout", readyText: "套餐不存在或已下架" },
-        { path: "/billing/success", readyText: "支付结果缺少订单编号" },
-        { path: "/billing/cancel", readyText: "支付结果缺少订单编号" },
+        { path: "/billing/success", readyText: "缺少订单信息" },
+        { path: "/billing/cancel", readyText: "缺少订单信息" },
         { path: "/admin/setup", readyHeading: "把站点配置到可以上线运营" },
         { path: "/admin/billing", readyHeading: "财务钱包" },
         { path: "/admin/generation-operations", expectedPath: /\/admin\?section=generationOperations$/ },
@@ -72,7 +73,7 @@ test("every administrator section renders its server-backed surface", async ({ p
 
 test("signed-out, legal, installation and invalid public detail routes fail safely", async ({ browser }, testInfo) => {
     test.setTimeout(180_000);
-    const context = await browser.newContext({ baseURL: BASE_URL, viewport: testInfo.project.use.viewport || undefined, storageState: { cookies: [], origins: [] } });
+    const context = await browser.newContext({ baseURL: BASE_URL, locale: "zh-CN", viewport: testInfo.project.use.viewport || undefined, storageState: { cookies: [], origins: [] } });
     const page = await context.newPage();
     try {
         const theme = testInfo.project.name === "mobile-430" ? "dark" : "light";
@@ -85,7 +86,7 @@ test("signed-out, legal, installation and invalid public detail routes fail safe
             { path: "/privacy", readyHeading: "隐私政策" },
             { path: "/terms", readyHeading: "服务条款" },
             { path: "/gallery", readyHeading: "灵感发现" },
-            { path: "/announcements", readyHeading: "网站公告" },
+            { path: "/announcements", readyHeading: "公告" },
             USES_POSTGRES ? { path: `/u/${E2E_ADMIN.username}`, expectedStatus: 404, readyText: "404" } : { path: `/u/${E2E_ADMIN.username}`, readyHeading: "创作者主页暂不可用" },
             { path: "/share/not-a-real-public-work", expectedStatus: USES_POSTGRES ? 404 : 200, readyText: USES_POSTGRES ? "404" : "作品分享暂不可用" },
             { path: "/install", expectedPath: /\/$/ },

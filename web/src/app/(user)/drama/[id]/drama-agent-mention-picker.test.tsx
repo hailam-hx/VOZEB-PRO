@@ -1,12 +1,13 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+
+import { renderWithI18n } from "@/test/render-with-i18n";
 
 import { DramaAgentMentionPicker } from "./drama-agent-mention-picker";
 import type { DramaAgentMentionItem } from "./drama-agent-mention";
 
 describe("DramaAgentMentionPicker", () => {
     it("uses category tabs and initially renders only character names", () => {
-        const markup = renderToStaticMarkup(<DramaAgentMentionPicker items={items} selectedIds={new Set()} onSelect={() => undefined} />);
+        const markup = renderWithI18n(<DramaAgentMentionPicker items={items} selectedIds={new Set()} onSelect={() => undefined} />);
 
         expect(markup).toContain('role="tablist"');
         expect(markup).toContain('aria-label="引用项目内容类型"');

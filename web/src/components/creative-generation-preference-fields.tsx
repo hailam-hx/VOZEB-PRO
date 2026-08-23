@@ -1,11 +1,13 @@
 "use client";
 
 import { InputNumber, Space, Switch } from "antd";
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
 export function VideoQualityField({ value, options, onChange }: { value: string; options: readonly { value: string; label: string; shortLabel?: string }[]; onChange: (value: string) => void }) {
+    const t = useTranslations("create");
     const customSelected = !options.some((option) => option.value === value);
     const [draft, setDraft] = useState(customSelected ? value : "");
 
@@ -15,10 +17,10 @@ export function VideoQualityField({ value, options, onChange }: { value: string;
 
     return (
         <div className="grid gap-1.5">
-            <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">清晰度</p>
-            <div className="grid grid-cols-4 gap-1" role="group" aria-label="选择视频清晰度">
+            <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{t("definition")}</p>
+            <div className="grid grid-cols-4 gap-1" role="group" aria-label={t("selectVideoDefinition")}>
                 {options.map((option) => (
-                    <OptionButton key={option.value} selected={value === option.value} label={option.shortLabel || option.label} ariaLabel={`选择视频清晰度 ${option.label}`} onClick={() => onChange(option.value)} />
+                    <OptionButton key={option.value} selected={value === option.value} label={option.shortLabel || option.label} ariaLabel={t("selectVideoDefinitionValue", { value: option.label })} onClick={() => onChange(option.value)} />
                 ))}
             </div>
             <label
@@ -30,9 +32,9 @@ export function VideoQualityField({ value, options, onChange }: { value: string;
                 )}
             >
                 <input
-                    aria-label="输入自定义视频清晰度"
+                    aria-label={t("enterCustomVideoDefinition")}
                     value={draft}
-                    placeholder="自定义，例如 2160 或 4K"
+                    placeholder={t("customVideoDefinitionPlaceholder")}
                     onChange={(event) => {
                         const next = event.target.value;
                         setDraft(next);
@@ -41,7 +43,7 @@ export function VideoQualityField({ value, options, onChange }: { value: string;
                     }}
                     className="h-8 min-w-0 bg-transparent text-xs outline-none placeholder:text-[#aeb6be] dark:placeholder:text-[#697480]"
                 />
-                <span className="text-[10px] text-[#9aa4ae]">建议值可直接选择</span>
+                <span className="text-[10px] text-[#9aa4ae]">{t("suggestedValuesHint")}</span>
             </label>
         </div>
     );
@@ -62,6 +64,7 @@ export function SuggestedPositiveIntegerField({
     options: readonly { value: number; label: string }[];
     onChange: (value: number) => void;
 }) {
+    const t = useTranslations("create");
     const customSelected = !options.some((option) => option.value === value);
     return (
         <div className="grid gap-1.5">
@@ -76,7 +79,7 @@ export function SuggestedPositiveIntegerField({
                         controls={false}
                         min={1}
                         value={customSelected ? value : null}
-                        placeholder="自定义"
+                        placeholder={t("custom")}
                         onChange={(next) => {
                             const normalized = normalizePositiveInteger(next);
                             if (normalized) onChange(normalized);

@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { SYSTEM, Viewer } from "@photo-sphere-viewer/core";
+import { useTranslations } from "next-intl";
 import "@photo-sphere-viewer/core/index.css";
 
 export function CanvasPanoramaSurface({ src, alt }: { src: string; alt: string }) {
+    const t = useTranslations("canvas.panorama");
     const containerRef = useRef<HTMLDivElement>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 
@@ -47,8 +49,8 @@ export function CanvasPanoramaSurface({ src, alt }: { src: string; alt: string }
         <div className="relative h-full w-full overflow-hidden" data-canvas-no-zoom>
             {status === "error" ? <img src={src} alt={alt} draggable={false} className="absolute inset-0 h-full w-full object-contain" /> : null}
             <div ref={containerRef} className="absolute inset-0 transition-opacity duration-200" style={{ opacity: status === "ready" ? 1 : 0 }} />
-            {status === "loading" ? <div className="absolute inset-0 grid place-items-center bg-black/20 text-xs text-white/80">正在加载全景图...</div> : null}
-            {status === "error" ? <div className="absolute inset-x-0 bottom-4 text-center text-xs text-white/80">全景查看器加载失败，已显示原图</div> : null}
+            {status === "loading" ? <div className="absolute inset-0 grid place-items-center bg-black/20 text-xs text-white/80">{t("loading")}</div> : null}
+            {status === "error" ? <div className="absolute inset-x-0 bottom-4 text-center text-xs text-white/80">{t("fallback")}</div> : null}
         </div>
     );
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { App, Button, Empty, Form, Input, Modal, Popconfirm, Space, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
 import { Copy, FolderPlus, Plus, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -22,6 +23,7 @@ type PromptFormValue = {
 };
 
 export function MyPromptsPage() {
+    const t = useTranslations("media.myPrompts");
     const { message } = App.useApp();
     const [form] = Form.useForm<PromptFormValue>();
     const [items, setItems] = useState<Prompt[]>([]);
@@ -41,13 +43,13 @@ export function MyPromptsPage() {
                 const payload = await listMyPrompts({ page: targetPage, pageSize: PAGE_SIZE });
                 setItems(payload.items);
                 setTotal(payload.total);
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "获取我的提示词失败");
+            } catch {
+                message.error(t("loadFailed"));
             } finally {
                 setLoading(false);
             }
         },
-        [message],
+        [message, t],
     );
 
     useEffect(() => {
@@ -60,11 +62,11 @@ export function MyPromptsPage() {
             await createMyPrompt({ ...value, tags: splitTags(value.tags) });
             form.resetFields();
             setCreateOpen(false);
-            message.success("提示词已保存");
+            message.success(t("saved"));
             if (page === 1) await loadPrompts(1);
             else setPage(1);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "新增提示词失败");
+        } catch {
+            message.error(t("createFailed"));
         } finally {
             setSubmitting(false);
         }
@@ -74,12 +76,12 @@ export function MyPromptsPage() {
         setDeletingId(id);
         try {
             await deleteMyPrompt(id);
-            message.success("提示词已删除");
+            message.success(t("deleted"));
             const targetPage = Math.min(page, Math.max(1, Math.ceil(Math.max(0, total - 1) / PAGE_SIZE)));
             if (targetPage === page) await loadPrompts(targetPage);
             else setPage(targetPage);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "删除提示词失败");
+        } catch {
+            message.error(t("deleteFailed"));
         } finally {
             setDeletingId("");
         }
@@ -88,15 +90,15 @@ export function MyPromptsPage() {
     const savePromptAsset = async (item: Prompt) => {
         try {
             await addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "my-prompts", promptId: item.id } });
-            message.success("已加入我的素材");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "素材保存失败");
+            message.success(t("assetSaved"));
+        } catch {
+            message.error(t("assetSaveFailed"));
         }
     };
 
     const columns: TableColumnsType<Prompt> = [
         {
-            title: "标题",
+            title: t("columns.title"),
             dataIndex: "title",
             render: (_, record) => (
                 <div className="min-w-0">
@@ -113,24 +115,24 @@ export function MyPromptsPage() {
             ),
         },
         {
-            title: "分类",
+            title: t("columns.category"),
             dataIndex: "category",
             width: 120,
             responsive: ["md"],
         },
         {
-            title: "操作",
+            title: t("columns.actions"),
             width: 180,
             render: (_, record) => (
                 <Space wrap size="small">
-                    <Button size="small" aria-label="复制提示词" icon={<Copy className="size-3.5" />} onClick={() => copyText(record.prompt, "提示词已复制")}>
-                        <span className="hidden sm:inline">复制</span>
+                    <Button size="small" aria-label={t("copyPrompt")} icon={<Copy className="size-3.5" />} onClick={() => copyText(record.prompt, t("copied"))}>
+                        <span className="hidden sm:inline">{t("copy")}</span>
                     </Button>
-                    <Button size="small" aria-label="加入我的素材" icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(record)}>
-                        <span className="hidden sm:inline">素材</span>
+                    <Button size="small" aria-label={t("addToAssets")} icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(record)}>
+                        <span className="hidden sm:inline">{t("asset")}</span>
                     </Button>
-                    <Popconfirm title="删除提示词？" okText="删除" cancelText="取消" onConfirm={() => deletePrompt(record.id)}>
-                        <Button size="small" danger aria-label="删除提示词" loading={deletingId === record.id} icon={<Trash2 className="size-3.5" />} />
+                    <Popconfirm title={t("deleteConfirm")} okText={t("delete")} cancelText={t("cancel")} onConfirm={() => deletePrompt(record.id)}>
+                        <Button size="small" danger aria-label={t("deletePrompt")} loading={deletingId === record.id} icon={<Trash2 className="size-3.5" />} />
                     </Popconfirm>
                 </Space>
             ),
@@ -143,17 +145,17 @@ export function MyPromptsPage() {
                 <div className="mx-auto max-w-7xl space-y-3 sm:space-y-6">
                     <div className="flex flex-row items-center justify-between gap-3 sm:items-end sm:gap-4">
                         <div>
-                            <h1 className="text-xl font-semibold text-stone-950 sm:text-2xl dark:text-stone-100">我的提示词</h1>
-                            <p className="mt-1.5 text-xs leading-5 text-stone-500 sm:mt-2 sm:text-sm dark:text-stone-400">保存自己的提示词记录，复制使用或沉淀到我的素材。</p>
+                            <h1 className="text-xl font-semibold text-stone-950 sm:text-2xl dark:text-stone-100">{t("title")}</h1>
+                            <p className="mt-1.5 text-xs leading-5 text-stone-500 sm:mt-2 sm:text-sm dark:text-stone-400">{t("description")}</p>
                         </div>
                         <Button type="primary" size="small" className="shrink-0 sm:!h-9" icon={<Plus className="size-3.5 sm:size-4" />} onClick={() => setCreateOpen(true)}>
-                            添加提示词
+                            {t("add")}
                         </Button>
                     </div>
 
                     <section className="overflow-hidden rounded-lg border border-border bg-card">
                         <div className="border-b border-border px-3 py-2.5 sm:px-5 sm:py-4">
-                            <h2 className="text-base font-semibold text-stone-950 sm:text-lg dark:text-stone-100">我的记录</h2>
+                            <h2 className="text-base font-semibold text-stone-950 sm:text-lg dark:text-stone-100">{t("records")}</h2>
                         </div>
                         <Table
                             className="[&_.ant-table-tbody>tr>td]:!py-2 sm:[&_.ant-table-tbody>tr>td]:!py-3 [&_.ant-table-thead>tr>th]:!py-2"
@@ -163,37 +165,37 @@ export function MyPromptsPage() {
                             dataSource={items}
                             tableLayout="fixed"
                             pagination={{ current: page, pageSize: PAGE_SIZE, total, hideOnSinglePage: true, showSizeChanger: false, onChange: setPage }}
-                            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有保存提示词" /> }}
+                            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("empty")} /> }}
                         />
                     </section>
                 </div>
             </main>
-            <Modal title="添加提示词" open={createOpen} footer={null} centered width={720} destroyOnHidden onCancel={() => setCreateOpen(false)} afterClose={() => form.resetFields()}>
+            <Modal title={t("add")} open={createOpen} footer={null} centered width={720} destroyOnHidden onCancel={() => setCreateOpen(false)} afterClose={() => form.resetFields()}>
                 <Form form={form} layout="vertical" onFinish={createPrompt} requiredMark={false} className="pt-3">
                     <div className="grid gap-x-4 sm:grid-cols-2">
-                        <Form.Item label="标题" name="title" rules={[{ required: true, message: "请输入标题" }]}>
-                            <Input placeholder="例如：产品摄影主视觉" />
+                        <Form.Item label={t("form.title")} name="title" rules={[{ required: true, message: t("form.titleRequired") }]}>
+                            <Input placeholder={t("form.titlePlaceholder")} />
                         </Form.Item>
-                        <Form.Item label="分类" name="category">
-                            <Input placeholder="例如：商业海报" />
+                        <Form.Item label={t("form.category")} name="category">
+                            <Input placeholder={t("form.categoryPlaceholder")} />
                         </Form.Item>
-                        <Form.Item label="标签" name="tags">
-                            <Input placeholder="用逗号分隔，例如：摄影, 电商, 写实" />
+                        <Form.Item label={t("form.tags")} name="tags">
+                            <Input placeholder={t("form.tagsPlaceholder")} />
                         </Form.Item>
-                        <Form.Item label="封面 URL" name="coverUrl">
-                            <Input placeholder="可选，用于展示卡片封面" />
+                        <Form.Item label={t("form.coverUrl")} name="coverUrl">
+                            <Input placeholder={t("form.coverPlaceholder")} />
                         </Form.Item>
                     </div>
-                    <Form.Item label="提示词内容" name="prompt" rules={[{ required: true, message: "请输入提示词内容" }]}>
-                        <Input.TextArea rows={5} placeholder="输入完整提示词..." />
+                    <Form.Item label={t("form.prompt")} name="prompt" rules={[{ required: true, message: t("form.promptRequired") }]}>
+                        <Input.TextArea rows={5} placeholder={t("form.promptPlaceholder")} />
                     </Form.Item>
-                    <Form.Item label="备注 / 预览" name="preview">
-                        <Input.TextArea rows={2} placeholder="可选，记录使用场景、参考图说明或效果备注" />
+                    <Form.Item label={t("form.preview")} name="preview">
+                        <Input.TextArea rows={2} placeholder={t("form.previewPlaceholder")} />
                     </Form.Item>
                     <div className="flex justify-end gap-3">
-                        <Button onClick={() => setCreateOpen(false)}>取消</Button>
+                        <Button onClick={() => setCreateOpen(false)}>{t("cancel")}</Button>
                         <Button type="primary" htmlType="submit" loading={submitting} icon={<Plus className="size-4" />}>
-                            保存提示词
+                            {t("save")}
                         </Button>
                     </div>
                 </Form>

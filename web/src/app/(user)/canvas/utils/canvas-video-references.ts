@@ -39,7 +39,7 @@ export function normalizeCanvasVideoReferenceMode(value: unknown): CreativeVideo
 
 export function canvasVideoReferenceModeLabel(value: unknown) {
     const mode = normalizeCanvasVideoReferenceMode(value);
-    return mode === "first_frame" ? "首帧" : mode === "first_last" ? "首尾帧" : "普通参考";
+    return mode === "first_frame" ? "First frame" : mode === "first_last" ? "First and last frames" : "General reference";
 }
 
 export function canvasVideoReferenceModePatch(mode: CreativeVideoReferenceMode): Partial<CanvasNodeMetadata> {
@@ -91,18 +91,18 @@ export function resolveCanvasVideoGenerationReferences({
     }
 
     const firstImage = resolveFrameImage(metadata?.videoFirstFrame, availableImages);
-    if (!firstImage) throw new Error("请先选择视频首帧图片");
+    if (!firstImage) throw new Error("Select a first-frame image first");
     const firstFrame = frameSelectionFromImage(firstImage, metadata?.videoFirstFrame);
-    if (!firstFrame) throw new Error("视频首帧尚未保存到服务器，请重新连接图片后再试");
+    if (!firstFrame) throw new Error("The first-frame image is not saved on the server. Reconnect it and try again.");
 
     let lastImage: ReferenceImage | undefined;
     let lastFrame: CanvasVideoFrameSelection | undefined;
     if (mode === "first_last") {
         lastImage = resolveFrameImage(metadata?.videoLastFrame, availableImages);
-        if (!lastImage) throw new Error("请先选择视频尾帧图片");
+        if (!lastImage) throw new Error("Select a last-frame image first");
         lastFrame = frameSelectionFromImage(lastImage, metadata?.videoLastFrame);
-        if (!lastFrame) throw new Error("视频尾帧尚未保存到服务器，请重新连接图片后再试");
-        if (sameReferenceImage(firstImage, lastImage)) throw new Error("视频首帧和尾帧不能使用同一张图片");
+        if (!lastFrame) throw new Error("The last-frame image is not saved on the server. Reconnect it and try again.");
+        if (sameReferenceImage(firstImage, lastImage)) throw new Error("The first and last frames cannot use the same image");
     }
 
     const frameImages = [withVideoRole(firstImage, "first_frame"), ...(lastImage ? [withVideoRole(lastImage, "last_frame")] : [])];
@@ -134,7 +134,7 @@ export function restoreCanvasVideoGenerationReferences(metadata: CanvasNodeMetad
             });
             continue;
         }
-        if (role !== "reference") throw new Error("视频首尾帧只能使用图片素材");
+        if (role !== "reference") throw new Error("First and last video frames can only use image assets");
         if (snapshot.type === "video") {
             videos.push({
                 id: snapshot.id,
@@ -242,7 +242,7 @@ function resolveFrameImage(selection: CanvasVideoFrameSelection | undefined, ima
     const previewUrl = persistedSource(selection.serverUrl, selection.remoteUrl, selection.previewUrl);
     return {
         id: selection.nodeId || `frame-${selection.source}`,
-        name: `${selection.title || "视频帧"}.png`,
+        name: `${selection.title || "Video frame"}.png`,
         type: selection.mimeType || "image/png",
         dataUrl: previewUrl || selection.source,
         url: selection.serverUrl || selection.remoteUrl || (isDirectUrl(selection.source) ? selection.source : undefined),
@@ -259,7 +259,7 @@ function frameSelectionFromImage(image: ReferenceImage, fallback?: CanvasVideoFr
     if (!source) return undefined;
     return {
         nodeId: image.id || fallback?.nodeId,
-        title: fallback?.title || image.name.replace(/\.[^.]+$/, "") || "视频帧",
+        title: fallback?.title || image.name.replace(/\.[^.]+$/, "") || "Video frame",
         source,
         previewUrl: persistedSource(image.serverUrl, image.remoteUrl, image.url, image.dataUrl, fallback?.previewUrl) || undefined,
         storageKey: image.storageKey || fallback?.storageKey,
@@ -278,15 +278,15 @@ function withVideoRole(image: ReferenceImage, role: VideoReferenceRole): Referen
 function assertFrameRoles(images: ReferenceImage[]) {
     const firstFrames = images.filter((image) => image.videoRole === "first_frame");
     const lastFrames = images.filter((image) => image.videoRole === "last_frame");
-    if (firstFrames.length > 1) throw new Error("一次只能指定一张视频首帧图片");
-    if (lastFrames.length > 1) throw new Error("一次只能指定一张视频尾帧图片");
-    if (lastFrames.length && !firstFrames.length) throw new Error("指定视频尾帧时必须同时指定首帧");
-    if (firstFrames[0] && lastFrames[0] && sameReferenceImage(firstFrames[0], lastFrames[0])) throw new Error("视频首帧和尾帧不能使用同一张图片");
+    if (firstFrames.length > 1) throw new Error("Only one first-frame image can be selected");
+    if (lastFrames.length > 1) throw new Error("Only one last-frame image can be selected");
+    if (lastFrames.length && !firstFrames.length) throw new Error("Selecting a last frame also requires a first frame");
+    if (firstFrames[0] && lastFrames[0] && sameReferenceImage(firstFrames[0], lastFrames[0])) throw new Error("The first and last frames cannot use the same image");
 }
 
 function assertReferenceModeFrames(mode: CreativeVideoReferenceMode, images: ReferenceImage[]) {
-    if (mode !== "reference" && !images.some((image) => image.videoRole === "first_frame")) throw new Error("请先选择视频首帧图片");
-    if (mode === "first_last" && !images.some((image) => image.videoRole === "last_frame")) throw new Error("请先选择视频尾帧图片");
+    if (mode !== "reference" && !images.some((image) => image.videoRole === "first_frame")) throw new Error("Select a first-frame image first");
+    if (mode === "first_last" && !images.some((image) => image.videoRole === "last_frame")) throw new Error("Select a last-frame image first");
 }
 
 function inferReferenceMode(value: unknown, images: ReferenceImage[]): CreativeVideoReferenceMode {

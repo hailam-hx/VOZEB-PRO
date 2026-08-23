@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useState, type SyntheticEvent } from "react";
 import { Maximize2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Modal } from "antd";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -11,12 +12,18 @@ import { useThemeStore } from "@/stores/use-theme-store";
 
 const CanvasPanoramaSurface = dynamic(() => import("./canvas-panorama-surface").then((module) => module.CanvasPanoramaSurface), {
     ssr: false,
-    loading: () => <div className="grid h-full w-full place-items-center text-xs text-white/75">正在准备全景查看器...</div>,
+    loading: () => <CanvasPanoramaLoading />,
 });
+
+function CanvasPanoramaLoading() {
+    const t = useTranslations("canvas.panorama");
+    return <div className="grid h-full w-full place-items-center text-xs text-white/75">{t("preparing")}</div>;
+}
 
 const stopCanvasInteraction = (event: SyntheticEvent) => event.stopPropagation();
 
 export function CanvasPanoramaViewer({ src, alt }: { src: string; alt: string }) {
+    const t = useTranslations("canvas.panorama");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [open, setOpen] = useState(false);
     const previewSrc = imagePreviewUrl(src, 1920);
@@ -37,17 +44,17 @@ export function CanvasPanoramaViewer({ src, alt }: { src: string; alt: string })
                     }}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
-                    aria-label="沉浸查看全景"
-                    title="沉浸查看全景"
+                    aria-label={t("immersiveAria")}
+                    title={t("immersiveAria")}
                 >
                     <Maximize2 className="size-3.5" />
-                    沉浸查看
+                    {t("immersive")}
                 </button>
             </div>
             <div className="contents" onClick={stopCanvasInteraction} onDoubleClick={stopCanvasInteraction} onMouseDown={stopCanvasInteraction} onPointerDown={stopCanvasInteraction} onWheel={stopCanvasInteraction} onContextMenu={stopCanvasInteraction}>
                 <Modal
                     open={open}
-                    title="全景查看"
+                    title={t("title")}
                     centered
                     destroyOnHidden
                     mask={{ closable: false }}

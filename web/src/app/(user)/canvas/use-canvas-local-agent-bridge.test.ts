@@ -38,7 +38,7 @@ describe("Canvas local agent bridge", () => {
                 applyOps,
                 vi.fn(async () => false),
             ),
-        ).rejects.toThrow("用户拒绝");
+        ).rejects.toThrow("user rejected");
         await expect(
             executeCanvasAgentToolCall(
                 { requestId: "write", name: "canvas_apply_ops", input: { ops } },

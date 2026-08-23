@@ -9,18 +9,10 @@ export type CanvasAgentRunStage = {
 
 export type CanvasAgentProgressStep = {
     key: "canvas" | "skills" | "plan" | "execute" | "review" | "deliver";
-    label: string;
     status: "pending" | "running" | "completed" | "paused";
 };
 
-const definitions: Array<Pick<CanvasAgentProgressStep, "key" | "label">> = [
-    { key: "canvas", label: "理解当前需求" },
-    { key: "skills", label: "检查素材与能力" },
-    { key: "plan", label: "准备执行任务" },
-    { key: "execute", label: "执行生成任务" },
-    { key: "review", label: "检查生成结果" },
-    { key: "deliver", label: "整理生成结果" },
-];
+const definitions: Array<Pick<CanvasAgentProgressStep, "key">> = [{ key: "canvas" }, { key: "skills" }, { key: "plan" }, { key: "execute" }, { key: "review" }, { key: "deliver" }];
 
 export function canvasAgentProgressSteps(stage: CanvasAgentRunStage): CanvasAgentProgressStep[] {
     const activeKey = stage.key === "reconnecting" ? stage.resumeKey || "planning" : stage.key;

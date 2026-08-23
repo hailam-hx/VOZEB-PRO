@@ -1,13 +1,13 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { CreativeConversation } from "@/lib/creative-runtime-contract";
+import { renderWithI18n } from "@/test/render-with-i18n";
 
 import { DramaAgentHistory } from "./drama-agent-history";
 
 describe("DramaAgentHistory", () => {
     it("renders a compact project conversation switcher with the active item", () => {
-        const markup = renderToStaticMarkup(
+        const markup = renderWithI18n(
             <DramaAgentHistory
                 items={[conversation("one", "第一场对话", 2), conversation("two", "第二场对话", 1)]}
                 activeId="one"

@@ -5,11 +5,13 @@ import { App, Button } from "antd";
 import { Heart } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { getWorkCommunity, setWorkLike, type WorkCommunitySummary } from "@/services/api/work-community";
 import { useUserStore } from "@/stores/use-user-store";
 
 export function PublicWorkLikeButton({ slug, initialCount = 0, compact = false, nextPath }: { slug: string; initialCount?: number; compact?: boolean; nextPath?: string }) {
+    const t = useTranslations("public.work.community");
     const router = useRouter();
     const queryClient = useQueryClient();
     const user = useUserStore((state) => state.user);
@@ -21,7 +23,7 @@ export function PublicWorkLikeButton({ slug, initialCount = 0, compact = false, 
 
     const toggleLike = async () => {
         if (!user) {
-            message.info("登录后可以点赞作品");
+            message.info(t("loginToLike"));
             router.push(`/login?next=${encodeURIComponent(nextPath || `/share/${slug}`)}`);
             return;
         }
@@ -30,9 +32,9 @@ export function PublicWorkLikeButton({ slug, initialCount = 0, compact = false, 
         try {
             const result = await setWorkLike(slug, !summary.liked);
             queryClient.setQueryData<WorkCommunitySummary>(["work-community", slug], (current) => (current ? { ...current, liked: result.active, likeCount: result.likeCount } : current));
-            message.success(result.active ? "已点赞" : "已取消点赞");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "点赞操作失败");
+            message.success(result.active ? t("liked") : t("unliked"));
+        } catch {
+            message.error(t("likeFailed"));
         } finally {
             setLoading(false);
         }
@@ -45,7 +47,7 @@ export function PublicWorkLikeButton({ slug, initialCount = 0, compact = false, 
                 className={`inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[11px] transition hover:bg-[#eef1f4] disabled:cursor-wait disabled:opacity-60 dark:hover:bg-[#252a31] ${summary?.liked ? "text-rose-500 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-300" : "text-[#8b949f] hover:text-[#20242a] dark:text-[#7f8996] dark:hover:text-white"}`}
                 disabled={!summary || loading}
                 onClick={() => void toggleLike()}
-                aria-label={summary?.liked ? "取消点赞" : "点赞作品"}
+                aria-label={summary?.liked ? t("unlike") : t("like")}
                 aria-pressed={summary?.liked || false}
             >
                 <Heart className={summary?.liked ? "size-3 fill-current" : "size-3"} />

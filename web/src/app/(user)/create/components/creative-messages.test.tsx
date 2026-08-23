@@ -1,5 +1,5 @@
 import { App } from "antd";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderWithI18n as renderToStaticMarkup } from "@/test/render-with-i18n";
 import { describe, expect, it, vi } from "vitest";
 
 import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";

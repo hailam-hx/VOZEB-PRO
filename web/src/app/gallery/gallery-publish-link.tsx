@@ -2,10 +2,12 @@
 
 import { Plus } from "lucide-react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
-export function GalleryPublishLink({ className, label = "发布作品" }: { className: string; label?: string }) {
+export function GalleryPublishLink({ className, label }: { className: string; label?: string }) {
+    const t = useTranslations("public");
     const ready = usePublicSessionStore((state) => state.ready);
     const user = usePublicSessionStore((state) => state.payload?.user);
 
@@ -14,7 +16,7 @@ export function GalleryPublishLink({ className, label = "发布作品" }: { clas
     return (
         <Link href="/works" className={className}>
             <Plus className="size-4" />
-            {label}
+            {label || t("publishWork")}
         </Link>
     );
 }
