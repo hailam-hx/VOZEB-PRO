@@ -5,7 +5,6 @@ import { BillingInputError } from "@/lib/server/billing-errors";
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
 import { assertInstallToken, InstallTokenError } from "@/lib/server/install-token";
-import { adjustPermanentPointsInAuthDb, adjustPermanentPointsInPostgresTransaction, walletClock } from "@/lib/server/points-wallet-service";
 import { bindReferralRelationshipAfterRegistration, normalizeReferralCode } from "@/lib/server/referral-service";
 import { createRegistrationPolicyConsent } from "@/lib/registration-consent";
 import { verifyAdminMfaForLogin } from "@/lib/server/admin-mfa-service";
@@ -19,12 +18,8 @@ import {
     hashToken,
     normalizeDisplayName,
     normalizeEmail,
-    normalizePoints,
     normalizeUsername,
     randomNumericCode,
-    resolveDefaultPlan,
-    resolveInitialUserPoints,
-    resolvePlanById,
     validateEmail,
     validatePassword,
     validateUsername,
@@ -70,8 +65,7 @@ export async function createUser(input: { username: string; email?: string; emai
                 role: "user",
                 adminPermissions: [],
                 status: "active",
-                planId: resolveDefaultPlan(settings.entitlements).id,
-                pointsBalance: 0,
+                settledBalance: "0",
                 passwordHash: await hashPassword(input.password),
                 registrationConsent: createRegistrationPolicyConsent(
                     {
@@ -101,7 +95,7 @@ export async function createUser(input: { username: string; email?: string; emai
             }
             const record = (await repos.users.getPublicDetails([user.id], { now, date: clock.date }))[0];
             if (!record) throw new AuthInputError("用户创建失败");
-            return { ok: true as const, user: publicUserFromAuthenticatedRecord(record, clock.expiresAt) };
+            return { ok: true as const, user: publicUserFromAuthenticatedRecord(record) };
         });
         if (!outcome.ok) throw outcome.error;
         return outcome.user;
@@ -127,8 +121,7 @@ export async function createUser(input: { username: string; email?: string; emai
             role: "user",
             adminPermissions: [],
             status: "active",
-            planId: resolveDefaultPlan(db.settings.entitlements).id,
-            pointsBalance: 0,
+            settledBalance: "0",
             passwordHash: await hashPassword(input.password),
             registrationConsent: createRegistrationPolicyConsent(
                 {
@@ -169,7 +162,6 @@ export async function createFirstAdmin(input: { username: string; email?: string
             await lockAuthMutation(client);
             const repos = createPostgresRepositories(client);
             if ((await repos.users.count()) !== 0) throw new AuthInputError("项目已完成安装，禁止重复创建首个管理员", 409);
-            const settings = await readPostgresAuthSettings(client);
             assertNoIdentityConflict(await repos.users.findIdentityConflict({ username, email: email || undefined }), username, email);
             const now = clock.now.toISOString();
             const user = await repos.users.createWithNextAccountId({
@@ -181,15 +173,14 @@ export async function createFirstAdmin(input: { username: string; email?: string
                 role: "admin",
                 adminPermissions: [...ALL_ADMIN_PERMISSIONS],
                 status: "active",
-                planId: resolveDefaultPlan(settings.entitlements).id,
-                pointsBalance: 0,
+                settledBalance: "0",
                 passwordHash: await hashPassword(input.password),
                 createdAt: now,
                 updatedAt: now,
             });
             const record = (await repos.users.getPublicDetails([user.id], { now, date: clock.date }))[0];
             if (!record) throw new AuthInputError("管理员创建失败");
-            return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
+            return publicUserFromAuthenticatedRecord(record);
         });
     }
 
@@ -206,8 +197,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
             role: "admin",
             adminPermissions: [...ALL_ADMIN_PERMISSIONS],
             status: "active",
-            planId: resolveDefaultPlan(db.settings.entitlements).id,
-            pointsBalance: 0,
+            settledBalance: "0",
             passwordHash: await hashPassword(input.password),
             createdAt: now,
             updatedAt: now,
@@ -226,8 +216,6 @@ export async function createUserByAdmin(input: {
     role?: UserRole;
     adminPermissions?: AdminPermission[];
     status?: UserStatus;
-    pointsBalance?: number;
-    planId?: string;
 }) {
     const username = normalizeUsername(input.username);
     const email = normalizeEmail(input.email);
@@ -244,10 +232,7 @@ export async function createUserByAdmin(input: {
             const repos = createPostgresRepositories(client);
             const actor = await repos.users.getById(input.actorId, true);
             assertCanCreateManagedUser(actor, input);
-            const settings = await readPostgresAuthSettings(client);
             assertNoIdentityConflict(await repos.users.findIdentityConflict({ username, email: email || undefined }), username, email);
-            const plan = resolvePlanById(settings.entitlements, input.planId);
-            const pointsBalance = normalizePoints(input.pointsBalance, resolveInitialUserPoints({ settings }, plan));
             const intendedStatus = input.status === "disabled" ? "disabled" : "active";
             const now = clock.now.toISOString();
             const user = await repos.users.createWithNextAccountId({
@@ -259,26 +244,15 @@ export async function createUserByAdmin(input: {
                 role: input.role === "admin" ? "admin" : "user",
                 adminPermissions: input.role === "admin" ? normalizeAdminPermissions(input.adminPermissions) : [],
                 status: "active",
-                planId: plan.id,
-                pointsBalance: 0,
+                settledBalance: "0",
                 passwordHash: await hashPassword(input.password),
                 createdAt: now,
                 updatedAt: now,
             });
-            if (pointsBalance) {
-                await adjustPermanentPointsInPostgresTransaction(client, {
-                    userId: user.id,
-                    amount: pointsBalance,
-                    description: "管理员创建用户",
-                    idempotencyKey: `admin-create:${user.id}`,
-                    type: "admin-adjust",
-                    now: clock.now,
-                });
-            }
             if (intendedStatus !== "active") await repos.users.update(user.id, { status: intendedStatus });
             const record = (await repos.users.getPublicDetails([user.id], { now, date: clock.date }))[0];
             if (!record) throw new AuthInputError("用户创建失败");
-            return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
+            return publicUserFromAuthenticatedRecord(record);
         });
     }
 
@@ -289,8 +263,6 @@ export async function createUserByAdmin(input: {
         if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
 
         const now = new Date().toISOString();
-        const plan = resolvePlanById(db.settings.entitlements, input.planId);
-        const pointsBalance = normalizePoints(input.pointsBalance, resolveInitialUserPoints(db, plan));
         const intendedStatus = input.status === "disabled" ? "disabled" : "active";
         const user: StoredUser = {
             id: randomUUID(),
@@ -302,16 +274,14 @@ export async function createUserByAdmin(input: {
             role: input.role === "admin" ? "admin" : "user",
             adminPermissions: input.role === "admin" ? normalizeAdminPermissions(input.adminPermissions) : [],
             status: "active",
-            planId: plan.id,
-            pointsBalance: 0,
+            settledBalance: "0",
             passwordHash: await hashPassword(input.password),
             createdAt: now,
             updatedAt: now,
         };
         db.users.push(user);
-        const wallet = pointsBalance ? adjustPermanentPointsInAuthDb(db, { userId: user.id, amount: pointsBalance, description: "管理员创建用户", idempotencyKey: `admin-create:${user.id}`, now: new Date(now) }) : null;
         user.status = intendedStatus;
-        return { ...toPublicUser(user, db), pointsBalance: wallet?.snapshot.totalPoints || 0 };
+        return toPublicUser(user, db);
     });
 }
 
@@ -332,7 +302,7 @@ export async function authenticateUser(input: { username: string; password: stri
         const clock = walletClock();
         const details = await repos.users.getPublicDetails([user.id], { now: clock.now.toISOString(), date: clock.date });
         const snapshot = details[0];
-        return snapshot ? publicUserFromAuthenticatedRecord(snapshot, clock.expiresAt) : toPublicUser({ ...user, lastLoginAt });
+        return snapshot ? publicUserFromAuthenticatedRecord(snapshot) : toPublicUser({ ...user, lastLoginAt });
     }
     const db = await readAuthDb();
     const user = db.users.find((item) => item.username.toLowerCase() === account.toLowerCase() || (accountEmail && item.email?.toLowerCase() === accountEmail));
@@ -439,7 +409,7 @@ function assertNoIdentityConflict(conflict: StoredUser | null, username: string,
     if (email && conflict.email?.toLowerCase() === email.toLowerCase()) throw new AuthInputError("邮箱已被注册");
 }
 
-function assertCanCreateManagedUser(actor: StoredUser | null | undefined, input: { role?: UserRole; adminPermissions?: AdminPermission[]; pointsBalance?: number; planId?: string }) {
+function assertCanCreateManagedUser(actor: StoredUser | null | undefined, input: { role?: UserRole; adminPermissions?: AdminPermission[] }) {
     if (input.role === "admin") {
         assertAdminPermission(actor, "administrators.manage");
         const permissions = normalizeAdminPermissions(input.adminPermissions);
@@ -448,7 +418,11 @@ function assertCanCreateManagedUser(actor: StoredUser | null | undefined, input:
     } else {
         assertAdminPermission(actor, "users.manage");
     }
-    if ((Number(input.pointsBalance) || 0) !== 0 || input.planId !== undefined) assertAdminPermission(actor, "billing.manage");
+}
+
+function walletClock() {
+    const now = new Date();
+    return { now, date: now.toISOString().slice(0, 10) };
 }
 
 function assertAdminPermission(actor: StoredUser | null | undefined, permission: AdminPermission) {

@@ -573,6 +573,7 @@ CREATE TABLE IF NOT EXISTS point_records (
 CREATE INDEX IF NOT EXISTS point_records_user_created_idx ON point_records (user_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS point_records_idempotency_idx ON point_records (idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS point_records_refund_source_idx ON point_records (source_record_id) WHERE type = 'refund' AND source_record_id IS NOT NULL AND source_record_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS point_records_id_user_idx ON point_records (id, user_id);
 
 CREATE TABLE IF NOT EXISTS wallet_holds (
     id text PRIMARY KEY,
@@ -583,13 +584,17 @@ CREATE TABLE IF NOT EXISTS wallet_holds (
     status text NOT NULL DEFAULT 'active',
     description text NOT NULL,
     usage_charge_id text UNIQUE,
+    release_business_id text,
+    release_request_fingerprint text,
+    release_reason text,
     expires_at timestamptz,
     closed_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT wallet_holds_amount CHECK (amount >= 0),
     CONSTRAINT wallet_holds_status CHECK (status IN ('active', 'settled', 'released')),
-    CONSTRAINT wallet_holds_closed_state CHECK ((status = 'active' AND closed_at IS NULL) OR (status <> 'active' AND closed_at IS NOT NULL))
+    CONSTRAINT wallet_holds_closed_state CHECK ((status = 'active' AND closed_at IS NULL) OR (status <> 'active' AND closed_at IS NOT NULL)),
+    CONSTRAINT wallet_holds_release_identity CHECK ((status = 'released' AND release_business_id IS NOT NULL AND release_request_fingerprint IS NOT NULL AND release_reason IS NOT NULL) OR (status <> 'released' AND release_business_id IS NULL AND release_request_fingerprint IS NULL AND release_reason IS NULL))
 );
 
 CREATE INDEX IF NOT EXISTS wallet_holds_user_active_idx ON wallet_holds (user_id, created_at) WHERE status = 'active';
@@ -604,15 +609,16 @@ CREATE TABLE IF NOT EXISTS usage_charges (
     settled_credits numeric(30, 8) NOT NULL,
     normalized_usage jsonb NOT NULL,
     sale_rate_snapshot jsonb NOT NULL,
+    final_sale_charge jsonb NOT NULL,
     estimated boolean NOT NULL DEFAULT false,
     total_provider_cost_usd numeric(30, 12) NOT NULL DEFAULT 0,
-    margin_credits numeric(30, 12) NOT NULL,
     description text NOT NULL,
-    point_record_id text UNIQUE REFERENCES point_records(id) ON DELETE RESTRICT,
+    point_record_id text UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now(),
     settled_at timestamptz NOT NULL,
     CONSTRAINT usage_charges_amounts CHECK (reserved_credits >= 0 AND settled_credits >= 0 AND settled_credits <= reserved_credits),
-    CONSTRAINT usage_charges_ledger_link CHECK ((settled_credits = 0 AND point_record_id IS NULL) OR (settled_credits <> 0 AND point_record_id IS NOT NULL))
+    CONSTRAINT usage_charges_ledger_link CHECK ((settled_credits = 0 AND point_record_id IS NULL) OR (settled_credits <> 0 AND point_record_id IS NOT NULL)),
+    CONSTRAINT usage_charges_point_record_user_fk FOREIGN KEY (point_record_id, user_id) REFERENCES point_records(id, user_id) ON DELETE RESTRICT
 );
 
 DO $$
@@ -637,6 +643,7 @@ CREATE TABLE IF NOT EXISTS provider_usage_attempts (
     upstream_task_id text,
     native_cost_amount numeric(30, 12) NOT NULL DEFAULT 0,
     native_cost_unit jsonb NOT NULL,
+    usd_conversion_rate numeric(30, 12) NOT NULL,
     cost_usd numeric(30, 12) NOT NULL DEFAULT 0,
     cost_rate_snapshot jsonb,
     normalized_usage jsonb,

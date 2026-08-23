@@ -26,7 +26,7 @@ describe("PostgreSQL account-config auth restore", () => {
     beforeEach(() => vi.clearAllMocks());
 
     it("uses upserts and never deletes users or backup-missing auth entities", async () => {
-        const query = vi.fn(async (...args: [string]) => {
+        const query = vi.fn(async (...args: [string, unknown[]?]) => {
             void args;
             return { rows: [] };
         });
@@ -47,14 +47,15 @@ describe("PostgreSQL account-config auth restore", () => {
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z",
         });
-        db.walletHolds.push({ id: "hold-a", userId: "user-a", businessId: "generation:a", requestFingerprint: "a".repeat(64), amount: "1.25", status: "active", description: "生成预留", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" });
-        db.providerUsageAttempts.push({ id: "attempt-a", holdId: "hold-a", userId: "user-a", attemptNumber: 1, status: "failed", provider: "vendor", bindingId: "binding", requestFingerprint: "b".repeat(64), nativeCostAmount: "0.1", nativeCostUnit: { kind: "fiat", currency: "USD" }, costUsd: "0.1", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", completedAt: "2026-08-01T00:00:00.000Z" });
+        db.walletHolds.push({ id: "hold-a", userId: "user-a", businessId: "generation:a", requestFingerprint: "a".repeat(64), amount: "1.25", status: "released", description: "生成预留", releaseBusinessId: "release:a", releaseRequestFingerprint: "c".repeat(64), releaseReason: "上游失败", closedAt: "2026-08-01T00:01:00.000Z", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:01:00.000Z" });
+        db.providerUsageAttempts.push({ id: "attempt-a", holdId: "hold-a", userId: "user-a", attemptNumber: 1, status: "failed", provider: "vendor", bindingId: "binding", requestFingerprint: "b".repeat(64), nativeCostAmount: "0.1", nativeCostUnit: { kind: "fiat", currency: "USD" }, usdConversionRate: "1", costUsd: "0.1", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", completedAt: "2026-08-01T00:00:00.000Z" });
 
         await restorePostgresAuthSnapshot(client, db);
 
         expect(mocks.insertPostgresUsers).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "user-a", accountId: "0001" })]);
-        expect(mocks.insertPostgresWalletHolds).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "hold-a", amount: "1.25" })]);
+        expect(mocks.insertPostgresWalletHolds).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "hold-a", amount: "1.25", status: "active", releaseBusinessId: undefined, closedAt: undefined })]);
         expect(mocks.insertPostgresProviderUsageAttempts).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "attempt-a", nativeCostAmount: "0.1" })]);
+        expect(query.mock.calls.some(([, values]) => Array.isArray(values) && values.includes("release:a") && values.includes("c".repeat(64)))).toBe(true);
         expect(query.mock.calls.map(([sql]) => sql.toUpperCase()).some((sql) => sql.includes("DELETE FROM"))).toBe(false);
     });
 });

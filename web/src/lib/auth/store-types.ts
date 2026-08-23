@@ -64,13 +64,6 @@ export type SystemChannelAdvancedConfig = {
     operationConfigs?: Partial<Record<LogicalModelCapability, SystemChannelModelConfig>>;
 };
 
-export type LegacyUserQuota = {
-    imageDaily: number;
-    videoDaily: number;
-    textDaily: number;
-    audioDaily: number;
-};
-
 export type ModelPointCosts = Record<string, number>;
 export type PointUsageKind = "api" | "image" | "video" | "audio" | "text";
 
@@ -396,6 +389,9 @@ export type WalletHold = {
     status: WalletHoldStatus;
     description: string;
     usageChargeId?: string;
+    releaseBusinessId?: string;
+    releaseRequestFingerprint?: string;
+    releaseReason?: string;
     expiresAt?: string;
     closedAt?: string;
     createdAt: string;
@@ -411,9 +407,9 @@ export type UsageCharge = {
     settledCredits: string;
     normalizedUsage: import("@/lib/billing/pricing").NormalizedUsage;
     saleRateSnapshot: import("@/lib/billing/pricing").PricingRateCardV1;
+    finalSaleCharge: import("@/lib/billing/pricing").FinalSaleCharge;
     estimated: boolean;
     totalProviderCostUsd: string;
-    marginCredits: string;
     description: string;
     pointRecordId?: string;
     createdAt: string;
@@ -435,6 +431,7 @@ export type ProviderUsageAttempt = {
     upstreamTaskId?: string;
     nativeCostAmount: string;
     nativeCostUnit: import("@/lib/billing/money").ProviderCostUnit;
+    usdConversionRate: string;
     costUsd: string;
     costRateSnapshot?: import("@/lib/billing/pricing").PricingRateCardV1;
     normalizedUsage?: import("@/lib/billing/pricing").NormalizedUsage;

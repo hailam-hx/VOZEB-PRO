@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { decimal, type DecimalInput, type ExactDecimal } from "@/lib/billing/decimal";
 import { convertProviderCostToUsd, validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/money";
-import type { NormalizedUsage, PricingRateCardV1 } from "@/lib/billing/pricing";
+import { calculateFinalSaleCharge, type FinalSaleCharge, type NormalizedUsage, type PricingRateCardV1 } from "@/lib/billing/pricing";
 import { AuthInputError, QuotaExceededError } from "@/lib/auth/store-foundation";
 import { mutateAuthDb } from "@/lib/auth/store-repository";
 import type { AuthDatabase, ProviderUsageAttempt, ProviderUsageAttemptStatus, StoredPointRecord, UsageCharge, WalletHold } from "@/lib/auth/store-types";
@@ -28,10 +28,8 @@ export type SettleWalletHoldInput = {
     holdId: string;
     usageChargeId: string;
     requestFingerprint: string;
-    settledCredits: DecimalInput;
-    normalizedUsage: NormalizedUsage;
+    finalCharge: FinalSaleCharge;
     saleRateSnapshot: PricingRateCardV1;
-    estimated: boolean;
     description: string;
     now?: Date;
 };
@@ -140,18 +138,20 @@ export async function reserveWalletCredits(input: ReserveWalletCreditsInput) {
 export async function settleWalletHold(input: SettleWalletHoldInput) {
     const usageChargeId = requiredText(input.usageChargeId, "用量账单缺少业务 ID");
     const requestFingerprint = fingerprint(input.requestFingerprint);
-    const settledCredits = creditAmount(input.settledCredits, "结算积分");
-    if (isPostgresDatabaseEnabled()) return settlePostgresHold({ ...input, usageChargeId, requestFingerprint, settledCredits } as Omit<SettleWalletHoldInput, "settledCredits"> & { settledCredits: ExactDecimal; usageChargeId: string; requestFingerprint: string });
+    if (isPostgresDatabaseEnabled()) return settlePostgresHold({ ...input, usageChargeId, requestFingerprint });
     return mutateAuthDb((db) => {
         const existing = db.usageCharges.find((charge) => charge.id === usageChargeId);
         if (existing) {
-            assertMatchingSettlement(existing, input.holdId, requestFingerprint, settledCredits.toString());
+            assertMatchingSettlement(existing, input.holdId, requestFingerprint, input.saleRateSnapshot, input.finalCharge);
             return { charge: existing, record: existing.pointRecordId ? db.pointRecords.find((record) => record.id === existing.pointRecordId) : undefined, snapshot: snapshotFileWallet(db, existing.userId), applied: false };
         }
         const hold = db.walletHolds.find((item) => item.id === input.holdId);
         if (!hold) throw new AuthInputError("钱包预留不存在");
         activeFileUser(db, hold.userId);
         if (hold.status !== "active") throw new WalletConflictError("钱包预留已经关闭");
+        if (db.providerUsageAttempts.some((attempt) => attempt.holdId === hold.id && attempt.status === "pending")) throw new WalletConflictError("供应商尝试仍在处理中");
+        const finalCharge = validatedFinalCharge(input.saleRateSnapshot, hold.amount, input.finalCharge);
+        const settledCredits = creditAmount(finalCharge.credits, "结算积分");
         if (settledCredits.greaterThan(decimal(hold.amount))) throw new AuthInputError("结算积分不能超过预留积分");
         const currentBalance = settledBalance(db, hold.userId);
         if (settledCredits.greaterThan(currentBalance)) throw new QuotaExceededError("结算余额不足");
@@ -180,11 +180,11 @@ export async function settleWalletHold(input: SettleWalletHoldInput) {
             requestFingerprint,
             reservedCredits: hold.amount,
             settledCredits: settledCredits.toString(),
-            normalizedUsage: input.normalizedUsage,
+            normalizedUsage: finalCharge.usage,
+            finalSaleCharge: finalCharge,
             saleRateSnapshot: input.saleRateSnapshot,
-            estimated: input.estimated,
+            estimated: finalCharge.estimated,
             totalProviderCostUsd: totalProviderCostUsd.toString(),
-            marginCredits: settledCredits.minus(totalProviderCostUsd).toString(),
             description: requiredText(input.description, "用量账单缺少说明"),
             pointRecordId: record?.id,
             createdAt: now.toISOString(),
@@ -203,9 +203,9 @@ export async function settleWalletHold(input: SettleWalletHoldInput) {
 }
 
 export async function releaseWalletHold(input: ReleaseWalletHoldInput) {
-    requiredText(input.businessId, "释放预留缺少业务 ID");
-    fingerprint(input.requestFingerprint);
-    requiredText(input.reason, "释放预留缺少原因");
+    const businessId = requiredText(input.businessId, "释放预留缺少业务 ID");
+    const requestFingerprint = fingerprint(input.requestFingerprint);
+    const reason = requiredText(input.reason, "释放预留缺少原因");
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
@@ -216,19 +216,28 @@ export async function releaseWalletHold(input: ReleaseWalletHoldInput) {
             if (!user) throw new AuthInputError("用户不存在");
             const hold = await repos.pointsWallet.getHoldById(input.holdId, true);
             if (!hold) throw new AuthInputError("钱包预留不存在");
-            if (hold.status === "released") return { hold, snapshot: postgresSnapshot(user.settledBalance, await repos.pointsWallet.getActiveHeldBalance(user.id)), applied: false };
+            if (hold.status === "released") {
+                assertMatchingRelease(hold, businessId, requestFingerprint, reason);
+                return { hold, snapshot: postgresSnapshot(user.settledBalance, await repos.pointsWallet.getActiveHeldBalance(user.id)), applied: false };
+            }
             if (hold.status !== "active") throw new WalletConflictError("钱包预留已经结算");
-            const closed = await repos.pointsWallet.closeHold(hold.id, { status: "released", closedAt: (input.now || new Date()).toISOString() });
+            const closed = await repos.pointsWallet.closeHold(hold.id, { status: "released", releaseBusinessId: businessId, releaseRequestFingerprint: requestFingerprint, releaseReason: reason, closedAt: (input.now || new Date()).toISOString() });
             return { hold: closed!, snapshot: postgresSnapshot(user.settledBalance, await repos.pointsWallet.getActiveHeldBalance(user.id)), applied: true };
         });
     }
     return mutateAuthDb((db) => {
         const hold = db.walletHolds.find((item) => item.id === input.holdId);
         if (!hold) throw new AuthInputError("钱包预留不存在");
-        if (hold.status === "released") return { hold, snapshot: snapshotFileWallet(db, hold.userId), applied: false };
+        if (hold.status === "released") {
+            assertMatchingRelease(hold, businessId, requestFingerprint, reason);
+            return { hold, snapshot: snapshotFileWallet(db, hold.userId), applied: false };
+        }
         if (hold.status !== "active") throw new WalletConflictError("钱包预留已经结算");
         const now = input.now || new Date();
         hold.status = "released";
+        hold.releaseBusinessId = businessId;
+        hold.releaseRequestFingerprint = requestFingerprint;
+        hold.releaseReason = reason;
         hold.closedAt = now.toISOString();
         hold.updatedAt = now.toISOString();
         return { hold, snapshot: snapshotFileWallet(db, hold.userId), applied: true };
@@ -240,40 +249,32 @@ export async function recordProviderUsageAttempt(input: RecordProviderUsageAttem
     const requestFingerprint = fingerprint(input.requestFingerprint);
     const nativeCostAmount = costAmount(input.nativeCostAmount, "供应商原生成本");
     const nativeCostUnit = validateProviderCostUnit(input.nativeCostUnit);
+    const usdConversionRate = nativeCostUnit.kind === "provider-native" ? nativeCostUnit.usdConversion.usdPerUnit : "1";
     const costUsd = decimal(convertProviderCostToUsd(nativeCostAmount.toString(), nativeCostUnit)).roundHalfUp(12).toString();
     if (!Number.isSafeInteger(input.attemptNumber) || input.attemptNumber < 1) throw new AuthInputError("供应商尝试序号无效");
-    if (isPostgresDatabaseEnabled()) return recordPostgresProviderAttempt({ ...input, id, requestFingerprint, nativeCostAmount, nativeCostUnit, costUsd } as Omit<RecordProviderUsageAttemptInput, "nativeCostAmount"> & { id: string; requestFingerprint: string; nativeCostAmount: ExactDecimal; nativeCostUnit: ProviderCostUnit; costUsd: string });
+    if (isPostgresDatabaseEnabled()) return recordPostgresProviderAttempt({ ...input, id, requestFingerprint, nativeCostAmount, nativeCostUnit, usdConversionRate, costUsd } as Omit<RecordProviderUsageAttemptInput, "nativeCostAmount"> & { id: string; requestFingerprint: string; nativeCostAmount: ExactDecimal; nativeCostUnit: ProviderCostUnit; usdConversionRate: string; costUsd: string });
     return mutateAuthDb((db) => {
         const hold = db.walletHolds.find((item) => item.id === input.holdId);
         if (!hold) throw new AuthInputError("钱包预留不存在");
         const existing = db.providerUsageAttempts.find((attempt) => attempt.id === id);
         if (existing) {
-            if (existing.holdId !== hold.id || existing.requestFingerprint !== requestFingerprint || existing.nativeCostAmount !== nativeCostAmount.toString() || existing.costUsd !== costUsd) throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
+            assertMatchingProviderAttemptIdentity(existing, input, requestFingerprint);
+            if (existing.status === "pending" && input.status !== "pending") {
+                if (hold.status !== "active") throw new WalletConflictError("钱包预留已经关闭");
+                const now = input.now || new Date();
+                const createdAt = existing.createdAt;
+                Object.assign(existing, providerAttemptValues(input, hold.userId, id, requestFingerprint, nativeCostAmount.toString(), nativeCostUnit, usdConversionRate, costUsd, now));
+                existing.createdAt = createdAt;
+                return { attempt: existing, applied: true };
+            }
+            if (!sameProviderAttemptSnapshot(existing, input.status, nativeCostAmount.toString(), nativeCostUnit, usdConversionRate, costUsd)) throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
             return { attempt: existing, applied: false };
         }
+        if (hold.status !== "active") throw new WalletConflictError("钱包预留已经关闭");
         const duplicateNumber = db.providerUsageAttempts.find((attempt) => attempt.holdId === hold.id && attempt.attemptNumber === input.attemptNumber);
         if (duplicateNumber) throw new WalletConflictError("供应商尝试序号已经存在");
         const now = input.now || new Date();
-        const attempt: ProviderUsageAttempt = {
-            id,
-            holdId: hold.id,
-            userId: hold.userId,
-            attemptNumber: input.attemptNumber,
-            status: input.status,
-            provider: requiredText(input.provider, "供应商尝试缺少供应商"),
-            bindingId: requiredText(input.bindingId, "供应商尝试缺少绑定 ID"),
-            requestFingerprint,
-            providerIdempotencyKey: input.providerIdempotencyKey?.trim() || undefined,
-            upstreamTaskId: input.upstreamTaskId?.trim() || undefined,
-            nativeCostAmount: nativeCostAmount.toString(),
-            nativeCostUnit,
-            costUsd,
-            costRateSnapshot: input.costRateSnapshot,
-            normalizedUsage: input.normalizedUsage,
-            createdAt: now.toISOString(),
-            updatedAt: now.toISOString(),
-            completedAt: input.status === "pending" ? undefined : now.toISOString(),
-        };
+        const attempt: ProviderUsageAttempt = providerAttemptValues(input, hold.userId, id, requestFingerprint, nativeCostAmount.toString(), nativeCostUnit, usdConversionRate, costUsd, now);
         db.providerUsageAttempts.push(attempt);
         return { attempt, applied: true };
     });
@@ -347,7 +348,7 @@ async function reservePostgresWallet(input: Omit<ReserveWalletCreditsInput, "amo
     });
 }
 
-async function settlePostgresHold(input: Omit<SettleWalletHoldInput, "settledCredits"> & { usageChargeId: string; requestFingerprint: string; settledCredits: ExactDecimal }) {
+async function settlePostgresHold(input: SettleWalletHoldInput & { usageChargeId: string; requestFingerprint: string }) {
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {
         const repos = createPostgresRepositories(client);
@@ -357,41 +358,53 @@ async function settlePostgresHold(input: Omit<SettleWalletHoldInput, "settledCre
         if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
         const existing = await repos.pointsWallet.getUsageChargeById(input.usageChargeId);
         if (existing) {
-            assertMatchingSettlement(existing as UsageCharge, input.holdId, input.requestFingerprint, input.settledCredits.toString());
+            assertMatchingSettlement(existing as UsageCharge, input.holdId, input.requestFingerprint, input.saleRateSnapshot, input.finalCharge);
             return { charge: existing, record: existing.pointRecordId ? await repos.points.getRecordById(existing.pointRecordId) : undefined, snapshot: postgresSnapshot(user.settledBalance, await repos.pointsWallet.getActiveHeldBalance(user.id)), applied: false };
         }
         const hold = await repos.pointsWallet.getHoldById(input.holdId, true);
         if (!hold || hold.status !== "active") throw new WalletConflictError("钱包预留已经关闭");
-        if (input.settledCredits.greaterThan(decimal(hold.amount))) throw new AuthInputError("结算积分不能超过预留积分");
-        const nextBalance = decimal(user.settledBalance).minus(input.settledCredits);
+        if (await repos.pointsWallet.hasPendingProviderAttempts(hold.id)) throw new WalletConflictError("供应商尝试仍在处理中");
+        const finalCharge = validatedFinalCharge(input.saleRateSnapshot, hold.amount, input.finalCharge);
+        const settledCredits = creditAmount(finalCharge.credits, "结算积分");
+        if (settledCredits.greaterThan(decimal(hold.amount))) throw new AuthInputError("结算积分不能超过预留积分");
+        const nextBalance = decimal(user.settledBalance).minus(settledCredits);
         if (nextBalance.isNegative()) throw new QuotaExceededError("结算余额不足");
         const now = input.now || new Date();
         const totalProviderCostUsd = decimal(await repos.pointsWallet.getTotalProviderCostUsd(hold.id));
         let record;
-        if (!input.settledCredits.isZero()) {
-            record = await repos.points.addRecord({ id: randomUUID(), userId: user.id, type: "consume", amount: `-${input.settledCredits.toString()}`, balanceAfter: nextBalance.toString(), description: requiredText(input.description, "用量账单缺少说明"), idempotencyKey: input.usageChargeId, requestFingerprint: input.requestFingerprint, createdAt: now.toISOString() });
+        if (!settledCredits.isZero()) {
+            record = await repos.points.addRecord({ id: randomUUID(), userId: user.id, type: "consume", amount: `-${settledCredits.toString()}`, balanceAfter: nextBalance.toString(), description: requiredText(input.description, "用量账单缺少说明"), idempotencyKey: input.usageChargeId, requestFingerprint: input.requestFingerprint, createdAt: now.toISOString() });
         }
-        const charge = await repos.pointsWallet.createUsageCharge({ id: input.usageChargeId, userId: user.id, holdId: hold.id, requestFingerprint: input.requestFingerprint, reservedCredits: hold.amount, settledCredits: input.settledCredits.toString(), normalizedUsage: input.normalizedUsage, saleRateSnapshot: input.saleRateSnapshot, estimated: input.estimated, totalProviderCostUsd: totalProviderCostUsd.toString(), marginCredits: input.settledCredits.minus(totalProviderCostUsd).toString(), description: requiredText(input.description, "用量账单缺少说明"), pointRecordId: record?.id, createdAt: now.toISOString(), settledAt: now.toISOString() });
+        const charge = await repos.pointsWallet.createUsageCharge({ id: input.usageChargeId, userId: user.id, holdId: hold.id, requestFingerprint: input.requestFingerprint, reservedCredits: hold.amount, settledCredits: settledCredits.toString(), normalizedUsage: finalCharge.usage, saleRateSnapshot: input.saleRateSnapshot, finalSaleCharge: finalCharge, estimated: finalCharge.estimated, totalProviderCostUsd: totalProviderCostUsd.toString(), description: requiredText(input.description, "用量账单缺少说明"), pointRecordId: record?.id, createdAt: now.toISOString(), settledAt: now.toISOString() });
         if (!(await repos.pointsWallet.closeHold(hold.id, { status: "settled", usageChargeId: charge.id, closedAt: now.toISOString() }))) throw new WalletConflictError("钱包预留已经关闭");
         if (!(await repos.users.update(user.id, { settledBalance: nextBalance.toString() }))) throw new AuthInputError("用户不存在");
         return { charge, record, snapshot: postgresSnapshot(nextBalance.toString(), await repos.pointsWallet.getActiveHeldBalance(user.id)), applied: true };
     });
 }
 
-async function recordPostgresProviderAttempt(input: Omit<RecordProviderUsageAttemptInput, "nativeCostAmount"> & { id: string; requestFingerprint: string; nativeCostAmount: ExactDecimal; nativeCostUnit: ProviderCostUnit; costUsd: string }) {
+async function recordPostgresProviderAttempt(input: Omit<RecordProviderUsageAttemptInput, "nativeCostAmount"> & { id: string; requestFingerprint: string; nativeCostAmount: ExactDecimal; nativeCostUnit: ProviderCostUnit; usdConversionRate: string; costUsd: string }) {
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {
         const repos = createPostgresRepositories(client);
-        const hold = await repos.pointsWallet.getHoldById(input.holdId);
+        const hold = await repos.pointsWallet.getHoldById(input.holdId, true);
         if (!hold) throw new AuthInputError("钱包预留不存在");
         const existing = await repos.pointsWallet.getProviderAttemptById(input.id);
         if (existing) {
-            if (existing.holdId !== hold.id || existing.requestFingerprint !== input.requestFingerprint || existing.nativeCostAmount !== input.nativeCostAmount.toString() || existing.costUsd !== input.costUsd) throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
+            assertMatchingProviderAttemptIdentity(existing, input, input.requestFingerprint);
+            if (existing.status === "pending" && input.status !== "pending") {
+                if (hold.status !== "active") throw new WalletConflictError("钱包预留已经关闭");
+                const now = input.now || new Date();
+                const updated = await repos.pointsWallet.updatePendingProviderAttempt(existing.id, providerAttemptValues(input, hold.userId, input.id, input.requestFingerprint, input.nativeCostAmount.toString(), input.nativeCostUnit, input.usdConversionRate, input.costUsd, now));
+                if (!updated) throw new WalletConflictError("供应商尝试状态已经变更");
+                return { attempt: updated, applied: true };
+            }
+            if (!sameProviderAttemptSnapshot(existing, input.status, input.nativeCostAmount.toString(), input.nativeCostUnit, input.usdConversionRate, input.costUsd)) throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
             return { attempt: existing, applied: false };
         }
+        if (hold.status !== "active") throw new WalletConflictError("钱包预留已经关闭");
         if (await repos.pointsWallet.getProviderAttemptByNumber(hold.id, input.attemptNumber)) throw new WalletConflictError("供应商尝试序号已经存在");
         const now = input.now || new Date();
-        const attempt = await repos.pointsWallet.createProviderAttempt({ id: input.id, holdId: hold.id, userId: hold.userId, attemptNumber: input.attemptNumber, status: input.status, provider: requiredText(input.provider, "供应商尝试缺少供应商"), bindingId: requiredText(input.bindingId, "供应商尝试缺少绑定 ID"), requestFingerprint: input.requestFingerprint, providerIdempotencyKey: input.providerIdempotencyKey?.trim() || undefined, upstreamTaskId: input.upstreamTaskId?.trim() || undefined, nativeCostAmount: input.nativeCostAmount.toString(), nativeCostUnit: input.nativeCostUnit, costUsd: input.costUsd, costRateSnapshot: input.costRateSnapshot, normalizedUsage: input.normalizedUsage, createdAt: now.toISOString(), updatedAt: now.toISOString(), completedAt: input.status === "pending" ? undefined : now.toISOString() });
+        const attempt = await repos.pointsWallet.createProviderAttempt(providerAttemptValues(input, hold.userId, input.id, input.requestFingerprint, input.nativeCostAmount.toString(), input.nativeCostUnit, input.usdConversionRate, input.costUsd, now));
         return { attempt, applied: true };
     });
 }
@@ -471,8 +484,76 @@ function requiredText(value: string, message: string) {
     return normalized;
 }
 
-function assertMatchingSettlement(charge: UsageCharge, holdId: string, requestFingerprint: string, settledCredits: string) {
-    if (charge.holdId !== holdId || charge.requestFingerprint !== requestFingerprint || charge.settledCredits !== settledCredits) throw new WalletConflictError("用量账单业务 ID 对应的结算参数不一致");
+function validatedFinalCharge(rateCard: PricingRateCardV1, reservedCredits: string, supplied: FinalSaleCharge) {
+    if (!supplied || typeof supplied !== "object") throw new AuthInputError("结算快照无效");
+    const reserve = { credits: reservedCredits, rawCredits: reservedCredits, usage: supplied.usage };
+    const calculated = calculateFinalSaleCharge({
+        rateCard,
+        reserve,
+        ...(supplied.usage?.source === "actual" ? { actualUsage: supplied.usage } : {}),
+        ...(supplied.usage?.source === "derived" ? { derivedUsage: supplied.usage } : {}),
+    });
+    if (
+        calculated.credits !== supplied.credits
+        || calculated.uncappedCredits !== supplied.uncappedCredits
+        || calculated.platformLossCredits !== supplied.platformLossCredits
+        || calculated.estimated !== supplied.estimated
+        || calculated.capped !== supplied.capped
+        || JSON.stringify(calculated.usage) !== JSON.stringify(supplied.usage)
+    ) throw new AuthInputError("结算快照与售卖价格不一致");
+    return calculated;
+}
+
+function assertMatchingSettlement(charge: UsageCharge, holdId: string, requestFingerprint: string, saleRateSnapshot: PricingRateCardV1, finalCharge: FinalSaleCharge) {
+    if (charge.holdId !== holdId || charge.requestFingerprint !== requestFingerprint || JSON.stringify(charge.saleRateSnapshot) !== JSON.stringify(saleRateSnapshot) || JSON.stringify(charge.finalSaleCharge) !== JSON.stringify(validatedFinalCharge(charge.saleRateSnapshot, charge.reservedCredits, finalCharge))) throw new WalletConflictError("用量账单业务 ID 对应的结算参数不一致");
+}
+
+function assertMatchingRelease(hold: WalletHold, businessId: string, requestFingerprint: string, reason: string) {
+    if (hold.releaseBusinessId !== businessId || hold.releaseRequestFingerprint !== requestFingerprint || hold.releaseReason !== reason) throw new WalletConflictError("释放预留业务 ID 对应的请求参数不一致");
+}
+
+function assertMatchingProviderAttemptIdentity(existing: ProviderUsageAttempt, input: Pick<RecordProviderUsageAttemptInput, "holdId" | "attemptNumber" | "provider" | "bindingId">, requestFingerprint: string) {
+    if (existing.holdId !== input.holdId || existing.attemptNumber !== input.attemptNumber || existing.provider !== requiredText(input.provider, "供应商尝试缺少供应商") || existing.bindingId !== requiredText(input.bindingId, "供应商尝试缺少绑定 ID") || existing.requestFingerprint !== requestFingerprint) {
+        throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
+    }
+}
+
+function sameProviderAttemptSnapshot(existing: ProviderUsageAttempt, status: ProviderUsageAttemptStatus, nativeCostAmount: string, nativeCostUnit: ProviderCostUnit, usdConversionRate: string, costUsd: string) {
+    return existing.status === status && existing.nativeCostAmount === nativeCostAmount && JSON.stringify(existing.nativeCostUnit) === JSON.stringify(nativeCostUnit) && existing.usdConversionRate === usdConversionRate && existing.costUsd === costUsd;
+}
+
+function providerAttemptValues(
+    input: Omit<RecordProviderUsageAttemptInput, "nativeCostAmount">,
+    userId: string,
+    id: string,
+    requestFingerprint: string,
+    nativeCostAmount: string,
+    nativeCostUnit: ProviderCostUnit,
+    usdConversionRate: string,
+    costUsd: string,
+    now: Date,
+): ProviderUsageAttempt {
+    return {
+        id,
+        holdId: input.holdId,
+        userId,
+        attemptNumber: input.attemptNumber,
+        status: input.status,
+        provider: requiredText(input.provider, "供应商尝试缺少供应商"),
+        bindingId: requiredText(input.bindingId, "供应商尝试缺少绑定 ID"),
+        requestFingerprint,
+        providerIdempotencyKey: input.providerIdempotencyKey?.trim() || undefined,
+        upstreamTaskId: input.upstreamTaskId?.trim() || undefined,
+        nativeCostAmount,
+        nativeCostUnit,
+        usdConversionRate,
+        costUsd,
+        costRateSnapshot: input.costRateSnapshot,
+        normalizedUsage: input.normalizedUsage,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        completedAt: input.status === "pending" ? undefined : now.toISOString(),
+    };
 }
 
 function assertMatchingCredit(record: StoredPointRecord, userId: string, amount: string, type: StoredPointRecord["type"]) {

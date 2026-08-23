@@ -43,7 +43,7 @@ export async function restorePostgresAuthSnapshot(client: QueryExecutor, db: Aut
         normalized.pointRecords.filter((record) => userIds.has(record.userId)),
     );
     const holds = normalized.walletHolds.filter((hold) => userIds.has(hold.userId));
-    await insertPostgresWalletHolds(client, holds.map((hold) => ({ ...hold, status: "active", usageChargeId: undefined, closedAt: undefined })));
+    await insertPostgresWalletHolds(client, holds.map((hold) => ({ ...hold, status: "active", usageChargeId: undefined, releaseBusinessId: undefined, releaseRequestFingerprint: undefined, releaseReason: undefined, closedAt: undefined })));
     await insertPostgresProviderUsageAttempts(client, normalized.providerUsageAttempts.filter((attempt) => userIds.has(attempt.userId)));
     await insertPostgresUsageCharges(client, normalized.usageCharges.filter((charge) => userIds.has(charge.userId)));
     const walletRepository = (await import("@/lib/server/database")).createPostgresRepositories(client).pointsWallet;
@@ -51,6 +51,9 @@ export async function restorePostgresAuthSnapshot(client: QueryExecutor, db: Aut
         await walletRepository.closeHold(hold.id, {
             status: hold.status === "settled" ? "settled" : "released",
             usageChargeId: hold.usageChargeId,
+            releaseBusinessId: hold.releaseBusinessId,
+            releaseRequestFingerprint: hold.releaseRequestFingerprint,
+            releaseReason: hold.releaseReason,
             closedAt: hold.closedAt!,
         });
     }

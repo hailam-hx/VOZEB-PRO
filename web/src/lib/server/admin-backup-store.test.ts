@@ -89,7 +89,7 @@ describe("admin backup store", () => {
         await restoreAdminBackupData(imported);
 
         expect(String(mocks.client.query.mock.calls[0]?.[0])).toContain("LOCK TABLE");
-        expect(mocks.restorePostgresAuthSnapshot).toHaveBeenCalledWith(mocks.client, expect.objectContaining({ users: [expect.objectContaining({ id: "user-a", pointsBalance: 99 }), expect.objectContaining({ id: "user-b", pointsBalance: 20 })] }));
+        expect(mocks.restorePostgresAuthSnapshot).toHaveBeenCalledWith(mocks.client, expect.objectContaining({ users: [expect.objectContaining({ id: "user-a", settledBalance: "99" }), expect.objectContaining({ id: "user-b", settledBalance: "20" })] }));
         expect(mocks.upsertPostgresPromptDbWithExecutor).toHaveBeenCalledWith(expect.objectContaining({ prompts: [expect.objectContaining({ id: "prompt-b" }), expect.objectContaining({ id: "prompt-a" })] }), mocks.client);
     });
 
@@ -149,7 +149,7 @@ function emptyBackup(): AdminBackupData {
     };
 }
 
-function storedUser(id: string, pointsBalance: number): StoredUser {
+function storedUser(id: string, settledBalance: number): StoredUser {
     return {
         id,
         accountId: id === "user-a" ? "1" : "2",
@@ -160,8 +160,7 @@ function storedUser(id: string, pointsBalance: number): StoredUser {
         role: id === "user-a" ? ("admin" as const) : ("user" as const),
         adminPermissions: id === "user-a" ? ["system.manage"] : [],
         status: "active" as const,
-        planId: "free",
-        pointsBalance,
+        settledBalance: String(settledBalance),
         passwordHash: `${id}-hash`,
         createdAt: "2026-08-01T00:00:00.000Z",
         updatedAt: "2026-08-01T00:00:00.000Z",

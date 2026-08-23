@@ -10,7 +10,6 @@ import {
     type ApiCallFormat,
     type SystemChannelProtocol,
     type SystemChannelAdvancedConfig,
-    type LegacyUserQuota,
     type ModelPointCosts,
     type PointUsageKind,
     type SystemModelChannel,
@@ -112,7 +111,6 @@ import {
     normalizeMultiplierMap,
     resolveModelPointCost,
     buildPointRecordDescription,
-    legacyQuotaToPoints,
     normalizeQuotaUsage,
     toPublicCdkCode,
     isCdkCodeExpired,
@@ -387,15 +385,15 @@ export function mapPostgresPointRecord(row: Record<string, unknown>): StoredPoin
 }
 
 export function mapPostgresWalletHold(row: Record<string, unknown>): WalletHold {
-    return { id: dbText(row.id), userId: dbText(row.user_id), businessId: dbText(row.business_id), requestFingerprint: dbText(row.request_fingerprint), amount: dbText(row.amount), status: row.status === "settled" || row.status === "released" ? row.status : "active", description: dbText(row.description), usageChargeId: dbOptionalText(row.usage_charge_id), expiresAt: dbOptionalIso(row.expires_at), closedAt: dbOptionalIso(row.closed_at), createdAt: dbIso(row.created_at), updatedAt: dbIso(row.updated_at) };
+    return { id: dbText(row.id), userId: dbText(row.user_id), businessId: dbText(row.business_id), requestFingerprint: dbText(row.request_fingerprint), amount: dbText(row.amount), status: row.status === "settled" || row.status === "released" ? row.status : "active", description: dbText(row.description), usageChargeId: dbOptionalText(row.usage_charge_id), releaseBusinessId: dbOptionalText(row.release_business_id), releaseRequestFingerprint: dbOptionalText(row.release_request_fingerprint), releaseReason: dbOptionalText(row.release_reason), expiresAt: dbOptionalIso(row.expires_at), closedAt: dbOptionalIso(row.closed_at), createdAt: dbIso(row.created_at), updatedAt: dbIso(row.updated_at) };
 }
 
 export function mapPostgresUsageCharge(row: Record<string, unknown>): UsageCharge {
-    return { id: dbText(row.id), userId: dbText(row.user_id), holdId: dbText(row.hold_id), requestFingerprint: dbText(row.request_fingerprint), reservedCredits: dbText(row.reserved_credits), settledCredits: dbText(row.settled_credits), normalizedUsage: dbJson(row.normalized_usage, {}) as UsageCharge["normalizedUsage"], saleRateSnapshot: dbJson(row.sale_rate_snapshot, {}) as UsageCharge["saleRateSnapshot"], estimated: row.estimated === true, totalProviderCostUsd: dbText(row.total_provider_cost_usd), marginCredits: dbText(row.margin_credits), description: dbText(row.description), pointRecordId: dbOptionalText(row.point_record_id), createdAt: dbIso(row.created_at), settledAt: dbIso(row.settled_at) };
+    return { id: dbText(row.id), userId: dbText(row.user_id), holdId: dbText(row.hold_id), requestFingerprint: dbText(row.request_fingerprint), reservedCredits: dbText(row.reserved_credits), settledCredits: dbText(row.settled_credits), normalizedUsage: dbJson(row.normalized_usage, {}) as UsageCharge["normalizedUsage"], saleRateSnapshot: dbJson(row.sale_rate_snapshot, {}) as UsageCharge["saleRateSnapshot"], finalSaleCharge: dbJson(row.final_sale_charge, {}) as UsageCharge["finalSaleCharge"], estimated: row.estimated === true, totalProviderCostUsd: dbText(row.total_provider_cost_usd), description: dbText(row.description), pointRecordId: dbOptionalText(row.point_record_id), createdAt: dbIso(row.created_at), settledAt: dbIso(row.settled_at) };
 }
 
 export function mapPostgresProviderUsageAttempt(row: Record<string, unknown>): ProviderUsageAttempt {
-    return { id: dbText(row.id), holdId: dbText(row.hold_id), userId: dbText(row.user_id), attemptNumber: dbNumber(row.attempt_number, 0), status: row.status === "succeeded" || row.status === "failed" || row.status === "canceled" ? row.status : "pending", provider: dbText(row.provider), bindingId: dbText(row.binding_id), requestFingerprint: dbText(row.request_fingerprint), providerIdempotencyKey: dbOptionalText(row.provider_idempotency_key), upstreamTaskId: dbOptionalText(row.upstream_task_id), nativeCostAmount: dbText(row.native_cost_amount), nativeCostUnit: dbJson(row.native_cost_unit, {}) as ProviderUsageAttempt["nativeCostUnit"], costUsd: dbText(row.cost_usd), costRateSnapshot: dbJson(row.cost_rate_snapshot, undefined) as ProviderUsageAttempt["costRateSnapshot"], normalizedUsage: dbJson(row.normalized_usage, undefined) as ProviderUsageAttempt["normalizedUsage"], createdAt: dbIso(row.created_at), updatedAt: dbIso(row.updated_at), completedAt: dbOptionalIso(row.completed_at) };
+    return { id: dbText(row.id), holdId: dbText(row.hold_id), userId: dbText(row.user_id), attemptNumber: dbNumber(row.attempt_number, 0), status: row.status === "succeeded" || row.status === "failed" || row.status === "canceled" ? row.status : "pending", provider: dbText(row.provider), bindingId: dbText(row.binding_id), requestFingerprint: dbText(row.request_fingerprint), providerIdempotencyKey: dbOptionalText(row.provider_idempotency_key), upstreamTaskId: dbOptionalText(row.upstream_task_id), nativeCostAmount: dbText(row.native_cost_amount), nativeCostUnit: dbJson(row.native_cost_unit, {}) as ProviderUsageAttempt["nativeCostUnit"], usdConversionRate: dbText(row.usd_conversion_rate), costUsd: dbText(row.cost_usd), costRateSnapshot: dbJson(row.cost_rate_snapshot, undefined) as ProviderUsageAttempt["costRateSnapshot"], normalizedUsage: dbJson(row.normalized_usage, undefined) as ProviderUsageAttempt["normalizedUsage"], createdAt: dbIso(row.created_at), updatedAt: dbIso(row.updated_at), completedAt: dbOptionalIso(row.completed_at) };
 }
 
 export function mapPostgresEmailCode(row: Record<string, unknown>): StoredEmailCode {
@@ -652,17 +650,17 @@ export async function insertPostgresPointRecords(db: QueryExecutor, records: Sto
 
 export async function insertPostgresWalletHolds(db: QueryExecutor, holds: WalletHold[]) {
     const repository = createPostgresRepositories(db).pointsWallet;
-    for (const hold of holds) await repository.createHold(hold);
+    for (const hold of holds) await repository.upsertHoldForRestore(hold);
 }
 
 export async function insertPostgresUsageCharges(db: QueryExecutor, charges: UsageCharge[]) {
     const repository = createPostgresRepositories(db).pointsWallet;
-    for (const charge of charges) await repository.createUsageCharge(charge);
+    for (const charge of charges) await repository.upsertUsageChargeForRestore(charge);
 }
 
 export async function insertPostgresProviderUsageAttempts(db: QueryExecutor, attempts: ProviderUsageAttempt[]) {
     const repository = createPostgresRepositories(db).pointsWallet;
-    for (const attempt of attempts) await repository.createProviderAttempt(attempt);
+    for (const attempt of attempts) await repository.upsertProviderAttemptForRestore(attempt);
 }
 
 export async function insertPostgresCdkCodes(db: QueryExecutor, codes: StoredCdkCode[]) {

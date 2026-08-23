@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { createPostgresRepositories, ensurePostgresSchema } from "@/lib/server/database";
 
-import { creditWalletBalance, getWalletSnapshot, reconcileWallet, reserveWalletCredits, settleWalletHold, type SettleWalletHoldInput } from "./points-wallet-service";
+import { creditWalletBalance, getWalletSnapshot, reconcileWallet, recordProviderUsageAttempt, reserveWalletCredits, settleWalletHold, type SettleWalletHoldInput } from "./points-wallet-service";
 
 const postgresIt = process.env.VOZEB_PRO_RUN_POSTGRES_INTEGRATION === "1" ? it : it.skip;
 
@@ -42,7 +42,7 @@ describe("PostgreSQL prepaid wallet persistence", () => {
             await repositories.users.createWithNextAccountId({ id: userId, username: `settle_${suffix.replaceAll("-", "").slice(0, 16)}`, displayName: "钱包结算测试用户", bio: "", role: "user", adminPermissions: [], status: "active", settledBalance: "0", passwordHash: "integration-test-only", createdAt: now.toISOString(), updatedAt: now.toISOString() });
             await creditWalletBalance({ userId, amount: "2.75", businessId: `topup:${suffix}`, description: "测试充值", now });
             const reservation = await reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "c".repeat(64), amount: "1.23456789", description: "小数预留", now });
-            const input: SettleWalletHoldInput = { holdId: reservation.hold.id, usageChargeId: `charge:${suffix}`, requestFingerprint: "d".repeat(64), settledCredits: "1.125", normalizedUsage: { capability: "image", source: "actual", count: "1" }, saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1.125" }] }, estimated: false, description: "小数结算", now };
+            const input: SettleWalletHoldInput = { holdId: reservation.hold.id, usageChargeId: `charge:${suffix}`, requestFingerprint: "d".repeat(64), finalCharge: { credits: "1.125", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1.125", platformLossCredits: "0" }, saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1.125" }] }, description: "小数结算", now };
 
             const first = await settleWalletHold(input);
             const replay = await settleWalletHold(input);
@@ -50,6 +50,51 @@ describe("PostgreSQL prepaid wallet persistence", () => {
             expect(first.applied).toBe(true);
             expect(replay.applied).toBe(false);
             expect(await reconcileWallet(userId)).toEqual({ userId, ledgerBalance: "1.625", settledBalance: "1.625", activeHolds: "0", availableBalance: "1.625", issues: [] });
+        } finally {
+            await repositories.users.delete(userId);
+        }
+    });
+
+    postgresIt("upserts non-empty wallet backup rows and enforces same-user charge linkage", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const userId = `wallet-restore-${suffix}`;
+        const otherUserId = `wallet-restore-other-${suffix}`;
+        const now = new Date().toISOString();
+        try {
+            for (const [id, name] of [[userId, "restore"], [otherUserId, "restore_other"]] as const) await repositories.users.createWithNextAccountId({ id, username: `${name}_${suffix.replaceAll("-", "").slice(0, 12)}`, displayName: "钱包恢复测试用户", bio: "", role: "user", adminPermissions: [], status: "active", settledBalance: "0", passwordHash: "integration-test-only", createdAt: now, updatedAt: now });
+            const hold = { id: `hold:${suffix}`, userId, businessId: `restore:${suffix}`, requestFingerprint: "e".repeat(64), amount: "1.125", status: "active" as const, description: "恢复预留", createdAt: now, updatedAt: now };
+            await repositories.pointsWallet.upsertHoldForRestore(hold);
+            await repositories.pointsWallet.upsertHoldForRestore({ ...hold, description: "重复恢复预留" });
+            expect(await repositories.pointsWallet.getHoldById(hold.id)).toMatchObject({ description: "重复恢复预留", amount: "1.125" });
+
+            const foreignRecord = await repositories.points.addRecord({ id: `record:${suffix}`, userId: otherUserId, type: "credit", amount: "0.5", balanceAfter: "0.5", description: "其他用户流水", createdAt: now });
+            await expect(repositories.pointsWallet.createUsageCharge({ id: `charge:${suffix}`, userId, holdId: hold.id, requestFingerprint: "f".repeat(64), reservedCredits: "1.125", settledCredits: "0.5", normalizedUsage: { capability: "image", source: "actual", count: "1" }, saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "0.5" }] }, finalSaleCharge: { credits: "0.5", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "0.5", platformLossCredits: "0" }, estimated: false, totalProviderCostUsd: "0", description: "错误跨用户关联", pointRecordId: foreignRecord.id, createdAt: now, settledAt: now })).rejects.toThrow();
+        } finally {
+            await repositories.users.delete(userId);
+            await repositories.users.delete(otherUserId);
+        }
+    });
+
+    postgresIt("serializes provider completion with settlement without dropping terminal cost", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const userId = `wallet-attempt-race-${suffix}`;
+        const now = new Date();
+        try {
+            await repositories.users.createWithNextAccountId({ id: userId, username: `attempt_${suffix.replaceAll("-", "").slice(0, 12)}`, displayName: "尝试并发测试用户", bio: "", role: "user", adminPermissions: [], status: "active", settledBalance: "0", passwordHash: "integration-test-only", createdAt: now.toISOString(), updatedAt: now.toISOString() });
+            await creditWalletBalance({ userId, amount: "2", businessId: `topup:${suffix}`, description: "并发测试充值", now });
+            const reservation = await reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "1".repeat(64), amount: "1", description: "并发尝试预留", now });
+            const pending = { id: `attempt:${suffix}`, holdId: reservation.hold.id, attemptNumber: 1, status: "pending" as const, provider: "vendor", bindingId: "binding", requestFingerprint: "2".repeat(64), nativeCostAmount: "0", nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const }, now };
+            await recordProviderUsageAttempt(pending);
+            const settlement: SettleWalletHoldInput = { holdId: reservation.hold.id, usageChargeId: `charge:${suffix}`, requestFingerprint: "3".repeat(64), finalCharge: { credits: "1", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" }, saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1" }] }, description: "并发尝试结算", now };
+
+            const [settlementResult, completionResult] = await Promise.allSettled([settleWalletHold(settlement), recordProviderUsageAttempt({ ...pending, status: "failed", nativeCostAmount: "0.4" })]);
+            expect(completionResult.status).toBe("fulfilled");
+            const finalSettlement = settlementResult.status === "fulfilled" ? settlementResult.value : await settleWalletHold(settlement);
+            expect(finalSettlement.charge).toMatchObject({ settledCredits: "1", totalProviderCostUsd: "0.4" });
         } finally {
             await repositories.users.delete(userId);
         }

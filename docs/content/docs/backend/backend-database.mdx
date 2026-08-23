@@ -48,9 +48,9 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_email_codes`：注册、换绑邮箱、找回密码验证码及失败尝试次数。
 - `vozeb_pro_quota_usage`：按用户、日期和生成能力保存每日积分与次数占用；套餐关闭但生成成本保护启用时仍会写入，以便按用户和全站聚合实际积分成本，退款会原子回退对应日期的占用。
 - `vozeb_pro_point_records`：已结算余额流水。`amount` 和 `balance_after` 使用 `numeric(30,8)`，金额不得为零；只记录真实的入账、退款、管理员调整和已结算消费，不记录预留。
-- `vozeb_pro_wallet_holds`：独立积分预留，使用稳定业务 ID、请求指纹和 `numeric(30,8)` 金额保证幂等；状态为 `active/settled/released`，只有 `active` 记录计入 held balance。预留、余额检查和用户行锁在同一事务完成。
-- `vozeb_pro_usage_charges`：一次用量结算审计，保存规范化用量、售卖费率快照、预留/结算积分、所有供应商尝试的总美元成本和毛利快照。非零结算必须唯一关联一条消费流水，零结算不得关联流水。
-- `vozeb_pro_provider_usage_attempts`：每次上游调用尝试，包含失败尝试；原生成本与美元成本使用 `numeric(30,12)`，并保存原生计价单位、成本费率快照、规范化用量、供应商任务 ID 和尝试终态。
+- `vozeb_pro_wallet_holds`：独立积分预留，使用稳定业务 ID、请求指纹和 `numeric(30,8)` 金额保证幂等；状态为 `active/settled/released`，只有 `active` 记录计入 held balance。预留、余额检查和用户行锁在同一事务完成；释放身份、指纹和原因随关闭状态持久化，冲突重放会被拒绝。
+- `vozeb_pro_usage_charges`：一次用量结算审计，保存 Task 1 权威最终售卖结算、规范化用量、售卖费率快照、预留/结算积分和所有供应商尝试的总美元成本。积分和美元不直接相减；非零结算必须通过同用户复合外键唯一关联一条消费流水，零结算不得关联流水。
+- `vozeb_pro_provider_usage_attempts`：每次上游调用尝试，包含失败尝试；原生成本、显式 USD 转换率和美元成本使用 `numeric(30,12)`，并保存原生计价单位、版本元数据、成本费率快照、规范化用量、供应商任务 ID 和尝试终态。尝试写入与结算在同一 hold 行锁上串行化，pending 只允许一次转为终态，关闭后不接受新尝试。
 - `vozeb_pro_billing_products`：可售卖套餐商品，分别记录一次性永久积分、套餐有效期内每日赠送积分、价格、生效周期和上下架状态。
 - `vozeb_pro_promotion_campaigns` / `vozeb_pro_promotion_products`：限时促销活动及商品活动价；有效区间使用 `[starts_at, ends_at)`，活动价必须低于商品日常价，同一商品的启用活动不得时间重叠。
 - `vozeb_pro_coupon_templates` / `vozeb_pro_coupon_template_products`：固定金额或比例优惠券模板及适用商品，保存门槛、封顶、是否叠加活动、领取开关、发行总量、每用户限领、有效期和发行/核销计数。

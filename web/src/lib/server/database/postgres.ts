@@ -88,6 +88,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "point_records_user_created_idx",
     "point_records_idempotency_idx",
     "point_records_refund_source_idx",
+    "point_records_id_user_idx",
     "wallet_holds_user_active_idx",
     "wallet_holds_expires_idx",
     "usage_charges_user_settled_idx",

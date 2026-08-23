@@ -14,7 +14,6 @@ import { normalizeSystemChannelAdvancedConfig } from "./store-normalizers-channe
 import {
     type UserRole,
     type UserStatus,
-    type LegacyUserQuota,
     type ModelPointCosts,
     type PointUsageKind,
     type SystemModelChannel,
@@ -62,7 +61,6 @@ import {
     SESSION_MAX_AGE_SECONDS,
     EMAIL_CODE_MAX_AGE_MS,
     EMAIL_CODE_RESEND_COOLDOWN_MS,
-    DEFAULT_USER_POINTS,
     DEFAULT_SITE_SETTINGS,
     DEFAULT_MAIL_SETTINGS,
     DEFAULT_GENERATION_POINT_MULTIPLIERS,
@@ -83,21 +81,32 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
     let nextGeneratedAccountId = 1;
     const users = Array.isArray(db.users)
         ? db.users.map((user) => {
-              const legacyUser = user as Partial<StoredUser> & { quota?: Partial<LegacyUserQuota> };
+              const candidate = user as Partial<StoredUser>;
               const role = user.role === "admin" ? "admin" : "user";
-              const requestedAccountId = parseAccountId(legacyUser.accountId);
+              const requestedAccountId = parseAccountId(candidate.accountId);
               while (usedAccountIds.has(nextGeneratedAccountId)) nextGeneratedAccountId += 1;
               const accountId = requestedAccountId && !usedAccountIds.has(requestedAccountId) ? requestedAccountId : nextGeneratedAccountId;
               usedAccountIds.add(accountId);
               nextGeneratedAccountId = Math.max(nextGeneratedAccountId, accountId + 1);
               return {
-                  ...user,
+                  id: typeof candidate.id === "string" ? candidate.id : "",
+                  username: typeof candidate.username === "string" ? candidate.username : "",
+                  email: typeof candidate.email === "string" ? candidate.email : undefined,
+                  displayName: typeof candidate.displayName === "string" ? candidate.displayName : "",
                   role,
-                  adminPermissions: role === "admin" ? normalizeAdminPermissions(legacyUser.adminPermissions) : [],
+                  adminPermissions: role === "admin" ? normalizeAdminPermissions(candidate.adminPermissions) : [],
                   accountId: formatAccountId(accountId),
-                  bio: normalizeUserBio(legacyUser.bio),
-                  registrationConsent: normalizeRegistrationPolicyConsent(legacyUser.registrationConsent),
-                  settledBalance: normalizeCreditText(legacyUser.settledBalance),
+                  bio: normalizeUserBio(candidate.bio),
+                  avatarStorageKey: typeof candidate.avatarStorageKey === "string" ? candidate.avatarStorageKey : undefined,
+                  status: candidate.status === "disabled" ? "disabled" : "active",
+                  settledBalance: normalizeCreditText(candidate.settledBalance),
+                  passwordHash: typeof candidate.passwordHash === "string" ? candidate.passwordHash : "",
+                  mfaSecretCiphertext: typeof candidate.mfaSecretCiphertext === "string" ? candidate.mfaSecretCiphertext : undefined,
+                  mfaEnabledAt: typeof candidate.mfaEnabledAt === "string" ? candidate.mfaEnabledAt : undefined,
+                  registrationConsent: normalizeRegistrationPolicyConsent(candidate.registrationConsent),
+                  createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : new Date(0).toISOString(),
+                  updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date(0).toISOString(),
+                  lastLoginAt: typeof candidate.lastLoginAt === "string" ? candidate.lastLoginAt : undefined,
               } as StoredUser;
           })
         : [];
@@ -557,11 +566,6 @@ export function buildPointRecordDescription(model: string, usageKind: PointUsage
         text: { consume: "生成文本调用扣除", refund: "生成文本调用失败退回" },
     };
     return `${modelName} ${actionLabels[usageKind]?.[action] || actionLabels.api[action]}`;
-}
-
-export function legacyQuotaToPoints(quota: Partial<LegacyUserQuota> | undefined, fallback: number) {
-    if (!quota || typeof quota !== "object") return fallback;
-    return normalizePoints(quota.imageDaily, fallback);
 }
 
 export function normalizeQuotaUsage(value: Partial<StoredQuotaUsage>): StoredQuotaUsage {

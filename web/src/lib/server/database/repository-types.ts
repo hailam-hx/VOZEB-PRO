@@ -159,6 +159,9 @@ export type WalletHoldRecord = {
     status: WalletHoldStatus;
     description: string;
     usageChargeId?: string;
+    releaseBusinessId?: string;
+    releaseRequestFingerprint?: string;
+    releaseReason?: string;
     expiresAt?: string;
     closedAt?: string;
     createdAt: string;
@@ -174,9 +177,9 @@ export type UsageChargeRecord = {
     settledCredits: string;
     normalizedUsage: NormalizedUsage;
     saleRateSnapshot: PricingRateCardV1;
+    finalSaleCharge: import("@/lib/billing/pricing").FinalSaleCharge;
     estimated: boolean;
     totalProviderCostUsd: string;
-    marginCredits: string;
     description: string;
     pointRecordId?: string;
     createdAt: string;
@@ -196,6 +199,7 @@ export type ProviderUsageAttemptRecord = {
     upstreamTaskId?: string;
     nativeCostAmount: string;
     nativeCostUnit: ProviderCostUnit;
+    usdConversionRate: string;
     costUsd: string;
     costRateSnapshot?: PricingRateCardV1;
     normalizedUsage?: NormalizedUsage;

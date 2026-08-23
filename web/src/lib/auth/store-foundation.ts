@@ -7,7 +7,6 @@ import {
     type ApiCallFormat,
     type SystemChannelProtocol,
     type SystemChannelAdvancedConfig,
-    type LegacyUserQuota,
     type ModelPointCosts,
     type PointUsageKind,
     type SystemModelChannel,
