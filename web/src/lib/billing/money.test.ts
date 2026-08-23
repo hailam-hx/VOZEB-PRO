@@ -31,6 +31,10 @@ describe("provider cost money", () => {
 });
 
 describe("payment amount", () => {
+    it("normalizes crypto transaction identity and enforces schema decimal bounds", () => {
+        expect(validatePaymentAmount({ kind: "crypto", asset: "usdt", network: "tron", amountAtomic: "1000000", decimals: 6, txHash: " 0xABC " })).toMatchObject({ asset: "USDT", network: "TRON", txHash: "0xabc" });
+        expect(() => validatePaymentAmount({ kind: "crypto", asset: "USDT", network: "TRON", amountAtomic: "1", decimals: 31, txHash: "0xabc" })).toThrow("小数位");
+    });
     it("normalizes a fiat provider amount without accepting decimal or exponent overrides", () => {
         expect(validatePaymentAmount({ kind: "fiat", currency: "vnd", amountMinor: "125000", minorUnitExponent: 0 })).toEqual({
             kind: "fiat",

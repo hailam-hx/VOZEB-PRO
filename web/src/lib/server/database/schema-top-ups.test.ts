@@ -21,6 +21,26 @@ describe("top-up commerce schema", () => {
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("amount_atomic numeric(78, 0)");
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("top_up_payments_crypto_transaction_idx");
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("(crypto_asset, crypto_network, crypto_tx_hash)");
+        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("status <> 'succeeded' OR crypto_tx_hash IS NOT NULL");
+        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("crypto_tx_hash = lower(btrim(crypto_tx_hash))");
+        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("amount_atomic >= 0");
+        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("crypto_decimals BETWEEN 0 AND 30");
+    });
+
+    it("contains no retired billing record or amount-cents helper types", async () => {
+        const [types, utils] = await Promise.all([
+            import("node:fs/promises").then((fs) => fs.readFile(new URL("./repository-types.ts", import.meta.url), "utf8")),
+            import("node:fs/promises").then((fs) => fs.readFile(new URL("./repository-utils.ts", import.meta.url), "utf8")),
+        ]);
+        for (const legacy of ["BillingProductRecord", "BillingOrderRecord", "PaymentTransactionRecord", "amountCents", "billingProductKindValue", "billingOrderStatusValue", "paymentTransactionStatusValue"]) {
+            expect(`${types}\n${utils}`).not.toContain(legacy);
+        }
+    });
+
+    it("persists separate unsigned local paid and refunded reconciliation totals", () => {
+        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("local_paid_amount jsonb NOT NULL");
+        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("local_refunded_amount jsonb NOT NULL");
+        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).not.toContain("local_matched_amount");
     });
 
     it("links exactly-once grants and full-refund recovery holds to the order", () => {

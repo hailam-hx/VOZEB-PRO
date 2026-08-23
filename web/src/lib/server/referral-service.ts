@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 
+import { isQuotaExceededError } from "@/lib/auth/store-foundation";
 import { decimal } from "@/lib/billing/decimal";
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { BillingInputError } from "@/lib/server/billing-errors";
@@ -278,14 +279,24 @@ async function reverseReferralRewardSet(client: QueryExecutor, rewards: Referral
             continue;
         }
         if (reward.rewardType === "points") {
-            const reversal = await adjustWalletBalanceInPostgresTransaction(client, {
-                userId: reward.beneficiaryUserId,
-                amount: -reward.pointsAmount,
-                description: "邀请奖励撤销：触发订单已退款",
-                idempotencyKey: `referral-reward:${reward.id}:reversal`,
-                type: "admin-adjust",
-                now: new Date(input.revokedAt),
-            });
+            let reversal;
+            try {
+                reversal = await adjustWalletBalanceInPostgresTransaction(client, {
+                    userId: reward.beneficiaryUserId,
+                    amount: -reward.pointsAmount,
+                    description: "邀请奖励撤销：触发订单已退款",
+                    idempotencyKey: `referral-reward:${reward.id}:reversal`,
+                    type: "admin-adjust",
+                    now: new Date(input.revokedAt),
+                });
+            } catch (error) {
+                if (!isQuotaExceededError(error)) throw error;
+                const relationship = await repos.referrals.getRelationshipById(reward.relationshipId, true);
+                if (relationship) await repos.referrals.updateRelationship(relationship.id, { riskStatus: input.conflictRiskStatus, riskSignals: mergeJsonObject(relationship.riskSignals, { referralRewardRecoveryConflict: "insufficient_balance" }) });
+                const next = await repos.referrals.updateReward(reward.id, { status: "manual_review", reason: "邀请奖励余额不足，需人工回收", revokedAt: input.revokedAt });
+                if (next) updated.push(next);
+                continue;
+            }
             const next = await repos.referrals.updateReward(reward.id, { status: "revoked", reversalWalletRecordId: reversal?.record.id, reason: input.reason, revokedAt: input.revokedAt });
             if (next) updated.push(next);
             continue;

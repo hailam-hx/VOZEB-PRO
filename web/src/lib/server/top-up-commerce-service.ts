@@ -27,7 +27,7 @@ export async function saveTopUpPreset(input: { id?: unknown; name?: unknown; des
     } catch (error) {
         throw new BillingInputError(error instanceof Error ? error.message : "充值预设金额无效");
     }
-    if (!amount.greaterThan(decimal(0)) || !amount.hasAtMostDecimalPlaces(12)) throw new BillingInputError("充值预设金额必须为正数且最多保留 12 位小数");
+    if (!amount.greaterThan(decimal(0)) || !amount.hasAtMostDecimalPlaces(0)) throw new BillingInputError("充值预设金额必须为正整数 VND");
     const preset: TopUpPreset = {
         id,
         name,
@@ -100,16 +100,24 @@ export async function createTopUpOrder(input: TopUpRequest) {
 
 export async function getTopUpOrderForUser(userId: string, orderId: string) {
     await assertTopUpDatabase();
-    const order = await createPostgresRepositories().topUps.getOrderById(normalizeId(orderId));
-    if (!order || order.userId !== userId) throw new BillingInputError("充值订单不存在", 404);
-    return order;
+    return withPostgresTransaction(async (client) => {
+        const repos = createPostgresRepositories(client);
+        const order = await repos.topUps.getOrderById(normalizeId(orderId), true);
+        if (!order || order.userId !== userId) throw new BillingInputError("充值订单不存在", 404);
+        if (order.status === "pending" && order.expiresAt && Date.parse(order.expiresAt) <= Date.now()) return (await repos.topUps.expirePendingOrder(order.id, new Date().toISOString())) || order;
+        return order;
+    });
 }
 
 export async function cancelTopUpOrderForUser(userId: string, orderId: string) {
     await assertTopUpDatabase();
-    const order = await createPostgresRepositories().topUps.cancelPendingOrder(normalizeId(orderId), userId);
-    if (!order) throw new BillingInputError("充值订单不存在或状态不可取消", 409);
-    return order;
+    return withPostgresTransaction(async (client) => {
+        const repos = createPostgresRepositories(client);
+        const order = await repos.topUps.cancelPendingOrder(normalizeId(orderId), userId);
+        if (!order) throw new BillingInputError("充值订单不存在或状态不可取消", 409);
+        if (order.userCouponId && !(await repos.topUps.releaseCouponForOrder(order.userCouponId, order.id))) throw new BillingInputError("充值订单优惠券绑定状态不可释放", 409);
+        return order;
+    });
 }
 
 export async function listTopUpOrdersForUser(userId: string, input: { page?: number; pageSize?: number } = {}) {

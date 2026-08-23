@@ -15,14 +15,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         const { id } = await params;
         const order = await cancelTopUpOrderForUser(user.id, id);
         await safeRecordAuditLog({
-            action: "billing.order.cancel",
+            action: "top_up.order.cancel",
             actor: auditActorFromRequest(request, user),
-            target: { type: "billing_order", id: order.id, label: order.orderNo },
+            target: { type: "top_up_order", id: order.id, label: order.orderNo },
         });
         return NextResponse.json({ code: 0, data: { order }, msg: "订单已取消" });
     } catch (error) {
         if (isBillingInputError(error)) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
-        console.error("Cancel billing order failed", error);
+        console.error("Cancel top-up order failed", error);
         return NextResponse.json({ code: 500, data: null, msg: "取消订单失败" }, { status: 500 });
     }
 }

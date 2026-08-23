@@ -76,7 +76,17 @@ export class TopUpRepository {
     }
 
     async lockCoupon(id: string, orderId: string) {
-        const result = await this.db.query("UPDATE top_up_user_coupons SET status = 'locked', locked_order_id = $2 WHERE id = $1 AND status = 'available' RETURNING id", [id, orderId]);
+        const result = await this.db.query("UPDATE top_up_user_coupons SET status = 'locked', locked_order_id = $2, locked_at = now(), updated_at = now() WHERE id = $1 AND status = 'available' RETURNING id", [id, orderId]);
+        return Boolean(result.rows[0]);
+    }
+
+    async redeemCouponForOrder(id: string, orderId: string) {
+        const result = await this.db.query("UPDATE top_up_user_coupons SET status = 'redeemed', redeemed_order_id = $2, redeemed_at = now(), updated_at = now() WHERE id = $1 AND status = 'locked' AND locked_order_id = $2 RETURNING id", [id, orderId]);
+        return Boolean(result.rows[0]);
+    }
+
+    async releaseCouponForOrder(id: string, orderId: string) {
+        const result = await this.db.query("UPDATE top_up_user_coupons SET status = 'available', locked_order_id = NULL, locked_at = NULL, updated_at = now() WHERE id = $1 AND status = 'locked' AND locked_order_id = $2 RETURNING id", [id, orderId]);
         return Boolean(result.rows[0]);
     }
 
@@ -234,6 +244,20 @@ export class TopUpRepository {
         return result.rows[0] ? mapTopUpOrderRow(result.rows[0]) : null;
     }
 
+    async expirePendingOrder(id: string, confirmedAt: string) {
+        const result = await this.db.query(
+            `WITH expired AS (
+                UPDATE top_up_orders SET status = 'canceled', closed_at = $2::timestamptz, updated_at = $2::timestamptz
+                WHERE id = $1 AND status = 'pending' AND expires_at <= $2::timestamptz RETURNING *
+             ), released AS (
+                UPDATE top_up_user_coupons SET status = 'available', locked_order_id = NULL, locked_at = NULL, updated_at = $2::timestamptz
+                FROM expired WHERE top_up_user_coupons.id = expired.user_coupon_id AND top_up_user_coupons.status = 'locked' AND top_up_user_coupons.locked_order_id = expired.id
+             ) SELECT * FROM expired`,
+            [id, confirmedAt],
+        );
+        return result.rows[0] ? mapTopUpOrderRow(result.rows[0]) : null;
+    }
+
     async getFinancialSummary(input: { startAt?: string; endBefore?: string } = {}) {
         const result = await this.db.query(
             `SELECT currency,
@@ -270,12 +294,12 @@ export class TopUpRepository {
         const inserted = await this.db.query(
             `INSERT INTO top_up_reconciliation_runs (
                 id, provider, source, status, total_rows, matched_rows, ok_rows, issue_rows,
-                statement_paid_amount, statement_refunded_amount, local_matched_amount, difference_amount, difference_direction,
+                statement_paid_amount, statement_refunded_amount, local_paid_amount, local_refunded_amount, difference_amount, difference_direction,
                 local_nominal_usd_value, local_paid_usd_value, imported_by_user_id, imported_by_username,
                 file_name, file_hash, note, metadata, created_at, updated_at
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14::numeric,$15::numeric,$16,$17,$18,$19,$20,$21::jsonb,$22,$23)
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15::numeric,$16::numeric,$17,$18,$19,$20,$21,$22::jsonb,$23,$24)
              ON CONFLICT DO NOTHING RETURNING *`,
-            [run.id, run.provider, run.source, run.status, run.totalRows, run.matchedRows, run.okRows, run.issueRows, jsonParam(run.statementPaidAmount), jsonParam(run.statementRefundedAmount), jsonParam(run.localMatchedAmount), jsonParam(run.differenceAmount), run.differenceDirection, run.localNominalUsdValue, run.localPaidUsdValue, run.importedByUserId || null, run.importedByUsername || null, run.fileName || null, run.fileHash || null, run.note || null, jsonParam(run.metadata || {}), run.createdAt, run.updatedAt],
+            [run.id, run.provider, run.source, run.status, run.totalRows, run.matchedRows, run.okRows, run.issueRows, jsonParam(run.statementPaidAmount), jsonParam(run.statementRefundedAmount), jsonParam(run.localPaidAmount), jsonParam(run.localRefundedAmount), jsonParam(run.differenceAmount), run.differenceDirection, run.localNominalUsdValue, run.localPaidUsdValue, run.importedByUserId || null, run.importedByUsername || null, run.fileName || null, run.fileHash || null, run.note || null, jsonParam(run.metadata || {}), run.createdAt, run.updatedAt],
         );
         if (!inserted.rows[0]) return null;
         for (const row of rows) {
@@ -316,7 +340,7 @@ export class TopUpRepository {
 }
 
 function mapReconciliationRun(row: Record<string, unknown>): TopUpReconciliationRunRecord {
-    return { id: stringValue(row.id), provider: stringValue(row.provider), source: row.source === "provider-api" || row.source === "manual" ? row.source : "csv", status: row.status === "failed" ? "failed" : "completed", totalRows: numberValue(row.total_rows), matchedRows: numberValue(row.matched_rows), okRows: numberValue(row.ok_rows), issueRows: numberValue(row.issue_rows), statementPaidAmount: jsonValue(row.statement_paid_amount), statementRefundedAmount: jsonValue(row.statement_refunded_amount), localMatchedAmount: jsonValue(row.local_matched_amount), differenceAmount: jsonValue(row.difference_amount), differenceDirection: row.difference_direction === "statement_over" || row.difference_direction === "local_over" ? row.difference_direction : "balanced", localNominalUsdValue: stringValue(row.local_nominal_usd_value), localPaidUsdValue: stringValue(row.local_paid_usd_value), importedByUserId: optionalString(row.imported_by_user_id), importedByUsername: optionalString(row.imported_by_username), fileName: optionalString(row.file_name), fileHash: optionalString(row.file_hash), note: optionalString(row.note), metadata: optionalJson(row.metadata), createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
+    return { id: stringValue(row.id), provider: stringValue(row.provider), source: row.source === "provider-api" || row.source === "manual" ? row.source : "csv", status: row.status === "failed" ? "failed" : "completed", totalRows: numberValue(row.total_rows), matchedRows: numberValue(row.matched_rows), okRows: numberValue(row.ok_rows), issueRows: numberValue(row.issue_rows), statementPaidAmount: jsonValue(row.statement_paid_amount), statementRefundedAmount: jsonValue(row.statement_refunded_amount), localPaidAmount: jsonValue(row.local_paid_amount), localRefundedAmount: jsonValue(row.local_refunded_amount), differenceAmount: jsonValue(row.difference_amount), differenceDirection: row.difference_direction === "statement_over" || row.difference_direction === "local_over" ? row.difference_direction : "balanced", localNominalUsdValue: stringValue(row.local_nominal_usd_value), localPaidUsdValue: stringValue(row.local_paid_usd_value), importedByUserId: optionalString(row.imported_by_user_id), importedByUsername: optionalString(row.imported_by_username), fileName: optionalString(row.file_name), fileHash: optionalString(row.file_hash), note: optionalString(row.note), metadata: optionalJson(row.metadata), createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
 }
 
 function mapReconciliationRow(row: Record<string, unknown>): TopUpReconciliationRowRecord {

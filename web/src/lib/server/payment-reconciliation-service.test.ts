@@ -104,7 +104,7 @@ describe("payment statement reconciliation", () => {
         expect(result.rows[0]?.issueCodes).not.toContain("missing_local_order");
     });
 
-    it("compares paid and refunded statement totals as a net amount", () => {
+    it("keeps mixed local paid and refunded totals unsigned and separate", () => {
         const refundedOrder = { ...baseOrder, status: "refunded", paymentState: "refunded" } satisfies TopUpOrder;
         const refundPayment = { ...basePayment, id: "payment-refund", status: "refunded" as const, providerPaymentId: "ch_refund" };
         const rows = parsePaymentStatementCsv("order_no,payment_id,amount,currency,status\nVZ001,ch_local,1990,VND,succeeded\nVZ001,ch_refund,(1990),VND,refunded", "stripe");
@@ -112,8 +112,21 @@ describe("payment statement reconciliation", () => {
 
         expect(result.totals.statementPaidAmount).toMatchObject({ kind: "fiat", amountMinor: "1990" });
         expect(result.totals.statementRefundedAmount).toMatchObject({ kind: "fiat", amountMinor: "1990" });
-        expect(result.totals.localMatchedAmount).toMatchObject({ kind: "fiat", amountMinor: "0" });
+        expect(result.totals.localPaidAmount).toMatchObject({ kind: "fiat", amountMinor: "1990" });
+        expect(result.totals.localRefundedAmount).toMatchObject({ kind: "fiat", amountMinor: "1990" });
         expect(result.totals.differenceAmount).toMatchObject({ kind: "fiat", amountMinor: "0" });
+    });
+
+    it("represents a refund-only reconciliation without a negative PaymentAmount", () => {
+        const refundedOrder = { ...baseOrder, status: "refunded", paymentState: "refunded" } satisfies TopUpOrder;
+        const refundPayment = { ...basePayment, id: "payment-refund", status: "refunded" as const, providerPaymentId: "ch_refund" };
+        const rows = parsePaymentStatementCsv("order_no,payment_id,amount,currency,status\nVZ001,ch_refund,1990,VND,refunded", "stripe");
+        const result = reconcilePaymentStatementRows("stripe", rows, [local(refundedOrder, [refundPayment])]);
+
+        expect(result.totals.localPaidAmount).toMatchObject({ amountMinor: "0" });
+        expect(result.totals.localRefundedAmount).toMatchObject({ amountMinor: "1990" });
+        expect(result.totals.differenceAmount).toMatchObject({ amountMinor: "0" });
+        expect(JSON.stringify(result.totals)).not.toContain('"amountMinor":"-');
     });
 
     it("creates normalized persistence records without storing the raw CSV payload", () => {

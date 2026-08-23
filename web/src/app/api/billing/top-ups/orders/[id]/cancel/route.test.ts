@@ -13,7 +13,7 @@ vi.mock("@/lib/server/billing-errors", () => ({
 
 import { POST } from "./route";
 
-describe("POST /api/billing/orders/[id]/cancel", () => {
+describe("POST /api/billing/top-ups/orders/[id]/cancel", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user", role: "user" });
@@ -21,10 +21,10 @@ describe("POST /api/billing/orders/[id]/cancel", () => {
     });
 
     it("cancels the current user's pending order", async () => {
-        const response = await POST(new Request("http://localhost/api/billing/orders/order/cancel", { method: "POST" }), { params: Promise.resolve({ id: "order" }) });
+        const response = await POST(new Request("http://localhost/api/billing/top-ups/orders/order/cancel", { method: "POST" }), { params: Promise.resolve({ id: "order" }) });
 
         expect(response.status).toBe(200);
         expect(mocks.cancelTopUpOrderForUser).toHaveBeenCalledWith("user", "order");
-        expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "billing.order.cancel" }));
+        expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "top_up.order.cancel" }));
     });
 });

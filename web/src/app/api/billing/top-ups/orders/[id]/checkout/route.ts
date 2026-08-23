@@ -29,18 +29,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
             origin: request.nextUrl.origin,
         });
         await safeRecordAuditLog({
-            action: "billing.order.checkout",
+            action: "top_up.order.checkout",
             actor: auditActorFromRequest(request, currentUser),
-            target: { type: "billing_order", id: checkout.orderId, label: checkout.orderNo },
+            target: { type: "top_up_order", id: checkout.orderId, label: checkout.orderNo },
             metadata: { provider: checkout.provider, kind: checkout.kind, providerOrderId: checkout.providerOrderId },
         });
         return apiSuccess({ checkout }, "支付参数已创建");
     } catch (error) {
         await safeRecordAuditLog({
-            action: "billing.order.checkout",
+            action: "top_up.order.checkout",
             status: "failure",
             actor: auditActorFromRequest(request, currentUser),
-            target: { type: "billing_order", id },
+            target: { type: "top_up_order", id },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
         if (isBillingInputError(error)) return apiCompatError(error.status, error.message);

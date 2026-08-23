@@ -57,6 +57,7 @@ export function quoteTopUp(_input: {
     } else {
         nominal = positive(input.request.customAmountVnd, "自定义充值金额");
     }
+    if (!nominal.hasAtMostDecimalPlaces(input.config.minorUnitExponent)) throw new BillingInputError("VND 充值金额必须是整数");
 
     const promoted = input.promotion ? positive(input.promotion.payableNativeAmount, "活动应付金额") : nominal;
     if (promoted.greaterThan(nominal)) throw new BillingInputError("活动金额不能高于标称金额");

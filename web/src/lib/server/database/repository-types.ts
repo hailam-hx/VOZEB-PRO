@@ -26,15 +26,9 @@ export type UsageKind = "api" | "image" | "video" | "audio" | "text";
 export type GenerationKind = "image" | "video";
 export type GenerationStatus = "pending" | "success" | "failed";
 export type AuditStatus = "success" | "failure";
-export type BillingOrderStatus = "pending" | "paid" | "closed" | "canceled" | "refunding" | "refunded";
-export type BillingProductKind = "plan" | "points";
-export type PaymentTransactionStatus = "pending" | "succeeded" | "failed" | "refunded";
 export type BillingReconciliationRunStatus = "completed" | "failed";
 export type BillingReconciliationSource = "csv" | "provider-api" | "manual";
 export type BillingReconciliationStatementStatus = "paid" | "refunded" | "pending" | "failed" | "unknown";
-export type CouponDiscountType = "fixed" | "percentage";
-export type UserCouponStatus = "available" | "locked" | "redeemed" | "expired" | "revoked";
-export type CouponRedemptionStatus = "redeemed" | "refunded";
 export type ReferralInviteeRewardType = "points" | "coupon";
 export type ReferralRiskStatus = "clear" | "review" | "frozen" | "rejected";
 export type ReferralRewardStatus = "pending" | "settled" | "revoked" | "rejected" | "reversal_pending" | "manual_review";
@@ -357,119 +351,6 @@ export type AuditLogRecord = {
     createdAt: string;
 };
 
-export type BillingOrderRecord = {
-    id: string;
-    orderNo: string;
-    productId?: string;
-    userId?: string;
-    userAccountId?: string;
-    userUsername?: string;
-    userDisplayName?: string;
-    productKind: BillingProductKind;
-    planId?: string;
-    status: BillingOrderStatus;
-    subject: string;
-    listAmountCents: number;
-    promotionDiscountCents: number;
-    couponDiscountCents: number;
-    amountCents: number;
-    currency: string;
-    pointsAmount: number;
-    dailyPoints: number;
-    periodDays: number;
-    quantity: number;
-    provider: string;
-    providerOrderId?: string;
-    providerPaymentId?: string;
-    promotionCampaignId?: string;
-    userCouponId?: string;
-    expiresAt?: string;
-    paidAt?: string;
-    closedAt?: string;
-    pricingSnapshot?: JsonValue;
-    metadata?: JsonValue;
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type PromotionProductRecord = {
-    productId: string;
-    promotionalAmountCents: number;
-};
-
-export type PromotionCampaignRecord = {
-    id: string;
-    name: string;
-    label: string;
-    enabled: boolean;
-    startsAt: string;
-    endsAt: string;
-    createdByUserId?: string;
-    products: PromotionProductRecord[];
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type CouponTemplateRecord = {
-    id: string;
-    code: string;
-    name: string;
-    description: string;
-    discountType: CouponDiscountType;
-    discountValue: number;
-    minimumAmountCents: number;
-    maximumDiscountCents: number;
-    stackWithPromotion: boolean;
-    claimable: boolean;
-    enabled: boolean;
-    startsAt: string;
-    endsAt: string;
-    totalLimit: number;
-    perUserLimit: number;
-    issuedCount: number;
-    redeemedCount: number;
-    createdByUserId?: string;
-    productIds: string[];
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type UserCouponRecord = {
-    id: string;
-    templateId: string;
-    userId: string;
-    status: UserCouponStatus;
-    grantSource: string;
-    claimedAt: string;
-    expiresAt: string;
-    lockedOrderId?: string;
-    lockedAt?: string;
-    redeemedOrderId?: string;
-    redeemedAt?: string;
-    revokedAt?: string;
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type UserCouponListItemRecord = UserCouponRecord & {
-    template: CouponTemplateRecord;
-};
-
-export type CouponRedemptionRecord = {
-    id: string;
-    userCouponId: string;
-    orderId: string;
-    userId: string;
-    templateId: string;
-    status: CouponRedemptionStatus;
-    discountCents: number;
-    ruleSnapshot: JsonValue;
-    redeemedAt: string;
-    refundedAt?: string;
-    createdAt: string;
-    updatedAt: string;
-};
-
 export type ReferralProgramRecord = {
     id: "default";
     enabled: boolean;
@@ -546,43 +427,6 @@ export type ReferralRewardRecord = {
     beneficiaryAccountId?: string;
 };
 
-export type BillingProductRecord = {
-    id: string;
-    productKind: BillingProductKind;
-    planId?: string;
-    name: string;
-    description: string;
-    amountCents: number;
-    currency: string;
-    pointsAmount: number;
-    dailyPoints: number;
-    periodDays: number;
-    enabled: boolean;
-    sortOrder: number;
-    metadata?: JsonValue;
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type PaymentTransactionRecord = {
-    id: string;
-    orderId: string;
-    userId?: string;
-    provider: string;
-    channel: string;
-    status: PaymentTransactionStatus;
-    amountCents: number;
-    currency: string;
-    providerTradeId?: string;
-    providerPaymentId?: string;
-    rawPayload?: JsonValue;
-    paidAt?: string;
-    refundedAt?: string;
-    failedAt?: string;
-    createdAt: string;
-    updatedAt: string;
-};
-
 export type TopUpReconciliationRunRecord = {
     id: string;
     provider: string;
@@ -594,7 +438,8 @@ export type TopUpReconciliationRunRecord = {
     issueRows: number;
     statementPaidAmount: JsonValue;
     statementRefundedAmount: JsonValue;
-    localMatchedAmount: JsonValue;
+    localPaidAmount: JsonValue;
+    localRefundedAmount: JsonValue;
     differenceAmount: JsonValue;
     differenceDirection: "statement_over" | "local_over" | "balanced";
     localNominalUsdValue: string;
@@ -632,67 +477,6 @@ export type TopUpReconciliationRowRecord = {
     issues: JsonValue;
     createdAt: string;
     updatedAt: string;
-};
-
-export type PaymentProviderEventRecord = {
-    id: string;
-    provider: string;
-    eventId?: string;
-    eventType: string;
-    orderId?: string;
-    signatureValid: boolean;
-    payload?: JsonValue;
-    processingAt?: string;
-    processedAt?: string;
-    error?: string;
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type BillingSummaryProviderRecord = {
-    provider: string;
-    totalOrders: number;
-    pendingOrders: number;
-    paidOrders: number;
-    refundedOrders: number;
-    paidAmountCents: number;
-    refundedAmountCents: number;
-};
-
-export type BillingSummaryRecord = {
-    orders: {
-        total: number;
-        pending: number;
-        paid: number;
-        closed: number;
-        canceled: number;
-        refunded: number;
-        grossAmountCents: number;
-        paidAmountCents: number;
-        pendingAmountCents: number;
-        refundedAmountCents: number;
-    };
-    payments: {
-        succeeded: number;
-        refunded: number;
-        succeededAmountCents: number;
-        refundedAmountCents: number;
-    };
-    commerce: {
-        convertedOrders: number;
-        promotionOrders: number;
-        promotionConvertedOrders: number;
-        promotionDiscountCents: number;
-        couponOrders: number;
-        couponConvertedOrders: number;
-        couponDiscountCents: number;
-    };
-    providers: BillingSummaryProviderRecord[];
-    reconciliation: {
-        paidOrdersWithoutSucceededPayment: number;
-        succeededPaymentsWithoutPaidOrder: number;
-        amountMismatchPayments: number;
-    };
 };
 
 export type PublishedWorkSourceType = "media" | "canvas" | "drama";

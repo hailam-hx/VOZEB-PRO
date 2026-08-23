@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { getTopUpOrderForUser } from "@/lib/server/top-up-commerce-service";
-import { commerceError, commerceOk } from "../../commerce-response";
+import { commerceError, commerceOk } from "../../../commerce-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

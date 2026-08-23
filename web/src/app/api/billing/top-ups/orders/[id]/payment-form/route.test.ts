@@ -7,7 +7,7 @@ vi.mock("@/lib/server/payment-checkout-service", () => ({ getStoredPaymentChecko
 
 import { GET } from "./route";
 
-describe("payment form route", () => {
+describe("top-up payment form route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
@@ -21,7 +21,7 @@ describe("payment form route", () => {
     });
 
     it("returns an isolated auto-submit document for the owned stored checkout", async () => {
-        const response = await GET(new Request("http://localhost/api/billing/orders/order-one/payment-form") as never, { params: Promise.resolve({ id: "order-one" }) });
+        const response = await GET(new Request("http://localhost/api/billing/top-ups/orders/order-one/payment-form") as never, { params: Promise.resolve({ id: "order-one" }) });
 
         expect(mocks.getCheckout).toHaveBeenCalledWith("order-one", "user-one");
         expect(response.headers.get("content-type")).toContain("text/html");
@@ -32,7 +32,7 @@ describe("payment form route", () => {
     it("does not disclose stored payment data before authentication", async () => {
         mocks.getCurrentUser.mockResolvedValue(null);
 
-        const response = await GET(new Request("http://localhost/api/billing/orders/order-one/payment-form") as never, { params: Promise.resolve({ id: "order-one" }) });
+        const response = await GET(new Request("http://localhost/api/billing/top-ups/orders/order-one/payment-form") as never, { params: Promise.resolve({ id: "order-one" }) });
 
         expect(response.status).toBe(401);
         expect(mocks.getCheckout).not.toHaveBeenCalled();

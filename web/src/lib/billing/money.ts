@@ -35,8 +35,8 @@ export function validatePaymentAmount(input: unknown): PaymentAmount {
     const network = text(value.network).toUpperCase();
     if (!asset || !network) throw new Error("加密资产和网络不能为空");
     const amountAtomic = unsignedIntegerText(value.amountAtomic, "加密原子单位");
-    if (!Number.isSafeInteger(value.decimals) || Number(value.decimals) < 0) throw new Error("加密资产小数位无效");
-    const txHash = text(value.txHash);
+    if (!Number.isSafeInteger(value.decimals) || Number(value.decimals) < 0 || Number(value.decimals) > 30) throw new Error("加密资产小数位无效");
+    const txHash = text(value.txHash).toLowerCase();
     return { kind: "crypto", asset, network, amountAtomic, decimals: Number(value.decimals), ...(txHash ? { txHash } : {}) };
 }
 

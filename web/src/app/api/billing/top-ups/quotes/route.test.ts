@@ -8,7 +8,7 @@ vi.mock("@/lib/server/top-up-commerce-service", () => ({ quoteTopUpOrder: mocks.
 
 import { POST } from "./route";
 
-describe("POST /api/billing/quotes", () => {
+describe("POST /api/billing/top-ups/quotes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one", role: "user" });
@@ -17,7 +17,7 @@ describe("POST /api/billing/quotes", () => {
     });
 
     it("quotes against the authenticated user's coupon", async () => {
-        const response = await POST(new Request("http://localhost/api/billing/quotes", { method: "POST" }));
+        const response = await POST(new Request("http://localhost/api/billing/top-ups/quotes", { method: "POST" }));
         expect(response.status).toBe(200);
         expect(mocks.quoteTopUpOrder).toHaveBeenCalledWith({ customAmountVnd: "250000", userCouponId: "coupon-one", userId: "user-one" });
         expect(await response.json()).toMatchObject({ code: 0, data: { quote: { payableNativeAmount: "200000", creditAmount: "10" } } });

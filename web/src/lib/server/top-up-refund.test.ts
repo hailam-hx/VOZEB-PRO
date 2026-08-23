@@ -5,6 +5,12 @@ import { requestTopUpRefund, type TopUpRefundProvider, type TopUpRefundStore } f
 import type { TopUpOrder } from "./top-up-payment";
 
 describe("top-up full refund recovery", () => {
+    it("finalizes payment state and referral reversal in the PostgreSQL transaction", async () => {
+        const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./top-up-refund-service.ts", import.meta.url), "utf8"));
+        expect(source).toContain("UPDATE top_up_payments SET status = 'refunded'");
+        expect(source).toContain("reverseReferralRewardsForRefundedOrder(client");
+        expect(source.indexOf("UPDATE top_up_payments SET status = 'refunded'")).toBeLessThan(source.indexOf("UPDATE top_up_orders SET status = 'refunded'"));
+    });
     it("does not call the provider when the entire original grant cannot be held", async () => {
         const store = memoryRefundStore("5");
         const provider = memoryProvider("succeeded");
@@ -16,6 +22,8 @@ describe("top-up full refund recovery", () => {
         expect(store.state.balance).toBe("5");
         expect(store.state.held).toBe("0");
         expect(store.state.ledger).toEqual([]);
+        expect(store.state.paymentStatus).toBe("succeeded");
+        expect(store.state.referralReversals).toBe(0);
     });
 
     it("releases the full recovery hold when the provider fails without changing settled balance", async () => {
@@ -30,6 +38,8 @@ describe("top-up full refund recovery", () => {
         expect(store.state.balance).toBe("10.12345678");
         expect(store.state.held).toBe("0");
         expect(store.state.ledger).toEqual([]);
+        expect(store.state.paymentStatus).toBe("succeeded");
+        expect(store.state.referralReversals).toBe(0);
 
         const retry = await requestTopUpRefund({ orderId: "order-one", kind: "full", reason: "retry" }, store, provider);
         expect(retry).toMatchObject({ manualReview: true, reason: "provider_retry_review" });
@@ -49,6 +59,8 @@ describe("top-up full refund recovery", () => {
         expect(store.state.balance).toBe("0");
         expect(store.state.held).toBe("0");
         expect(store.state.ledger).toEqual([{ businessId: "top-up:order-one:refund-recovery", amount: "-10.12345678", orderId: "order-one" }]);
+        expect(store.state.paymentStatus).toBe("refunded");
+        expect(store.state.referralReversals).toBe(1);
     });
 
     it.each(["partial", "chargeback"] as const)("routes %s to manual review without wallet or provider mutation", async (kind) => {
@@ -96,8 +108,8 @@ function paidOrder(): TopUpOrder {
     };
 }
 
-function memoryRefundStore(balance: string): TopUpRefundStore & { state: { order: TopUpOrder; balance: string; held: string; ledger: Array<{ businessId: string; amount: string; orderId: string }> } } {
-    const state = { order: paidOrder(), balance, held: "0", ledger: [] as Array<{ businessId: string; amount: string; orderId: string }> };
+function memoryRefundStore(balance: string): TopUpRefundStore & { state: { order: TopUpOrder; balance: string; held: string; ledger: Array<{ businessId: string; amount: string; orderId: string }>; paymentStatus: "succeeded" | "refunded"; referralReversals: number } } {
+    const state = { order: paidOrder(), balance, held: "0", ledger: [] as Array<{ businessId: string; amount: string; orderId: string }>, paymentStatus: "succeeded" as "succeeded" | "refunded", referralReversals: 0 };
     return {
         state,
         async getOrder() {
@@ -122,6 +134,8 @@ function memoryRefundStore(balance: string): TopUpRefundStore & { state: { order
             state.balance = "0";
             state.held = "0";
             state.ledger.push({ businessId: input.businessId, amount: `-${input.creditAmount}`, orderId: input.orderId });
+            state.paymentStatus = "refunded";
+            state.referralReversals += 1;
             state.order = { ...state.order, status: "refunded", paymentState: "refunded", providerRefundState: "succeeded", creditRecoveryState: "recovered" };
             return "applied";
         },

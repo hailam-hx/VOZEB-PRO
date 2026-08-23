@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
     getPromotion: vi.fn(),
     getCoupon: vi.fn(),
     lockCoupon: vi.fn(),
+    cancelOrder: vi.fn(),
+    releaseCoupon: vi.fn(),
     getPaymentConfig: vi.fn(),
 }));
 
@@ -17,7 +19,7 @@ vi.mock("@/lib/server/database", async (importOriginal) => ({
     withPostgresTransaction: vi.fn(async (callback: (client: unknown) => unknown) => callback({ query: vi.fn() })),
     createPostgresRepositories: vi.fn(() => ({
         users: { getById: mocks.getUser },
-        topUps: { getPresetById: mocks.getPreset, createOrder: mocks.createOrder, getPromotion: mocks.getPromotion, getAvailableCoupon: mocks.getCoupon, lockCoupon: mocks.lockCoupon },
+        topUps: { getPresetById: mocks.getPreset, createOrder: mocks.createOrder, getPromotion: mocks.getPromotion, getAvailableCoupon: mocks.getCoupon, lockCoupon: mocks.lockCoupon, cancelPendingOrder: mocks.cancelOrder, releaseCouponForOrder: mocks.releaseCoupon },
     })),
 }));
 vi.mock("@/lib/server/payment-config-store", () => ({
@@ -25,7 +27,7 @@ vi.mock("@/lib/server/payment-config-store", () => ({
     isPaymentRuntimeProviderCheckoutReady: vi.fn(() => true),
 }));
 
-import { createTopUpOrder } from "./top-up-commerce-service";
+import { cancelTopUpOrderForUser, createTopUpOrder, saveTopUpPreset } from "./top-up-commerce-service";
 
 describe("top-up commerce service", () => {
     beforeEach(() => {
@@ -39,6 +41,19 @@ describe("top-up commerce service", () => {
         });
         mocks.createOrder.mockImplementation(async (value) => value);
         mocks.lockCoupon.mockResolvedValue(true);
+        mocks.releaseCoupon.mockResolvedValue(true);
+    });
+
+    it("releases the coupon bound to a canceled pending order in the same transaction", async () => {
+        mocks.cancelOrder.mockResolvedValue({ ...await createTopUpOrder({ userId: "user-one", customAmountVnd: "250000", provider: "payply" }), userCouponId: "coupon-one" });
+
+        await cancelTopUpOrderForUser("user-one", "order-one");
+
+        expect(mocks.releaseCoupon).toHaveBeenCalledWith("coupon-one", expect.any(String));
+    });
+
+    it("rejects a fractional VND admin preset", async () => {
+        await expect(saveTopUpPreset({ name: "Fractional", nominalNativeAmount: "250000.1" })).rejects.toThrow("整数");
     });
 
     it("loads persisted promotion and coupon rules while granting nominal credits", async () => {

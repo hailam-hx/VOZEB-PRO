@@ -52,7 +52,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_usage_charges`：一次用量结算审计，复制 hold 的完整运行时计费快照，并保存 Task 1 权威最终售卖结算、规范化用量、售卖费率快照、预留/结算积分和所有供应商尝试的总美元成本。积分和美元不直接相减；非零结算必须通过同用户复合外键唯一关联一条消费流水，零结算不得关联流水。
 - `vozeb_pro_provider_usage_attempts`：每次上游调用尝试，包含失败尝试；原生成本、显式 USD 转换率和美元成本使用 `numeric(30,12)`，并保存绑定身份、供应商幂等能力标记与原始幂等键、原生计价单位、转换版本、成本费率快照、规范化预留用量、流式观察用量、供应商任务 ID 和尝试终态。尝试写入与结算在同一 hold 行锁上串行化，pending 只允许一次转为终态，身份与成本快照不可在完成时替换；仅显式支持幂等且复用原键时允许重复创建，关闭后不接受新尝试。
 - `vozeb_pro_top_up_presets`：VND 法币充值预设，只保存服务端标称金额、名称、排序和上下架状态；自定义 VND 金额不需要伪造一条预设。
-- `vozeb_pro_top_up_promotions` / `vozeb_pro_top_up_coupon_templates` / `vozeb_pro_top_up_user_coupons`：充值专用活动、固定币种或比例优惠券及用户券；创建订单时在事务内校验、锁定并保存规则快照。
+- `vozeb_pro_top_up_promotions` / `vozeb_pro_top_up_coupon_templates` / `vozeb_pro_top_up_user_coupons`：充值专用活动、固定币种或比例优惠券及用户券；创建订单时在事务内校验并绑定锁定，支付成功仅核销同一订单绑定的用户券，取消或确认过期仅释放同一订单的锁定。
 - `vozeb_pro_coupon_redemptions`：订单优惠券核销凭证，每个订单最多一条；整单退款将核销标记为 `refunded`，不自动返券，避免退款套利。
 - `vozeb_pro_referral_programs`：单例邀请计划设置，保存功能开关、首单实付门槛、冷静期、邀请人积分、新用户积分或优惠券、月度/活动上限和自动冻结策略。
 - `vozeb_pro_referral_codes`：每个用户唯一的稳定邀请码；新邀请码由数据库唯一的公开账号 ID 生成，不再依赖随机碰撞重试。表内只保存聚合点击数和最后访问时间，不保存原始 IP、完整 User-Agent 或设备指纹。
@@ -63,7 +63,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_top_up_payment_events`：按 `provider + event_id` 和载荷指纹登记回调。签名、渠道、事件、订单、金额、币种与已支付状态全部核验后，才允许使用稳定业务 ID 授信一次。
 - `vozeb_pro_top_up_refunds`：V1 只自动处理全额退款。调用支付商前必须为原始 `credit_amount` 创建全额恢复 hold；余额不足、部分退款和拒付进入人工复核。支付商失败释放 hold，成功后同一事务关闭 hold、扣回全部积分并写一条冲正流水。
 - 管理接口 `/api/admin/billing/top-up-presets` 维护充值预设，`/api/admin/billing/top-up-config` 维护计价版本、客户 FX 版本和 VND/USD 汇率；保存后立即刷新支付运行时配置缓存。
-- `vozeb_pro_top_up_reconciliation_runs`：支付商账单导入对账批次，使用 `PaymentAmount` JSON 保存 VND 最小单位汇总，并独立保存匹配订单的标称/实付 USD 快照合计。
+- `vozeb_pro_top_up_reconciliation_runs`：支付商账单导入对账批次，使用非负 `PaymentAmount` JSON 分别保存账单与本地的支付、退款 VND 最小单位汇总，净差额以方向加非负金额表达，并独立保存匹配订单的标称/实付 USD 快照合计。
 - `vozeb_pro_top_up_reconciliation_rows`：充值账单对账明细，保存支付商身份、`PaymentAmount`、匹配的充值订单、原生金额与 USD 快照及差异代码；不保存整份原始 CSV。
 - `vozeb_pro_cdk_codes` / `vozeb_pro_cdk_redemptions`：CDK 和兑换记录。新 CDK 使用同一条记录的完整 UUID 生成稳定密钥，不再预查并执行固定次数的随机碰撞重试；PostgreSQL 后台列表使用数据库侧的关键词、状态筛选、聚合统计和分页，只读取当前页兑换明细，文件 Provider 保持相同业务结果。
 - `vozeb_pro_announcements`：站内公告。
@@ -138,13 +138,13 @@ Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，�
 
 外部存储开关只决定新媒体写入位置。开启后新上传和新生成媒体只写对象存储，不保留本地持久副本；关闭后新媒体恢复写入 `VOZEB_PRO_DATA_DIR`。后台可把已有本地登记分批迁移到对象存储，迁移候选和过期清理均通过带条件和上限的批次查询读取；只有对象上传和登记更新成功后才删除本地源文件，失败文件保留用于重试。
 
-`topUps` Repository 提供充值预设、权威报价快照和订单读写。`GET /api/billing/products` 当前返回 `presets`，`POST /api/billing/quotes` 接受 `presetId` 或 `customAmountVnd`，`POST /api/billing/orders` 保存服务端报价并忽略客户端财务字段；这些接口统一返回 `{ code, data, msg }`。推荐门槛只读取已核验订单的 `nominalUsdValue`，财务汇总按原生支付币种分组并只汇总订单上的 USD 快照。
+`topUps` Repository 提供充值预设、权威报价快照和订单读写。`GET /api/billing/top-ups/presets` 返回 `presets`，`POST /api/billing/top-ups/quotes` 接受 `presetId` 或 `customAmountVnd`，`POST /api/billing/top-ups/orders` 保存服务端报价并忽略客户端财务字段；这些接口统一返回 `{ code, data, msg }`。推荐门槛只读取已核验订单的 `nominalUsdValue`，财务汇总按原生支付币种分组并只汇总订单上的 USD 快照。
 
 后台支付配置已通过 `vozeb_pro_app_settings.payment_config` 保存；Stripe、支付宝、微信支付、PayPly 和人工确认的密钥会按字段加密存储。支付宝在同一个 Provider 配置内保存 `mode=official|face_to_face`，因此官方支付和当面付天然互斥，不会向用户暴露两个支付宝渠道。支付下单、回调验签和后台配置状态读取时优先使用后台保存值，环境变量仍作为服务器部署兜底。
 
 ## 支付配置
 
-用户创建商业订单后，可调用 `POST /api/billing/orders/{id}/checkout` 生成真实支付下单参数。接口会校验订单归属和状态，然后按订单支付渠道返回 Stripe Checkout 跳转链接、支付宝官方支付 `alipay.trade.page.pay` 结构化表单/链接、支付宝当面付 `alipay.trade.precreate` 二维码、微信支付 v3 Native `code_url` 二维码内容，或 PayPly 自定义接口返回的支付链接、二维码内容、结构化表单。支付宝两种模式在用户端都显示为“支付宝”。
+用户创建充值订单后，可调用 `POST /api/billing/top-ups/orders/{id}/checkout` 生成真实支付下单参数。接口会校验订单归属和状态，然后按订单支付渠道返回 Stripe Checkout 跳转链接、支付宝官方支付 `alipay.trade.page.pay` 结构化表单/链接、支付宝当面付 `alipay.trade.precreate` 二维码、微信支付 v3 Native `code_url` 二维码内容，或 PayPly 自定义接口返回的支付链接、二维码内容、结构化表单。支付宝两种模式在用户端都显示为“支付宝”。
 
 管理员也可以在后台支付配置页直接填写渠道开关、下单密钥、回调验签密钥、PayPly 返回字段映射和返回地址。页面只返回配置状态与非密钥字段；已保存的密钥不会回显到浏览器，留空保存会保留原密钥。
 
@@ -201,8 +201,7 @@ VOZEB_PRO_PAYPLY_WEBHOOK_ORDER_ID_FIELD=data.orderId
 VOZEB_PRO_PAYPLY_WEBHOOK_ORDER_NO_FIELD=data.orderNo
 VOZEB_PRO_PAYPLY_WEBHOOK_STATUS_FIELD=data.status
 VOZEB_PRO_PAYPLY_WEBHOOK_SUCCESS_STATUSES=paid,success,succeeded,completed
-VOZEB_PRO_PAYPLY_WEBHOOK_AMOUNT_CENTS_FIELD=data.amountCents
-VOZEB_PRO_PAYPLY_WEBHOOK_AMOUNT_YUAN_FIELD=data.amount
+VOZEB_PRO_PAYPLY_WEBHOOK_AMOUNT_MINOR_FIELD=data.amountMinor
 VOZEB_PRO_PAYPLY_WEBHOOK_CURRENCY_FIELD=data.currency
 VOZEB_PRO_PAYPLY_WEBHOOK_PAID_AT_FIELD=data.paidAt
 ```

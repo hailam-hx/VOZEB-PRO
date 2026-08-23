@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
-vi.mock("@/lib/server/billing-order-event-signal", () => ({ subscribeBillingOrderEvent: mocks.subscribe }));
+vi.mock("@/lib/server/top-up-order-event-signal", () => ({ subscribeTopUpOrderEvent: mocks.subscribe }));
 vi.mock("@/lib/server/top-up-commerce-service", () => ({
     getTopUpOrderForUser: mocks.getTopUpOrderForUser,
 }));
@@ -25,7 +25,7 @@ import { GET } from "./route";
 const pendingOrder = { id: "order-one", userId: "user-one", orderNo: "VZ001", status: "pending", updatedAt: "2026-08-11T00:00:00.000Z" };
 const paidOrder = { ...pendingOrder, status: "paid", updatedAt: "2026-08-11T00:00:01.000Z" };
 
-describe("GET /api/billing/orders/[id]/events", () => {
+describe("GET /api/billing/top-ups/orders/[id]/events", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.listener = undefined;
@@ -35,7 +35,7 @@ describe("GET /api/billing/orders/[id]/events", () => {
     it("streams the current order and closes after a notified terminal state", async () => {
         mocks.getTopUpOrderForUser.mockResolvedValueOnce(pendingOrder).mockResolvedValueOnce(pendingOrder).mockResolvedValueOnce(paidOrder);
 
-        const response = await GET(new Request("http://localhost/api/billing/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
+        const response = await GET(new Request("http://localhost/api/billing/top-ups/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledWith("order-one", expect.any(Function)));
         mocks.listener?.();
         const body = await response.text();
@@ -50,7 +50,7 @@ describe("GET /api/billing/orders/[id]/events", () => {
     it("returns an owned terminal order without opening a subscription", async () => {
         mocks.getTopUpOrderForUser.mockResolvedValue(paidOrder);
 
-        const response = await GET(new Request("http://localhost/api/billing/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
+        const response = await GET(new Request("http://localhost/api/billing/top-ups/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
 
         expect(await response.text()).toContain('"status":"paid"');
         expect(mocks.subscribe).not.toHaveBeenCalled();
@@ -59,7 +59,7 @@ describe("GET /api/billing/orders/[id]/events", () => {
     it("requires a signed-in user", async () => {
         mocks.getCurrentUser.mockResolvedValue(null);
 
-        const response = await GET(new Request("http://localhost/api/billing/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
+        const response = await GET(new Request("http://localhost/api/billing/top-ups/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
 
         expect(response.status).toBe(401);
         expect(mocks.getTopUpOrderForUser).not.toHaveBeenCalled();

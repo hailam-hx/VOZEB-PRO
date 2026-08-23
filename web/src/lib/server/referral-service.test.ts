@@ -1,14 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ makeRepositories: vi.fn(), transaction: vi.fn() }));
+const mocks = vi.hoisted(() => ({ makeRepositories: vi.fn(), transaction: vi.fn(), adjustWallet: vi.fn() }));
 vi.mock("@/lib/server/database", () => ({
     createPostgresRepositories: mocks.makeRepositories,
     ensurePostgresSchema: vi.fn(),
     isPostgresDatabaseEnabled: () => true,
     withPostgresTransaction: mocks.transaction,
 }));
+vi.mock("@/lib/server/points-wallet-service", () => ({ adjustWalletBalanceInPostgresTransaction: mocks.adjustWallet }));
 
-import { prepareReferralRewardsForPaidOrder, settleDueReferralRewards } from "./referral-service";
+import { QuotaExceededError } from "@/lib/auth/store-foundation";
+import { prepareReferralRewardsForPaidOrder, reverseReferralRewardsForRefundedOrder, settleDueReferralRewards } from "./referral-service";
 
 describe("referral qualification", () => {
     it("uses the verified nominal USD snapshot and the top-up order history", async () => {
@@ -50,5 +52,18 @@ describe("referral qualification", () => {
         await settleDueReferralRewards({ now: new Date(now) });
 
         expect(updateReward).toHaveBeenCalledWith("reward", expect.objectContaining({ status: "manual_review" }));
+    });
+
+    it("marks an unrecoverable settled referral reward for manual review during full refund", async () => {
+        const reward = { id: "reward", relationshipId: "rel", beneficiaryUserId: "inviter", beneficiaryRole: "inviter", rewardType: "points", pointsAmount: 2, triggerOrderId: "topup", status: "settled", settleAfter: "2026-08-23T00:00:00.000Z", createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" };
+        const updateReward = vi.fn(async (_id, patch) => ({ ...reward, ...patch }));
+        const updateRelationship = vi.fn();
+        mocks.makeRepositories.mockReturnValue({ referrals: { getRewardsByTriggerOrder: vi.fn(async () => [reward]), updateReward, getRelationshipById: vi.fn(async () => ({ id: "rel", riskSignals: {} })), updateRelationship } });
+        mocks.adjustWallet.mockRejectedValue(new QuotaExceededError("钱包余额不足"));
+
+        await reverseReferralRewardsForRefundedOrder({ query: vi.fn() }, { orderId: "topup", refundedAt: "2026-08-24T00:00:00.000Z" });
+
+        expect(updateReward).toHaveBeenCalledWith("reward", expect.objectContaining({ status: "manual_review" }));
+        expect(updateRelationship).toHaveBeenCalledWith("rel", expect.objectContaining({ riskStatus: "frozen" }));
     });
 });

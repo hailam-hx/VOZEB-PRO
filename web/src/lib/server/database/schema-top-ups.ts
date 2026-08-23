@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS top_up_presets (
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT top_up_presets_amount CHECK (nominal_native_amount > 0)
+    CONSTRAINT top_up_presets_amount CHECK (nominal_native_amount > 0 AND nominal_native_amount = trunc(nominal_native_amount))
 );
 
 CREATE INDEX IF NOT EXISTS top_up_presets_enabled_idx ON top_up_presets (enabled, sort_order, id);
@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS top_up_user_coupons (
     status text NOT NULL DEFAULT 'available',
     grant_source text NOT NULL DEFAULT 'claim',
     locked_order_id text,
+    locked_at timestamptz,
     redeemed_order_id text,
+    redeemed_at timestamptz,
     expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -90,6 +92,8 @@ CREATE TABLE IF NOT EXISTS top_up_orders (
     payment_kind text NOT NULL,
     payment_amount jsonb NOT NULL,
     provider text NOT NULL,
+    provider_event_id text NOT NULL,
+    order_snapshot_fingerprint text NOT NULL,
     provider_order_id text,
     provider_payment_id text,
     promotion_campaign_id text,
@@ -110,7 +114,7 @@ CREATE TABLE IF NOT EXISTS top_up_orders (
     CONSTRAINT top_up_orders_provider_refund_state CHECK (provider_refund_state IN ('none', 'pending', 'succeeded', 'failed', 'manual')),
     CONSTRAINT top_up_orders_recovery_state CHECK (credit_recovery_state IN ('none', 'held', 'recovered', 'released', 'manual_review')),
     CONSTRAINT top_up_orders_v1_fiat CHECK (payment_kind = 'fiat' AND currency = 'VND' AND currency_exponent = 0),
-    CONSTRAINT top_up_orders_amounts CHECK (nominal_native_amount > 0 AND promotion_discount_native_amount >= 0 AND coupon_discount_native_amount >= 0 AND payable_native_amount > 0 AND nominal_usd_value > 0 AND paid_usd_value > 0 AND credit_amount > 0)
+    CONSTRAINT top_up_orders_amounts CHECK (nominal_native_amount > 0 AND nominal_native_amount = trunc(nominal_native_amount) AND promotion_discount_native_amount >= 0 AND coupon_discount_native_amount >= 0 AND payable_native_amount > 0 AND payable_native_amount = trunc(payable_native_amount) AND nominal_usd_value > 0 AND paid_usd_value > 0 AND credit_amount > 0)
 );
 
 CREATE INDEX IF NOT EXISTS top_up_orders_user_created_idx ON top_up_orders (user_id, created_at DESC);
@@ -142,7 +146,9 @@ CREATE TABLE IF NOT EXISTS top_up_payments (
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT top_up_payments_status CHECK (status IN ('pending', 'succeeded', 'failed', 'refunded')),
     CONSTRAINT top_up_payments_kind CHECK (payment_kind IN ('fiat', 'crypto')),
-    CONSTRAINT top_up_payments_amount CHECK ((payment_kind = 'fiat' AND fiat_currency IS NOT NULL AND amount_minor IS NOT NULL AND minor_unit_exponent IS NOT NULL AND crypto_asset IS NULL AND crypto_network IS NULL AND amount_atomic IS NULL AND crypto_decimals IS NULL) OR (payment_kind = 'crypto' AND fiat_currency IS NULL AND amount_minor IS NULL AND minor_unit_exponent IS NULL AND crypto_asset IS NOT NULL AND crypto_network IS NOT NULL AND amount_atomic IS NOT NULL AND crypto_decimals IS NOT NULL))
+    CONSTRAINT top_up_payments_amount CHECK ((payment_kind = 'fiat' AND fiat_currency IS NOT NULL AND amount_minor IS NOT NULL AND amount_minor >= 0 AND minor_unit_exponent IS NOT NULL AND crypto_asset IS NULL AND crypto_network IS NULL AND amount_atomic IS NULL AND crypto_decimals IS NULL AND crypto_tx_hash IS NULL) OR (payment_kind = 'crypto' AND fiat_currency IS NULL AND amount_minor IS NULL AND minor_unit_exponent IS NULL AND crypto_asset IS NOT NULL AND crypto_network IS NOT NULL AND amount_atomic IS NOT NULL AND amount_atomic >= 0 AND crypto_decimals BETWEEN 0 AND 30)),
+    CONSTRAINT top_up_payments_crypto_hash_required CHECK (payment_kind <> 'crypto' OR status <> 'succeeded' OR crypto_tx_hash IS NOT NULL),
+    CONSTRAINT top_up_payments_crypto_hash_normalized CHECK (crypto_tx_hash IS NULL OR (crypto_tx_hash <> '' AND crypto_tx_hash = lower(btrim(crypto_tx_hash))))
 );
 
 CREATE INDEX IF NOT EXISTS top_up_payments_order_idx ON top_up_payments (order_id, created_at DESC);
@@ -201,7 +207,8 @@ CREATE TABLE IF NOT EXISTS top_up_reconciliation_runs (
     issue_rows integer NOT NULL DEFAULT 0,
     statement_paid_amount jsonb NOT NULL,
     statement_refunded_amount jsonb NOT NULL,
-    local_matched_amount jsonb NOT NULL,
+    local_paid_amount jsonb NOT NULL,
+    local_refunded_amount jsonb NOT NULL,
     difference_amount jsonb NOT NULL,
     difference_direction text NOT NULL,
     local_nominal_usd_value numeric(30, 12) NOT NULL DEFAULT 0,

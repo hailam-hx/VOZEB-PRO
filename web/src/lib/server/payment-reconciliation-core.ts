@@ -60,7 +60,8 @@ export function createBillingReconciliationPersistenceRecords(result: BillingRec
         issueRows: result.issueRows,
         statementPaidAmount: result.totals.statementPaidAmount,
         statementRefundedAmount: result.totals.statementRefundedAmount,
-        localMatchedAmount: result.totals.localMatchedAmount,
+        localPaidAmount: result.totals.localPaidAmount,
+        localRefundedAmount: result.totals.localRefundedAmount,
         differenceAmount: result.totals.differenceAmount,
         differenceDirection: result.totals.differenceDirection,
         localNominalUsdValue: result.totals.localNominalUsdValue,
@@ -106,15 +107,20 @@ export function reconcilePaymentStatementRows(provider: string, rows: PaymentSta
     });
     const statementPaidMinor = rows.reduce((sum, row) => sum + (row.status === "paid" ? BigInt(row.amountMinor || "0") : BigInt(0)), BigInt(0));
     const statementRefundedMinor = rows.reduce((sum, row) => sum + (row.status === "refunded" ? BigInt(row.amountMinor || "0") : BigInt(0)), BigInt(0));
-    const localMatchedMinor = resultRows.reduce((sum, row) => {
+    const localPaidMinor = resultRows.reduce((sum, row) => {
         if (!row.localOrderId) return sum;
         const amount = row.localPaymentAmount?.kind === "fiat" ? BigInt(row.localPaymentAmount.amountMinor) : BigInt(0);
         if (row.statementStatus === "paid") return sum + amount;
-        if (row.statementStatus === "refunded") return sum - amount;
         return sum;
     }, BigInt(0));
+    const localRefundedMinor = resultRows.reduce((sum, row) => {
+        if (!row.localOrderId) return sum;
+        const amount = row.localPaymentAmount?.kind === "fiat" ? BigInt(row.localPaymentAmount.amountMinor) : BigInt(0);
+        return row.statementStatus === "refunded" ? sum + amount : sum;
+    }, BigInt(0));
     const statementNetMinor = statementPaidMinor - statementRefundedMinor;
-    const signedDifference = statementNetMinor - localMatchedMinor;
+    const localNetMinor = localPaidMinor - localRefundedMinor;
+    const signedDifference = statementNetMinor - localNetMinor;
     const absoluteDifference = signedDifference < BigInt(0) ? -signedDifference : signedDifference;
     const fiat = (amountMinor: bigint): PaymentAmount => ({ kind: "fiat", currency: "VND", amountMinor: amountMinor.toString(), minorUnitExponent: 0 });
     const localNominalUsdValue = sumDecimalStrings(resultRows.map((row) => row.localNominalUsdValue));
@@ -128,7 +134,8 @@ export function reconcilePaymentStatementRows(provider: string, rows: PaymentSta
         totals: {
             statementPaidAmount: fiat(statementPaidMinor),
             statementRefundedAmount: fiat(statementRefundedMinor),
-            localMatchedAmount: fiat(localMatchedMinor),
+            localPaidAmount: fiat(localPaidMinor),
+            localRefundedAmount: fiat(localRefundedMinor),
             differenceAmount: fiat(absoluteDifference),
             differenceDirection: signedDifference > BigInt(0) ? "statement_over" : signedDifference < BigInt(0) ? "local_over" : "balanced",
             localNominalUsdValue,
@@ -248,7 +255,8 @@ export function buildStoredReconciliationResult(run: TopUpReconciliationRunRecor
         totals: {
             statementPaidAmount: validatePaymentAmount(run.statementPaidAmount),
             statementRefundedAmount: validatePaymentAmount(run.statementRefundedAmount),
-            localMatchedAmount: validatePaymentAmount(run.localMatchedAmount),
+            localPaidAmount: validatePaymentAmount(run.localPaidAmount),
+            localRefundedAmount: validatePaymentAmount(run.localRefundedAmount),
             differenceAmount: validatePaymentAmount(run.differenceAmount),
             differenceDirection: run.differenceDirection,
             localNominalUsdValue: run.localNominalUsdValue,

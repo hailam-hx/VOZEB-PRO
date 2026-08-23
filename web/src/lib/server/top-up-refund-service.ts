@@ -7,6 +7,7 @@ import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEna
 import { TOP_UP_ORDER_NOTIFY_CHANNEL } from "@/lib/server/database/top-up-repository";
 import { getPaymentRuntimeConfig, getPaymentRuntimeValue } from "@/lib/server/payment-config-store";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
+import { reverseReferralRewardsForRefundedOrder } from "@/lib/server/referral-service";
 import { requestTopUpRefund, type TopUpRefundKind, type TopUpRefundProvider, type TopUpRefundProviderResult, type TopUpRefundStore } from "./top-up-refund";
 
 export async function refundTopUpOrder(orderId: string, input: { kind?: TopUpRefundKind; reason?: unknown; operatorUserId: string }) {
@@ -134,10 +135,21 @@ class PostgresTopUpRefundStore implements TopUpRefundStore {
                 createdAt: new Date().toISOString(),
             });
             await repos.pointsWallet.closeHold(hold.id, { status: "settled", closedAt: new Date().toISOString() });
-            await client.query(`UPDATE top_up_refunds SET status = 'completed', provider_refund_id = $2, raw_payload = $3::jsonb, completed_at = now(), updated_at = now() WHERE order_id = $1`, [
+            const refundedAt = new Date().toISOString();
+            const payment = await client.query("UPDATE top_up_payments SET status = 'refunded', refunded_at = $4, updated_at = $4 WHERE order_id = $1 AND provider = $2 AND provider_payment_id = $3 AND status = 'succeeded' RETURNING id", [
                 order.id,
+                order.provider,
+                order.providerPaymentId || "",
+                refundedAt,
+            ]);
+            if (!payment.rows[0]) throw new BillingInputError("充值订单成功支付记录不存在或已变化", 409);
+            await reverseReferralRewardsForRefundedOrder(client, { orderId: order.id, refundedAt, reason: "触发充值订单已全额退款" });
+            await client.query(`UPDATE top_up_refunds SET status = 'completed', payment_id = $2, provider_refund_id = $3, raw_payload = $4::jsonb, completed_at = $5, updated_at = $5 WHERE order_id = $1`, [
+                order.id,
+                String(payment.rows[0].id),
                 input.providerRefund.providerRefundId || null,
                 JSON.stringify(input.providerRefund.rawPayload || {}),
+                refundedAt,
             ]);
             await client.query(
                 `WITH updated_order AS (

@@ -40,7 +40,7 @@ description: 当前接口响应事实与管理员敏感配置契约
 促销与优惠券新增接口使用 `{ code, data, msg }`，其中成功时 `code = 0`，业务数据位于 `data`，失败时 `data = null` 且 HTTP 状态与 `code` 一致：
 
 - `GET /api/billing/coupons`、`POST /api/billing/coupons/claim`
-- `POST /api/billing/quotes`
+- `POST /api/billing/top-ups/quotes`
 - `/api/admin/billing/promotions` 与 `/api/admin/billing/promotions/{id}`
 - `/api/admin/billing/coupon-templates` 与 `/api/admin/billing/coupon-templates/{id}`
 - `POST /api/admin/billing/coupons/grant`
@@ -55,7 +55,7 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 `GET /invite/{code}` 是归因重定向而不是 JSON 接口：有效访问写入 30 天 HttpOnly、SameSite=Lax Cookie 后跳转注册页；`next` 只接受站内绝对路径。邀请业务仅在 PostgreSQL 下启用，文件 Provider 不创建关系或奖励账本。
 
-`GET /api/billing/products` 返回 VND 充值 `presets`。`POST /api/billing/quotes` 与 `POST /api/billing/orders` 接受 `presetId` 或 `customAmountVnd`；服务端计算 VND 指数、标称/应付原生金额、标称/实付 USD、FX/价格版本和 `creditAmount`，忽略客户端提供的同名财务字段。支付商下单、回调、退款与对账不得重新计算或覆盖这些快照。
+`GET /api/billing/top-ups/presets` 返回 VND 充值 `presets`。`POST /api/billing/top-ups/quotes` 与 `POST /api/billing/top-ups/orders` 接受 `presetId` 或 `customAmountVnd`；服务端要求 VND 标称金额符合指数 0（整数），计算标称/应付原生金额、标称/实付 USD、FX/价格版本和 `creditAmount`，忽略客户端提供的同名财务字段。支付商下单、回调、退款与对账不得重新计算或覆盖这些快照。
 
 `GET /api/admin/billing/summary` 的 `summary.commerce` 返回累计成交订单数、活动/用券订单数、对应成交数和已成交优惠金额。成交订单定义为 `paid` 或 `refunded`，退款不抹除已经成交的事实；活动和用券成交率分别以真实使用对应优惠的订单为分母。`GET /api/admin/referrals` 的 `stats` 返回点击、注册、首单触发、待结算、已发放和风险数量。两类摘要只返回聚合字段，不返回订单、邀请关系或奖励明细。
 

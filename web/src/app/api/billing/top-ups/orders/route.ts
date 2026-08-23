@@ -5,7 +5,7 @@ import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { createTopUpOrder, listTopUpOrdersForUser } from "@/lib/server/top-up-commerce-service";
-import { commerceError, commerceOk } from "../commerce-response";
+import { commerceError, commerceOk } from "../../commerce-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,18 +31,18 @@ export async function POST(request: Request) {
         const body = await readJsonBody<{ presetId?: unknown; customAmountVnd?: unknown; provider?: unknown; promotionId?: unknown; userCouponId?: unknown }>(request);
         const order = await createTopUpOrder({ ...body, userId: currentUser.id });
         await safeRecordAuditLog({
-            action: "billing.order.create",
+            action: "top_up.order.create",
             actor: auditActorFromRequest(request, currentUser),
-            target: { type: "billing_order", id: order.id, label: order.orderNo },
+            target: { type: "top_up_order", id: order.id, label: order.orderNo },
             metadata: { presetId: order.presetId, paymentAmount: order.paymentAmount, currency: order.currency, provider: order.provider, userCouponId: order.userCouponId },
         });
         return commerceOk({ order }, 201);
     } catch (error) {
         await safeRecordAuditLog({
-            action: "billing.order.create",
+            action: "top_up.order.create",
             status: "failure",
             actor: auditActorFromRequest(request, currentUser),
-            target: { type: "billing_order" },
+            target: { type: "top_up_order" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
         return commerceError(error, "创建充值订单失败", "Create top-up order failed");

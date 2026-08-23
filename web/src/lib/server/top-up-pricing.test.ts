@@ -74,4 +74,11 @@ describe("top-up pricing", () => {
             }),
         ).toThrow("币种");
     });
+
+    it.each([
+        ["custom", { request: { customAmountVnd: "250000.1" }, config }],
+        ["preset", { request: { presetId: "fractional" }, config, preset: { ...preset, id: "fractional", nominalNativeAmount: "250000.1" } }],
+    ])("rejects fractional VND from a %s input before snapshotting", (_label, input) => {
+        expect(() => quoteTopUp(input)).toThrow("整数");
+    });
 });

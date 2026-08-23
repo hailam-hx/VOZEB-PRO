@@ -9,7 +9,9 @@ import { createPaymentFormPage } from "@/lib/server/payment-form-page";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type RouteContext = { params: Promise<{ id: string }> };
+type RouteContext = {
+    params: Promise<{ id: string }>;
+};
 
 export async function GET(_request: NextRequest, context: RouteContext) {
     const currentUser = await getCurrentUser();

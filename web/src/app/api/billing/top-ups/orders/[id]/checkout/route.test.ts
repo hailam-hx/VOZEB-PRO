@@ -9,7 +9,7 @@ vi.mock("@/lib/server/payment-checkout-service", () => ({ createPaymentCheckoutF
 
 import { POST } from "./route";
 
-describe("payment checkout route", () => {
+describe("top-up payment checkout route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
@@ -17,7 +17,7 @@ describe("payment checkout route", () => {
     });
 
     it("uses the common business response envelope", async () => {
-        const request = new NextRequest("http://localhost/api/billing/orders/order-one/checkout", { method: "POST", body: JSON.stringify({ provider: "alipay" }) });
+        const request = new NextRequest("http://localhost/api/billing/top-ups/orders/order-one/checkout", { method: "POST", body: JSON.stringify({ provider: "alipay" }) });
         const response = await POST(request, { params: Promise.resolve({ id: "order-one" }) });
 
         expect(response.status).toBe(200);

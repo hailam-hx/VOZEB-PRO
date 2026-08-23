@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { subscribeBillingOrderEvent } from "@/lib/server/billing-order-event-signal";
+import { subscribeTopUpOrderEvent } from "@/lib/server/top-up-order-event-signal";
 import { isBillingInputError } from "@/lib/server/billing-errors";
 import { getTopUpOrderForUser } from "@/lib/server/top-up-commerce-service";
 import type { TopUpOrder } from "@/lib/server/top-up-payment";
@@ -23,7 +23,7 @@ export async function GET(request: Request, context: RouteContext) {
         initialOrder = await getTopUpOrderForUser(currentUser.id, id);
     } catch (error) {
         if (isBillingInputError(error)) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
-        console.error("Subscribe billing order failed", error);
+        console.error("Subscribe top-up order failed", error);
         return NextResponse.json({ code: 500, data: null, msg: "获取订单失败" }, { status: 500 });
     }
 
@@ -63,7 +63,7 @@ export async function GET(request: Request, context: RouteContext) {
             emit(initialOrder);
             if (closed) return;
 
-            void subscribeBillingOrderEvent(id, () => void emitLatest().catch(close))
+            void subscribeTopUpOrderEvent(id, () => void emitLatest().catch(close))
                 .then(async (release) => {
                     if (closed) {
                         release();

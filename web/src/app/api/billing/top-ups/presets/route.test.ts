@@ -7,7 +7,7 @@ vi.mock("@/lib/server/payment-config-status", () => ({ getPaymentConfigSummary: 
 
 import { GET } from "./route";
 
-describe("GET /api/billing/products", () => {
+describe("GET /api/billing/top-ups/presets", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.listTopUpPresets.mockResolvedValue([{ id: "starter" }]);

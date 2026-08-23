@@ -92,7 +92,8 @@ export type BillingReconciliationResult = {
     totals: {
         statementPaidAmount: PaymentAmount;
         statementRefundedAmount: PaymentAmount;
-        localMatchedAmount: PaymentAmount;
+        localPaidAmount: PaymentAmount;
+        localRefundedAmount: PaymentAmount;
         differenceAmount: PaymentAmount;
         differenceDirection: "statement_over" | "local_over" | "balanced";
         localNominalUsdValue: string;
@@ -113,7 +114,8 @@ export type BillingReconciliationRun = {
     issueRows: number;
     statementPaidAmount: PaymentAmount;
     statementRefundedAmount: PaymentAmount;
-    localMatchedAmount: PaymentAmount;
+    localPaidAmount: PaymentAmount;
+    localRefundedAmount: PaymentAmount;
     differenceAmount: PaymentAmount;
     differenceDirection: "statement_over" | "local_over" | "balanced";
     localNominalUsdValue: string;
