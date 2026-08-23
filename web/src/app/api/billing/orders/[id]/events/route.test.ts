@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
-    getBillingOrderForUser: vi.fn(),
+    getTopUpOrderForUser: vi.fn(),
     listener: undefined as (() => void) | undefined,
     unsubscribe: vi.fn(),
     subscribe: vi.fn(async (_orderId: string, listener: () => void) => {
@@ -13,8 +13,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/server/billing-order-event-signal", () => ({ subscribeBillingOrderEvent: mocks.subscribe }));
-vi.mock("@/lib/server/billing-service", () => ({
-    getBillingOrderForUser: mocks.getBillingOrderForUser,
+vi.mock("@/lib/server/top-up-commerce-service", () => ({
+    getTopUpOrderForUser: mocks.getTopUpOrderForUser,
+}));
+vi.mock("@/lib/server/billing-errors", () => ({
     isBillingInputError: vi.fn((error) => Boolean(error && typeof error === "object" && "status" in error)),
 }));
 
@@ -31,7 +33,7 @@ describe("GET /api/billing/orders/[id]/events", () => {
     });
 
     it("streams the current order and closes after a notified terminal state", async () => {
-        mocks.getBillingOrderForUser.mockResolvedValueOnce(pendingOrder).mockResolvedValueOnce(pendingOrder).mockResolvedValueOnce(paidOrder);
+        mocks.getTopUpOrderForUser.mockResolvedValueOnce(pendingOrder).mockResolvedValueOnce(pendingOrder).mockResolvedValueOnce(paidOrder);
 
         const response = await GET(new Request("http://localhost/api/billing/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledWith("order-one", expect.any(Function)));
@@ -41,12 +43,12 @@ describe("GET /api/billing/orders/[id]/events", () => {
         expect(response.headers.get("content-type")).toContain("text/event-stream");
         expect(body).toContain('"status":"pending"');
         expect(body).toContain('"status":"paid"');
-        expect(mocks.getBillingOrderForUser).toHaveBeenCalledTimes(3);
+        expect(mocks.getTopUpOrderForUser).toHaveBeenCalledTimes(3);
         expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
     });
 
     it("returns an owned terminal order without opening a subscription", async () => {
-        mocks.getBillingOrderForUser.mockResolvedValue(paidOrder);
+        mocks.getTopUpOrderForUser.mockResolvedValue(paidOrder);
 
         const response = await GET(new Request("http://localhost/api/billing/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
 
@@ -60,6 +62,6 @@ describe("GET /api/billing/orders/[id]/events", () => {
         const response = await GET(new Request("http://localhost/api/billing/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });
 
         expect(response.status).toBe(401);
-        expect(mocks.getBillingOrderForUser).not.toHaveBeenCalled();
+        expect(mocks.getTopUpOrderForUser).not.toHaveBeenCalled();
     });
 });

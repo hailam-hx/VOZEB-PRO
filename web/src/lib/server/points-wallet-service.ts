@@ -65,6 +65,32 @@ export type CreditWalletBalanceInput = {
     now?: Date;
 };
 
+export async function adjustWalletBalanceInPostgresTransaction(
+    client: import("@/lib/server/database").QueryExecutor,
+    input: { userId: string; amount: DecimalInput; description: string; idempotencyKey: string; type: "credit" | "admin-adjust"; now?: Date },
+) {
+    const amount = decimal(input.amount);
+    const repos = createPostgresRepositories(client);
+    const existing = await repos.points.getRecordByIdempotencyKey(input.idempotencyKey);
+    if (existing) return { record: existing };
+    const user = await repos.users.getById(input.userId, true);
+    if (!user) throw new AuthInputError("用户不存在");
+    const next = decimal(user.settledBalance).plus(amount);
+    if (next.isNegative()) throw new QuotaExceededError("钱包余额不足");
+    await repos.users.update(user.id, { settledBalance: next.toString() });
+    const record = await repos.points.addRecord({
+        id: randomUUID(),
+        userId: user.id,
+        type: input.type,
+        amount: amount.toString(),
+        balanceAfter: next.toString(),
+        description: requiredText(input.description, "钱包调整缺少说明"),
+        idempotencyKey: requiredText(input.idempotencyKey, "钱包调整缺少业务 ID"),
+        createdAt: (input.now || new Date()).toISOString(),
+    });
+    return { record };
+}
+
 export type ReleaseWalletHoldInput = { holdId: string; businessId: string; requestFingerprint: string; reason: string; now?: Date };
 
 export type WalletReconciliationReport = {
@@ -719,7 +745,11 @@ function sameProviderAttemptSnapshot(
     );
 }
 
-function assertProviderAttemptImmutableSnapshot(existing: ProviderUsageAttempt, input: Pick<RecordProviderUsageAttemptInput, "providerIdempotencySupported" | "providerIdempotencyKey" | "upstreamTaskId" | "costRateSnapshot">, nativeCostUnit: ProviderCostUnit) {
+function assertProviderAttemptImmutableSnapshot(
+    existing: ProviderUsageAttempt,
+    input: Pick<RecordProviderUsageAttemptInput, "providerIdempotencySupported" | "providerIdempotencyKey" | "upstreamTaskId" | "costRateSnapshot">,
+    nativeCostUnit: ProviderCostUnit,
+) {
     const upstreamTaskId = normalizedOptionalText(input.upstreamTaskId);
     if (
         existing.providerIdempotencySupported !== (input.providerIdempotencySupported === true) ||

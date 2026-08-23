@@ -1,18 +1,8 @@
 import { createHash } from "node:crypto";
 
-import type { BillingReconciliationIssue, BillingReconciliationIssueCode, BillingReconciliationResult, BillingReconciliationRow, BillingStatementStatus } from "@/lib/admin-billing-types";
+import type { BillingReconciliationResult } from "@/lib/admin-billing-types";
 import { BillingInputError } from "@/lib/server/billing-errors";
-import {
-    createPostgresRepositories,
-    ensurePostgresSchema,
-    isPostgresDatabaseEnabled,
-    withPostgresTransaction,
-    type BillingOrderRecord,
-    type BillingReconciliationRowRecord,
-    type BillingReconciliationRunRecord,
-    type JsonValue,
-    type PaymentTransactionRecord,
-} from "@/lib/server/database";
+import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
 import {
     buildStoredReconciliationResult,
     createBillingReconciliationPersistenceRecords,
@@ -51,7 +41,7 @@ export async function listBillingReconciliationRuns(input: ListBillingReconcilia
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付对账需要启用 PostgreSQL", 501);
     await ensurePostgresSchema();
     const provider = normalizeOptionalProvider(input.provider);
-    return createPostgresRepositories().billing.listReconciliationRuns({
+    return createPostgresRepositories().topUps.listReconciliationRuns({
         page: normalizeInteger(input.page, 1, 1, 10_000),
         pageSize: normalizeInteger(input.pageSize, 10, 1, 50),
         provider,
@@ -62,9 +52,9 @@ export async function getBillingReconciliationRun(id: string): Promise<BillingRe
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付对账需要启用 PostgreSQL", 501);
     await ensurePostgresSchema();
     const repos = createPostgresRepositories();
-    const run = await repos.billing.getReconciliationRun(normalizeText(id, "", 120));
+    const run = await repos.topUps.getReconciliationRun(normalizeText(id, "", 120));
     if (!run) return null;
-    const rows = await repos.billing.listReconciliationRows({ runId: run.id, page: 1, pageSize: MAX_STATEMENT_ROWS });
+    const rows = await repos.topUps.listReconciliationRows({ runId: run.id, page: 1, pageSize: MAX_STATEMENT_ROWS });
     return buildStoredReconciliationResult(run, rows.items);
 }
 
@@ -75,7 +65,7 @@ export async function importBillingStatement(input: ReconcileBillingStatementInp
     const csvText = normalizeText(input.csvText, "", 200_000);
     const fileHash = createHash("sha256").update(csvText, "utf8").digest("hex");
     const repos = createPostgresRepositories();
-    if (await repos.billing.getReconciliationRunByFileHash(provider, fileHash)) throw new BillingInputError("该支付渠道的同一账单文件已经导入", 409);
+    if (await repos.topUps.getReconciliationRunByFileHash(provider, fileHash)) throw new BillingInputError("该支付渠道的同一账单文件已经导入", 409);
     const result = await reconcileBillingStatement({ ...input, provider, csvText });
     const { run, rows } = createBillingReconciliationPersistenceRecords(result, {
         actor,
@@ -84,7 +74,7 @@ export async function importBillingStatement(input: ReconcileBillingStatementInp
         note: input.note,
     });
     const created = await withPostgresTransaction(async (client) => {
-        return createPostgresRepositories(client).billing.createReconciliationRun(run, rows);
+        return createPostgresRepositories(client).topUps.createReconciliationRun(run, rows);
     });
     if (!created) throw new BillingInputError("该支付渠道的同一账单文件已经导入", 409);
     return { ...result, runId: run.id, source: run.source, fileName: run.fileName, importedByUsername: run.importedByUsername };
@@ -109,20 +99,20 @@ export async function reconcileBillingStatement(input: ReconcileBillingStatement
     async function findLocalRecordForStatementRow(row: PaymentStatementRow) {
         const order = await findLocalOrder(row);
         if (!order) return undefined;
-        const payments = await repos.billing.listPaymentsByOrderId(order.id);
+        const payments = await repos.topUps.listPaymentsByOrderId(order.id);
         return { order, payments };
     }
 
     async function findLocalOrder(row: PaymentStatementRow) {
         if (row.orderNo) {
-            const exact = await repos.billing.getOrderByOrderNo(row.orderNo);
+            const exact = await repos.topUps.getOrderByOrderNo(row.orderNo);
             if (exact && localOrderMatchesStatement(exact, row)) return exact;
         }
         const identifiers = statementIdentifiers(row);
-        const order = await repos.billing.getOrderByProviderIdentifiers(row.provider, identifiers);
+        const order = await repos.topUps.getOrderByProviderIdentifiers(row.provider, identifiers);
         if (order && localOrderMatchesStatement(order, row)) return order;
-        const payment = await repos.billing.getPaymentByProviderIdentifiers(row.provider, identifiers);
-        if (payment) return repos.billing.getOrderById(payment.orderId);
+        const payment = await repos.topUps.getPaymentByProviderIdentifiers(row.provider, identifiers);
+        if (payment) return repos.topUps.getOrderById(payment.orderId);
         return undefined;
     }
 }

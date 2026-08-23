@@ -95,9 +95,8 @@ async function readPointsExportData(userId: string) {
 async function readBillingExportData(userId: string) {
     const billing = await readBillingData(userId);
     return {
-        orders: billing.orders.map(({ userId: _userId, metadata: _metadata, providerOrderId: _providerOrderId, providerPaymentId: _providerPaymentId, ...order }) => order),
-        payments: billing.payments.map(({ userId: _userId, rawPayload: _rawPayload, providerTradeId: _providerTradeId, providerPaymentId: _providerPaymentId, ...payment }) => payment),
-        planAssignments: billing.planAssignments.map(({ userId: _userId, metadata: _metadata, sourceId: _sourceId, ...assignment }) => assignment),
+        topUpOrders: billing.topUpOrders.map((item) => sanitizePortableData(item)),
+        topUpPayments: billing.topUpPayments.map((item) => sanitizePortableData(item)),
     };
 }
 
@@ -151,7 +150,7 @@ async function readCommercialData(userId: string) {
     await ensurePostgresSchema();
     const repos = createPostgresRepositories();
     const [coupons, referralRelationships, referralRewards, workSummaries, notifications] = await Promise.all([
-        collectPages((page) => repos.coupons.listUserCoupons(userId, { page, pageSize: PAGE_SIZE })),
+        collectPages((page) => repos.topUps.listUserCoupons({ userId, page, pageSize: PAGE_SIZE })),
         collectPages((page) => repos.referrals.listRelationships({ participantUserId: userId, page, pageSize: PAGE_SIZE })),
         collectPages((page) => repos.referrals.listRewards({ beneficiaryUserId: userId, page, pageSize: PAGE_SIZE })),
         collectPages((page) => repos.workPublications.listWorks({ ownerUserId: userId, page, pageSize: PAGE_SIZE })),
@@ -168,15 +167,14 @@ async function readCommercialData(userId: string) {
 }
 
 async function readBillingData(userId: string) {
-    if (!isPostgresDatabaseEnabled()) return { orders: [], payments: [], planAssignments: [] };
+    if (!isPostgresDatabaseEnabled()) return { topUpOrders: [], topUpPayments: [] };
     await ensurePostgresSchema();
-    const billing = createPostgresRepositories().billing;
-    const [orders, payments, planAssignments] = await Promise.all([
-        collectPages((page) => billing.listOrders({ userId, page, pageSize: PAGE_SIZE })),
-        collectPages((page) => billing.listPayments({ userId, page, pageSize: PAGE_SIZE })),
-        collectPages((page) => billing.listPlanAssignments({ userId, page, pageSize: PAGE_SIZE })),
+    const topUps = createPostgresRepositories().topUps;
+    const [topUpOrders, topUpPayments] = await Promise.all([
+        collectPages((page) => topUps.listOrders({ userId, page, pageSize: PAGE_SIZE })),
+        collectPages((page) => topUps.listPayments({ userId, page, pageSize: PAGE_SIZE })),
     ]);
-    return { orders, payments, planAssignments };
+    return { topUpOrders, topUpPayments };
 }
 
 async function readCreativeData(userId: string) {

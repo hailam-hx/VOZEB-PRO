@@ -1,5 +1,5 @@
 import type { QueryExecutor } from "@/lib/server/database/postgres";
-import type { JsonValue, PageInput, PageResult, ReferralCodeRecord, ReferralProgramRecord, ReferralRelationshipRecord, ReferralRewardRecord, ReferralRewardStatus, ReferralRiskStatus } from "./repository-shared";
+import type { PageInput, PageResult, ReferralCodeRecord, ReferralProgramRecord, ReferralRelationshipRecord, ReferralRewardRecord, ReferralRewardStatus, ReferralRiskStatus } from "./repository-shared";
 import { jsonParam, mapReferralCode, mapReferralProgram, mapReferralRelationship, mapReferralReward, normalizePage, normalizePageSize, numberValue, pageResult } from "./repository-shared";
 
 export class ReferralRepository {
@@ -14,8 +14,8 @@ export class ReferralRepository {
         const result = await this.db.query(
             `
             INSERT INTO referral_programs (
-                id, enabled, inviter_points, invitee_reward_type, invitee_points, invitee_coupon_template_id,
-                minimum_paid_cents, cooling_off_days, inviter_monthly_limit, campaign_total_limit,
+                id, enabled, inviter_points, invitee_reward_type, invitee_points, invitee_top_up_coupon_template_id,
+                minimum_paid_usd, cooling_off_days, inviter_monthly_limit, campaign_total_limit,
                 auto_freeze_risk, created_by_user_id, updated_by_user_id, created_at, updated_at
             ) VALUES ('default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT (id) DO UPDATE SET
@@ -23,8 +23,8 @@ export class ReferralRepository {
                 inviter_points = EXCLUDED.inviter_points,
                 invitee_reward_type = EXCLUDED.invitee_reward_type,
                 invitee_points = EXCLUDED.invitee_points,
-                invitee_coupon_template_id = EXCLUDED.invitee_coupon_template_id,
-                minimum_paid_cents = EXCLUDED.minimum_paid_cents,
+                invitee_top_up_coupon_template_id = EXCLUDED.invitee_top_up_coupon_template_id,
+                minimum_paid_usd = EXCLUDED.minimum_paid_usd,
                 cooling_off_days = EXCLUDED.cooling_off_days,
                 inviter_monthly_limit = EXCLUDED.inviter_monthly_limit,
                 campaign_total_limit = EXCLUDED.campaign_total_limit,
@@ -38,8 +38,8 @@ export class ReferralRepository {
                 program.inviterPoints,
                 program.inviteeRewardType,
                 program.inviteePoints,
-                program.inviteeCouponTemplateId || null,
-                program.minimumPaidCents,
+                program.inviteeTopUpCouponTemplateId || null,
+                program.minimumPaidUsd,
                 program.coolingOffDays,
                 program.inviterMonthlyLimit,
                 program.campaignTotalLimit,
@@ -191,8 +191,8 @@ export class ReferralRepository {
             `
             INSERT INTO referral_rewards (
                 id, relationship_id, beneficiary_user_id, beneficiary_role, reward_type, points_amount,
-                coupon_template_id, trigger_order_id, status, settle_after, wallet_record_id,
-                reversal_wallet_record_id, user_coupon_id, reason, settled_at, revoked_at, created_at, updated_at
+                top_up_coupon_template_id, trigger_order_id, status, settle_after, wallet_record_id,
+                reversal_wallet_record_id, top_up_user_coupon_id, reason, settled_at, revoked_at, created_at, updated_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             ON CONFLICT (relationship_id, beneficiary_role) DO NOTHING
             RETURNING *
@@ -204,13 +204,13 @@ export class ReferralRepository {
                 reward.beneficiaryRole,
                 reward.rewardType,
                 reward.pointsAmount,
-                reward.couponTemplateId || null,
+                reward.topUpCouponTemplateId || null,
                 reward.triggerOrderId,
                 reward.status,
                 reward.settleAfter,
                 reward.walletRecordId || null,
                 reward.reversalWalletRecordId || null,
-                reward.userCouponId || null,
+                reward.topUpUserCouponId || null,
                 reward.reason || null,
                 reward.settledAt || null,
                 reward.revokedAt || null,
@@ -270,19 +270,19 @@ export class ReferralRepository {
         return result.rows.map(mapReferralReward);
     }
 
-    async updateReward(id: string, patch: Partial<Pick<ReferralRewardRecord, "status" | "walletRecordId" | "reversalWalletRecordId" | "userCouponId" | "reason" | "settledAt" | "revokedAt">>) {
+    async updateReward(id: string, patch: Partial<Pick<ReferralRewardRecord, "status" | "walletRecordId" | "reversalWalletRecordId" | "topUpUserCouponId" | "reason" | "settledAt" | "revokedAt">>) {
         const result = await this.db.query(
             `UPDATE referral_rewards SET
                 status = COALESCE($2, status),
                 wallet_record_id = COALESCE($3, wallet_record_id),
                 reversal_wallet_record_id = COALESCE($4, reversal_wallet_record_id),
-                user_coupon_id = COALESCE($5, user_coupon_id),
+                top_up_user_coupon_id = COALESCE($5, top_up_user_coupon_id),
                 reason = COALESCE($6, reason),
                 settled_at = COALESCE($7, settled_at),
                 revoked_at = COALESCE($8, revoked_at)
              WHERE id = $1
              RETURNING *`,
-            [id, patch.status, patch.walletRecordId, patch.reversalWalletRecordId, patch.userCouponId, patch.reason, patch.settledAt, patch.revokedAt],
+            [id, patch.status, patch.walletRecordId, patch.reversalWalletRecordId, patch.topUpUserCouponId, patch.reason, patch.settledAt, patch.revokedAt],
         );
         return result.rows[0] ? mapReferralReward(result.rows[0]) : null;
     }
@@ -309,8 +309,8 @@ export class ReferralRepository {
 
     async hasPriorPaidOrder(userId: string, excludeOrderId: string) {
         const result = await this.db.query(
-            `SELECT 1 FROM billing_orders
-             WHERE user_id = $1 AND id <> $2 AND paid_at IS NOT NULL AND status IN ('paid', 'refunding', 'refunded')
+            `SELECT 1 FROM top_up_orders
+             WHERE user_id = $1 AND id <> $2 AND credit_grant_state = 'granted' AND status IN ('paid', 'refunding', 'refunded')
              LIMIT 1`,
             [userId, excludeOrderId],
         );

@@ -1,13 +1,13 @@
 import { createHmac, randomUUID } from "node:crypto";
 
+import { decimal } from "@/lib/billing/decimal";
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { BillingInputError } from "@/lib/server/billing-errors";
-import { assertBillingDatabaseReady, normalizeId, normalizeInteger, normalizeMoneyLike, normalizeText } from "@/lib/server/billing-service-helpers";
-import { issueCouponInPostgresTransaction } from "@/lib/server/coupon-service";
 import {
     createPostgresRepositories,
+    ensurePostgresSchema,
+    isPostgresDatabaseEnabled,
     withPostgresTransaction,
-    type BillingOrderRecord,
     type JsonValue,
     type QueryExecutor,
     type ReferralProgramRecord,
@@ -16,7 +16,9 @@ import {
     type ReferralRewardStatus,
     type ReferralRiskStatus,
 } from "@/lib/server/database";
-import { adjustPermanentPointsInPostgresTransaction } from "@/lib/server/points-wallet-service";
+import type { TopUpOrder } from "@/lib/server/top-up-payment";
+import { qualifiesReferralFromVerifiedTopUp } from "@/lib/server/top-up-reporting";
+import { adjustWalletBalanceInPostgresTransaction } from "@/lib/server/points-wallet-service";
 
 const REGISTRATION_NETWORK_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const REGISTRATION_NETWORK_REVIEW_COUNT = 3;
@@ -27,8 +29,8 @@ export type ReferralProgramInput = {
     inviterPoints?: unknown;
     inviteeRewardType?: unknown;
     inviteePoints?: unknown;
-    inviteeCouponTemplateId?: unknown;
-    minimumPaidCents?: unknown;
+    inviteeTopUpCouponTemplateId?: unknown;
+    minimumPaidUsd?: unknown;
     coolingOffDays?: unknown;
     inviterMonthlyLimit?: unknown;
     campaignTotalLimit?: unknown;
@@ -60,15 +62,15 @@ export async function saveReferralProgram(input: ReferralProgramInput, operatorU
         const now = new Date().toISOString();
         if (input.inviteeRewardType !== undefined && input.inviteeRewardType !== "points" && input.inviteeRewardType !== "coupon") throw new BillingInputError("新用户奖励类型无效");
         const inviteeRewardType = input.inviteeRewardType === undefined ? current.inviteeRewardType : input.inviteeRewardType;
-        const inviteeCouponTemplateId = input.inviteeCouponTemplateId === undefined ? current.inviteeCouponTemplateId : normalizeId(input.inviteeCouponTemplateId) || undefined;
+        const inviteeTopUpCouponTemplateId = input.inviteeTopUpCouponTemplateId === undefined ? current.inviteeTopUpCouponTemplateId : normalizeId(input.inviteeTopUpCouponTemplateId) || undefined;
         const program: ReferralProgramRecord = {
             ...current,
             enabled: input.enabled === undefined ? current.enabled : input.enabled === true,
             inviterPoints: normalizeMoneyLike(input.inviterPoints, current.inviterPoints, 1_000_000),
             inviteeRewardType,
             inviteePoints: normalizeMoneyLike(input.inviteePoints, current.inviteePoints, 1_000_000),
-            inviteeCouponTemplateId: inviteeRewardType === "coupon" ? inviteeCouponTemplateId : undefined,
-            minimumPaidCents: normalizeInteger(input.minimumPaidCents, 0, 100_000_000, current.minimumPaidCents),
+            inviteeTopUpCouponTemplateId: inviteeRewardType === "coupon" ? inviteeTopUpCouponTemplateId : undefined,
+            minimumPaidUsd: normalizeDecimal(input.minimumPaidUsd, current.minimumPaidUsd),
             coolingOffDays: normalizeInteger(input.coolingOffDays, 0, 365, current.coolingOffDays),
             inviterMonthlyLimit: normalizeInteger(input.inviterMonthlyLimit, 0, 100_000, current.inviterMonthlyLimit),
             campaignTotalLimit: normalizeInteger(input.campaignTotalLimit, 0, 10_000_000, current.campaignTotalLimit),
@@ -80,9 +82,9 @@ export async function saveReferralProgram(input: ReferralProgramInput, operatorU
         if (program.enabled && program.inviterPoints <= 0) throw new BillingInputError("启用邀请奖励前，请配置大于 0 的邀请人积分");
         if (program.enabled && program.inviteeRewardType === "points" && program.inviteePoints <= 0) throw new BillingInputError("启用邀请奖励前，请配置大于 0 的新用户积分");
         if (program.inviteeRewardType === "coupon") {
-            if (!program.inviteeCouponTemplateId) throw new BillingInputError("请选择新用户优惠券模板");
-            const template = await repos.coupons.getTemplateById(program.inviteeCouponTemplateId);
-            if (!template || !template.enabled) throw new BillingInputError("新用户优惠券不存在或已停用", 404);
+            if (!program.inviteeTopUpCouponTemplateId) throw new BillingInputError("请选择新用户充值优惠券模板");
+            const template = await repos.topUps.getCouponTemplate(program.inviteeTopUpCouponTemplateId, true);
+            if (!template?.enabled) throw new BillingInputError("新用户充值优惠券不存在或已停用", 404);
         }
         return repos.referrals.upsertProgram(program);
     });
@@ -167,7 +169,7 @@ export async function bindReferralRelationshipAfterRegistration(client: QueryExe
     return repos.referrals.createRelationship(relationship);
 }
 
-export async function prepareReferralRewardsForPaidOrder(client: QueryExecutor, input: { order: BillingOrderRecord; provider: string; rawPayload?: JsonValue; paidAt: string }) {
+export async function prepareReferralRewardsForPaidOrder(client: QueryExecutor, input: { order: TopUpOrder; provider: string; rawPayload?: JsonValue; paidAt: string }) {
     const { order } = input;
     if (!order.userId) return [];
     const repos = createPostgresRepositories(client);
@@ -192,7 +194,7 @@ export async function prepareReferralRewardsForPaidOrder(client: QueryExecutor, 
     }
 
     const priorPaidOrder = await repos.referrals.hasPriorPaidOrder(order.userId, order.id);
-    const rejectionReason = priorPaidOrder ? "当前订单不是受邀用户首笔实付订单" : order.amountCents < program.minimumPaidCents ? "首笔实付金额未达到邀请奖励门槛" : "";
+    const rejectionReason = priorPaidOrder ? "当前订单不是受邀用户首笔实付订单" : !qualifiesReferralFromVerifiedTopUp(order, program.minimumPaidUsd) ? "首笔已验证充值 USD 快照未达到邀请奖励门槛" : "";
     const createdAt = input.paidAt;
     const settleAfter = new Date(Date.parse(input.paidAt) + program.coolingOffDays * 24 * 60 * 60_000).toISOString();
     const initialStatus = rejectionReason ? "rejected" : "pending";
@@ -215,7 +217,7 @@ export async function prepareReferralRewardsForPaidOrder(client: QueryExecutor, 
             userId: nextRelationship.inviteeUserId,
             type: program.inviteeRewardType,
             points: program.inviteePoints,
-            couponTemplateId: program.inviteeCouponTemplateId,
+            topUpCouponTemplateId: program.inviteeTopUpCouponTemplateId,
             orderId: order.id,
             status: initialStatus,
             reason: rejectionReason,
@@ -276,22 +278,21 @@ async function reverseReferralRewardSet(client: QueryExecutor, rewards: Referral
             continue;
         }
         if (reward.rewardType === "points") {
-            const reversal = await adjustPermanentPointsInPostgresTransaction(client, {
+            const reversal = await adjustWalletBalanceInPostgresTransaction(client, {
                 userId: reward.beneficiaryUserId,
                 amount: -reward.pointsAmount,
                 description: "邀请奖励撤销：触发订单已退款",
                 idempotencyKey: `referral-reward:${reward.id}:reversal`,
                 type: "admin-adjust",
-                requireActive: false,
                 now: new Date(input.revokedAt),
             });
             const next = await repos.referrals.updateReward(reward.id, { status: "revoked", reversalWalletRecordId: reversal?.record.id, reason: input.reason, revokedAt: input.revokedAt });
             if (next) updated.push(next);
             continue;
         }
-        const coupon = reward.userCouponId ? await repos.coupons.getUserCouponById(reward.userCouponId, true) : null;
-        if (!coupon || coupon.status === "available" || coupon.status === "expired" || coupon.status === "revoked") {
-            if (coupon && coupon.status !== "revoked") await repos.coupons.updateUserCoupon(coupon.id, { status: "revoked", revokedAt: input.revokedAt, lockedOrderId: undefined, lockedAt: undefined });
+        const coupon = reward.topUpUserCouponId ? await repos.topUps.getUserCouponState(reward.topUpUserCouponId, true) : null;
+        if (!coupon || coupon.status === "available" || coupon.status === "revoked") {
+            if (coupon && coupon.status !== "revoked") await repos.topUps.revokeAvailableCoupon(coupon.id, input.revokedAt);
             const next = await repos.referrals.updateReward(reward.id, { status: "revoked", reason: input.reason, revokedAt: input.revokedAt });
             if (next) updated.push(next);
             continue;
@@ -425,12 +426,20 @@ async function settleRelationshipRewards(client: QueryExecutor, relationshipId: 
         const pointRewards = pending.filter((reward) => reward.rewardType === "points");
         let settled = 0;
         for (const reward of couponRewards) {
-            const coupon = await issueCouponInPostgresTransaction(client, { userId: reward.beneficiaryUserId, templateId: reward.couponTemplateId, source: "referral", now: new Date(nowIso) });
-            await repos.referrals.updateReward(reward.id, { status: "settled", userCouponId: coupon.id, settledAt: nowIso });
+            if (!reward.topUpCouponTemplateId) {
+                await repos.referrals.updateReward(reward.id, { status: "manual_review", reason: "邀请奖励未配置有效的 V1 充值优惠券映射" });
+                continue;
+            }
+            const couponId = await repos.topUps.issueReferralCoupon({ id: randomUUID(), userId: reward.beneficiaryUserId, templateId: reward.topUpCouponTemplateId, now: nowIso });
+            if (!couponId) {
+                await repos.referrals.updateReward(reward.id, { status: "manual_review", reason: "邀请奖励充值优惠券映射无效，需人工复核" });
+                continue;
+            }
+            await repos.referrals.updateReward(reward.id, { status: "settled", topUpUserCouponId: couponId, settledAt: nowIso });
             settled += 1;
         }
         for (const reward of pointRewards) {
-            const adjustment = await adjustPermanentPointsInPostgresTransaction(client, {
+            const adjustment = await adjustWalletBalanceInPostgresTransaction(client, {
                 userId: reward.beneficiaryUserId,
                 amount: reward.pointsAmount,
                 description: reward.beneficiaryRole === "inviter" ? "邀请奖励：新用户完成首笔有效支付" : "新用户邀请奖励",
@@ -460,7 +469,7 @@ function buildReferralReward(input: {
     userId: string;
     type: "points" | "coupon";
     points: number;
-    couponTemplateId?: string;
+    topUpCouponTemplateId?: string;
     orderId: string;
     status: "pending" | "rejected";
     reason: string;
@@ -474,7 +483,7 @@ function buildReferralReward(input: {
         beneficiaryRole: input.role,
         rewardType: input.type,
         pointsAmount: input.type === "points" ? input.points : 0,
-        couponTemplateId: input.type === "coupon" ? input.couponTemplateId : undefined,
+        topUpCouponTemplateId: input.type === "coupon" ? input.topUpCouponTemplateId : undefined,
         triggerOrderId: input.orderId,
         status: input.status,
         settleAfter: input.settleAfter,
@@ -490,7 +499,7 @@ function publicReferralProgram(program: ReferralProgramRecord) {
         inviterPoints: program.inviterPoints,
         inviteeRewardType: program.inviteeRewardType,
         inviteePoints: program.inviteePoints,
-        minimumPaidCents: program.minimumPaidCents,
+        minimumPaidUsd: program.minimumPaidUsd,
         coolingOffDays: program.coolingOffDays,
     };
 }
@@ -558,7 +567,7 @@ function normalizeRiskStatus(value: unknown): ReferralRiskStatus | undefined {
 }
 
 function normalizeRewardStatus(value: unknown): ReferralRewardStatus | undefined {
-    if (value === "pending" || value === "settled" || value === "revoked" || value === "rejected" || value === "reversal_pending") return value;
+    if (value === "pending" || value === "settled" || value === "revoked" || value === "rejected" || value === "reversal_pending" || value === "manual_review") return value;
     return undefined;
 }
 
@@ -581,4 +590,38 @@ function maskDisplayName(value: string) {
     const text = value.trim();
     if (!text) return "新用户";
     return `${text.slice(0, 1)}${"*".repeat(Math.min(4, Math.max(2, text.length - 1)))}`;
+}
+
+async function assertBillingDatabaseReady() {
+    if (!isPostgresDatabaseEnabled()) throw new BillingInputError("邀请奖励需要启用 PostgreSQL", 501);
+    await ensurePostgresSchema();
+}
+
+function normalizeText(value: unknown, fallback = "", maxLength = 200) {
+    const text = typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
+    return (text || fallback).slice(0, maxLength);
+}
+
+function normalizeId(value: unknown) {
+    return normalizeText(value, "", 120).replace(/[^a-zA-Z0-9_.:-]/g, "");
+}
+
+function normalizeInteger(value: unknown, min: number, max: number, fallback: number) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.floor(parsed))) : fallback;
+}
+
+function normalizeMoneyLike(value: unknown, fallback: number, max: number) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.min(max, Math.max(0, parsed)) : fallback;
+}
+
+function normalizeDecimal(value: unknown, fallback: string) {
+    try {
+        const parsed = decimal(value == null || value === "" ? fallback : String(value));
+        if (parsed.isNegative()) throw new Error("negative");
+        return parsed.roundHalfUp(12).toString();
+    } catch {
+        throw new BillingInputError("邀请奖励最低实付 USD 金额无效");
+    }
 }

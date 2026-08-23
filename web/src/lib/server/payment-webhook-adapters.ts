@@ -16,7 +16,7 @@ export type ParsedPaymentWebhook = {
     status: WebhookStatus;
     providerTradeId?: string;
     providerPaymentId?: string;
-    amountCents?: number;
+    amountMinor?: string;
     currency?: string;
     paidAt?: string;
     payload: unknown;
@@ -47,9 +47,7 @@ const customWebhookAdapter: PaymentWebhookAdapter = {
                 readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_PAYMENT_ID_FIELD`, ["providerPaymentId", "paymentId", "payment_id", "transactionId", "data.providerPaymentId", "data.paymentId", "data.transactionId"]),
                 160,
             ),
-            amountCents:
-                normalizeOptionalInteger(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_AMOUNT_CENTS_FIELD`, ["amountCents", "data.amountCents"])) ??
-                yuanDecimalToCents(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_AMOUNT_YUAN_FIELD`, ["amount", "amountYuan", "totalAmount", "data.amount", "data.totalAmount"])),
+            amountMinor: normalizeOptionalIntegerText(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_AMOUNT_MINOR_FIELD`, ["amountMinor", "data.amountMinor"])),
             currency: normalizeCurrency(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_CURRENCY_FIELD`, ["currency", "data.currency"])),
             paidAt: normalizeOptionalIso(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_PAID_AT_FIELD`, ["paidAt", "successTime", "paid_time", "data.paidAt", "data.successTime"])),
             payload,
@@ -67,7 +65,7 @@ const stripeWebhookAdapter: PaymentWebhookAdapter = {
         const object = readPath(event, "data.object");
         const orderId = normalizeOptionalId(readPath(object, "metadata.orderId") || readPath(object, "metadata.vozebProOrderId") || readPath(object, "client_reference_id"));
         const orderNo = normalizeOptionalId(readPath(object, "metadata.orderNo") || readPath(object, "metadata.vozebProOrderNo"));
-        const amountCents = normalizeOptionalInteger(readPath(object, "amount_total") || readPath(object, "amount_received") || readPath(object, "amount"));
+        const amountMinor = normalizeOptionalIntegerText(readPath(object, "amount_total") || readPath(object, "amount_received") || readPath(object, "amount"));
         const paidAt = normalizeStripePaidAt(readPath(object, "created"));
         const providerTradeId = normalizeOptionalText(readPath(object, "payment_intent") || readPath(object, "id"), 160);
         const providerPaymentId = normalizeOptionalText(readPath(object, "latest_charge") || readPath(object, "id"), 160);
@@ -79,7 +77,7 @@ const stripeWebhookAdapter: PaymentWebhookAdapter = {
             status: isStripeSuccessEvent(eventType, object) ? "succeeded" : "ignored",
             providerTradeId,
             providerPaymentId,
-            amountCents,
+            amountMinor,
             currency: normalizeCurrency(readPath(object, "currency")),
             paidAt,
             payload: event,
@@ -103,7 +101,7 @@ const alipayWebhookAdapter: PaymentWebhookAdapter = {
             status: tradeStatus === "TRADE_SUCCESS" || tradeStatus === "TRADE_FINISHED" ? "succeeded" : "ignored",
             providerTradeId: normalizeOptionalText(payload.trade_no, 160),
             providerPaymentId: normalizeOptionalText(payload.trade_no, 160),
-            amountCents: yuanDecimalToCents(payload.total_amount),
+            amountMinor: decimalMajorToMinor(payload.total_amount, 2),
             currency: "CNY",
             paidAt: parseAlipayDate(payload.gmt_payment || payload.notify_time),
             payload,
@@ -139,7 +137,7 @@ const wechatWebhookAdapter: PaymentWebhookAdapter = {
             status: eventType === "TRANSACTION.SUCCESS" && tradeState === "SUCCESS" ? "succeeded" : "ignored",
             providerTradeId: transactionId,
             providerPaymentId: transactionId,
-            amountCents: normalizeOptionalInteger(readPath(transaction, "amount.payer_total") || readPath(transaction, "amount.total")),
+            amountMinor: normalizeOptionalIntegerText(readPath(transaction, "amount.payer_total") || readPath(transaction, "amount.total")),
             currency: normalizeCurrency(readPath(transaction, "amount.payer_currency") || readPath(transaction, "amount.currency") || "CNY"),
             paidAt: normalizeOptionalIso(readPath(transaction, "success_time")),
             payload: { envelope: sanitizeJson(envelope), transaction: sanitizeJson(transaction) },
@@ -348,10 +346,9 @@ function normalizeText(value: unknown, fallback: string, maxLength: number) {
     return (text || fallback).slice(0, maxLength);
 }
 
-function normalizeOptionalInteger(value: unknown) {
-    if (value === null || value === undefined || value === "") return undefined;
-    const number = Number(value);
-    return Number.isFinite(number) && number >= 0 ? Math.floor(number) : undefined;
+function normalizeOptionalIntegerText(value: unknown) {
+    const text = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+    return /^\d+$/.test(text) ? BigInt(text).toString() : undefined;
 }
 
 function normalizeCurrency(value: unknown) {
@@ -372,11 +369,11 @@ function parseAlipayDate(value: unknown) {
     return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
 
-function yuanDecimalToCents(value: unknown) {
+function decimalMajorToMinor(value: unknown, exponent: number) {
     const text = normalizeText(value, "", 40);
-    if (!/^\d+(\.\d{1,2})?$/.test(text)) return undefined;
-    const [yuan, cents = ""] = text.split(".");
-    return Number(yuan) * 100 + Number(cents.padEnd(2, "0"));
+    if (!new RegExp(`^\\d+(?:\\.\\d{1,${exponent}})?$`).test(text)) return undefined;
+    const [major, minor = ""] = text.split(".");
+    return BigInt(`${major}${minor.padEnd(exponent, "0")}`).toString();
 }
 
 function decodeMaybeUrlEncoded(value: unknown) {

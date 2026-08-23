@@ -15,28 +15,26 @@ CREATE TRIGGER wallet_holds_set_updated_at BEFORE UPDATE ON wallet_holds FOR EAC
 DROP TRIGGER IF EXISTS provider_usage_attempts_set_updated_at ON provider_usage_attempts;
 CREATE TRIGGER provider_usage_attempts_set_updated_at BEFORE UPDATE ON provider_usage_attempts FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 
-DROP TRIGGER IF EXISTS billing_products_set_updated_at ON billing_products;
-CREATE TRIGGER billing_products_set_updated_at BEFORE UPDATE ON billing_products FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
-DROP TRIGGER IF EXISTS promotion_campaigns_set_updated_at ON promotion_campaigns;
-CREATE TRIGGER promotion_campaigns_set_updated_at BEFORE UPDATE ON promotion_campaigns FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
-DROP TRIGGER IF EXISTS coupon_templates_set_updated_at ON coupon_templates;
-CREATE TRIGGER coupon_templates_set_updated_at BEFORE UPDATE ON coupon_templates FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
-DROP TRIGGER IF EXISTS billing_orders_set_updated_at ON billing_orders;
-CREATE TRIGGER billing_orders_set_updated_at BEFORE UPDATE ON billing_orders FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
-DROP TRIGGER IF EXISTS user_coupons_set_updated_at ON user_coupons;
-CREATE TRIGGER user_coupons_set_updated_at BEFORE UPDATE ON user_coupons FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
-DROP TRIGGER IF EXISTS coupon_redemptions_set_updated_at ON coupon_redemptions;
-CREATE TRIGGER coupon_redemptions_set_updated_at BEFORE UPDATE ON coupon_redemptions FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
-DROP TRIGGER IF EXISTS payment_transactions_set_updated_at ON payment_transactions;
-CREATE TRIGGER payment_transactions_set_updated_at BEFORE UPDATE ON payment_transactions FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-DROP TRIGGER IF EXISTS billing_refund_jobs_set_updated_at ON billing_refund_jobs;
-CREATE TRIGGER billing_refund_jobs_set_updated_at BEFORE UPDATE ON billing_refund_jobs FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_presets_set_updated_at ON top_up_presets;
+CREATE TRIGGER top_up_presets_set_updated_at BEFORE UPDATE ON top_up_presets FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_promotions_set_updated_at ON top_up_promotions;
+CREATE TRIGGER top_up_promotions_set_updated_at BEFORE UPDATE ON top_up_promotions FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_coupon_templates_set_updated_at ON top_up_coupon_templates;
+CREATE TRIGGER top_up_coupon_templates_set_updated_at BEFORE UPDATE ON top_up_coupon_templates FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_user_coupons_set_updated_at ON top_up_user_coupons;
+CREATE TRIGGER top_up_user_coupons_set_updated_at BEFORE UPDATE ON top_up_user_coupons FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_orders_set_updated_at ON top_up_orders;
+CREATE TRIGGER top_up_orders_set_updated_at BEFORE UPDATE ON top_up_orders FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_payments_set_updated_at ON top_up_payments;
+CREATE TRIGGER top_up_payments_set_updated_at BEFORE UPDATE ON top_up_payments FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_payment_events_set_updated_at ON top_up_payment_events;
+CREATE TRIGGER top_up_payment_events_set_updated_at BEFORE UPDATE ON top_up_payment_events FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_refunds_set_updated_at ON top_up_refunds;
+CREATE TRIGGER top_up_refunds_set_updated_at BEFORE UPDATE ON top_up_refunds FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_reconciliation_runs_set_updated_at ON top_up_reconciliation_runs;
+CREATE TRIGGER top_up_reconciliation_runs_set_updated_at BEFORE UPDATE ON top_up_reconciliation_runs FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS top_up_reconciliation_rows_set_updated_at ON top_up_reconciliation_rows;
+CREATE TRIGGER top_up_reconciliation_rows_set_updated_at BEFORE UPDATE ON top_up_reconciliation_rows FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 DROP TRIGGER IF EXISTS referral_programs_set_updated_at ON referral_programs;
 CREATE TRIGGER referral_programs_set_updated_at BEFORE UPDATE ON referral_programs FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 DROP TRIGGER IF EXISTS referral_codes_set_updated_at ON referral_codes;
@@ -51,16 +49,6 @@ DROP TRIGGER IF EXISTS published_work_versions_set_updated_at ON published_work_
 CREATE TRIGGER published_work_versions_set_updated_at BEFORE UPDATE ON published_work_versions FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 DROP TRIGGER IF EXISTS published_work_cases_set_updated_at ON published_work_cases;
 CREATE TRIGGER published_work_cases_set_updated_at BEFORE UPDATE ON published_work_cases FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-DROP TRIGGER IF EXISTS billing_reconciliation_runs_set_updated_at ON billing_reconciliation_runs;
-CREATE TRIGGER billing_reconciliation_runs_set_updated_at BEFORE UPDATE ON billing_reconciliation_runs FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
-DROP TRIGGER IF EXISTS billing_reconciliation_rows_set_updated_at ON billing_reconciliation_rows;
-CREATE TRIGGER billing_reconciliation_rows_set_updated_at BEFORE UPDATE ON billing_reconciliation_rows FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
-
-DROP TRIGGER IF EXISTS payment_provider_events_set_updated_at ON payment_provider_events;
-CREATE TRIGGER payment_provider_events_set_updated_at BEFORE UPDATE ON payment_provider_events FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
-
 DROP TRIGGER IF EXISTS cdk_codes_set_updated_at ON cdk_codes;
 CREATE TRIGGER cdk_codes_set_updated_at BEFORE UPDATE ON cdk_codes FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 

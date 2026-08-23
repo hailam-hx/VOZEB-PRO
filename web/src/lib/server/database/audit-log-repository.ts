@@ -1,6 +1,6 @@
 import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type { AuditLogRecord, AuditStatus, PageInput, PageResult } from "./repository-shared";
-import { jsonParam, mapAuditLog, normalizePage, normalizePageSize, pageResult } from "./repository-shared";
+import { isoValue, jsonParam, normalizePage, normalizePageSize, optionalJson, optionalString, pageResult, stringValue } from "./repository-shared";
 
 export class AuditLogsRepository {
     constructor(private readonly db: QueryExecutor) {}
@@ -54,4 +54,8 @@ export class AuditLogsRepository {
         );
         return pageResult(result.rows.map(mapAuditLog), Number(result.rows[0]?.total_count || 0), page, pageSize);
     }
+}
+
+function mapAuditLog(row: Record<string, unknown>): AuditLogRecord {
+    return { id: stringValue(row.id), action: stringValue(row.action), status: row.status === "failure" ? "failure" : "success", actorUserId: optionalString(row.actor_user_id), actorUsername: optionalString(row.actor_username), actorRole: row.actor_role === "admin" || row.actor_role === "user" ? row.actor_role : undefined, actorIp: optionalString(row.actor_ip), actorUserAgent: optionalString(row.actor_user_agent), targetType: optionalString(row.target_type), targetId: optionalString(row.target_id), targetLabel: optionalString(row.target_label), metadata: optionalJson(row.metadata), createdAt: isoValue(row.created_at) };
 }

@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { apiCompatError, apiSuccess } from "@/app/api/_shared/api-response";
 import { getCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
-import { BillingInputError, isBillingInputError } from "@/lib/server/billing-service";
+import { BillingInputError, isBillingInputError } from "@/lib/server/billing-errors";
 import { createPaymentCheckoutForOrder } from "@/lib/server/payment-checkout-service";
 import { readRequestBodyText, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 

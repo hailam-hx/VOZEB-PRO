@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { apiError } from "@/app/api/_shared/api-response";
 import { getCurrentUser } from "@/lib/auth/session";
-import { isBillingInputError } from "@/lib/server/billing-service";
+import { isBillingInputError } from "@/lib/server/billing-errors";
 import { getStoredPaymentCheckoutForOrder } from "@/lib/server/payment-checkout-service";
 import { createPaymentFormPage } from "@/lib/server/payment-form-page";
 

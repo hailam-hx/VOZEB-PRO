@@ -1,5 +1,6 @@
 import { ALL_ADMIN_PERMISSIONS } from "@/lib/admin-permissions";
 import { POSTGRESQL_COMMERCIAL_FEATURES_SCHEMA_SQL } from "./schema-commercial-features";
+import { POSTGRESQL_TOP_UP_SCHEMA_SQL } from "./schema-top-ups";
 import { POSTGRESQL_TRIGGER_SCHEMA_SQL } from "./schema-triggers";
 
 const FULL_ADMIN_PERMISSIONS_JSON = JSON.stringify(ALL_ADMIN_PERMISSIONS);
@@ -671,147 +672,8 @@ ALTER TABLE provider_usage_attempts ADD COLUMN IF NOT EXISTS observed_usage json
 CREATE INDEX IF NOT EXISTS provider_usage_attempts_hold_idx ON provider_usage_attempts (hold_id, attempt_number);
 CREATE INDEX IF NOT EXISTS provider_usage_attempts_upstream_idx ON provider_usage_attempts (provider, upstream_task_id) WHERE upstream_task_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS billing_products (
-    id text PRIMARY KEY,
-    product_kind text NOT NULL DEFAULT 'plan',
-    plan_id text,
-    name text NOT NULL,
-    description text NOT NULL DEFAULT '',
-    amount_cents bigint NOT NULL DEFAULT 0,
-    currency text NOT NULL DEFAULT 'CNY',
-    points_amount numeric(18, 2) NOT NULL DEFAULT 0,
-    daily_points numeric(18, 2) NOT NULL DEFAULT 0,
-    period_days integer NOT NULL DEFAULT 30,
-    enabled boolean NOT NULL DEFAULT true,
-    sort_order integer NOT NULL DEFAULT 0,
-    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT billing_products_amount CHECK (amount_cents >= 0),
-    CONSTRAINT billing_products_points CHECK (points_amount >= 0),
-    CONSTRAINT billing_products_daily_points CHECK (daily_points >= 0),
-    CONSTRAINT billing_products_kind CHECK (product_kind IN ('plan', 'points')),
-    CONSTRAINT billing_products_period_days CHECK (period_days >= 0)
-);
-
-CREATE INDEX IF NOT EXISTS billing_products_plan_idx ON billing_products (plan_id, enabled, sort_order);
-CREATE INDEX IF NOT EXISTS billing_products_enabled_idx ON billing_products (enabled, sort_order);
-
-ALTER TABLE billing_products ADD COLUMN IF NOT EXISTS product_kind text NOT NULL DEFAULT 'plan';
-ALTER TABLE billing_products ADD COLUMN IF NOT EXISTS daily_points numeric(18, 2) NOT NULL DEFAULT 0;
-ALTER TABLE billing_products ALTER COLUMN plan_id DROP NOT NULL;
-ALTER TABLE billing_products DROP CONSTRAINT IF EXISTS billing_products_kind;
-ALTER TABLE billing_products ADD CONSTRAINT billing_products_kind CHECK (product_kind IN ('plan', 'points'));
-ALTER TABLE billing_products DROP CONSTRAINT IF EXISTS billing_products_daily_points;
-ALTER TABLE billing_products ADD CONSTRAINT billing_products_daily_points CHECK (daily_points >= 0);
-
-INSERT INTO billing_products (id, plan_id, name, description, amount_cents, currency, points_amount, period_days, enabled, sort_order, metadata)
-VALUES
-(
-    'creator-monthly',
-    'creator',
-    '创作者月卡',
-    '适合个人创作者持续使用生图、视频和提示词工作流，包含创作者版权益与积分包。',
-    990,
-    'CNY',
-    500,
-    30,
-    true,
-    10,
-    '{"highlight":"个人创作入门","recommended":true}'::jsonb
-),
-(
-    'pro-monthly',
-    'pro',
-    '专业月卡',
-    '适合高频创作、团队试运营和商业项目交付，包含专业版权益与更高积分包。',
-    2990,
-    'CNY',
-    2000,
-    30,
-    true,
-    20,
-    '{"highlight":"高频商业创作"}'::jsonb
-)
-ON CONFLICT (id) DO NOTHING;
-
+${POSTGRESQL_TOP_UP_SCHEMA_SQL}
 ${POSTGRESQL_COMMERCIAL_FEATURES_SCHEMA_SQL}
-
-CREATE TABLE IF NOT EXISTS billing_reconciliation_runs (
-    id text PRIMARY KEY,
-    provider text NOT NULL,
-    source text NOT NULL DEFAULT 'csv',
-    status text NOT NULL DEFAULT 'completed',
-    total_rows integer NOT NULL DEFAULT 0,
-    matched_rows integer NOT NULL DEFAULT 0,
-    ok_rows integer NOT NULL DEFAULT 0,
-    issue_rows integer NOT NULL DEFAULT 0,
-    statement_paid_amount_cents bigint NOT NULL DEFAULT 0,
-    statement_refunded_amount_cents bigint NOT NULL DEFAULT 0,
-    local_matched_amount_cents bigint NOT NULL DEFAULT 0,
-    difference_amount_cents bigint NOT NULL DEFAULT 0,
-    imported_by_user_id text REFERENCES users(id) ON DELETE SET NULL,
-    imported_by_username text,
-    file_name text,
-    file_hash text,
-    note text,
-    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT billing_reconciliation_runs_status CHECK (status IN ('completed', 'failed')),
-    CONSTRAINT billing_reconciliation_runs_source CHECK (source IN ('csv', 'provider-api', 'manual'))
-);
-
-CREATE INDEX IF NOT EXISTS billing_reconciliation_runs_created_idx ON billing_reconciliation_runs (created_at DESC);
-CREATE INDEX IF NOT EXISTS billing_reconciliation_runs_provider_created_idx ON billing_reconciliation_runs (provider, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS billing_reconciliation_runs_provider_file_hash_idx ON billing_reconciliation_runs (provider, file_hash) WHERE file_hash IS NOT NULL AND file_hash <> '';
-
-CREATE TABLE IF NOT EXISTS billing_reconciliation_rows (
-    id text PRIMARY KEY,
-    run_id text NOT NULL REFERENCES billing_reconciliation_runs(id) ON DELETE CASCADE,
-    row_number integer NOT NULL,
-    row_key text NOT NULL,
-    provider text NOT NULL,
-    order_no text,
-    provider_order_id text,
-    provider_payment_id text,
-    statement_status text NOT NULL DEFAULT 'unknown',
-    amount_cents bigint,
-    currency text,
-    local_order_id text REFERENCES billing_orders(id) ON DELETE SET NULL,
-    local_order_no text,
-    local_order_status text,
-    local_amount_cents bigint,
-    local_currency text,
-    issue_codes jsonb NOT NULL DEFAULT '[]'::jsonb,
-    issues jsonb NOT NULL DEFAULT '[]'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT billing_reconciliation_rows_statement_status CHECK (statement_status IN ('paid', 'refunded', 'pending', 'failed', 'unknown'))
-);
-
-CREATE INDEX IF NOT EXISTS billing_reconciliation_rows_run_idx ON billing_reconciliation_rows (run_id, row_number ASC);
-CREATE INDEX IF NOT EXISTS billing_reconciliation_rows_issue_codes_gin_idx ON billing_reconciliation_rows USING gin (issue_codes);
-
-CREATE TABLE IF NOT EXISTS payment_provider_events (
-    id text PRIMARY KEY,
-    provider text NOT NULL,
-    event_id text,
-    event_type text NOT NULL DEFAULT '',
-    order_id text REFERENCES billing_orders(id) ON DELETE SET NULL,
-    signature_valid boolean NOT NULL DEFAULT false,
-    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-    processing_at timestamptz,
-    processed_at timestamptz,
-    error text,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-ALTER TABLE payment_provider_events ADD COLUMN IF NOT EXISTS processing_at timestamptz;
-
-CREATE INDEX IF NOT EXISTS payment_provider_events_provider_created_idx ON payment_provider_events (provider, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS payment_provider_events_provider_event_idx ON payment_provider_events (provider, event_id) WHERE event_id IS NOT NULL AND event_id <> '';
 
 CREATE TABLE IF NOT EXISTS cdk_codes (
     id text PRIMARY KEY,
@@ -969,6 +831,6 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs (target_type, tar
 ${POSTGRESQL_TRIGGER_SCHEMA_SQL}
 
 INSERT INTO schema_migrations (version)
-VALUES ('20260709_postgresql_commercial_base'), ('20260709_billing_foundation'), ('20260709_billing_checkout'), ('20260709_commercial_seed_products'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260716_billing_reconciliation'), ('20260725_account_deletion_requests'), ('20260726_promotion_coupon_commerce'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks')
+VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce')
 ON CONFLICT (version) DO NOTHING;
 `;

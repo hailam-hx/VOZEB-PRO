@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { subscribeBillingOrderEvent } from "@/lib/server/billing-order-event-signal";
-import { getBillingOrderForUser, isBillingInputError } from "@/lib/server/billing-service";
-import type { BillingOrderRecord } from "@/lib/server/database";
+import { isBillingInputError } from "@/lib/server/billing-errors";
+import { getTopUpOrderForUser } from "@/lib/server/top-up-commerce-service";
+import type { TopUpOrder } from "@/lib/server/top-up-payment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,9 +18,9 @@ export async function GET(request: Request, context: RouteContext) {
     if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
 
     const { id } = await context.params;
-    let initialOrder: BillingOrderRecord;
+    let initialOrder: TopUpOrder;
     try {
-        initialOrder = await getBillingOrderForUser(currentUser.id, id);
+        initialOrder = await getTopUpOrderForUser(currentUser.id, id);
     } catch (error) {
         if (isBillingInputError(error)) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
         console.error("Subscribe billing order failed", error);
@@ -44,7 +45,7 @@ export async function GET(request: Request, context: RouteContext) {
                     // The client may already have cancelled the stream.
                 }
             };
-            const emit = (order: BillingOrderRecord) => {
+            const emit = (order: TopUpOrder) => {
                 if (closed) return;
                 const version = `${order.status}:${order.updatedAt}`;
                 if (version !== lastVersion) {
@@ -54,7 +55,7 @@ export async function GET(request: Request, context: RouteContext) {
                 if (order.status !== "pending") close();
             };
             const emitLatest = async () => {
-                emit(await getBillingOrderForUser(currentUser.id, id));
+                emit(await getTopUpOrderForUser(currentUser.id, id));
             };
 
             dispose = close;

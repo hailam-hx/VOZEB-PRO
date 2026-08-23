@@ -1,6 +1,7 @@
 import { createPostgresRepositories, ensurePostgresSchema, getPostgresConnectionString, isPostgresDatabaseEnabled, type JsonValue } from "@/lib/server/database";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { BillingInputError } from "@/lib/server/billing-errors";
+import { decimal } from "@/lib/billing/decimal";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import { PAYMENT_PROVIDER_DEFINITIONS, type PaymentProviderConfigField, type PaymentProviderId, type SavedPaymentConfig, type SavedPaymentProviderConfig } from "@/lib/payment-config-types";
 
@@ -13,6 +14,7 @@ export type PaymentRuntimeConfig = {
     saved: SavedPaymentConfig;
     valuesByEnvName: Record<string, string>;
     providers: Partial<Record<PaymentProviderId, PaymentRuntimeProvider>>;
+    topUp?: SavedPaymentConfig["topUp"];
 };
 
 const PAYMENT_CONFIG_FILE = "payment-config.json";
@@ -64,7 +66,7 @@ async function buildPaymentRuntimeConfig(): Promise<PaymentRuntimeConfig> {
         }
     }
 
-    return { saved, valuesByEnvName, providers };
+    return { saved, valuesByEnvName, providers, topUp: saved.topUp };
 }
 
 export async function savePaymentProviderConfig(input: { providerId: PaymentProviderId; enabled?: boolean; values?: Record<string, unknown> }) {
@@ -92,6 +94,7 @@ export async function savePaymentProviderConfig(input: { providerId: PaymentProv
     }
 
     const next: SavedPaymentConfig = {
+        ...(current.topUp ? { topUp: current.topUp } : {}),
         providers: {
             ...current.providers,
             [input.providerId]: {
@@ -100,6 +103,26 @@ export async function savePaymentProviderConfig(input: { providerId: PaymentProv
             },
         },
     };
+    invalidatePaymentRuntimeCache();
+    await writeStoredPaymentConfig(encryptPaymentConfigSecrets(next));
+    invalidatePaymentRuntimeCache();
+    return getSavedPaymentConfig();
+}
+
+export async function saveTopUpPricingConfig(input: { pricingVersion?: unknown; customerFxVersion?: unknown; usdPerVnd?: unknown }) {
+    const pricingVersion = normalizePaymentConfigText(input.pricingVersion, 120);
+    const customerFxVersion = normalizePaymentConfigText(input.customerFxVersion, 120);
+    const usdPerVnd = normalizePaymentConfigText(input.usdPerVnd, 120);
+    if (!pricingVersion || !customerFxVersion || !usdPerVnd) throw new BillingInputError("充值价格、汇率版本和 VND/USD 汇率不能为空");
+    let rate;
+    try {
+        rate = decimal(usdPerVnd, "VND/USD 客户汇率");
+    } catch (error) {
+        throw new BillingInputError(error instanceof Error ? error.message : "VND/USD 客户汇率无效");
+    }
+    if (!rate.greaterThan(decimal(0)) || !rate.hasAtMostDecimalPlaces(12)) throw new BillingInputError("VND/USD 客户汇率必须为正数且最多保留 12 位小数");
+    const current = await getSavedPaymentConfig();
+    const next: SavedPaymentConfig = { providers: current.providers, topUp: { pricingVersion, customerFxVersion, usdPerVnd: rate.toString() } };
     invalidatePaymentRuntimeCache();
     await writeStoredPaymentConfig(encryptPaymentConfigSecrets(next));
     invalidatePaymentRuntimeCache();
@@ -176,7 +199,7 @@ async function writeStoredPaymentConfig(value: SavedPaymentConfig) {
 }
 
 function normalizeSavedPaymentConfig(value: unknown): SavedPaymentConfig {
-    const source = value && typeof value === "object" && !Array.isArray(value) ? (value as { providers?: unknown }) : {};
+    const source = value && typeof value === "object" && !Array.isArray(value) ? (value as { providers?: unknown; topUp?: unknown }) : {};
     const providersInput = source.providers && typeof source.providers === "object" && !Array.isArray(source.providers) ? (source.providers as Record<string, unknown>) : {};
     const providers: SavedPaymentConfig["providers"] = {};
     for (const definition of PAYMENT_PROVIDER_DEFINITIONS) {
@@ -184,7 +207,15 @@ function normalizeSavedPaymentConfig(value: unknown): SavedPaymentConfig {
         if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
         providers[definition.id] = normalizeSavedProviderConfig(raw as Partial<SavedPaymentProviderConfig>, definition.fields, definition.id);
     }
-    return { providers };
+    const topUpSource = source.topUp && typeof source.topUp === "object" && !Array.isArray(source.topUp) ? (source.topUp as Record<string, unknown>) : undefined;
+    const topUp = topUpSource
+        ? {
+              pricingVersion: normalizePaymentConfigText(topUpSource.pricingVersion, 120),
+              customerFxVersion: normalizePaymentConfigText(topUpSource.customerFxVersion, 120),
+              usdPerVnd: normalizePaymentConfigText(topUpSource.usdPerVnd, 120),
+          }
+        : undefined;
+    return { providers, ...(topUp?.pricingVersion && topUp.customerFxVersion && topUp.usdPerVnd ? { topUp } : {}) };
 }
 
 function normalizeSavedProviderConfig(value: Partial<SavedPaymentProviderConfig>, fields: PaymentProviderConfigField[], providerId: PaymentProviderId): SavedPaymentProviderConfig {
@@ -219,7 +250,7 @@ function transformPaymentConfigSecrets(config: SavedPaymentConfig, transform: (v
         }
         providers[definition.id] = { ...provider, values };
     }
-    return { providers };
+    return { providers, ...(config.topUp ? { topUp: { ...config.topUp } } : {}) };
 }
 
 function normalizePaymentConfigText(value: unknown, maxLength: number) {

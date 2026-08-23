@@ -1,34 +1,21 @@
 import { postgresQuery, type QueryExecutor } from "@/lib/server/database/postgres";
 import { AuditLogsRepository } from "./audit-log-repository";
-import { BillingOrderRepository } from "./billing-order-repository";
-import { BillingPaymentRepository } from "./billing-payment-repository";
-import { BillingRefundRepository } from "./billing-refund-repository";
-import { BillingProductRepository } from "./billing-product-repository";
-import { CouponRepository } from "./coupon-repository";
+import { TopUpRepository } from "./top-up-repository";
 import { PointsWalletRepository } from "./points-wallet-repository";
-import { PromotionRepository } from "./promotion-repository";
 import { ReferralRepository } from "./referral-repository";
 import { WorkPublicationRepository } from "./work-publication-repository";
 import { WorkGovernanceRepository } from "./work-governance-repository";
 import { WorkCommunityRepository } from "./work-community-repository";
 import { AnnouncementsRepository, GenerationLogsRepository, PromptsRepository } from "./content-repository";
 import { CdkRepository, EmailCodesRepository, PointsRepository, SessionsRepository, UsersRepository } from "./user-repository";
-import type { AppSettingsRecord, JsonValue, SystemModelChannelRecord } from "./repository-shared";
-import { isoValue, jsonParam, jsonValue, numberValue, optionalIso, optionalJson, optionalString, stringValue } from "./repository-shared";
+import type { AppSettingsRecord, SystemModelChannelRecord } from "./repository-shared";
+import { isoValue, jsonParam, jsonValue, numberValue, optionalJson, stringValue } from "./repository-shared";
 
 export type {
     AuthenticatedUserRecord,
-    BillingOrderRecord,
-    BillingOrderStatus,
-    BillingProductRecord,
-    BillingReconciliationRowRecord,
-    BillingReconciliationRunRecord,
-    CouponRedemptionRecord,
-    CouponTemplateRecord,
     JsonValue,
-    PaymentTransactionRecord,
-    PromotionCampaignRecord,
-    PromotionProductRecord,
+    TopUpReconciliationRowRecord,
+    TopUpReconciliationRunRecord,
     ReferralCodeRecord,
     ReferralProgramRecord,
     ReferralRelationshipRecord,
@@ -63,21 +50,15 @@ export type {
     PublicCreatorProfileRecord,
     PublicCreatorWorkCursor,
     UserCommunitySummaryRecord,
-    UserCouponListItemRecord,
-    UserCouponRecord,
     UserSummaryRecord,
 } from "./repository-shared";
 
 export function createPostgresRepositories(executor: QueryExecutor = { query: postgresQuery }) {
-    const billingProduct = new BillingProductRepository(executor);
-    const billingOrder = new BillingOrderRepository(executor);
     const pointsWallet = new PointsWalletRepository(executor);
-    const billingPayment = new BillingPaymentRepository(executor);
-    const billingRefund = new BillingRefundRepository(executor);
-    const promotion = new PromotionRepository(executor);
-    const coupons = new CouponRepository(executor);
+    const topUps = new TopUpRepository(executor);
 
     return {
+        topUps,
         settings: new SettingsRepository(executor),
         users: new UsersRepository(executor),
         sessions: new SessionsRepository(executor),
@@ -88,48 +69,6 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
         announcements: new AnnouncementsRepository(executor),
         prompts: new PromptsRepository(executor),
         generationLogs: new GenerationLogsRepository(executor),
-        billing: {
-            listProducts: billingProduct.listProducts.bind(billingProduct),
-            getProductById: billingProduct.getProductById.bind(billingProduct),
-            getProductsByIds: billingProduct.getProductsByIds.bind(billingProduct),
-            upsertProduct: billingProduct.upsertProduct.bind(billingProduct),
-            updateProduct: billingProduct.updateProduct.bind(billingProduct),
-            deleteProductIfUnused: billingProduct.deleteProductIfUnused.bind(billingProduct),
-            createOrder: billingOrder.createOrder.bind(billingOrder),
-            getOrderById: billingOrder.getOrderById.bind(billingOrder),
-            getOrderByOrderNo: billingOrder.getOrderByOrderNo.bind(billingOrder),
-            getOrderByProviderIdentifiers: billingOrder.getOrderByProviderIdentifiers.bind(billingOrder),
-            listOrders: billingOrder.listOrders.bind(billingOrder),
-            getSummary: billingOrder.getSummary.bind(billingOrder),
-            expirePendingOrders: billingOrder.expirePendingOrders.bind(billingOrder),
-            updateOrder: billingOrder.updateOrder.bind(billingOrder),
-            upsertPayment: billingPayment.upsertPayment.bind(billingPayment),
-            updatePaymentState: billingPayment.updatePaymentState.bind(billingPayment),
-            listPayments: billingPayment.listPayments.bind(billingPayment),
-            listPaymentsByOrderId: billingPayment.listPaymentsByOrderId.bind(billingPayment),
-            findOrderPayment: billingPayment.findOrderPayment.bind(billingPayment),
-            lockPaymentIdentity: billingPayment.lockPaymentIdentity.bind(billingPayment),
-            getPaymentByProviderIdentifiers: billingPayment.getPaymentByProviderIdentifiers.bind(billingPayment),
-            getPaymentByProviderIdentifier: billingPayment.getPaymentByProviderIdentifier.bind(billingPayment),
-            createReconciliationRun: billingPayment.createReconciliationRun.bind(billingPayment),
-            getReconciliationRunByFileHash: billingPayment.getReconciliationRunByFileHash.bind(billingPayment),
-            listReconciliationRuns: billingPayment.listReconciliationRuns.bind(billingPayment),
-            getReconciliationRun: billingPayment.getReconciliationRun.bind(billingPayment),
-            listReconciliationRows: billingPayment.listReconciliationRows.bind(billingPayment),
-            upsertProviderEvent: billingPayment.upsertProviderEvent.bind(billingPayment),
-            getProviderEventByProviderEventId: billingPayment.getProviderEventByProviderEventId.bind(billingPayment),
-            claimProviderEvent: billingPayment.claimProviderEvent.bind(billingPayment),
-            markProviderEventProcessed: billingPayment.markProviderEventProcessed.bind(billingPayment),
-            markProviderEventConflict: billingPayment.markProviderEventConflict.bind(billingPayment),
-            releaseProviderEvent: billingPayment.releaseProviderEvent.bind(billingPayment),
-            getRefundJobByOrderId: billingRefund.getByOrderId.bind(billingRefund),
-            upsertRefundJob: billingRefund.upsert.bind(billingRefund),
-            claimDueRefundJobs: billingRefund.claimDue.bind(billingRefund),
-            checkpointRefundJob: billingRefund.checkpoint.bind(billingRefund),
-            releaseRefundJob: billingRefund.release.bind(billingRefund),
-        },
-        promotions: promotion,
-        coupons,
         referrals: new ReferralRepository(executor),
         workPublications: new WorkPublicationRepository(executor),
         workGovernance: new WorkGovernanceRepository(executor),
@@ -184,7 +123,6 @@ class SettingsRepository {
         const row = await this.db.query(`UPDATE app_settings SET ${assignments.join(", ")} WHERE id = 'default' RETURNING *`, values);
         return mapSettings(row.rows[0]);
     }
-
 
     async listSystemModelChannels() {
         const result = await this.db.query("SELECT * FROM system_model_channels ORDER BY sort_order ASC, created_at ASC");

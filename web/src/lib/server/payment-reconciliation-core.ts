@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import type { BillingReconciliationIssue, BillingReconciliationIssueCode, BillingReconciliationResult, BillingReconciliationRow, BillingStatementStatus } from "@/lib/admin-billing-types";
 import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
-import type { BillingOrderRecord, BillingReconciliationRowRecord, BillingReconciliationRunRecord, JsonValue, PaymentTransactionRecord } from "@/lib/server/database";
+import { decimal } from "@/lib/billing/decimal";
+import { validatePaymentAmount, type PaymentAmount } from "@/lib/billing/money";
+import type { JsonValue, TopUpReconciliationRowRecord, TopUpReconciliationRunRecord } from "@/lib/server/database";
+import type { TopUpOrder } from "@/lib/server/top-up-payment";
 
 export type BillingReconciliationActor = {
     userId?: string;
@@ -17,14 +20,14 @@ export type PaymentStatementRow = {
     providerOrderId?: string;
     providerPaymentId?: string;
     status: BillingStatementStatus;
-    amountCents?: number;
+    amountMinor?: string;
     currency?: string;
     raw: Record<string, string>;
 };
 
 export type LocalBillingReconciliationRecord = {
-    order: BillingOrderRecord;
-    payments: PaymentTransactionRecord[];
+    order: TopUpOrder;
+    payments: Array<{ provider: string; status: "pending" | "succeeded" | "failed" | "refunded"; amountMinor: string; currency: string; providerTradeId?: string; providerPaymentId?: string }>;
 };
 
 const MAX_STATEMENT_ROWS = 500;
@@ -33,7 +36,7 @@ const HEADER_ALIASES = {
     providerOrderId: ["providerOrderId", "provider_order_id", "支付商订单号", "交易号", "trade_no", "tradeNo", "providerTradeId", "provider_trade_id"],
     providerPaymentId: ["providerPaymentId", "provider_payment_id", "支付单号", "支付流水号", "流水号", "payment_id", "paymentId", "transaction_id", "transactionId", "微信支付订单号", "支付宝交易号"],
     status: ["status", "trade_status", "tradeStatus", "状态", "交易状态", "支付状态", "退款状态", "refund_status"],
-    amountCents: ["amountCents", "amount_cents", "金额分", "总金额分", "total_fee", "payer_total", "refund_fee"],
+    amountMinor: ["amountMinor", "amount_minor", "金额最小单位", "总金额", "total_fee", "payer_total", "refund_fee"],
     amount: ["amount", "total_amount", "金额", "实收金额", "支付金额", "退款金额", "totalAmount", "refund_amount"],
     currency: ["currency", "币种", "currency_code"],
     provider: ["provider", "渠道", "支付渠道"],
@@ -46,7 +49,7 @@ export function createBillingReconciliationPersistenceRecords(result: BillingRec
     const nowIso = new Date().toISOString();
     const fileName = normalizeText(input.fileName, "", 180);
     const note = normalizeText(input.note, "", 300);
-    const run: BillingReconciliationRunRecord = {
+    const run: TopUpReconciliationRunRecord = {
         id: runId,
         provider: result.provider,
         source: "csv",
@@ -55,10 +58,13 @@ export function createBillingReconciliationPersistenceRecords(result: BillingRec
         matchedRows: result.matchedRows,
         okRows: result.okRows,
         issueRows: result.issueRows,
-        statementPaidAmountCents: result.totals.statementPaidAmountCents,
-        statementRefundedAmountCents: result.totals.statementRefundedAmountCents,
-        localMatchedAmountCents: result.totals.localMatchedAmountCents,
-        differenceAmountCents: result.totals.differenceAmountCents,
+        statementPaidAmount: result.totals.statementPaidAmount,
+        statementRefundedAmount: result.totals.statementRefundedAmount,
+        localMatchedAmount: result.totals.localMatchedAmount,
+        differenceAmount: result.totals.differenceAmount,
+        differenceDirection: result.totals.differenceDirection,
+        localNominalUsdValue: result.totals.localNominalUsdValue,
+        localPaidUsdValue: result.totals.localPaidUsdValue,
         importedByUserId: normalizeText(input.actor?.userId, "", 120) || undefined,
         importedByUsername: normalizeText(input.actor?.username, "", 120) || undefined,
         fileName: fileName || undefined,
@@ -98,15 +104,21 @@ export function reconcilePaymentStatementRows(provider: string, rows: PaymentSta
         if (duplicateKey) seenStatementKeys.add(duplicateKey);
         return reconcileStatementRow(row, findLocalRecordInIndex(row, localIndex), duplicate);
     });
-    const statementPaidAmountCents = rows.reduce((sum, row) => sum + (row.status === "paid" ? row.amountCents || 0 : 0), 0);
-    const statementRefundedAmountCents = rows.reduce((sum, row) => sum + (row.status === "refunded" ? row.amountCents || 0 : 0), 0);
-    const localMatchedAmountCents = resultRows.reduce((sum, row) => {
+    const statementPaidMinor = rows.reduce((sum, row) => sum + (row.status === "paid" ? BigInt(row.amountMinor || "0") : BigInt(0)), BigInt(0));
+    const statementRefundedMinor = rows.reduce((sum, row) => sum + (row.status === "refunded" ? BigInt(row.amountMinor || "0") : BigInt(0)), BigInt(0));
+    const localMatchedMinor = resultRows.reduce((sum, row) => {
         if (!row.localOrderId) return sum;
-        if (row.statementStatus === "paid") return sum + (row.localAmountCents || 0);
-        if (row.statementStatus === "refunded") return sum - (row.localAmountCents || 0);
+        const amount = row.localPaymentAmount?.kind === "fiat" ? BigInt(row.localPaymentAmount.amountMinor) : BigInt(0);
+        if (row.statementStatus === "paid") return sum + amount;
+        if (row.statementStatus === "refunded") return sum - amount;
         return sum;
-    }, 0);
-    const statementNetAmountCents = statementPaidAmountCents - statementRefundedAmountCents;
+    }, BigInt(0));
+    const statementNetMinor = statementPaidMinor - statementRefundedMinor;
+    const signedDifference = statementNetMinor - localMatchedMinor;
+    const absoluteDifference = signedDifference < BigInt(0) ? -signedDifference : signedDifference;
+    const fiat = (amountMinor: bigint): PaymentAmount => ({ kind: "fiat", currency: "VND", amountMinor: amountMinor.toString(), minorUnitExponent: 0 });
+    const localNominalUsdValue = sumDecimalStrings(resultRows.map((row) => row.localNominalUsdValue));
+    const localPaidUsdValue = sumDecimalStrings(resultRows.map((row) => row.localPaidUsdValue));
     return {
         provider: normalizeProvider(provider),
         totalRows: rows.length,
@@ -114,10 +126,13 @@ export function reconcilePaymentStatementRows(provider: string, rows: PaymentSta
         okRows: resultRows.filter((row) => !row.issueCodes.length).length,
         issueRows: resultRows.filter((row) => row.issueCodes.length).length,
         totals: {
-            statementPaidAmountCents,
-            statementRefundedAmountCents,
-            localMatchedAmountCents,
-            differenceAmountCents: statementNetAmountCents - localMatchedAmountCents,
+            statementPaidAmount: fiat(statementPaidMinor),
+            statementRefundedAmount: fiat(statementRefundedMinor),
+            localMatchedAmount: fiat(localMatchedMinor),
+            differenceAmount: fiat(absoluteDifference),
+            differenceDirection: signedDifference > BigInt(0) ? "statement_over" : signedDifference < BigInt(0) ? "local_over" : "balanced",
+            localNominalUsdValue,
+            localPaidUsdValue,
         },
         rows: resultRows,
         generatedAt: new Date().toISOString(),
@@ -129,7 +144,7 @@ function reconcileStatementRow(row: PaymentStatementRow, local: LocalBillingReco
     if (duplicate) issues.push(issue("duplicate_statement_record", "账单中存在重复记录", "warning"));
     if (!statementIdentifiers(row).length) issues.push(issue("invalid_statement_row", "账单行缺少订单号或支付流水号", "error"));
     if (row.status === "unknown") issues.push(issue("invalid_statement_row", "账单行状态无法识别", "warning", undefined, "unknown"));
-    if (row.amountCents === undefined) issues.push(issue("invalid_statement_row", "账单行缺少有效金额", "error"));
+    if (row.amountMinor === undefined) issues.push(issue("invalid_statement_row", "账单行缺少有效金额", "error"));
     if (!row.currency) issues.push(issue("invalid_statement_row", "账单行缺少币种", "error"));
     if (!local) {
         issues.push(issue("missing_local_order", "本地没有匹配的订单", "error"));
@@ -142,8 +157,8 @@ function reconcileStatementRow(row: PaymentStatementRow, local: LocalBillingReco
     if (row.provider && local.order.provider && normalizeProvider(row.provider) !== normalizeProvider(local.order.provider)) {
         issues.push(issue("provider_mismatch", "支付渠道不一致", "error", local.order.provider, row.provider));
     }
-    if (row.amountCents !== undefined && row.amountCents !== local.order.amountCents) {
-        issues.push(issue("amount_mismatch", "支付商金额与本地订单金额不一致", "error", String(local.order.amountCents), String(row.amountCents)));
+    if (row.amountMinor !== undefined && BigInt(row.amountMinor) !== BigInt(localAmountMinor(local.order))) {
+        issues.push(issue("amount_mismatch", "支付商金额与本地订单金额不一致", "error", localAmountMinor(local.order), row.amountMinor));
     }
     if (row.currency && local.order.currency && row.currency !== normalizeCurrency(local.order.currency)) {
         issues.push(issue("currency_mismatch", "支付商币种与本地订单币种不一致", "error", normalizeCurrency(local.order.currency), row.currency));
@@ -172,19 +187,21 @@ function buildResultRow(row: PaymentStatementRow, local: LocalBillingReconciliat
         providerOrderId: row.providerOrderId,
         providerPaymentId: row.providerPaymentId,
         statementStatus: row.status,
-        amountCents: row.amountCents,
-        currency: row.currency,
+        statementPaymentAmount: row.amountMinor === undefined ? undefined : { kind: "fiat", currency: "VND", amountMinor: row.amountMinor, minorUnitExponent: 0 },
         localOrderId: local?.order.id,
         localOrderNo: local?.order.orderNo,
         localOrderStatus: local?.order.status,
-        localAmountCents: local?.order.amountCents,
-        localCurrency: local?.order.currency,
+        localPaymentAmount: local?.order.paymentAmount,
+        localNominalNativeAmount: local?.order.nominalNativeAmount,
+        localPayableNativeAmount: local?.order.payableNativeAmount,
+        localNominalUsdValue: local?.order.nominalUsdValue,
+        localPaidUsdValue: local?.order.paidUsdValue,
         issueCodes: issues.map((item) => item.code),
         issues,
     };
 }
 
-function toReconciliationRowRecord(runId: string, row: BillingReconciliationRow, nowIso: string): BillingReconciliationRowRecord {
+function toReconciliationRowRecord(runId: string, row: BillingReconciliationRow, nowIso: string): TopUpReconciliationRowRecord {
     return {
         id: randomUUID(),
         runId,
@@ -195,13 +212,15 @@ function toReconciliationRowRecord(runId: string, row: BillingReconciliationRow,
         providerOrderId: row.providerOrderId,
         providerPaymentId: row.providerPaymentId,
         statementStatus: row.statementStatus,
-        amountCents: row.amountCents,
-        currency: row.currency,
+        statementPaymentAmount: row.statementPaymentAmount,
         localOrderId: row.localOrderId,
         localOrderNo: row.localOrderNo,
         localOrderStatus: row.localOrderStatus,
-        localAmountCents: row.localAmountCents,
-        localCurrency: row.localCurrency,
+        localPaymentAmount: row.localPaymentAmount,
+        localNominalNativeAmount: row.localNominalNativeAmount,
+        localPayableNativeAmount: row.localPayableNativeAmount,
+        localNominalUsdValue: row.localNominalUsdValue,
+        localPaidUsdValue: row.localPaidUsdValue,
         issueCodes: row.issueCodes,
         issues: row.issues.map((item) => ({
             code: item.code,
@@ -215,7 +234,7 @@ function toReconciliationRowRecord(runId: string, row: BillingReconciliationRow,
     };
 }
 
-export function buildStoredReconciliationResult(run: BillingReconciliationRunRecord, rows: BillingReconciliationRowRecord[]): BillingReconciliationResult {
+export function buildStoredReconciliationResult(run: TopUpReconciliationRunRecord, rows: TopUpReconciliationRowRecord[]): BillingReconciliationResult {
     return {
         runId: run.id,
         provider: run.provider,
@@ -227,17 +246,20 @@ export function buildStoredReconciliationResult(run: BillingReconciliationRunRec
         okRows: run.okRows,
         issueRows: run.issueRows,
         totals: {
-            statementPaidAmountCents: run.statementPaidAmountCents,
-            statementRefundedAmountCents: run.statementRefundedAmountCents,
-            localMatchedAmountCents: run.localMatchedAmountCents,
-            differenceAmountCents: run.differenceAmountCents,
+            statementPaidAmount: validatePaymentAmount(run.statementPaidAmount),
+            statementRefundedAmount: validatePaymentAmount(run.statementRefundedAmount),
+            localMatchedAmount: validatePaymentAmount(run.localMatchedAmount),
+            differenceAmount: validatePaymentAmount(run.differenceAmount),
+            differenceDirection: run.differenceDirection,
+            localNominalUsdValue: run.localNominalUsdValue,
+            localPaidUsdValue: run.localPaidUsdValue,
         },
         rows: rows.map(fromReconciliationRowRecord),
         generatedAt: run.createdAt,
     };
 }
 
-function fromReconciliationRowRecord(row: BillingReconciliationRowRecord): BillingReconciliationRow {
+function fromReconciliationRowRecord(row: TopUpReconciliationRowRecord): BillingReconciliationRow {
     const issues = normalizeStoredIssues(row.issues);
     return {
         rowNumber: row.rowNumber,
@@ -247,13 +269,14 @@ function fromReconciliationRowRecord(row: BillingReconciliationRowRecord): Billi
         providerOrderId: row.providerOrderId,
         providerPaymentId: row.providerPaymentId,
         statementStatus: row.statementStatus,
-        amountCents: row.amountCents,
-        currency: row.currency,
+        statementPaymentAmount: row.statementPaymentAmount ? validatePaymentAmount(row.statementPaymentAmount) : undefined,
         localOrderId: row.localOrderId,
-        localOrderNo: row.localOrderNo,
         localOrderStatus: row.localOrderStatus,
-        localAmountCents: row.localAmountCents,
-        localCurrency: row.localCurrency,
+        localPaymentAmount: row.localPaymentAmount ? validatePaymentAmount(row.localPaymentAmount) : undefined,
+        localNominalNativeAmount: row.localNominalNativeAmount,
+        localPayableNativeAmount: row.localPayableNativeAmount,
+        localNominalUsdValue: row.localNominalUsdValue,
+        localPaidUsdValue: row.localPaidUsdValue,
         issueCodes: normalizeStoredIssueCodes(row.issueCodes, issues),
         issues,
     };
@@ -288,7 +311,8 @@ function normalizeStoredIssues(value: JsonValue): BillingReconciliationIssue[] {
 function normalizeStatementRow(headers: string[], cells: string[], rowNumber: number, defaultProvider: string): PaymentStatementRow {
     const raw = Object.fromEntries(headers.map((header, index) => [header || `column_${index + 1}`, normalizeText(cells[index], "", 500)]));
     const provider = normalizeProvider(readAliased(raw, HEADER_ALIASES.provider) || defaultProvider);
-    const amountCentsValue = readAliased(raw, HEADER_ALIASES.amountCents);
+    const currency = normalizeCurrency(readAliased(raw, HEADER_ALIASES.currency));
+    const amountMinorValue = readAliased(raw, HEADER_ALIASES.amountMinor);
     const amountValue = readAliased(raw, HEADER_ALIASES.amount);
     return {
         rowNumber,
@@ -297,8 +321,8 @@ function normalizeStatementRow(headers: string[], cells: string[], rowNumber: nu
         providerOrderId: normalizeOptionalId(readAliased(raw, HEADER_ALIASES.providerOrderId)),
         providerPaymentId: normalizeOptionalId(readAliased(raw, HEADER_ALIASES.providerPaymentId)),
         status: normalizeStatementStatus(readAliased(raw, HEADER_ALIASES.status)),
-        amountCents: amountCentsValue ? parseCents(amountCentsValue) : amountValue ? parseMoneyToCents(amountValue) : undefined,
-        currency: normalizeCurrency(readAliased(raw, HEADER_ALIASES.currency)),
+        amountMinor: amountMinorValue ? parseMinor(amountMinorValue) : amountValue ? parseMoneyToMinor(amountValue, currency || "") : undefined,
+        currency,
         raw,
     };
 }
@@ -381,14 +405,14 @@ export function reconciliationLookupCacheKey(row: PaymentStatementRow) {
 function statementDuplicateKey(row: PaymentStatementRow) {
     const identifiers = statementIdentifiers(row);
     if (!identifiers.length) return undefined;
-    return `${normalizeProvider(row.provider)}:${identifiers.map(keyValue).join("|")}:${row.status}:${row.amountCents ?? ""}`;
+    return `${normalizeProvider(row.provider)}:${identifiers.map(keyValue).join("|")}:${row.status}:${row.amountMinor ?? ""}`;
 }
 
 export function statementIdentifiers(row: PaymentStatementRow) {
     return [row.orderNo, row.providerOrderId, row.providerPaymentId].filter(Boolean) as string[];
 }
 
-export function localOrderMatchesStatement(order: BillingOrderRecord, row: PaymentStatementRow) {
+export function localOrderMatchesStatement(order: TopUpOrder, row: PaymentStatementRow) {
     if (normalizeProvider(order.provider) !== normalizeProvider(row.provider)) return false;
     const keys = new Set(
         [order.orderNo, order.providerOrderId, order.providerPaymentId]
@@ -397,6 +421,10 @@ export function localOrderMatchesStatement(order: BillingOrderRecord, row: Payme
             .map((value) => keyValue(value)),
     );
     return statementIdentifiers(row).some((identifier) => keys.has(keyValue(identifier)));
+}
+
+function localAmountMinor(order: TopUpOrder) {
+    return order.paymentAmount.kind === "fiat" ? order.paymentAmount.amountMinor : "";
 }
 
 function providerIdentifierKey(provider: string, identifier: string) {
@@ -441,16 +469,25 @@ function normalizeStatementStatus(value: unknown): BillingStatementStatus {
     return "unknown";
 }
 
-function parseCents(value: string) {
-    const number = Number(value.replace(/[^\d.-]/g, ""));
-    return Number.isFinite(number) ? Math.abs(Math.round(number)) : undefined;
+function parseMinor(value: string) {
+    const normalized = value.replace(/[^\d-]/g, "");
+    if (!/^-?\d+$/.test(normalized)) return undefined;
+    return BigInt(normalized).toString().replace(/^-/, "");
 }
 
-function parseMoneyToCents(value: string) {
+function parseMoneyToMinor(value: string, currency: string) {
     const text = value.replace(/[¥￥$,，\sA-Za-z]/g, "");
-    const number = Number(text.replace(/[()]/g, ""));
-    if (!Number.isFinite(number)) return undefined;
-    return Math.abs(Math.round(number * 100));
+    try {
+        const parsed = decimal(text.replace(/[()]/g, ""));
+        const absolute = parsed.isNegative() ? decimal(0).minus(parsed) : parsed;
+        return absolute.times(decimal(currency === "VND" ? 1 : 100)).roundHalfUp(0).toString();
+    } catch {
+        return undefined;
+    }
+}
+
+function sumDecimalStrings(values: Array<string | undefined>) {
+    return values.reduce((sum, value) => sum.plus(decimal(value || "0")), decimal(0)).toString();
 }
 
 function normalizeHeader(value: unknown) {

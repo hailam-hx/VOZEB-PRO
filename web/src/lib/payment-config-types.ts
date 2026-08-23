@@ -85,6 +85,11 @@ export type SavedPaymentProviderConfig = {
 
 export type SavedPaymentConfig = {
     providers: Partial<Record<PaymentProviderId, SavedPaymentProviderConfig>>;
+    topUp?: {
+        pricingVersion: string;
+        customerFxVersion: string;
+        usdPerVnd: string;
+    };
 };
 
 export const PAYMENT_PROVIDER_DEFINITIONS: PaymentProviderDefinition[] = [

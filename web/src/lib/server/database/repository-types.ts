@@ -37,7 +37,7 @@ export type UserCouponStatus = "available" | "locked" | "redeemed" | "expired" |
 export type CouponRedemptionStatus = "redeemed" | "refunded";
 export type ReferralInviteeRewardType = "points" | "coupon";
 export type ReferralRiskStatus = "clear" | "review" | "frozen" | "rejected";
-export type ReferralRewardStatus = "pending" | "settled" | "revoked" | "rejected" | "reversal_pending";
+export type ReferralRewardStatus = "pending" | "settled" | "revoked" | "rejected" | "reversal_pending" | "manual_review";
 export type ReferralRewardType = "points" | "coupon";
 export type ReferralBeneficiaryRole = "inviter" | "invitee";
 
@@ -476,8 +476,8 @@ export type ReferralProgramRecord = {
     inviterPoints: number;
     inviteeRewardType: ReferralInviteeRewardType;
     inviteePoints: number;
-    inviteeCouponTemplateId?: string;
-    minimumPaidCents: number;
+    inviteeTopUpCouponTemplateId?: string;
+    minimumPaidUsd: string;
     coolingOffDays: number;
     inviterMonthlyLimit: number;
     campaignTotalLimit: number;
@@ -529,13 +529,13 @@ export type ReferralRewardRecord = {
     beneficiaryRole: ReferralBeneficiaryRole;
     rewardType: ReferralRewardType;
     pointsAmount: number;
-    couponTemplateId?: string;
+    topUpCouponTemplateId?: string;
     triggerOrderId: string;
     status: ReferralRewardStatus;
     settleAfter: string;
     walletRecordId?: string;
     reversalWalletRecordId?: string;
-    userCouponId?: string;
+    topUpUserCouponId?: string;
     reason?: string;
     settledAt?: string;
     revokedAt?: string;
@@ -583,7 +583,7 @@ export type PaymentTransactionRecord = {
     updatedAt: string;
 };
 
-export type BillingReconciliationRunRecord = {
+export type TopUpReconciliationRunRecord = {
     id: string;
     provider: string;
     source: BillingReconciliationSource;
@@ -592,10 +592,13 @@ export type BillingReconciliationRunRecord = {
     matchedRows: number;
     okRows: number;
     issueRows: number;
-    statementPaidAmountCents: number;
-    statementRefundedAmountCents: number;
-    localMatchedAmountCents: number;
-    differenceAmountCents: number;
+    statementPaidAmount: JsonValue;
+    statementRefundedAmount: JsonValue;
+    localMatchedAmount: JsonValue;
+    differenceAmount: JsonValue;
+    differenceDirection: "statement_over" | "local_over" | "balanced";
+    localNominalUsdValue: string;
+    localPaidUsdValue: string;
     importedByUserId?: string;
     importedByUsername?: string;
     fileName?: string;
@@ -606,7 +609,7 @@ export type BillingReconciliationRunRecord = {
     updatedAt: string;
 };
 
-export type BillingReconciliationRowRecord = {
+export type TopUpReconciliationRowRecord = {
     id: string;
     runId: string;
     rowNumber: number;
@@ -616,13 +619,15 @@ export type BillingReconciliationRowRecord = {
     providerOrderId?: string;
     providerPaymentId?: string;
     statementStatus: BillingReconciliationStatementStatus;
-    amountCents?: number;
-    currency?: string;
+    statementPaymentAmount?: JsonValue;
     localOrderId?: string;
     localOrderNo?: string;
     localOrderStatus?: string;
-    localAmountCents?: number;
-    localCurrency?: string;
+    localPaymentAmount?: JsonValue;
+    localNominalNativeAmount?: string;
+    localPayableNativeAmount?: string;
+    localNominalUsdValue?: string;
+    localPaidUsdValue?: string;
     issueCodes: JsonValue;
     issues: JsonValue;
     createdAt: string;

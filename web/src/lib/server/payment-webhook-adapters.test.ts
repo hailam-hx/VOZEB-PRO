@@ -19,7 +19,7 @@ describe("Alipay payment webhook adapter", () => {
             orderId: "order-one",
             orderNo: "VZ001",
             providerTradeId: "2026072800000001",
-            amountCents: 1299,
+            amountMinor: "1299",
             currency: "CNY",
         });
     });

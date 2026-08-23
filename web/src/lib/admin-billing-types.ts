@@ -1,3 +1,5 @@
+import type { PaymentAmount } from "@/lib/billing/money";
+
 export type AdminBillingSummary = {
     orders: {
         total: number;
@@ -64,13 +66,15 @@ export type BillingReconciliationRow = {
     providerOrderId?: string;
     providerPaymentId?: string;
     statementStatus: BillingStatementStatus;
-    amountCents?: number;
-    currency?: string;
+    statementPaymentAmount?: PaymentAmount;
     localOrderId?: string;
     localOrderNo?: string;
     localOrderStatus?: string;
-    localAmountCents?: number;
-    localCurrency?: string;
+    localPaymentAmount?: PaymentAmount;
+    localNominalNativeAmount?: string;
+    localPayableNativeAmount?: string;
+    localNominalUsdValue?: string;
+    localPaidUsdValue?: string;
     issueCodes: BillingReconciliationIssueCode[];
     issues: BillingReconciliationIssue[];
 };
@@ -86,10 +90,13 @@ export type BillingReconciliationResult = {
     okRows: number;
     issueRows: number;
     totals: {
-        statementPaidAmountCents: number;
-        statementRefundedAmountCents: number;
-        localMatchedAmountCents: number;
-        differenceAmountCents: number;
+        statementPaidAmount: PaymentAmount;
+        statementRefundedAmount: PaymentAmount;
+        localMatchedAmount: PaymentAmount;
+        differenceAmount: PaymentAmount;
+        differenceDirection: "statement_over" | "local_over" | "balanced";
+        localNominalUsdValue: string;
+        localPaidUsdValue: string;
     };
     rows: BillingReconciliationRow[];
     generatedAt: string;
@@ -104,10 +111,13 @@ export type BillingReconciliationRun = {
     matchedRows: number;
     okRows: number;
     issueRows: number;
-    statementPaidAmountCents: number;
-    statementRefundedAmountCents: number;
-    localMatchedAmountCents: number;
-    differenceAmountCents: number;
+    statementPaidAmount: PaymentAmount;
+    statementRefundedAmount: PaymentAmount;
+    localMatchedAmount: PaymentAmount;
+    differenceAmount: PaymentAmount;
+    differenceDirection: "statement_over" | "local_over" | "balanced";
+    localNominalUsdValue: string;
+    localPaidUsdValue: string;
     importedByUserId?: string;
     importedByUsername?: string;
     fileName?: string;

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { getBillingOrderForUser, isBillingInputError } from "@/lib/server/billing-service";
+import { getTopUpOrderForUser } from "@/lib/server/top-up-commerce-service";
+import { commerceError, commerceOk } from "../../commerce-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,14 +13,12 @@ type RouteContext = {
 
 export async function GET(_request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
 
     try {
         const { id } = await context.params;
-        return NextResponse.json({ order: await getBillingOrderForUser(currentUser.id, id) });
+        return commerceOk({ order: await getTopUpOrderForUser(currentUser.id, id) });
     } catch (error) {
-        if (isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
-        console.error("Get billing order failed", error);
-        return NextResponse.json({ error: "获取订单失败" }, { status: 500 });
+        return commerceError(error, "获取充值订单失败", "Get top-up order failed");
     }
 }
