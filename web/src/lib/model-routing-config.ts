@@ -2,8 +2,8 @@ import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, Logical
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { inferModelCapability, isCreativeGenerationModel, normalizeModelId } from "@/lib/model-capability";
 import { channelConnectionReady, protocolCatalogCapability, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
-import { normalizePricingRateCard } from "@/lib/billing/pricing";
-import { normalizeProviderCostUnit } from "@/lib/billing/money";
+import { validatePricingRateCard } from "@/lib/billing/pricing";
+import { validateProviderCostUnit } from "@/lib/billing/money";
 
 const CAPABILITY_DEFAULT_KEYS = {
     text: "textModel",
@@ -58,8 +58,9 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                 const stored = findStoredBinding(existingModels, channel.id, upstreamModel);
                 const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile);
                 const weight = clampWeight(stored?.weight);
-                const costRateCard = normalizePricingRateCard(stored?.costRateCard);
-                const providerCostUnit = normalizeProviderCostUnit(stored?.providerCostUnit);
+                const costRateCard = stored?.costRateCard === undefined ? undefined : validatePricingRateCard(stored.costRateCard);
+                const providerCostUnit = stored?.providerCostUnit === undefined ? undefined : validateProviderCostUnit(stored.providerCostUnit);
+                if (costRateCard && !providerCostUnit) throw new Error("供应商成本价格卡必须指定有效的供应商成本单位");
                 return {
                     id: text(stored?.id, 120) || `${channel.id}:${rawModelName(upstreamModel)}`,
                     channelId: channel.id,
@@ -73,7 +74,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                 };
             })
             .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
-        const saleRateCard = normalizePricingRateCard(existing?.saleRateCard);
+        const saleRateCard = existing?.saleRateCard === undefined ? undefined : validatePricingRateCard(existing.saleRateCard);
         return {
             id,
             name: text(existing?.name, 120) || catalogModel.upstreamModel,

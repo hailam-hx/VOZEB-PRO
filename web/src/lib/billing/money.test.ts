@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { convertProviderCostToUsd, normalizeProviderCostUnit, sumProviderAttemptCostUsd, type ProviderCostUnit } from "./money";
+import { convertProviderCostToUsd, validateProviderCostUnit, sumProviderAttemptCostUsd, type ProviderCostUnit } from "./money";
 
 describe("provider cost money", () => {
     it("converts provider-native cost with its versioned USD snapshot without intermediate rounding", () => {
@@ -25,7 +25,7 @@ describe("provider cost money", () => {
         expect(() => convertProviderCostToUsd("1", { kind: "fiat", currency: "VND" } as unknown as ProviderCostUnit)).toThrow("USD");
     });
 
-    it("drops an invalid provider conversion snapshot during configuration normalization", () => {
-        expect(normalizeProviderCostUnit({ kind: "provider-native", provider: "vendor", unit: "tokens", usdConversion: { version: "v1", usdPerUnit: "0" } })).toBeUndefined();
+    it("surfaces an invalid provider conversion snapshot during configuration validation", () => {
+        expect(() => validateProviderCostUnit({ kind: "provider-native", provider: "vendor", unit: "tokens", usdConversion: { version: "v1", usdPerUnit: "0" } })).toThrow("USD 转换快照");
     });
 });

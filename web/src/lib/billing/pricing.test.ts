@@ -7,6 +7,7 @@ import {
     validatePricingRateCard,
     type PricingRateCardV1,
 } from "./pricing";
+import { decimal } from "./decimal";
 
 const textRateCard: PricingRateCardV1 = {
     version: 1,
@@ -71,7 +72,12 @@ describe("pricing", () => {
         });
         const actual = normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "100", outputTokens: "1000" });
 
-        expect(calculateFinalSaleCharge({ rateCard: textRateCard, reserve, actualUsage: actual, providerCostUsd: "999999" })).toMatchObject({ credits: reserve.credits, capped: true });
+        expect(calculateFinalSaleCharge({ rateCard: textRateCard, reserve, actualUsage: actual, providerCostUsd: "999999" })).toMatchObject({
+            credits: reserve.credits,
+            uncappedCredits: "0.0000265",
+            platformLossCredits: "0.0000225",
+            capped: true,
+        });
         expect(calculateFinalSaleCharge({ rateCard: textRateCard, reserve, actualUsage: actual, providerCostUsd: "0.0000001" }).credits).toBe(reserve.credits);
     });
 
@@ -85,13 +91,19 @@ describe("pricing", () => {
         });
         const reserve = calculatePricingReserve({ rateCard, usage: normalizeBillableUsage({ capability: "text", source: "request", inputTokens: "1", maxOutputTokens: "1" }) });
 
-        expect(reserve.credits).toBe("0.000000009");
-        expect(calculateFinalSaleCharge({ rateCard, reserve, actualUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "1", outputTokens: "1" }) }).credits).toBe("0.00000001");
+        expect(reserve).toMatchObject({ rawCredits: "0.000000009", credits: "0.00000001" });
+        const finalCharge = calculateFinalSaleCharge({ rateCard, reserve, actualUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "1", outputTokens: "1" }) });
+        expect(finalCharge.credits).toBe("0.00000001");
+        expect(decimal(finalCharge.credits).lessThanOrEqualTo(decimal(reserve.credits))).toBe(true);
     });
 
     it("allows an explicit zero-price component for a free model", () => {
         const rateCard = validatePricingRateCard({ version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "0" }] });
 
         expect(calculatePricingReserve({ rateCard, usage: normalizeBillableUsage({ capability: "text", source: "request", inputTokens: "20", maxOutputTokens: "10" }) }).credits).toBe("0");
+    });
+
+    it("rejects a component unit that would require non-terminating intermediate precision", () => {
+        expect(() => validatePricingRateCard({ version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "1", per: "3" }] })).toThrow("精确表示");
     });
 });

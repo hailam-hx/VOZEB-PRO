@@ -32,4 +32,19 @@ describe("model routing pricing contracts", () => {
             bindings: [{ costRateCard: models[0].bindings[0].costRateCard, providerCostUnit: models[0].bindings[0].providerCostUnit }],
         });
     });
+
+    it("rejects a retained provider cost rate card without a valid cost unit", () => {
+        const channels: SystemModelChannel[] = [{ id: "channel", name: "Channel", baseUrl: "https://channel.example.com", apiKey: "secret", apiFormat: "openai", models: ["writer"], enabled: true }];
+        const models: LogicalModel[] = [
+            {
+                id: "writer",
+                name: "Writer",
+                capability: "text",
+                enabled: true,
+                bindings: [{ id: "binding", channelId: "channel", upstreamModel: "writer", enabled: true, priority: 1, costRateCard: { version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "0.0001" }] } }],
+            },
+        ];
+
+        expect(() => normalizeLogicalModelsConfig(models, channels)).toThrow("供应商成本单位");
+    });
 });

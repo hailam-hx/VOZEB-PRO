@@ -1,6 +1,4 @@
-import Decimal from "decimal.js";
-
-import { decimal, decimalText, type DecimalInput } from "./decimal";
+import { decimal, decimalText, hasTerminatingDecimal, type DecimalInput } from "./decimal";
 
 export type UsageSource = "request" | "actual" | "derived" | "reserve";
 export type BillableCapability = "text" | "image" | "video" | "audio";
@@ -47,6 +45,7 @@ export type BillableUsageInput = {
 
 export type PricingReserve = {
     credits: string;
+    rawCredits: string;
     usage: NormalizedUsage;
 };
 
@@ -55,6 +54,8 @@ export type FinalSaleCharge = {
     usage: NormalizedUsage;
     estimated: boolean;
     capped: boolean;
+    uncappedCredits: string;
+    platformLossCredits: string;
 };
 
 const numericDimensions = new Set<PricingDimension>(["inputTokens", "outputTokens", "count", "durationSeconds"]);
@@ -98,7 +99,8 @@ export function calculatePricingReserve(input: { rateCard: PricingRateCardV1; us
     const rateCard = validatePricingRateCard(input.rateCard);
     const request = input.usage;
     const usage = request.capability === "text" ? textReserveUsage(request) : { ...request, source: "reserve" as const };
-    return { credits: decimalText(priceUsage(rateCard, usage)), usage };
+    const rawCredits = priceUsage(rateCard, usage);
+    return { rawCredits: decimalText(rawCredits), credits: rawCredits.ceilToDecimalPlaces(8).toString(), usage };
 }
 
 export function calculateFinalSaleCharge(input: {
@@ -113,9 +115,18 @@ export function calculateFinalSaleCharge(input: {
     const estimated = !input.actualUsage && !input.derivedUsage;
     const calculated = priceUsage(rateCard, usage);
     const reserve = decimal(input.reserve.credits, "预留积分");
-    const capped = calculated.greaterThan(reserve);
-    const credits = (capped ? reserve : calculated).toDecimalPlaces(8, Decimal.ROUND_HALF_UP).toString();
-    return { credits, usage, estimated, capped };
+    if (!reserve.hasAtMostDecimalPlaces(8)) throw new Error("预留积分必须保留至 8 位小数");
+    const uncapped = calculated.roundHalfUp(8);
+    const capped = uncapped.greaterThan(reserve);
+    const charge = capped ? reserve : uncapped;
+    return {
+        credits: charge.toString(),
+        uncappedCredits: uncapped.toString(),
+        platformLossCredits: (capped ? uncapped.minus(charge) : decimal(0)).toString(),
+        usage,
+        estimated,
+        capped,
+    };
 }
 
 function normalizeComponent(input: unknown, ids: Set<string>): PricingComponent {
@@ -129,6 +140,7 @@ function normalizeComponent(input: unknown, ids: Set<string>): PricingComponent 
     const match = typeof value.match === "string" ? value.match.trim() : undefined;
     if (categoricalDimensions.has(value.dimension) && !match) throw new Error("分类价格组件必须指定匹配值");
     if (numericDimensions.has(value.dimension) && match) throw new Error("数值价格组件不能指定匹配值");
+    if (per && !hasTerminatingDecimal(decimal(1).dividedBy(decimal(per)))) throw new Error("价格组件单位必须可精确表示");
     ids.add(id);
     return { id, dimension: value.dimension, unitPrice, ...(per ? { per } : {}), ...(match ? { match } : {}) };
 }
@@ -145,7 +157,7 @@ function priceComponent(component: PricingComponent, usage: NormalizedUsage) {
         const count = usage.count === undefined ? decimal(1) : decimal(usage.count, "生成数量");
         return decimal(component.unitPrice, "价格组件单价").times(count);
     }
-    return decimal(component.unitPrice, "价格组件单价").times(decimal(value, component.dimension)).dividedBy(component.per || "1");
+    return decimal(component.unitPrice, "价格组件单价").times(decimal(value, component.dimension)).dividedBy(decimal(component.per || "1"));
 }
 
 function textReserveUsage(usage: NormalizedUsage): NormalizedUsage {
@@ -156,7 +168,7 @@ function textReserveUsage(usage: NormalizedUsage): NormalizedUsage {
 
 function positiveDecimal(value: unknown, label: string) {
     const normalized = decimal(value as DecimalInput, label);
-    if (!normalized.greaterThan(0)) throw new Error(`${label}必须大于零`);
+    if (!normalized.greaterThan(decimal(0))) throw new Error(`${label}必须大于零`);
     return normalized.toString();
 }
 

@@ -20,20 +20,19 @@ export type CryptoPaymentAmount = {
 
 export type PaymentAmount = FiatPaymentAmount | CryptoPaymentAmount;
 
-export function normalizeProviderCostUnit(input: unknown): ProviderCostUnit | undefined {
-    if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+export function validateProviderCostUnit(input: unknown): ProviderCostUnit {
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("供应商成本单位无效");
     const value = input as Partial<ProviderCostUnit>;
-    if (value.kind === "fiat") return value.currency === "USD" ? { kind: "fiat", currency: "USD" } : undefined;
-    if (value.kind !== "provider-native") return undefined;
-    try {
-        const provider = text(value.provider);
-        const unit = text(value.unit);
-        const version = text(value.usdConversion?.version);
-        const usdPerUnit = positiveDecimal(value.usdConversion?.usdPerUnit);
-        return provider && unit && version ? { kind: "provider-native", provider, unit, usdConversion: { version, usdPerUnit: usdPerUnit.toString() } } : undefined;
-    } catch {
-        return undefined;
+    if (value.kind === "fiat") {
+        if (value.currency !== "USD") throw new Error("供应商法币成本必须为 USD");
+        return { kind: "fiat", currency: "USD" };
     }
+    if (value.kind !== "provider-native") throw new Error("供应商成本单位无效");
+    const provider = text(value.provider);
+    const unit = text(value.unit);
+    const version = text(value.usdConversion?.version);
+    if (!provider || !unit || !version) throw new Error("供应商原生单位需要版本化 USD 转换快照");
+    return { kind: "provider-native", provider, unit, usdConversion: { version, usdPerUnit: positiveDecimal(value.usdConversion?.usdPerUnit).toString() } };
 }
 
 export function convertProviderCostToUsd(amount: DecimalInput, unit: ProviderCostUnit) {
@@ -48,7 +47,7 @@ export function convertProviderCostToUsd(amount: DecimalInput, unit: ProviderCos
 }
 
 export function sumProviderAttemptCostUsd(attempts: Array<{ amount: DecimalInput; unit: ProviderCostUnit }>) {
-    return decimalText(attempts.reduce((total, attempt) => total.plus(convertProviderCostToUsd(attempt.amount, attempt.unit)), decimal(0)));
+    return decimalText(attempts.reduce((total, attempt) => total.plus(decimal(convertProviderCostToUsd(attempt.amount, attempt.unit))), decimal(0)));
 }
 
 function nonNegativeDecimal(value: DecimalInput, label: string) {
@@ -59,7 +58,7 @@ function nonNegativeDecimal(value: DecimalInput, label: string) {
 
 function positiveDecimal(value: DecimalInput | undefined) {
     const normalized = decimal(value || "", "USD 转换快照");
-    if (!normalized.greaterThan(0)) throw new Error("USD 转换快照必须大于零");
+    if (!normalized.greaterThan(decimal(0))) throw new Error("USD 转换快照必须大于零");
     return normalized;
 }
 
