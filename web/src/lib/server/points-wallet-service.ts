@@ -221,6 +221,7 @@ export async function releaseWalletHold(input: ReleaseWalletHoldInput) {
                 return { hold, snapshot: postgresSnapshot(user.settledBalance, await repos.pointsWallet.getActiveHeldBalance(user.id)), applied: false };
             }
             if (hold.status !== "active") throw new WalletConflictError("钱包预留已经结算");
+            if (await repos.pointsWallet.hasPendingProviderAttempts(hold.id)) throw new WalletConflictError("供应商尝试仍在处理中");
             const closed = await repos.pointsWallet.closeHold(hold.id, { status: "released", releaseBusinessId: businessId, releaseRequestFingerprint: requestFingerprint, releaseReason: reason, closedAt: (input.now || new Date()).toISOString() });
             return { hold: closed!, snapshot: postgresSnapshot(user.settledBalance, await repos.pointsWallet.getActiveHeldBalance(user.id)), applied: true };
         });
@@ -233,6 +234,7 @@ export async function releaseWalletHold(input: ReleaseWalletHoldInput) {
             return { hold, snapshot: snapshotFileWallet(db, hold.userId), applied: false };
         }
         if (hold.status !== "active") throw new WalletConflictError("钱包预留已经结算");
+        if (db.providerUsageAttempts.some((attempt) => attempt.holdId === hold.id && attempt.status === "pending")) throw new WalletConflictError("供应商尝试仍在处理中");
         const now = input.now || new Date();
         hold.status = "released";
         hold.releaseBusinessId = businessId;
@@ -248,8 +250,9 @@ export async function recordProviderUsageAttempt(input: RecordProviderUsageAttem
     const id = requiredText(input.id, "供应商尝试缺少业务 ID");
     const requestFingerprint = fingerprint(input.requestFingerprint);
     const nativeCostAmount = costAmount(input.nativeCostAmount, "供应商原生成本");
-    const nativeCostUnit = validateProviderCostUnit(input.nativeCostUnit);
-    const usdConversionRate = nativeCostUnit.kind === "provider-native" ? nativeCostUnit.usdConversion.usdPerUnit : "1";
+    let nativeCostUnit = validateProviderCostUnit(input.nativeCostUnit);
+    const usdConversionRate = nativeCostUnit.kind === "provider-native" ? costAmount(nativeCostUnit.usdConversion.usdPerUnit, "供应商 USD 转换率").toString() : "1";
+    if (nativeCostUnit.kind === "provider-native") nativeCostUnit = { ...nativeCostUnit, usdConversion: { ...nativeCostUnit.usdConversion, usdPerUnit: usdConversionRate } };
     const costUsd = decimal(convertProviderCostToUsd(nativeCostAmount.toString(), nativeCostUnit)).roundHalfUp(12).toString();
     if (!Number.isSafeInteger(input.attemptNumber) || input.attemptNumber < 1) throw new AuthInputError("供应商尝试序号无效");
     if (isPostgresDatabaseEnabled()) return recordPostgresProviderAttempt({ ...input, id, requestFingerprint, nativeCostAmount, nativeCostUnit, usdConversionRate, costUsd } as Omit<RecordProviderUsageAttemptInput, "nativeCostAmount"> & { id: string; requestFingerprint: string; nativeCostAmount: ExactDecimal; nativeCostUnit: ProviderCostUnit; usdConversionRate: string; costUsd: string });
@@ -519,7 +522,21 @@ function assertMatchingProviderAttemptIdentity(existing: ProviderUsageAttempt, i
 }
 
 function sameProviderAttemptSnapshot(existing: ProviderUsageAttempt, status: ProviderUsageAttemptStatus, nativeCostAmount: string, nativeCostUnit: ProviderCostUnit, usdConversionRate: string, costUsd: string) {
-    return existing.status === status && existing.nativeCostAmount === nativeCostAmount && JSON.stringify(existing.nativeCostUnit) === JSON.stringify(nativeCostUnit) && existing.usdConversionRate === usdConversionRate && existing.costUsd === costUsd;
+    return existing.status === status && sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) && sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) && sameDecimalValue(existing.usdConversionRate, usdConversionRate) && sameDecimalValue(existing.costUsd, costUsd);
+}
+
+function sameDecimalValue(left: string, right: string) {
+    try {
+        return decimal(left).minus(decimal(right)).isZero();
+    } catch {
+        return false;
+    }
+}
+
+function sameProviderCostUnit(left: ProviderCostUnit, right: ProviderCostUnit) {
+    if (left.kind !== right.kind) return false;
+    if (left.kind === "fiat" || right.kind === "fiat") return left.kind === "fiat" && right.kind === "fiat" && left.currency === right.currency;
+    return left.provider === right.provider && left.unit === right.unit && left.usdConversion.version === right.usdConversion.version && sameDecimalValue(left.usdConversion.usdPerUnit, right.usdConversion.usdPerUnit);
 }
 
 function providerAttemptValues(

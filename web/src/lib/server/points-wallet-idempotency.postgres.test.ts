@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { createPostgresRepositories, ensurePostgresSchema } from "@/lib/server/database";
 
-import { creditWalletBalance, getWalletSnapshot, reconcileWallet, recordProviderUsageAttempt, reserveWalletCredits, settleWalletHold, type SettleWalletHoldInput } from "./points-wallet-service";
+import { creditWalletBalance, getWalletSnapshot, reconcileWallet, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold, type SettleWalletHoldInput } from "./points-wallet-service";
 
 const postgresIt = process.env.VOZEB_PRO_RUN_POSTGRES_INTEGRATION === "1" ? it : it.skip;
 
@@ -95,6 +95,27 @@ describe("PostgreSQL prepaid wallet persistence", () => {
             expect(completionResult.status).toBe("fulfilled");
             const finalSettlement = settlementResult.status === "fulfilled" ? settlementResult.value : await settleWalletHold(settlement);
             expect(finalSettlement.charge).toMatchObject({ settledCredits: "1", totalProviderCostUsd: "0.4" });
+        } finally {
+            await repositories.users.delete(userId);
+        }
+    });
+
+    postgresIt("does not release a hold while a provider attempt is pending", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const userId = `wallet-release-pending-${suffix}`;
+        const now = new Date();
+        try {
+            await repositories.users.createWithNextAccountId({ id: userId, username: `release_${suffix.replaceAll("-", "").slice(0, 12)}`, displayName: "释放并发测试用户", bio: "", role: "user", adminPermissions: [], status: "active", settledBalance: "0", passwordHash: "integration-test-only", createdAt: now.toISOString(), updatedAt: now.toISOString() });
+            await creditWalletBalance({ userId, amount: "2", businessId: `topup:${suffix}`, description: "释放测试充值", now });
+            const reservation = await reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "4".repeat(64), amount: "1", description: "释放测试预留", now });
+            const pending = { id: `attempt:${suffix}`, holdId: reservation.hold.id, attemptNumber: 1, status: "pending" as const, provider: "vendor", bindingId: "binding", requestFingerprint: "5".repeat(64), nativeCostAmount: "0", nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const }, now };
+            await recordProviderUsageAttempt(pending);
+
+            await expect(releaseWalletHold({ holdId: reservation.hold.id, businessId: `release:${suffix}`, requestFingerprint: "6".repeat(64), reason: "任务取消", now })).rejects.toThrow("供应商尝试仍在处理中");
+            await expect(recordProviderUsageAttempt({ ...pending, status: "canceled", nativeCostAmount: "0.125" })).resolves.toMatchObject({ applied: true, attempt: { status: "canceled" } });
+            await expect(releaseWalletHold({ holdId: reservation.hold.id, businessId: `release:${suffix}`, requestFingerprint: "6".repeat(64), reason: "任务取消", now })).resolves.toMatchObject({ applied: true, hold: { status: "released" } });
         } finally {
             await repositories.users.delete(userId);
         }
