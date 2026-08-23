@@ -17,6 +17,7 @@ import {
     recordUsageProviderAttempt,
     releaseUsageBilling,
     reserveUsageBilling,
+    reserveOrReuseUsageBilling,
     settleCancelledUsageBilling,
     settleUsageBilling,
 } from "./usage-billing-runtime";
@@ -196,6 +197,36 @@ describe("usage billing runtime", () => {
         expect((await readAuthDb()).providerUsageAttempts[0]).toMatchObject({ status: "succeeded", nativeCostAmount: "0.375", costUsd: "0.375", upstreamTaskId: "upstream-one" });
     });
 
+    it("freezes business identity and provider idempotency capability in audit snapshots", async () => {
+        const billing = await reservation("audit-identities");
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "vendor", bindingId: "binding", providerIdempotencySupported: true, providerIdempotencyKey: "task:attempt:1", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        const db = await readAuthDb();
+
+        expect(db.walletHolds[0].runtimeSnapshot).toMatchObject({ businessId: "runtime:audit-identities", originalRequestFingerprint: createHash("sha256").update("audit-identities").digest("hex") });
+        expect(db.providerUsageAttempts[0]).toMatchObject({ providerIdempotencySupported: true });
+    });
+
+    it("retains failed-attempt cost evidence and sums it with the successful failover", async () => {
+        const billing = await reservation("failover-cost");
+        const costRateSnapshot = { version: 1 as const, components: [{ id: "count", dimension: "count" as const, unitPrice: "0.25" }] };
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "primary", bindingId: "primary", providerIdempotencySupported: false, nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" }, costRateSnapshot });
+        await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed", normalizedUsage: normalizeBillableUsage({ capability: "image", source: "derived", count: 1 }) });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 2, status: "pending", provider: "backup", bindingId: "backup", providerIdempotencySupported: true, providerIdempotencyKey: "backup:2", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" }, costRateSnapshot });
+        await finishUsageProviderAttempt({ billing, attemptNumber: 2, status: "succeeded", normalizedUsage: normalizeBillableUsage({ capability: "image", source: "actual", count: 1 }) });
+        await settleUsageBilling({ billing, actualUsage: normalizeBillableUsage({ capability: "image", source: "actual", count: 1 }), description: "failover" });
+
+        expect((await readAuthDb()).usageCharges[0]).toMatchObject({ settledCredits: "1.5", totalProviderCostUsd: "0.5" });
+    });
+
+    it("reuses the first sale snapshot when pricing changes between failover attempts", async () => {
+        const first = await reservation("pricing-failover");
+        const second = await reserveOrReuseUsageBilling({ userId: first.userId, businessId: first.businessId, requestFingerprint: first.requestFingerprint, logicalModelId: "image-pro", saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "99" }] }, requestUsage: imageRequest, description: "edited price" });
+
+        expect(second.holdId).toBe(first.holdId);
+        expect(second.snapshot.saleRateSnapshot).toEqual(imageSale);
+        expect(second.snapshot.reservedCredits).toBe("1.5");
+    });
+
     it("binds a persisted upstream task identity once without settling the async attempt", async () => {
         const billing = await reservation("attach-upstream");
         await recordUsageProviderAttempt({
@@ -249,6 +280,17 @@ describe("orphan usage recovery", () => {
 
         expect(result).toMatchObject({ inspected: 1, needsReview: 1, settled: 0, released: 0 });
         expect(hold).toMatchObject({ status: "active", reviewReason: "供应商状态未知" });
+    });
+
+    it("advances bounded recovery past an already reviewed unknown hold", async () => {
+        await reservation("reviewed-first", new Date("2026-08-23T00:00:00.000Z"));
+        await reservation("later", new Date("2026-08-23T00:01:00.000Z"));
+        const now = new Date("2026-08-23T01:00:00.000Z");
+        await recoverOrphanUsageHolds({ limit: 1, now, inspect: vi.fn(async () => ({ state: "unknown" as const, reason: "人工复核" })) });
+        const inspect = vi.fn(async () => ({ state: "failed" as const, reason: "确认失败" }));
+        await recoverOrphanUsageHolds({ limit: 1, now, inspect });
+
+        expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ businessId: "runtime:later" }));
     });
 
     it("releases confirmed failures and settles confirmed successes from snapshots", async () => {

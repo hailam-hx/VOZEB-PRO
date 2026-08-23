@@ -385,6 +385,8 @@ export type WalletHoldStatus = "active" | "settled" | "released";
 
 export type UsageBillingHoldSnapshot = {
     version: 1;
+    businessId: string;
+    originalRequestFingerprint: string;
     logicalModelId: string;
     capability: import("@/lib/billing/pricing").BillableCapability;
     saleRateSnapshot: import("@/lib/billing/pricing").PricingRateCardV1;
@@ -446,6 +448,7 @@ export type ProviderUsageAttempt = {
     provider: string;
     bindingId: string;
     requestFingerprint: string;
+    providerIdempotencySupported: boolean;
     providerIdempotencyKey?: string;
     upstreamTaskId?: string;
     nativeCostAmount: string;
@@ -454,6 +457,7 @@ export type ProviderUsageAttempt = {
     costUsd: string;
     costRateSnapshot?: import("@/lib/billing/pricing").PricingRateCardV1;
     normalizedUsage?: import("@/lib/billing/pricing").NormalizedUsage;
+    observedUsage?: import("@/lib/billing/pricing").NormalizedUsage;
     createdAt: string;
     updatedAt: string;
     completedAt?: string;

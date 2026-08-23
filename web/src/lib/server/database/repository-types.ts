@@ -199,6 +199,7 @@ export type ProviderUsageAttemptRecord = {
     provider: string;
     bindingId: string;
     requestFingerprint: string;
+    providerIdempotencySupported: boolean;
     providerIdempotencyKey?: string;
     upstreamTaskId?: string;
     nativeCostAmount: string;
@@ -207,6 +208,7 @@ export type ProviderUsageAttemptRecord = {
     costUsd: string;
     costRateSnapshot?: PricingRateCardV1;
     normalizedUsage?: NormalizedUsage;
+    observedUsage?: NormalizedUsage;
     createdAt: string;
     updatedAt: string;
     completedAt?: string;

@@ -18,6 +18,7 @@ export type ReserveWalletCreditsInput = {
     userId: string;
     businessId: string;
     requestFingerprint: string;
+    providerIdempotencySupported?: boolean;
     amount: DecimalInput;
     description: string;
     runtimeSnapshot?: UsageBillingHoldSnapshot;
@@ -43,12 +44,14 @@ export type RecordProviderUsageAttemptInput = {
     provider: string;
     bindingId: string;
     requestFingerprint: string;
+    providerIdempotencySupported?: boolean;
     providerIdempotencyKey?: string;
     upstreamTaskId?: string;
     nativeCostAmount: DecimalInput;
     nativeCostUnit: ProviderCostUnit;
     costRateSnapshot?: PricingRateCardV1;
     normalizedUsage?: NormalizedUsage;
+    observedUsage?: NormalizedUsage;
     now?: Date;
 };
 
@@ -90,6 +93,15 @@ export async function getWalletHoldById(holdId: string) {
     return mutateAuthDb((db) => db.walletHolds.find((hold) => hold.id === holdId) || null);
 }
 
+export async function getWalletHoldByBusinessId(businessId: string) {
+    const normalized = requiredText(businessId, "钱包预留缺少业务 ID");
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        return createPostgresRepositories().pointsWallet.getHoldByBusinessId(normalized);
+    }
+    return mutateAuthDb((db) => db.walletHolds.find((hold) => hold.businessId === normalized) || null);
+}
+
 export async function listExpiredActiveWalletHolds(input: { now: Date; limit: number }) {
     if (!Number.isSafeInteger(input.limit) || input.limit < 1) throw new AuthInputError("钱包恢复批次无效");
     if (isPostgresDatabaseEnabled()) {
@@ -98,7 +110,7 @@ export async function listExpiredActiveWalletHolds(input: { now: Date; limit: nu
     }
     return mutateAuthDb((db) =>
         db.walletHolds
-            .filter((hold) => hold.status === "active" && hold.expiresAt && Date.parse(hold.expiresAt) <= input.now.getTime())
+            .filter((hold) => hold.status === "active" && !hold.reviewReason && hold.expiresAt && Date.parse(hold.expiresAt) <= input.now.getTime())
             .sort((left, right) => String(left.expiresAt).localeCompare(String(right.expiresAt)) || left.id.localeCompare(right.id))
             .slice(0, input.limit),
     );
@@ -332,7 +344,7 @@ export async function recordProviderUsageAttempt(input: RecordProviderUsageAttem
         const existing = db.providerUsageAttempts.find((attempt) => attempt.id === id);
         if (existing) {
             assertMatchingProviderAttemptIdentity(existing, input, requestFingerprint);
-            if (existing.status === "pending" && input.status === "pending" && !existing.upstreamTaskId && input.upstreamTaskId?.trim()) {
+            if (existing.status === "pending" && input.status === "pending" && ((!existing.upstreamTaskId && input.upstreamTaskId?.trim()) || input.observedUsage)) {
                 assertPendingProviderAttemptAttachment(existing, input, nativeCostAmount.toString(), nativeCostUnit, usdConversionRate, costUsd);
                 const now = input.now || new Date();
                 const createdAt = existing.createdAt;
@@ -530,7 +542,7 @@ async function recordPostgresProviderAttempt(
         const existing = await repos.pointsWallet.getProviderAttemptById(input.id);
         if (existing) {
             assertMatchingProviderAttemptIdentity(existing, input, input.requestFingerprint);
-            if (existing.status === "pending" && input.status === "pending" && !existing.upstreamTaskId && input.upstreamTaskId?.trim()) {
+            if (existing.status === "pending" && input.status === "pending" && ((!existing.upstreamTaskId && input.upstreamTaskId?.trim()) || input.observedUsage)) {
                 assertPendingProviderAttemptAttachment(existing, input, input.nativeCostAmount.toString(), input.nativeCostUnit, input.usdConversionRate, input.costUsd);
                 const updated = await repos.pointsWallet.updatePendingProviderAttempt(
                     existing.id,
@@ -671,13 +683,14 @@ function assertMatchingRelease(hold: WalletHold, businessId: string, requestFing
     if (hold.releaseBusinessId !== businessId || hold.releaseRequestFingerprint !== requestFingerprint || hold.releaseReason !== reason) throw new WalletConflictError("释放预留业务 ID 对应的请求参数不一致");
 }
 
-function assertMatchingProviderAttemptIdentity(existing: ProviderUsageAttempt, input: Pick<RecordProviderUsageAttemptInput, "holdId" | "attemptNumber" | "provider" | "bindingId">, requestFingerprint: string) {
+function assertMatchingProviderAttemptIdentity(existing: ProviderUsageAttempt, input: Pick<RecordProviderUsageAttemptInput, "holdId" | "attemptNumber" | "provider" | "bindingId" | "providerIdempotencySupported">, requestFingerprint: string) {
     if (
         existing.holdId !== input.holdId ||
         existing.attemptNumber !== input.attemptNumber ||
         existing.provider !== requiredText(input.provider, "供应商尝试缺少供应商") ||
         existing.bindingId !== requiredText(input.bindingId, "供应商尝试缺少绑定 ID") ||
-        existing.requestFingerprint !== requestFingerprint
+        existing.requestFingerprint !== requestFingerprint ||
+        existing.providerIdempotencySupported !== (input.providerIdempotencySupported === true)
     ) {
         throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
     }
@@ -685,7 +698,7 @@ function assertMatchingProviderAttemptIdentity(existing: ProviderUsageAttempt, i
 
 function sameProviderAttemptSnapshot(
     existing: ProviderUsageAttempt,
-    input: Pick<RecordProviderUsageAttemptInput, "status" | "providerIdempotencyKey" | "upstreamTaskId" | "costRateSnapshot" | "normalizedUsage">,
+    input: Pick<RecordProviderUsageAttemptInput, "status" | "providerIdempotencySupported" | "providerIdempotencyKey" | "upstreamTaskId" | "costRateSnapshot" | "normalizedUsage" | "observedUsage">,
     nativeCostAmount: string,
     nativeCostUnit: ProviderCostUnit,
     usdConversionRate: string,
@@ -693,10 +706,12 @@ function sameProviderAttemptSnapshot(
 ) {
     return (
         existing.status === input.status &&
+        existing.providerIdempotencySupported === (input.providerIdempotencySupported === true) &&
         existing.providerIdempotencyKey === normalizedOptionalText(input.providerIdempotencyKey) &&
         existing.upstreamTaskId === normalizedOptionalText(input.upstreamTaskId) &&
         JSON.stringify(existing.costRateSnapshot) === JSON.stringify(input.costRateSnapshot) &&
         JSON.stringify(existing.normalizedUsage) === JSON.stringify(input.normalizedUsage) &&
+        JSON.stringify(existing.observedUsage) === JSON.stringify(input.observedUsage) &&
         sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) &&
         sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) &&
         sameDecimalValue(existing.usdConversionRate, usdConversionRate) &&
@@ -704,9 +719,10 @@ function sameProviderAttemptSnapshot(
     );
 }
 
-function assertProviderAttemptImmutableSnapshot(existing: ProviderUsageAttempt, input: Pick<RecordProviderUsageAttemptInput, "providerIdempotencyKey" | "upstreamTaskId" | "costRateSnapshot">, nativeCostUnit: ProviderCostUnit) {
+function assertProviderAttemptImmutableSnapshot(existing: ProviderUsageAttempt, input: Pick<RecordProviderUsageAttemptInput, "providerIdempotencySupported" | "providerIdempotencyKey" | "upstreamTaskId" | "costRateSnapshot">, nativeCostUnit: ProviderCostUnit) {
     const upstreamTaskId = normalizedOptionalText(input.upstreamTaskId);
     if (
+        existing.providerIdempotencySupported !== (input.providerIdempotencySupported === true) ||
         existing.providerIdempotencyKey !== normalizedOptionalText(input.providerIdempotencyKey) ||
         (existing.upstreamTaskId && existing.upstreamTaskId !== upstreamTaskId) ||
         JSON.stringify(existing.costRateSnapshot) !== JSON.stringify(input.costRateSnapshot) ||
@@ -717,16 +733,18 @@ function assertProviderAttemptImmutableSnapshot(existing: ProviderUsageAttempt, 
 
 function assertPendingProviderAttemptAttachment(
     existing: ProviderUsageAttempt,
-    input: Pick<RecordProviderUsageAttemptInput, "providerIdempotencyKey" | "costRateSnapshot" | "normalizedUsage">,
+    input: Pick<RecordProviderUsageAttemptInput, "providerIdempotencySupported" | "providerIdempotencyKey" | "costRateSnapshot" | "normalizedUsage" | "observedUsage">,
     nativeCostAmount: string,
     nativeCostUnit: ProviderCostUnit,
     usdConversionRate: string,
     costUsd: string,
 ) {
     if (
+        existing.providerIdempotencySupported !== (input.providerIdempotencySupported === true) ||
         existing.providerIdempotencyKey !== normalizedOptionalText(input.providerIdempotencyKey) ||
         JSON.stringify(existing.costRateSnapshot) !== JSON.stringify(input.costRateSnapshot) ||
         JSON.stringify(existing.normalizedUsage) !== JSON.stringify(input.normalizedUsage) ||
+        (existing.observedUsage && JSON.stringify(existing.observedUsage) !== JSON.stringify(input.observedUsage)) ||
         !sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) ||
         !sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) ||
         !sameDecimalValue(existing.usdConversionRate, usdConversionRate) ||
@@ -779,6 +797,7 @@ function providerAttemptValues(
         provider: requiredText(input.provider, "供应商尝试缺少供应商"),
         bindingId: requiredText(input.bindingId, "供应商尝试缺少绑定 ID"),
         requestFingerprint,
+        providerIdempotencySupported: input.providerIdempotencySupported === true,
         providerIdempotencyKey: input.providerIdempotencyKey?.trim() || undefined,
         upstreamTaskId: input.upstreamTaskId?.trim() || undefined,
         nativeCostAmount,
@@ -787,6 +806,7 @@ function providerAttemptValues(
         costUsd,
         costRateSnapshot: input.costRateSnapshot,
         normalizedUsage: input.normalizedUsage,
+        observedUsage: input.observedUsage,
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
         completedAt: input.status === "pending" ? undefined : now.toISOString(),

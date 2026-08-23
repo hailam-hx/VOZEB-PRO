@@ -1,22 +1,28 @@
 import type { BillableCapability } from "@/lib/billing/pricing";
-import type { SystemAiUsageContext } from "./system-ai-billing";
+import type { SystemAiUsageContextDraft } from "./system-ai-billing";
 import { systemAiUsageRequestFingerprint } from "./system-ai-billing";
+import { resolveModelRequestTimeoutMs } from "./model-request-policy";
 
 type PricedGenerationConfig = {
     logicalModel?: string;
     model: string;
-    capabilityProfile?: { supportsIdempotency?: boolean };
+    channelId?: string;
+    capabilityProfile?: { supportsIdempotency?: boolean; timeoutMs?: number };
     usagePricing?: { logicalModelId: string; bindingId: string };
 };
 
-export function generationSystemAiUsageContext(config: PricedGenerationConfig, capability: BillableCapability, providerIdempotencyKey: string): SystemAiUsageContext | undefined {
+export function generationSystemAiUsageContext(config: PricedGenerationConfig, capability: BillableCapability, providerIdempotencyKey: string, userId: string): SystemAiUsageContextDraft | undefined {
     const pricing = config.usagePricing;
     const parsed = parseAttemptKey(providerIdempotencyKey);
-    if (!pricing || !parsed) return undefined;
+    if (!pricing || !parsed || !config.channelId?.trim() || !userId.trim()) return undefined;
     const providerIdempotencySupported = config.capabilityProfile?.supportsIdempotency === true;
     return {
         businessRequestId: parsed.businessRequestId,
-        requestFingerprint: systemAiUsageRequestFingerprint({ userId: "", businessRequestId: parsed.businessRequestId, logicalModel: pricing.logicalModelId, capability, payload: { businessRequestId: parsed.businessRequestId } }),
+        userId: userId.trim(),
+        channelId: config.channelId.trim(),
+        capability,
+        expiresAtMs: Date.now() + resolveModelRequestTimeoutMs(config, capability),
+        requestFingerprint: systemAiUsageRequestFingerprint({ userId: userId.trim(), businessRequestId: parsed.businessRequestId, logicalModel: pricing.logicalModelId, capability, payload: { businessRequestId: parsed.businessRequestId } }),
         attemptNumber: parsed.attemptNumber,
         bindingId: pricing.bindingId,
         providerIdempotencySupported,

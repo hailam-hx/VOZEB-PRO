@@ -69,7 +69,7 @@ export class PointsWalletRepository {
     }
 
     async listExpiredActiveHolds(now: string, limit: number) {
-        const result = await this.db.query("SELECT * FROM wallet_holds WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= $1 ORDER BY expires_at ASC, id ASC LIMIT $2", [now, limit]);
+        const result = await this.db.query("SELECT * FROM wallet_holds WHERE status = 'active' AND review_reason IS NULL AND expires_at IS NOT NULL AND expires_at <= $1 ORDER BY expires_at ASC, id ASC LIMIT $2", [now, limit]);
         return result.rows.map(mapWalletHold);
     }
 
@@ -144,9 +144,9 @@ export class PointsWalletRepository {
 
     private async writeProviderAttempt(attempt: ProviderUsageAttemptRecord, restore: boolean) {
         const result = await this.db.query(
-            `INSERT INTO provider_usage_attempts (id, hold_id, user_id, attempt_number, status, provider, binding_id, request_fingerprint, provider_idempotency_key, upstream_task_id, native_cost_amount, native_cost_unit, usd_conversion_rate, cost_usd, cost_rate_snapshot, normalized_usage, created_at, updated_at, completed_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::numeric, $12::jsonb, $13::numeric, $14::numeric, $15::jsonb, $16::jsonb, $17, $18, $19)
-             ${restore ? `ON CONFLICT (id) DO UPDATE SET hold_id = EXCLUDED.hold_id, user_id = EXCLUDED.user_id, attempt_number = EXCLUDED.attempt_number, status = EXCLUDED.status, provider = EXCLUDED.provider, binding_id = EXCLUDED.binding_id, request_fingerprint = EXCLUDED.request_fingerprint, provider_idempotency_key = EXCLUDED.provider_idempotency_key, upstream_task_id = EXCLUDED.upstream_task_id, native_cost_amount = EXCLUDED.native_cost_amount, native_cost_unit = EXCLUDED.native_cost_unit, usd_conversion_rate = EXCLUDED.usd_conversion_rate, cost_usd = EXCLUDED.cost_usd, cost_rate_snapshot = EXCLUDED.cost_rate_snapshot, normalized_usage = EXCLUDED.normalized_usage, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, completed_at = EXCLUDED.completed_at` : ""}
+            `INSERT INTO provider_usage_attempts (id, hold_id, user_id, attempt_number, status, provider, binding_id, request_fingerprint, provider_idempotency_supported, provider_idempotency_key, upstream_task_id, native_cost_amount, native_cost_unit, usd_conversion_rate, cost_usd, cost_rate_snapshot, normalized_usage, observed_usage, created_at, updated_at, completed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::numeric, $13::jsonb, $14::numeric, $15::numeric, $16::jsonb, $17::jsonb, $18::jsonb, $19, $20, $21)
+             ${restore ? `ON CONFLICT (id) DO UPDATE SET hold_id = EXCLUDED.hold_id, user_id = EXCLUDED.user_id, attempt_number = EXCLUDED.attempt_number, status = EXCLUDED.status, provider = EXCLUDED.provider, binding_id = EXCLUDED.binding_id, request_fingerprint = EXCLUDED.request_fingerprint, provider_idempotency_supported = EXCLUDED.provider_idempotency_supported, provider_idempotency_key = EXCLUDED.provider_idempotency_key, upstream_task_id = EXCLUDED.upstream_task_id, native_cost_amount = EXCLUDED.native_cost_amount, native_cost_unit = EXCLUDED.native_cost_unit, usd_conversion_rate = EXCLUDED.usd_conversion_rate, cost_usd = EXCLUDED.cost_usd, cost_rate_snapshot = EXCLUDED.cost_rate_snapshot, normalized_usage = EXCLUDED.normalized_usage, observed_usage = EXCLUDED.observed_usage, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, completed_at = EXCLUDED.completed_at` : ""}
              RETURNING *`,
             [
                 attempt.id,
@@ -157,6 +157,7 @@ export class PointsWalletRepository {
                 attempt.provider,
                 attempt.bindingId,
                 attempt.requestFingerprint,
+                attempt.providerIdempotencySupported,
                 attempt.providerIdempotencyKey || null,
                 attempt.upstreamTaskId || null,
                 attempt.nativeCostAmount,
@@ -165,6 +166,7 @@ export class PointsWalletRepository {
                 attempt.costUsd,
                 attempt.costRateSnapshot ? jsonParam(attempt.costRateSnapshot) : null,
                 attempt.normalizedUsage ? jsonParam(attempt.normalizedUsage) : null,
+                attempt.observedUsage ? jsonParam(attempt.observedUsage) : null,
                 attempt.createdAt,
                 attempt.updatedAt,
                 attempt.completedAt || null,
@@ -178,7 +180,7 @@ export class PointsWalletRepository {
             `UPDATE provider_usage_attempts SET status = $2, provider_idempotency_key = $3, upstream_task_id = $4,
                 native_cost_amount = $5::numeric, native_cost_unit = $6::jsonb, usd_conversion_rate = $7::numeric,
                 cost_usd = $8::numeric, cost_rate_snapshot = $9::jsonb, normalized_usage = $10::jsonb,
-                completed_at = $11, updated_at = $12
+                observed_usage = $11::jsonb, completed_at = $12, updated_at = $13
              WHERE id = $1 AND status = 'pending' RETURNING *`,
             [
                 id,
@@ -191,6 +193,7 @@ export class PointsWalletRepository {
                 attempt.costUsd,
                 attempt.costRateSnapshot ? jsonParam(attempt.costRateSnapshot) : null,
                 attempt.normalizedUsage ? jsonParam(attempt.normalizedUsage) : null,
+                attempt.observedUsage ? jsonParam(attempt.observedUsage) : null,
                 attempt.completedAt || null,
                 attempt.updatedAt,
             ],

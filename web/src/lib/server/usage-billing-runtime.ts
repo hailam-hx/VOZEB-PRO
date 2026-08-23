@@ -4,11 +4,12 @@ import { calculateFinalSaleCharge, calculateNormalizedUsagePrice, calculatePrici
 import { validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/money";
 import type { ProviderUsageAttempt, UsageBillingHoldSnapshot, WalletHold } from "@/lib/auth/store-types";
 import { readSystemAiUsageBilling } from "./system-ai-billing";
+import { deriveProxyBillableUsage } from "./usage-billing-adapter";
 import { getTextTask } from "./text-task-store";
 import { getImageTask } from "./image-task-store";
 import { getVideoTask } from "./video-task-store";
 import { getAudioTask } from "./audio-task-store";
-import { listExpiredActiveWalletHolds, getWalletHoldById, listProviderUsageAttemptsForHold, markWalletHoldNeedsReview, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold } from "./points-wallet-service";
+import { listExpiredActiveWalletHolds, getWalletHoldByBusinessId, getWalletHoldById, listProviderUsageAttemptsForHold, markWalletHoldNeedsReview, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold } from "./points-wallet-service";
 
 export type UsageBilling = {
     holdId: string;
@@ -40,11 +41,14 @@ export type UsageProviderAttemptInput = {
     provider: string;
     bindingId: string;
     providerIdempotencyKey?: string;
+    providerIdempotencySupported?: boolean;
+    requestFingerprint?: string;
     upstreamTaskId?: string;
     nativeCostAmount: string;
     nativeCostUnit: ProviderCostUnit;
     costRateSnapshot?: PricingRateCardV1;
     normalizedUsage?: NormalizedUsage;
+    observedUsage?: NormalizedUsage;
     now?: Date;
 };
 
@@ -53,6 +57,8 @@ export async function reserveUsageBilling(input: ReserveUsageBillingInput): Prom
     const reserve = calculatePricingReserve({ rateCard: saleRateSnapshot, usage: input.requestUsage });
     const snapshot: UsageBillingHoldSnapshot = {
         version: 1,
+        businessId: requiredText(input.businessId, "用量预留缺少业务 ID"),
+        originalRequestFingerprint: requiredFingerprint(input.requestFingerprint),
         logicalModelId: requiredText(input.logicalModelId, "用量预留缺少逻辑模型"),
         capability: input.requestUsage.capability,
         saleRateSnapshot,
@@ -76,6 +82,19 @@ export async function reserveUsageBilling(input: ReserveUsageBillingInput): Prom
     return billingFromHold(result.hold);
 }
 
+export async function reserveOrReuseUsageBilling(input: ReserveUsageBillingInput): Promise<UsageBilling> {
+    const existing = await reuseExistingUsageBilling({ userId: input.userId, businessId: input.businessId, requestFingerprint: input.requestFingerprint });
+    if (existing) return existing;
+    return reserveUsageBilling(input);
+}
+
+export async function reuseExistingUsageBilling(input: Pick<ReserveUsageBillingInput, "userId" | "businessId" | "requestFingerprint">): Promise<UsageBilling | undefined> {
+    const existing = await getWalletHoldByBusinessId(input.businessId);
+    if (!existing) return undefined;
+    if (existing.status !== "active" || existing.userId !== input.userId || existing.requestFingerprint !== requiredFingerprint(input.requestFingerprint) || !existing.runtimeSnapshot) throw new Error("用量预留业务 ID 对应的请求参数不一致");
+    return billingFromHold(existing);
+}
+
 export function recordUsageProviderAttempt(input: UsageProviderAttemptInput) {
     const nativeCostUnit = validateProviderCostUnit(input.nativeCostUnit);
     return recordProviderUsageAttempt({
@@ -85,13 +104,15 @@ export function recordUsageProviderAttempt(input: UsageProviderAttemptInput) {
         status: input.status,
         provider: input.provider,
         bindingId: input.bindingId,
-        requestFingerprint: stableFingerprint(input.billing.requestFingerprint, "attempt", String(input.attemptNumber), input.provider, input.bindingId),
+        requestFingerprint: input.requestFingerprint || stableFingerprint(input.billing.requestFingerprint, "attempt", String(input.attemptNumber), input.provider, input.bindingId),
+        providerIdempotencySupported: input.providerIdempotencySupported === true,
         providerIdempotencyKey: input.providerIdempotencyKey,
         upstreamTaskId: input.upstreamTaskId,
         nativeCostAmount: input.nativeCostAmount,
         nativeCostUnit,
         costRateSnapshot: input.costRateSnapshot,
         normalizedUsage: input.normalizedUsage,
+        observedUsage: input.observedUsage,
         now: input.now,
     });
 }
@@ -106,7 +127,7 @@ export async function finishUsageProviderAttempt(input: { billing: UsageBilling;
     const attempts = await listProviderUsageAttemptsForHold(input.billing.holdId);
     const attempt = attempts.find((item) => item.attemptNumber === input.attemptNumber);
     if (!attempt) throw new Error("供应商尝试不存在");
-    const usage = input.normalizedUsage || attempt.normalizedUsage;
+    const usage = input.normalizedUsage || attempt.observedUsage || (input.status === "failed" ? undefined : attempt.normalizedUsage);
     const nativeCostAmount = attempt.costRateSnapshot && usage ? calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage }) : attempt.nativeCostAmount;
     return recordUsageProviderAttempt({
         billing: input.billing,
@@ -114,12 +135,15 @@ export async function finishUsageProviderAttempt(input: { billing: UsageBilling;
         status: input.status,
         provider: attempt.provider,
         bindingId: attempt.bindingId,
+        requestFingerprint: attempt.requestFingerprint,
+        providerIdempotencySupported: attempt.providerIdempotencySupported,
         providerIdempotencyKey: attempt.providerIdempotencyKey,
         upstreamTaskId: input.upstreamTaskId || attempt.upstreamTaskId,
         nativeCostAmount,
         nativeCostUnit: attempt.nativeCostUnit,
         costRateSnapshot: attempt.costRateSnapshot,
         normalizedUsage: usage,
+        observedUsage: attempt.observedUsage,
         now: input.now,
     });
 }
@@ -135,14 +159,60 @@ export async function attachUsageProviderUpstreamTaskId(input: { holdId: string;
         status: "pending",
         provider: attempt.provider,
         bindingId: attempt.bindingId,
+        requestFingerprint: attempt.requestFingerprint,
+        providerIdempotencySupported: attempt.providerIdempotencySupported,
         providerIdempotencyKey: attempt.providerIdempotencyKey,
         upstreamTaskId: requiredText(input.upstreamTaskId, "供应商任务 ID 不能为空"),
         nativeCostAmount: attempt.nativeCostAmount,
         nativeCostUnit: attempt.nativeCostUnit,
         costRateSnapshot: attempt.costRateSnapshot,
         normalizedUsage: attempt.normalizedUsage,
+        observedUsage: attempt.observedUsage,
         now: input.now,
     });
+}
+
+export async function attachUsageProviderEvidence(input: { billing: UsageBilling; attemptNumber: number; usage: NormalizedUsage; now?: Date }) {
+    const attempts = await listProviderUsageAttemptsForHold(input.billing.holdId);
+    const attempt = attempts.find((item) => item.attemptNumber === input.attemptNumber);
+    if (!attempt || attempt.status !== "pending") return;
+    return recordUsageProviderAttempt({
+        billing: input.billing,
+        attemptNumber: attempt.attemptNumber,
+        status: "pending",
+        provider: attempt.provider,
+        bindingId: attempt.bindingId,
+        requestFingerprint: attempt.requestFingerprint,
+        providerIdempotencySupported: attempt.providerIdempotencySupported,
+        providerIdempotencyKey: attempt.providerIdempotencyKey,
+        upstreamTaskId: attempt.upstreamTaskId,
+        nativeCostAmount: attempt.nativeCostAmount,
+        nativeCostUnit: attempt.nativeCostUnit,
+        costRateSnapshot: attempt.costRateSnapshot,
+        normalizedUsage: attempt.normalizedUsage,
+        observedUsage: input.usage,
+        now: input.now,
+    });
+}
+
+export async function finishSystemAiTextAttempt(headers: Headers, input: { status: "succeeded" | "failed" | "canceled"; payload?: unknown; reason?: string }) {
+    const identity = readSystemAiUsageBilling(headers);
+    if (!identity) return;
+    const billing = await loadUsageBilling(identity.holdId);
+    const attempts = await listProviderUsageAttemptsForHold(billing.holdId);
+    const attempt = attempts.find((item) => item.attemptNumber === identity.attemptNumber);
+    const usage = attempt?.observedUsage || (input.payload ? deriveProxyBillableUsage({ capability: "text", requestUsage: billing.snapshot.requestUsage, payload: input.payload }) : undefined);
+    await finishUsageProviderAttempt({ billing, attemptNumber: identity.attemptNumber, status: input.status, normalizedUsage: usage });
+    if (input.status === "succeeded") await settleUsageBilling({ billing, description: "文本生成用量结算", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
+    else if (input.status === "canceled") await settleCancelledUsageBilling({ billing, description: "用户取消已由上游接受的文本生成", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
+}
+
+export async function releaseUsageBillingForBusiness(userId: string, businessId: string, reason: string) {
+    const hold = await getWalletHoldByBusinessId(businessId);
+    if (!hold || hold.userId !== userId || hold.status !== "active" || !hold.runtimeSnapshot) return;
+    const billing = billingFromHold(hold);
+    await finishPendingAttempts(billing, "failed", new Date());
+    return releaseUsageBilling({ billing, reason });
 }
 
 export async function attachSystemAiUsageUpstreamTask(headers: Headers, upstreamTaskId: string) {
@@ -291,6 +361,12 @@ function stableId(prefix: string, ...parts: string[]) {
 function requiredText(value: string, message: string) {
     const normalized = value.trim();
     if (!normalized) throw new Error(message);
+    return normalized;
+}
+
+function requiredFingerprint(value: string) {
+    const normalized = value.trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(normalized)) throw new Error("用量请求指纹无效");
     return normalized;
 }
 

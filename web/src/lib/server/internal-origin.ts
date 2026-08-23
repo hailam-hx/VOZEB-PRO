@@ -1,7 +1,9 @@
 import { Agent, fetch as undiciFetch } from "undici";
+import { createHash } from "node:crypto";
 
 import { GENERATION_TRANSPORT_TIMEOUT_MS } from "@/lib/server/generation-http-lifecycle";
 import { toUndiciRequestBody } from "@/lib/server/undici-request-body";
+import { finalizeSystemAiUsageRequestHeaders } from "@/lib/server/system-ai-billing";
 
 const internalDispatcher = new Agent({
     headersTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
@@ -26,8 +28,17 @@ export function isInternalApiBaseUrl(baseUrl: string) {
 }
 
 export async function fetchInternalApi(input: string | URL, init?: RequestInit): Promise<Response> {
-    const body = await toUndiciRequestBody(init?.body);
-    return undiciFetch(input, { ...init, body, dispatcher: internalDispatcher } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
+    const method = (init?.method || "GET").toUpperCase();
+    const request = new Request(input, init);
+    const bytes = method === "GET" || method === "HEAD" ? undefined : new Uint8Array(await request.arrayBuffer());
+    const headers = new Headers(request.headers);
+    finalizeSystemAiUsageRequestHeaders(headers, {
+        method,
+        canonicalPath: new URL(input).pathname,
+        bodyDigest: createHash("sha256").update(bytes || new Uint8Array()).digest("hex"),
+    });
+    const body = await toUndiciRequestBody(bytes);
+    return undiciFetch(input, { ...init, method, headers, body, dispatcher: internalDispatcher } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
 }
 
 function normalizeOrigin(value: string) {

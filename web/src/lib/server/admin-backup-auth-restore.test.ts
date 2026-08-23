@@ -48,7 +48,7 @@ describe("PostgreSQL account-config auth restore", () => {
             updatedAt: "2026-08-01T00:00:00.000Z",
         });
         db.walletHolds.push({ id: "hold-a", userId: "user-a", businessId: "generation:a", requestFingerprint: "a".repeat(64), amount: "1.25", status: "released", description: "生成预留", releaseBusinessId: "release:a", releaseRequestFingerprint: "c".repeat(64), releaseReason: "上游失败", closedAt: "2026-08-01T00:01:00.000Z", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:01:00.000Z" });
-        db.providerUsageAttempts.push({ id: "attempt-a", holdId: "hold-a", userId: "user-a", attemptNumber: 1, status: "failed", provider: "vendor", bindingId: "binding", requestFingerprint: "b".repeat(64), nativeCostAmount: "0.1", nativeCostUnit: { kind: "fiat", currency: "USD" }, usdConversionRate: "1", costUsd: "0.1", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", completedAt: "2026-08-01T00:00:00.000Z" });
+        db.providerUsageAttempts.push({ id: "attempt-a", holdId: "hold-a", userId: "user-a", attemptNumber: 1, status: "failed", provider: "vendor", bindingId: "binding", requestFingerprint: "b".repeat(64), providerIdempotencySupported: false, nativeCostAmount: "0.1", nativeCostUnit: { kind: "fiat", currency: "USD" }, usdConversionRate: "1", costUsd: "0.1", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", completedAt: "2026-08-01T00:00:00.000Z" });
 
         await restorePostgresAuthSnapshot(client, db);
 

@@ -183,7 +183,7 @@ async function createAudioUpstream(task: AudioTask, origin: string, cookie: stri
                     "Content-Type": "application/json",
                     "Idempotency-Key": idempotencyKey,
                     "X-Client-Request-Id": idempotencyKey,
-                    ...(task.config.baseUrl.startsWith("/") ? systemAiBillingHeaders(generationModelId(task.config), generationSystemAiUsageContext(task.config, "audio", idempotencyKey) || idempotencyKey, task.config.model) : {}),
+                    ...(task.config.baseUrl.startsWith("/") ? systemAiBillingHeaders(generationModelId(task.config), generationSystemAiUsageContext(task.config, "audio", idempotencyKey, task.userId) || idempotencyKey, task.config.model) : {}),
                 },
                 body: JSON.stringify(payload),
                 signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(task.config, "audio")),

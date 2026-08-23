@@ -238,14 +238,14 @@ export function isInternalSystemProxyBase(value: string) {
     }
 }
 
-export function taskHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
+export function taskHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string, userId?: string) {
     const headers = new Headers();
     const internal = config.baseUrl.startsWith("/");
     const workerHeaders = maintenanceWorkerContextHeaders(cookie);
     if (internal && workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (internal && cookie) headers.set("cookie", cookie);
     if (internal)
-        Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey ? generationSystemAiUsageContext(config, "image", pointsIdempotencyKey) || pointsIdempotencyKey : undefined, config.model)).forEach(([key, value]) =>
+        Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey ? generationSystemAiUsageContext(config, "image", pointsIdempotencyKey, userId || "") || pointsIdempotencyKey : undefined, config.model)).forEach(([key, value]) =>
             headers.set(key, value),
         );
     if (pointsIdempotencyKey?.trim()) {
@@ -297,8 +297,8 @@ export function imageTaskPollAttempts(config: ImageTaskConfig) {
 export class ImageUpstreamTerminalError extends Error {}
 export class ImageQueryContractError extends Error {}
 
-export function geminiHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
-    const headers = taskHeaders(config, cookie, pointsIdempotencyKey);
+export function geminiHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string, userId?: string) {
+    const headers = taskHeaders(config, cookie, pointsIdempotencyKey, userId);
     headers.set("content-type", "application/json");
     return headers;
 }

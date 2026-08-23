@@ -647,6 +647,7 @@ CREATE TABLE IF NOT EXISTS provider_usage_attempts (
     provider text NOT NULL,
     binding_id text NOT NULL,
     request_fingerprint text NOT NULL,
+    provider_idempotency_supported boolean NOT NULL DEFAULT false,
     provider_idempotency_key text,
     upstream_task_id text,
     native_cost_amount numeric(30, 12) NOT NULL DEFAULT 0,
@@ -655,6 +656,7 @@ CREATE TABLE IF NOT EXISTS provider_usage_attempts (
     cost_usd numeric(30, 12) NOT NULL DEFAULT 0,
     cost_rate_snapshot jsonb,
     normalized_usage jsonb,
+    observed_usage jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     completed_at timestamptz,
@@ -662,6 +664,9 @@ CREATE TABLE IF NOT EXISTS provider_usage_attempts (
     CONSTRAINT provider_usage_attempts_status CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled')),
     CONSTRAINT provider_usage_attempts_cost CHECK (native_cost_amount >= 0 AND cost_usd >= 0)
 );
+
+ALTER TABLE provider_usage_attempts ADD COLUMN IF NOT EXISTS provider_idempotency_supported boolean NOT NULL DEFAULT false;
+ALTER TABLE provider_usage_attempts ADD COLUMN IF NOT EXISTS observed_usage jsonb;
 
 CREATE INDEX IF NOT EXISTS provider_usage_attempts_hold_idx ON provider_usage_attempts (hold_id, attempt_number);
 CREATE INDEX IF NOT EXISTS provider_usage_attempts_upstream_idx ON provider_usage_attempts (provider, upstream_task_id) WHERE upstream_task_id IS NOT NULL;
