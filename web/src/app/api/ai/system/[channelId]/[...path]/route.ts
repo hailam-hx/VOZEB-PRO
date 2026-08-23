@@ -16,6 +16,7 @@ import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/req
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
 import {
+    canonicalizeSystemAiQuery,
     readVerifiedSystemAiUsageContext,
     SYSTEM_AI_LOGICAL_MODEL_HEADER,
     SYSTEM_AI_UPSTREAM_MODEL_HEADER,
@@ -81,6 +82,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (!userId) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { channelId, path } = await context.params;
+    const requestUrl = new URL(request.url);
     const settings = await getAuthSettings();
     const channel = settings.systemChannels.find((item) => item.id === channelId && item.enabled);
     if (!channel || !channelConnectionReady(channel)) return NextResponse.json({ error: "默认接口未配置或已停用" }, { status: 404 });
@@ -126,7 +128,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     const access = authorizeSystemAiProxyRequest({
         method: request.method,
         path: globalAdaptation?.path || path,
-        search: new URL(request.url).search,
+        search: requestUrl.search,
         channelId: channel.id,
         upstreamModel,
         preferredLogicalModelId: request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "",
@@ -149,7 +151,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         if (!owned) return NextResponse.json({ error: "任务不存在或无权访问" }, { status: 404 });
     }
 
-    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
+    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, requestUrl.search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
     if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
     const headers = new Headers();
     if (contentType && !isMultipart) headers.set("content-type", contentType);
@@ -167,11 +169,19 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
                   channelId: channel.id,
                   capability: access.capability,
                   method: request.method,
-                  canonicalPath: new URL(request.url).pathname,
+                  canonicalPath: requestUrl.pathname,
+                  canonicalQuery: canonicalizeSystemAiQuery(requestUrl.searchParams),
                   bodyDigest: requestBody.bodyDigest,
               })
             : undefined;
     if (access.operation === "create" && !usageContext) return NextResponse.json({ error: "生成请求缺少有效的用量预留签名" }, { status: 401 });
+    if (usageContext?.providerIdempotencySupported) {
+        headers.set("idempotency-key", usageContext.providerIdempotencyKey!);
+        headers.set("x-client-request-id", usageContext.providerIdempotencyKey!);
+    } else if (access.operation === "create") {
+        headers.delete("idempotency-key");
+        headers.delete("x-client-request-id");
+    }
     let usageBilling: UsageBilling | undefined;
     let usageAttempt: Parameters<typeof recordUsageProviderAttempt>[0] | undefined;
     if (usageContext) {
@@ -194,7 +204,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
                 status: "pending",
                 provider: channel.advancedConfig?.protocol || channel.id,
                 bindingId: binding.id,
-                requestFingerprint: createHash("sha256").update([usageContext.requestFingerprint, usageContext.userId, usageContext.channelId, usageContext.capability, usageContext.method, usageContext.canonicalPath, usageContext.bodyDigest, String(usageContext.attemptNumber), usageContext.bindingId].join("\0")).digest("hex"),
+                requestFingerprint: createHash("sha256").update([usageContext.requestFingerprint, usageContext.userId, usageContext.channelId, usageContext.capability, usageContext.method, usageContext.canonicalPath, usageContext.canonicalQuery, usageContext.bodyDigest, String(usageContext.attemptNumber), usageContext.bindingId].join("\0")).digest("hex"),
                 providerIdempotencySupported: usageContext.providerIdempotencySupported,
                 providerIdempotencyKey: usageContext.providerIdempotencyKey,
                 nativeCostAmount: "0",

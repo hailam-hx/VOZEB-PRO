@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 
 import { GENERATION_TRANSPORT_TIMEOUT_MS } from "@/lib/server/generation-http-lifecycle";
 import { toUndiciRequestBody } from "@/lib/server/undici-request-body";
-import { finalizeSystemAiUsageRequestHeaders } from "@/lib/server/system-ai-billing";
+import { canonicalizeSystemAiQuery, finalizeSystemAiUsageRequestHeaders } from "@/lib/server/system-ai-billing";
 
 const internalDispatcher = new Agent({
     headersTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
@@ -29,12 +29,14 @@ export function isInternalApiBaseUrl(baseUrl: string) {
 
 export async function fetchInternalApi(input: string | URL, init?: RequestInit): Promise<Response> {
     const method = (init?.method || "GET").toUpperCase();
+    const target = new URL(input);
     const request = new Request(input, init);
     const bytes = method === "GET" || method === "HEAD" ? undefined : new Uint8Array(await request.arrayBuffer());
     const headers = new Headers(request.headers);
     finalizeSystemAiUsageRequestHeaders(headers, {
         method,
-        canonicalPath: new URL(input).pathname,
+        canonicalPath: target.pathname,
+        canonicalQuery: canonicalizeSystemAiQuery(target.searchParams),
         bodyDigest: createHash("sha256").update(bytes || new Uint8Array()).digest("hex"),
     });
     const body = await toUndiciRequestBody(bytes);

@@ -70,7 +70,7 @@ describe("system AI billing helpers", () => {
     });
 
     it("signs stable usage and provider-attempt identities as one internal contract", () => {
-        const requestBinding = { userId: "user-one", channelId: "channel-one", capability: "text" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/chat/completions", bodyDigest: "b".repeat(64) };
+        const requestBinding = { userId: "user-one", channelId: "channel-one", capability: "text" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/chat/completions", canonicalQuery: "region=us&mode=fast", bodyDigest: "b".repeat(64) };
         const expiresAtMs = Date.now() + 60_000;
         const headers = new Headers(
             systemAiBillingHeaders(
@@ -102,6 +102,7 @@ describe("system AI billing helpers", () => {
 
         expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text", { ...requestBinding, userId: "user-two" })).toBeUndefined();
         expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text", { ...requestBinding, canonicalPath: "/api/ai/system/channel-one/responses" })).toBeUndefined();
+        expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text", { ...requestBinding, canonicalQuery: "region=eu&mode=fast" })).toBeUndefined();
         expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text", { ...requestBinding, bodyDigest: "c".repeat(64) })).toBeUndefined();
 
         headers.set("x-vozeb-pro-billing-attempt-number", "3");
@@ -109,7 +110,7 @@ describe("system AI billing helpers", () => {
     });
 
     it("rejects an otherwise valid create context after its configured request window", () => {
-        const binding = { userId: "user-one", channelId: "channel-one", capability: "text" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/chat/completions", bodyDigest: "b".repeat(64) };
+        const binding = { userId: "user-one", channelId: "channel-one", capability: "text" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/chat/completions", canonicalQuery: "", bodyDigest: "b".repeat(64) };
         const headers = new Headers(systemAiBillingHeaders("writer", { ...binding, expiresAtMs: Date.now() - 1, businessRequestId: "text-task:expired", requestFingerprint: "a".repeat(64), attemptNumber: 1, bindingId: "binding", providerIdempotencySupported: false }, "vendor-text"));
 
         expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text", binding)).toBeUndefined();
@@ -120,9 +121,9 @@ describe("system AI billing helpers", () => {
         const headers = new Headers(systemAiBillingHeaders("image-one", draft, "vendor-image"));
         expect(headers.get("x-vozeb-pro-points-signature")).toBeNull();
 
-        finalizeSystemAiUsageRequestHeaders(headers, { method: "POST", canonicalPath: "/api/ai/system/channel-one/images/generations", bodyDigest: "b".repeat(64) });
+        finalizeSystemAiUsageRequestHeaders(headers, { method: "POST", canonicalPath: "/api/ai/system/channel-one/images/generations", canonicalQuery: "", bodyDigest: "b".repeat(64) });
 
-        expect(readVerifiedSystemAiUsageContext(headers, "image-one", "vendor-image", { userId: "user-one", channelId: "channel-one", capability: "image", method: "POST", canonicalPath: "/api/ai/system/channel-one/images/generations", bodyDigest: "b".repeat(64) })).toMatchObject(draft);
+        expect(readVerifiedSystemAiUsageContext(headers, "image-one", "vendor-image", { userId: "user-one", channelId: "channel-one", capability: "image", method: "POST", canonicalPath: "/api/ai/system/channel-one/images/generations", canonicalQuery: "", bodyDigest: "b".repeat(64) })).toMatchObject(draft);
     });
 
     it("round-trips the server-owned hold and attempt response identity", () => {

@@ -14,6 +14,7 @@ export const SYSTEM_AI_BILLING_CHANNEL_HEADER = "x-vozeb-pro-billing-channel-id"
 export const SYSTEM_AI_BILLING_CAPABILITY_HEADER = "x-vozeb-pro-billing-capability";
 export const SYSTEM_AI_BILLING_METHOD_HEADER = "x-vozeb-pro-billing-method";
 export const SYSTEM_AI_BILLING_PATH_HEADER = "x-vozeb-pro-billing-path";
+export const SYSTEM_AI_BILLING_QUERY_HEADER = "x-vozeb-pro-billing-query";
 export const SYSTEM_AI_BILLING_BODY_DIGEST_HEADER = "x-vozeb-pro-billing-body-digest";
 export const SYSTEM_AI_BILLING_EXPIRES_AT_HEADER = "x-vozeb-pro-billing-expires-at";
 export const SYSTEM_AI_USAGE_HOLD_HEADER = "x-vozeb-pro-usage-hold-id";
@@ -34,6 +35,7 @@ export type SystemAiUsageContext = {
     capability: "text" | "image" | "video" | "audio";
     method: string;
     canonicalPath: string;
+    canonicalQuery: string;
     bodyDigest: string;
     expiresAtMs: number;
     businessRequestId: string;
@@ -44,7 +46,7 @@ export type SystemAiUsageContext = {
     providerIdempotencyKey?: string;
 };
 
-export type SystemAiUsageContextDraft = Omit<SystemAiUsageContext, "method" | "canonicalPath" | "bodyDigest">;
+export type SystemAiUsageContextDraft = Omit<SystemAiUsageContext, "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">;
 
 export type SystemAiUsageBilling = { holdId: string; attemptNumber: number; requestFingerprint: string };
 
@@ -73,7 +75,7 @@ export function systemAiBillingHeaders(logicalModel: string, idempotencyKey?: st
                   [SYSTEM_AI_BILLING_CHANNEL_HEADER]: usage.channelId,
                   [SYSTEM_AI_BILLING_CAPABILITY_HEADER]: usage.capability,
                   [SYSTEM_AI_BILLING_EXPIRES_AT_HEADER]: String(usage.expiresAtMs),
-                  ...(context ? { [SYSTEM_AI_BILLING_METHOD_HEADER]: context.method, [SYSTEM_AI_BILLING_PATH_HEADER]: context.canonicalPath, [SYSTEM_AI_BILLING_BODY_DIGEST_HEADER]: context.bodyDigest } : {}),
+                  ...(context ? { [SYSTEM_AI_BILLING_METHOD_HEADER]: context.method, [SYSTEM_AI_BILLING_PATH_HEADER]: context.canonicalPath, [SYSTEM_AI_BILLING_QUERY_HEADER]: context.canonicalQuery, [SYSTEM_AI_BILLING_BODY_DIGEST_HEADER]: context.bodyDigest } : {}),
                   ...(usage.providerIdempotencyKey ? { [SYSTEM_AI_PROVIDER_IDEMPOTENCY_KEY_HEADER]: usage.providerIdempotencyKey } : {}),
               }
             : {}),
@@ -81,7 +83,7 @@ export function systemAiBillingHeaders(logicalModel: string, idempotencyKey?: st
     };
 }
 
-export function finalizeSystemAiUsageRequestHeaders(headers: Headers, binding: Pick<SystemAiUsageContext, "method" | "canonicalPath" | "bodyDigest">) {
+export function finalizeSystemAiUsageRequestHeaders(headers: Headers, binding: Pick<SystemAiUsageContext, "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">) {
     const draft = readSystemAiUsageDraft(headers);
     if (!draft) return headers;
     const complete = normalizeUsageContext({ ...draft, ...binding });
@@ -105,13 +107,14 @@ export function readVerifiedSystemAiBusinessRequestId(headers: Headers, logicalM
     return businessRequestId;
 }
 
-export function readVerifiedSystemAiUsageContext(headers: Headers, logicalModel: string, upstreamModel: string, expectedBinding?: Pick<SystemAiUsageContext, "userId" | "channelId" | "capability" | "method" | "canonicalPath" | "bodyDigest">): SystemAiUsageContext | undefined {
+export function readVerifiedSystemAiUsageContext(headers: Headers, logicalModel: string, upstreamModel: string, expectedBinding?: Pick<SystemAiUsageContext, "userId" | "channelId" | "capability" | "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">): SystemAiUsageContext | undefined {
     const context = normalizeUsageContext({
         userId: headers.get(SYSTEM_AI_BILLING_USER_HEADER) || "",
         channelId: headers.get(SYSTEM_AI_BILLING_CHANNEL_HEADER) || "",
         capability: headers.get(SYSTEM_AI_BILLING_CAPABILITY_HEADER) as SystemAiUsageContext["capability"],
         method: headers.get(SYSTEM_AI_BILLING_METHOD_HEADER) || "",
         canonicalPath: headers.get(SYSTEM_AI_BILLING_PATH_HEADER) || "",
+        canonicalQuery: headers.get(SYSTEM_AI_BILLING_QUERY_HEADER) || "",
         bodyDigest: headers.get(SYSTEM_AI_BILLING_BODY_DIGEST_HEADER) || "",
         expiresAtMs: Number(headers.get(SYSTEM_AI_BILLING_EXPIRES_AT_HEADER)),
         businessRequestId: headers.get(SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER) || "",
@@ -180,6 +183,7 @@ function signSystemAiUsageContext(logicalModel: string, upstreamModel: string, c
                 context.capability,
                 context.method,
                 context.canonicalPath,
+                context.canonicalQuery,
                 context.bodyDigest,
                 String(context.expiresAtMs),
                 context.businessRequestId,
@@ -198,9 +202,10 @@ function normalizeUsageContext(value: SystemAiUsageContext): SystemAiUsageContex
     if (!draft) return undefined;
     const method = value.method.trim().toUpperCase();
     const canonicalPath = value.canonicalPath.trim();
+    const canonicalQuery = canonicalizeSystemAiQuery(value.canonicalQuery);
     const bodyDigest = value.bodyDigest.trim().toLowerCase();
     if (!method || !canonicalPath.startsWith("/") || !/^[a-f0-9]{64}$/.test(bodyDigest)) return undefined;
-    return { ...draft, method, canonicalPath, bodyDigest };
+    return { ...draft, method, canonicalPath, canonicalQuery, bodyDigest };
 }
 
 function normalizeUsageDraft(value: SystemAiUsageContext | SystemAiUsageContextDraft): SystemAiUsageContextDraft | undefined {
@@ -232,13 +237,19 @@ function readSystemAiUsageDraft(headers: Headers) {
     });
 }
 
-function sameRequestBinding(context: SystemAiUsageContext, expected: Pick<SystemAiUsageContext, "userId" | "channelId" | "capability" | "method" | "canonicalPath" | "bodyDigest">) {
+function sameRequestBinding(context: SystemAiUsageContext, expected: Pick<SystemAiUsageContext, "userId" | "channelId" | "capability" | "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">) {
     return context.userId === expected.userId.trim()
         && context.channelId === expected.channelId.trim()
         && context.capability === expected.capability
         && context.method === expected.method.trim().toUpperCase()
         && context.canonicalPath === expected.canonicalPath.trim()
+        && context.canonicalQuery === canonicalizeSystemAiQuery(expected.canonicalQuery)
         && context.bodyDigest === expected.bodyDigest.trim().toLowerCase();
+}
+
+export function canonicalizeSystemAiQuery(value: string | URLSearchParams) {
+    const raw = typeof value === "string" ? value.replace(/^\?/, "") : value;
+    return new URLSearchParams(raw).toString();
 }
 
 function stableDigest(parts: string[]) {
