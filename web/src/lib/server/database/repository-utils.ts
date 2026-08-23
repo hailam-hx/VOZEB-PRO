@@ -7,8 +7,6 @@ import type {
     JsonValue,
     PageResult,
     PaymentTransactionStatus,
-    PlanAssignmentSource,
-    PlanAssignmentStatus,
 } from "./repository-types";
 
 export function jsonParam(value: JsonValue | undefined) {
@@ -91,12 +89,4 @@ export function billingReconciliationSourceValue(value: unknown): BillingReconci
 
 export function billingReconciliationStatementStatusValue(value: unknown): BillingReconciliationStatementStatus {
     return value === "paid" || value === "refunded" || value === "pending" || value === "failed" ? value : "unknown";
-}
-
-export function planAssignmentStatusValue(value: unknown): PlanAssignmentStatus {
-    return value === "expired" || value === "canceled" ? value : "active";
-}
-
-export function planAssignmentSourceValue(value: unknown): PlanAssignmentSource {
-    return value === "order" || value === "cdk" || value === "system" ? value : "admin";
 }

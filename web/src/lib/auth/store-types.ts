@@ -201,30 +201,6 @@ export type DataLifecycleSettings = {
     maintenanceBatchSize: number;
 };
 
-export type EntitlementPlanLimits = {
-    dailyPointSpend: number;
-    dailyApiCalls: number;
-    dailyImages: number;
-    dailyVideos: number;
-    dailyAudio: number;
-    dailyText: number;
-};
-
-export type EntitlementPlan = {
-    id: string;
-    name: string;
-    enabled: boolean;
-    dailyPoints: number;
-    limits: EntitlementPlanLimits;
-    features: string[];
-};
-
-export type EntitlementSettings = {
-    enabled: boolean;
-    defaultPlanId: string;
-    plans: EntitlementPlan[];
-};
-
 export type CdkStatus = "active" | "disabled";
 
 export type PublicCdkRedemption = {
@@ -358,13 +334,9 @@ export type PublicUser = {
     role: UserRole;
     adminPermissions: AdminPermission[];
     status: UserStatus;
-    planId: string;
-    planName: string;
-    hasActivePlan: boolean;
-    pointsBalance: number;
-    permanentPointsBalance: number;
-    dailyPointsBalance: number;
-    dailyPointsExpiresAt: string;
+    settledBalance: string;
+    heldBalance: string;
+    availableBalance: string;
     mfaEnabled: boolean;
     createdAt: string;
     updatedAt: string;
@@ -377,11 +349,10 @@ export type PublicUserSummary = {
     disabled: number;
     admins: number;
     activeAdmins: number;
-    usersWithPlan: number;
-    totalPointsBalance: number;
+    totalSettledBalance: string;
 };
 
-export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "hasActivePlan" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt" | "mfaEnabled"> & {
+export type StoredUser = Omit<PublicUser, "avatarUrl" | "heldBalance" | "availableBalance" | "mfaEnabled"> & {
     avatarStorageKey?: string;
     passwordHash: string;
     mfaSecretCiphertext?: string;
@@ -401,17 +372,12 @@ export type PublicPointRecord = {
     id: string;
     userId: string;
     type: "consume" | "refund" | "credit" | "admin-adjust";
-    amount: number;
-    balanceAfter: number;
-    permanentAmount: number;
-    dailyAmount: number;
-    permanentBalanceAfter: number;
-    dailyBalanceAfter: number;
+    amount: string;
+    balanceAfter: string;
     description: string;
     model?: string;
     idempotencyKey?: string;
     sourceRecordId?: string;
-    sourceDate?: string;
     createdAt: string;
 };
 
@@ -419,15 +385,62 @@ export type StoredPointRecord = PublicPointRecord & {
     requestFingerprint?: string;
 };
 
-export type StoredDailyPlanPointWallet = {
+export type WalletHoldStatus = "active" | "settled" | "released";
+
+export type WalletHold = {
+    id: string;
     userId: string;
-    date: string;
-    planId: string;
-    assignmentId?: string;
-    grantedPoints: number;
-    remainingPoints: number;
+    businessId: string;
+    requestFingerprint: string;
+    amount: string;
+    status: WalletHoldStatus;
+    description: string;
+    usageChargeId?: string;
+    expiresAt?: string;
+    closedAt?: string;
     createdAt: string;
     updatedAt: string;
+};
+
+export type UsageCharge = {
+    id: string;
+    userId: string;
+    holdId: string;
+    requestFingerprint: string;
+    reservedCredits: string;
+    settledCredits: string;
+    normalizedUsage: import("@/lib/billing/pricing").NormalizedUsage;
+    saleRateSnapshot: import("@/lib/billing/pricing").PricingRateCardV1;
+    estimated: boolean;
+    totalProviderCostUsd: string;
+    marginCredits: string;
+    description: string;
+    pointRecordId?: string;
+    createdAt: string;
+    settledAt: string;
+};
+
+export type ProviderUsageAttemptStatus = "pending" | "succeeded" | "failed" | "canceled";
+
+export type ProviderUsageAttempt = {
+    id: string;
+    holdId: string;
+    userId: string;
+    attemptNumber: number;
+    status: ProviderUsageAttemptStatus;
+    provider: string;
+    bindingId: string;
+    requestFingerprint: string;
+    providerIdempotencyKey?: string;
+    upstreamTaskId?: string;
+    nativeCostAmount: string;
+    nativeCostUnit: import("@/lib/billing/money").ProviderCostUnit;
+    costUsd: string;
+    costRateSnapshot?: import("@/lib/billing/pricing").PricingRateCardV1;
+    normalizedUsage?: import("@/lib/billing/pricing").NormalizedUsage;
+    createdAt: string;
+    updatedAt: string;
+    completedAt?: string;
 };
 
 export type StoredQuotaUsage = {
@@ -457,15 +470,12 @@ export type AuthSettings = {
     site: SiteSettings;
     registrationEnabled: boolean;
     emailRegistrationEnabled: boolean;
-    freeDailyPointsEnabled: boolean;
-    freeDailyPoints: number;
     mail: MailSettings;
     allowUserApiConfig: boolean;
     modelPointCosts: ModelPointCosts;
     generationPointMultipliers: GenerationPointMultipliers;
     generationCostControl: GenerationCostControlSettings;
     dataLifecycle: DataLifecycleSettings;
-    entitlements: EntitlementSettings;
     generationConcurrency: GenerationConcurrencySettings;
     generationDefaults: GenerationDefaultSettings;
     systemChannels: SystemModelChannel[];
@@ -481,7 +491,9 @@ export type AuthDatabase = {
     sessions: StoredSession[];
     quotaUsage: StoredQuotaUsage[];
     pointRecords: StoredPointRecord[];
-    dailyPlanPointWallets: StoredDailyPlanPointWallet[];
+    walletHolds: WalletHold[];
+    usageCharges: UsageCharge[];
+    providerUsageAttempts: ProviderUsageAttempt[];
     emailCodes: StoredEmailCode[];
     cdkCodes: StoredCdkCode[];
     announcements: PublicAnnouncement[];

@@ -20,66 +20,17 @@ $$ LANGUAGE plpgsql;
 
 DROP TABLE IF EXISTS check_ins;
 
-CREATE TABLE IF NOT EXISTS entitlement_plans (
-    id text PRIMARY KEY,
-    name text NOT NULL,
-    enabled boolean NOT NULL DEFAULT true,
-    daily_points numeric(18, 2) NOT NULL DEFAULT 0,
-    limits jsonb NOT NULL DEFAULT '{}'::jsonb,
-    features jsonb NOT NULL DEFAULT '[]'::jsonb,
-    sort_order integer NOT NULL DEFAULT 0,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-INSERT INTO entitlement_plans (id, name, enabled, limits, features, sort_order)
-VALUES (
-    'free',
-    '免费版',
-    true,
-    '{"dailyPointSpend":0,"dailyApiCalls":0,"dailyImages":0,"dailyVideos":0,"dailyAudio":0,"dailyText":0}'::jsonb,
-    '["system-api","points-wallet"]'::jsonb,
-    0
-)
-ON CONFLICT (id) DO NOTHING;
-
-ALTER TABLE entitlement_plans ADD COLUMN IF NOT EXISTS daily_points numeric(18, 2) NOT NULL DEFAULT 0;
-
-INSERT INTO entitlement_plans (id, name, enabled, limits, features, sort_order)
-VALUES
-(
-    'creator',
-    '创作者版',
-    true,
-    '{"dailyPointSpend":800,"dailyApiCalls":0,"dailyImages":80,"dailyVideos":12,"dailyAudio":0,"dailyText":200}'::jsonb,
-    '["system-api","points-wallet","image-workbench","video-workbench","prompt-library"]'::jsonb,
-    10
-),
-(
-    'pro',
-    '专业版',
-    true,
-    '{"dailyPointSpend":4000,"dailyApiCalls":0,"dailyImages":300,"dailyVideos":50,"dailyAudio":0,"dailyText":800}'::jsonb,
-    '["system-api","points-wallet","image-workbench","video-workbench","prompt-library","priority-generation"]'::jsonb,
-    20
-)
-ON CONFLICT (id) DO NOTHING;
-
 CREATE TABLE IF NOT EXISTS app_settings (
     id text PRIMARY KEY DEFAULT 'default',
     site jsonb NOT NULL DEFAULT '{}'::jsonb,
     registration_enabled boolean NOT NULL DEFAULT true,
     email_registration_enabled boolean NOT NULL DEFAULT false,
-    free_daily_points_enabled boolean NOT NULL DEFAULT true,
-    free_daily_points numeric(18, 2) NOT NULL DEFAULT 0,
     mail jsonb NOT NULL DEFAULT '{}'::jsonb,
     allow_user_api_config boolean NOT NULL DEFAULT false,
     model_point_costs jsonb NOT NULL DEFAULT '{}'::jsonb,
     generation_point_multipliers jsonb NOT NULL DEFAULT '{}'::jsonb,
     generation_cost_control jsonb NOT NULL DEFAULT '{}'::jsonb,
     data_lifecycle jsonb NOT NULL DEFAULT '{}'::jsonb,
-    entitlements_enabled boolean NOT NULL DEFAULT false,
-    default_plan_id text NOT NULL DEFAULT 'free' REFERENCES entitlement_plans(id),
     generation_concurrency jsonb NOT NULL DEFAULT '{}'::jsonb,
     generation_defaults jsonb NOT NULL DEFAULT '{}'::jsonb,
     payment_config jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -96,8 +47,6 @@ VALUES ('default')
 ON CONFLICT (id) DO NOTHING;
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS agent_skills jsonb NOT NULL DEFAULT '[{"id":"ecommerce-image","name":"电商生图","description":"为商品主图、场景图和详情页视觉生成结构化方案。","instructions":"识别商品卖点、目标人群、平台与画幅。优先规划白底主图、核心卖点场景图、细节特写和详情页横幅；保持商品外观、材质、颜色、Logo 与包装一致。提示词必须写清主体、构图、光线、背景、镜头、商业质感、尺寸比例与禁止变形要求。","enabled":true,"keywords":["电商","商品","主图","详情页","淘宝","京东","亚马逊"]}]'::jsonb;
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS logical_models jsonb NOT NULL DEFAULT '[]'::jsonb;
-ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS free_daily_points_enabled boolean NOT NULL DEFAULT true;
-ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS free_daily_points numeric(18, 2) NOT NULL DEFAULT 0;
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS generation_cost_control jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS data_lifecycle jsonb NOT NULL DEFAULT '{}'::jsonb;
 
@@ -131,8 +80,7 @@ CREATE TABLE IF NOT EXISTS users (
     role text NOT NULL DEFAULT 'user',
     admin_permissions jsonb NOT NULL DEFAULT '[]'::jsonb,
     status text NOT NULL DEFAULT 'active',
-    plan_id text NOT NULL DEFAULT 'free' REFERENCES entitlement_plans(id),
-    points_balance numeric(18, 2) NOT NULL DEFAULT 0,
+    settled_balance numeric(30, 8) NOT NULL DEFAULT 0,
     password_hash text NOT NULL,
     mfa_secret_ciphertext text,
     mfa_enabled_at timestamptz,
@@ -232,7 +180,6 @@ $$;
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON users (lower(email)) WHERE email IS NOT NULL AND email <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS users_account_id_idx ON users (account_id);
-CREATE INDEX IF NOT EXISTS users_plan_id_idx ON users (plan_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id text PRIMARY KEY,
@@ -612,62 +559,102 @@ CREATE TABLE IF NOT EXISTS point_records (
     id text PRIMARY KEY,
     user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type text NOT NULL,
-    amount numeric(18, 2) NOT NULL,
-    balance_after numeric(18, 2) NOT NULL,
-    permanent_amount numeric(18, 2) NOT NULL DEFAULT 0,
-    daily_amount numeric(18, 2) NOT NULL DEFAULT 0,
-    permanent_balance_after numeric(18, 2) NOT NULL DEFAULT 0,
-    daily_balance_after numeric(18, 2) NOT NULL DEFAULT 0,
+    amount numeric(30, 8) NOT NULL,
+    balance_after numeric(30, 8) NOT NULL,
     description text NOT NULL,
     model text,
     idempotency_key text,
     request_fingerprint text,
     source_record_id text,
-    source_date date,
     created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT point_records_type CHECK (type IN ('consume', 'refund', 'credit', 'admin-adjust'))
+    CONSTRAINT point_records_type CHECK (type IN ('consume', 'refund', 'credit', 'admin-adjust')),
+    CONSTRAINT point_records_non_zero CHECK (amount <> 0)
 );
-
-ALTER TABLE point_records ADD COLUMN IF NOT EXISTS permanent_amount numeric(18, 2) NOT NULL DEFAULT 0;
-ALTER TABLE point_records ADD COLUMN IF NOT EXISTS daily_amount numeric(18, 2) NOT NULL DEFAULT 0;
-ALTER TABLE point_records ADD COLUMN IF NOT EXISTS permanent_balance_after numeric(18, 2) NOT NULL DEFAULT 0;
-ALTER TABLE point_records ADD COLUMN IF NOT EXISTS daily_balance_after numeric(18, 2) NOT NULL DEFAULT 0;
-ALTER TABLE point_records ADD COLUMN IF NOT EXISTS idempotency_key text;
-ALTER TABLE point_records ADD COLUMN IF NOT EXISTS request_fingerprint text;
-ALTER TABLE point_records ADD COLUMN IF NOT EXISTS source_record_id text;
-ALTER TABLE point_records ADD COLUMN IF NOT EXISTS source_date date;
-UPDATE point_records
-SET
-    type = 'credit',
-    permanent_amount = CASE WHEN permanent_amount = 0 THEN amount ELSE permanent_amount END,
-    permanent_balance_after = CASE WHEN permanent_balance_after = 0 THEN balance_after ELSE permanent_balance_after END
-WHERE type = 'check-in';
-ALTER TABLE point_records DROP CONSTRAINT IF EXISTS point_records_type;
-ALTER TABLE point_records ADD CONSTRAINT point_records_type CHECK (type IN ('consume', 'refund', 'credit', 'admin-adjust'));
 CREATE INDEX IF NOT EXISTS point_records_user_created_idx ON point_records (user_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS point_records_idempotency_idx ON point_records (idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS point_records_refund_source_idx ON point_records (source_record_id) WHERE type = 'refund' AND source_record_id IS NOT NULL AND source_record_id <> '';
 
-CREATE TABLE IF NOT EXISTS daily_plan_point_wallets (
+CREATE TABLE IF NOT EXISTS wallet_holds (
+    id text PRIMARY KEY,
     user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    date date NOT NULL,
-    plan_id text NOT NULL REFERENCES entitlement_plans(id),
-    assignment_id text,
-    granted_points numeric(18, 2) NOT NULL DEFAULT 0,
-    remaining_points numeric(18, 2) NOT NULL DEFAULT 0,
+    business_id text NOT NULL UNIQUE,
+    request_fingerprint text NOT NULL,
+    amount numeric(30, 8) NOT NULL,
+    status text NOT NULL DEFAULT 'active',
+    description text NOT NULL,
+    usage_charge_id text UNIQUE,
+    expires_at timestamptz,
+    closed_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (user_id, date),
-    CONSTRAINT daily_plan_point_wallets_granted CHECK (granted_points >= 0),
-    CONSTRAINT daily_plan_point_wallets_remaining CHECK (remaining_points >= 0 AND remaining_points <= granted_points)
+    CONSTRAINT wallet_holds_amount CHECK (amount >= 0),
+    CONSTRAINT wallet_holds_status CHECK (status IN ('active', 'settled', 'released')),
+    CONSTRAINT wallet_holds_closed_state CHECK ((status = 'active' AND closed_at IS NULL) OR (status <> 'active' AND closed_at IS NOT NULL))
 );
 
-CREATE INDEX IF NOT EXISTS daily_plan_point_wallets_assignment_idx ON daily_plan_point_wallets (assignment_id, date DESC);
+CREATE INDEX IF NOT EXISTS wallet_holds_user_active_idx ON wallet_holds (user_id, created_at) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS wallet_holds_expires_idx ON wallet_holds (expires_at, id) WHERE status = 'active' AND expires_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS usage_charges (
+    id text PRIMARY KEY,
+    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    hold_id text NOT NULL UNIQUE REFERENCES wallet_holds(id) ON DELETE RESTRICT,
+    request_fingerprint text NOT NULL,
+    reserved_credits numeric(30, 8) NOT NULL,
+    settled_credits numeric(30, 8) NOT NULL,
+    normalized_usage jsonb NOT NULL,
+    sale_rate_snapshot jsonb NOT NULL,
+    estimated boolean NOT NULL DEFAULT false,
+    total_provider_cost_usd numeric(30, 12) NOT NULL DEFAULT 0,
+    margin_credits numeric(30, 12) NOT NULL,
+    description text NOT NULL,
+    point_record_id text UNIQUE REFERENCES point_records(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    settled_at timestamptz NOT NULL,
+    CONSTRAINT usage_charges_amounts CHECK (reserved_credits >= 0 AND settled_credits >= 0 AND settled_credits <= reserved_credits),
+    CONSTRAINT usage_charges_ledger_link CHECK ((settled_credits = 0 AND point_record_id IS NULL) OR (settled_credits <> 0 AND point_record_id IS NOT NULL))
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'wallet_holds_usage_charge_fk') THEN
+        ALTER TABLE wallet_holds ADD CONSTRAINT wallet_holds_usage_charge_fk FOREIGN KEY (usage_charge_id) REFERENCES usage_charges(id) ON DELETE RESTRICT;
+    END IF;
+END;
+$$;
+CREATE INDEX IF NOT EXISTS usage_charges_user_settled_idx ON usage_charges (user_id, settled_at DESC);
+
+CREATE TABLE IF NOT EXISTS provider_usage_attempts (
+    id text PRIMARY KEY,
+    hold_id text NOT NULL REFERENCES wallet_holds(id) ON DELETE CASCADE,
+    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    attempt_number integer NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    provider text NOT NULL,
+    binding_id text NOT NULL,
+    request_fingerprint text NOT NULL,
+    provider_idempotency_key text,
+    upstream_task_id text,
+    native_cost_amount numeric(30, 12) NOT NULL DEFAULT 0,
+    native_cost_unit jsonb NOT NULL,
+    cost_usd numeric(30, 12) NOT NULL DEFAULT 0,
+    cost_rate_snapshot jsonb,
+    normalized_usage jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    completed_at timestamptz,
+    UNIQUE (hold_id, attempt_number),
+    CONSTRAINT provider_usage_attempts_status CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled')),
+    CONSTRAINT provider_usage_attempts_cost CHECK (native_cost_amount >= 0 AND cost_usd >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS provider_usage_attempts_hold_idx ON provider_usage_attempts (hold_id, attempt_number);
+CREATE INDEX IF NOT EXISTS provider_usage_attempts_upstream_idx ON provider_usage_attempts (provider, upstream_task_id) WHERE upstream_task_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS billing_products (
     id text PRIMARY KEY,
     product_kind text NOT NULL DEFAULT 'plan',
-    plan_id text REFERENCES entitlement_plans(id),
+    plan_id text,
     name text NOT NULL,
     description text NOT NULL DEFAULT '',
     amount_cents bigint NOT NULL DEFAULT 0,
@@ -785,27 +772,6 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation_rows (
 
 CREATE INDEX IF NOT EXISTS billing_reconciliation_rows_run_idx ON billing_reconciliation_rows (run_id, row_number ASC);
 CREATE INDEX IF NOT EXISTS billing_reconciliation_rows_issue_codes_gin_idx ON billing_reconciliation_rows USING gin (issue_codes);
-
-CREATE TABLE IF NOT EXISTS user_plan_assignments (
-    id text PRIMARY KEY,
-    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    plan_id text NOT NULL REFERENCES entitlement_plans(id),
-    status text NOT NULL DEFAULT 'active',
-    source text NOT NULL DEFAULT 'admin',
-    source_id text,
-    starts_at timestamptz NOT NULL DEFAULT now(),
-    ends_at timestamptz,
-    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT user_plan_assignments_status CHECK (status IN ('active', 'expired', 'canceled')),
-    CONSTRAINT user_plan_assignments_source CHECK (source IN ('admin', 'order', 'cdk', 'system'))
-);
-
-CREATE INDEX IF NOT EXISTS user_plan_assignments_user_active_idx ON user_plan_assignments (user_id, status, starts_at DESC);
-CREATE INDEX IF NOT EXISTS user_plan_assignments_plan_idx ON user_plan_assignments (plan_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS user_plan_assignments_source_idx ON user_plan_assignments (source, source_id);
-CREATE UNIQUE INDEX IF NOT EXISTS user_plan_assignments_source_unique_idx ON user_plan_assignments (source, source_id) WHERE source_id IS NOT NULL AND source_id <> '';
 
 CREATE TABLE IF NOT EXISTS payment_provider_events (
     id text PRIMARY KEY,

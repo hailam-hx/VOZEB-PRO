@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { decimal } from "@/lib/billing/decimal";
+
 import { formatAccountId, parseAccountId } from "@/lib/account-id";
 import { decryptSecretValue, encryptSecretValue, isEncryptedSecretValue } from "@/lib/server/secret-crypto";
 import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image";
@@ -26,9 +28,6 @@ import {
     type GenerationPointMultipliers,
     type GenerationCostControlSettings,
     type DataLifecycleSettings,
-    type EntitlementPlanLimits,
-    type EntitlementPlan,
-    type EntitlementSettings,
     type CdkStatus,
     type PublicCdkRedemption,
     type PublicCdkCode,
@@ -48,7 +47,6 @@ import {
     type StoredSession,
     type PublicPointRecord,
     type StoredPointRecord,
-    type StoredDailyPlanPointWallet,
     type StoredQuotaUsage,
     type EmailCodePurpose,
     type StoredEmailCode,
@@ -68,9 +66,6 @@ import {
     DEFAULT_SITE_SETTINGS,
     DEFAULT_MAIL_SETTINGS,
     DEFAULT_GENERATION_POINT_MULTIPLIERS,
-    DEFAULT_ENTITLEMENT_LIMITS,
-    DEFAULT_ENTITLEMENT_PLAN_ID,
-    DEFAULT_ENTITLEMENT_SETTINGS,
     DEFAULT_SETTINGS,
     AUTH_DATA_FILE,
 } from "./store-foundation";
@@ -102,8 +97,7 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
                   accountId: formatAccountId(accountId),
                   bio: normalizeUserBio(legacyUser.bio),
                   registrationConsent: normalizeRegistrationPolicyConsent(legacyUser.registrationConsent),
-                  planId: resolvePlanById(settings.entitlements, user.planId).id,
-                  pointsBalance: normalizePoints(legacyUser.pointsBalance, legacyQuotaToPoints(legacyUser.quota, resolveInitialUserPoints({ settings } as AuthDatabase, resolvePlanById(settings.entitlements, user.planId)))),
+                  settledBalance: normalizeCreditText(legacyUser.settledBalance),
               } as StoredUser;
           })
         : [];
@@ -119,7 +113,9 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
         sessions: Array.isArray(db.sessions) ? db.sessions : [],
         quotaUsage: Array.isArray(db.quotaUsage) ? db.quotaUsage.map(normalizeQuotaUsage).filter((usage) => usage.userId) : [],
         pointRecords: Array.isArray((db as Partial<AuthDatabase>).pointRecords) ? ((db as Partial<AuthDatabase>).pointRecords || []).map(normalizePointRecord).filter((item) => item.userId) : [],
-        dailyPlanPointWallets: Array.isArray(db.dailyPlanPointWallets) ? db.dailyPlanPointWallets.map(normalizeDailyPlanPointWallet).filter((item) => item.userId && item.date) : [],
+        walletHolds: Array.isArray(db.walletHolds) ? db.walletHolds : [],
+        usageCharges: Array.isArray(db.usageCharges) ? db.usageCharges : [],
+        providerUsageAttempts: Array.isArray(db.providerUsageAttempts) ? db.providerUsageAttempts : [],
         emailCodes: Array.isArray(db.emailCodes) ? db.emailCodes.map(normalizeEmailCode).filter((item) => item.email) : [],
         cdkCodes: Array.isArray(db.cdkCodes) ? db.cdkCodes.map(normalizeCdkCodeRecord).filter((item) => item.codeHash) : [],
         announcements: Array.isArray(db.announcements) ? db.announcements.map(normalizeAnnouncement).filter((item) => item.title && item.content) : [],
@@ -128,7 +124,7 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
 }
 
 export function emptyDb(): AuthDatabase {
-    return { version: 1, nextUserAccountId: 1, users: [], sessions: [], quotaUsage: [], pointRecords: [], dailyPlanPointWallets: [], emailCodes: [], cdkCodes: [], announcements: [], settings: DEFAULT_SETTINGS };
+    return { version: 1, nextUserAccountId: 1, users: [], sessions: [], quotaUsage: [], pointRecords: [], walletHolds: [], usageCharges: [], providerUsageAttempts: [], emailCodes: [], cdkCodes: [], announcements: [], settings: DEFAULT_SETTINGS };
 }
 
 export function encryptAuthDbSecretsForStorage(db: AuthDatabase): AuthDatabase {
@@ -162,70 +158,6 @@ export function encryptAuthSettingsSecrets(settings: AuthSettings): AuthSettings
     };
 }
 
-export function resolveInitialUserPoints(db: Pick<AuthDatabase, "settings">, plan = resolveDefaultPlan(db.settings.entitlements)) {
-    void db;
-    void plan;
-    return 0;
-}
-
-export function resolveDefaultPlan(settings: EntitlementSettings) {
-    return resolvePlanById(settings, settings.defaultPlanId);
-}
-
-export function resolveUserPlan(db: Pick<AuthDatabase, "settings">, user: StoredUser) {
-    return resolvePlanById(db.settings.entitlements, user.planId);
-}
-
-export function resolvePlanById(settings: EntitlementSettings, planId: unknown) {
-    const id = normalizePlanId(planId);
-    return settings.plans.find((plan) => plan.enabled && plan.id === id) || settings.plans.find((plan) => plan.enabled && plan.id === settings.defaultPlanId) || settings.plans.find((plan) => plan.enabled) || DEFAULT_ENTITLEMENT_SETTINGS.plans[0];
-}
-
-export function assertEntitlementUsageAllowed(db: AuthDatabase, user: StoredUser, usageKind: PointUsageKind, units: number, cost: number) {
-    if (!db.settings.entitlements.enabled) return;
-    const plan = resolveUserPlan(db, user);
-    const usage = findQuotaUsage(db, user.id, usageKind, currentQuotaDate());
-    assertDailyLimit(plan.limits.dailyPointSpend, usage.pointsSpent + cost, "今日积分消费额度");
-    assertDailyLimit(resolveDailyUsageLimit(plan.limits, usageKind), usage.units + units, dailyUsageLimitLabel(usageKind));
-}
-
-export function recordQuotaUsage(db: AuthDatabase, userId: string, usageKind: PointUsageKind, unitsDelta: number, pointsDelta: number, updatedAt: string) {
-    if (!db.settings.entitlements.enabled) return;
-    const usage = findQuotaUsage(db, userId, usageKind, currentQuotaDate());
-    usage.units = normalizePointAmount(usage.units + unitsDelta, 0);
-    usage.pointsSpent = normalizePointAmount(usage.pointsSpent + pointsDelta, 0);
-    usage.updatedAt = updatedAt;
-}
-
-export function findQuotaUsage(db: AuthDatabase, userId: string, usageKind: PointUsageKind, date: string) {
-    const item = db.quotaUsage.find((usage) => usage.userId === userId && usage.usageKind === usageKind && usage.date === date);
-    if (item) return item;
-    const next: StoredQuotaUsage = { userId, usageKind, date, pointsSpent: 0, units: 0, updatedAt: new Date().toISOString() };
-    db.quotaUsage.push(next);
-    return next;
-}
-
-export function assertDailyLimit(limit: number, nextValue: number, label: string) {
-    if (limit <= 0) return;
-    if (nextValue > limit) throw new QuotaExceededError(`${label}不足，今日额度 ${limit}，本次后将达到 ${Number(nextValue.toFixed(2))}`);
-}
-
-export function resolveDailyUsageLimit(limits: EntitlementPlanLimits, usageKind: PointUsageKind) {
-    if (usageKind === "image") return limits.dailyImages;
-    if (usageKind === "video") return limits.dailyVideos;
-    if (usageKind === "audio") return limits.dailyAudio;
-    if (usageKind === "text") return limits.dailyText;
-    return limits.dailyApiCalls;
-}
-
-export function dailyUsageLimitLabel(usageKind: PointUsageKind) {
-    if (usageKind === "image") return "今日图片生成次数";
-    if (usageKind === "video") return "今日视频生成次数";
-    if (usageKind === "audio") return "今日音频生成次数";
-    if (usageKind === "text") return "今日文本调用次数";
-    return "今日 API 调用次数";
-}
-
 export function countActiveAdmins(db: AuthDatabase, excludingUserId?: string) {
     return db.users.filter((user) => user.id !== excludingUserId && user.role === "admin" && user.status === "active").length;
 }
@@ -242,15 +174,12 @@ export function normalizeSettings(settings: AuthSettings): AuthSettings {
         site,
         registrationEnabled: Boolean(settings.registrationEnabled),
         emailRegistrationEnabled: Boolean(settings.emailRegistrationEnabled),
-        freeDailyPointsEnabled: settings.freeDailyPointsEnabled !== false,
-        freeDailyPoints: normalizePoints(settings.freeDailyPoints, 0),
         mail: normalizeMailSettings(settings.mail, site.title),
         allowUserApiConfig: false,
         modelPointCosts: normalizeModelPointCosts(settings.modelPointCosts),
         generationPointMultipliers: normalizeGenerationPointMultipliers(settings.generationPointMultipliers),
         generationCostControl: normalizeGenerationCostControl(settings.generationCostControl),
         dataLifecycle: normalizeDataLifecycle(settings.dataLifecycle),
-        entitlements: normalizeEntitlementSettings(settings.entitlements),
         generationConcurrency: normalizeGenerationConcurrency(settings.generationConcurrency),
         generationDefaults: normalizeGenerationDefaults(settings.generationDefaults),
         systemChannels,
@@ -367,57 +296,6 @@ function normalizePositiveSafeInteger(value: unknown, fallback: number) {
 export function allowedText(value: unknown, allowed: string[], fallback: string) {
     const text = typeof value === "string" ? value.trim() : "";
     return allowed.includes(text) ? text : fallback;
-}
-
-export function normalizeEntitlementSettings(settings: Partial<EntitlementSettings> | undefined): EntitlementSettings {
-    const plans = Array.isArray(settings?.plans) ? settings.plans.map(normalizeEntitlementPlan).filter((plan) => plan.id) : [];
-    const mergedPlans = plans.length ? plans : DEFAULT_ENTITLEMENT_SETTINGS.plans.map(normalizeEntitlementPlan);
-    const defaultPlanId = normalizePlanId(settings?.defaultPlanId) || DEFAULT_ENTITLEMENT_PLAN_ID;
-    const defaultPlan = mergedPlans.find((plan) => plan.id === defaultPlanId && plan.enabled) || mergedPlans.find((plan) => plan.enabled) || mergedPlans[0];
-    return {
-        enabled: settings?.enabled === true,
-        defaultPlanId: defaultPlan.id,
-        plans: mergedPlans,
-    };
-}
-
-export function normalizeEntitlementPlan(plan: Partial<EntitlementPlan>): EntitlementPlan {
-    const fallback = DEFAULT_ENTITLEMENT_SETTINGS.plans[0];
-    return {
-        id: normalizePlanId(plan.id) || fallback.id,
-        name: normalizeText(plan.name, fallback.name, 40),
-        enabled: plan.enabled !== false,
-        dailyPoints: Math.max(0, normalizePoints(plan.dailyPoints, fallback.dailyPoints)),
-        limits: normalizeEntitlementLimits(plan.limits),
-        features: normalizeFeatureList(plan.features),
-    };
-}
-
-export function normalizeEntitlementLimits(limits: Partial<EntitlementPlanLimits> | undefined): EntitlementPlanLimits {
-    return {
-        dailyPointSpend: normalizePointAmount(limits?.dailyPointSpend, DEFAULT_ENTITLEMENT_LIMITS.dailyPointSpend),
-        dailyApiCalls: normalizePointAmount(limits?.dailyApiCalls, DEFAULT_ENTITLEMENT_LIMITS.dailyApiCalls),
-        dailyImages: normalizePointAmount(limits?.dailyImages, DEFAULT_ENTITLEMENT_LIMITS.dailyImages),
-        dailyVideos: normalizePointAmount(limits?.dailyVideos, DEFAULT_ENTITLEMENT_LIMITS.dailyVideos),
-        dailyAudio: normalizePointAmount(limits?.dailyAudio, DEFAULT_ENTITLEMENT_LIMITS.dailyAudio),
-        dailyText: normalizePointAmount(limits?.dailyText, DEFAULT_ENTITLEMENT_LIMITS.dailyText),
-    };
-}
-
-export function normalizePlanId(value: unknown) {
-    const id =
-        typeof value === "string"
-            ? value
-                  .trim()
-                  .toLowerCase()
-                  .replace(/[^a-z0-9_.-]/g, "-")
-            : "";
-    return id.slice(0, 40);
-}
-
-export function normalizeFeatureList(value: unknown) {
-    if (!Array.isArray(value)) return [];
-    return Array.from(new Set(value.map((item) => normalizeText(item, "", 60)).filter(Boolean))).slice(0, 40);
 }
 
 export function normalizeGenerationConcurrency(settings: Partial<GenerationConcurrencySettings> | undefined): GenerationConcurrencySettings {
@@ -839,51 +717,37 @@ export function resolveCdkExpiresAt(expiresAt: unknown, expiresInDays: unknown) 
 
 export function normalizePointRecord(value: Partial<StoredPointRecord>): StoredPointRecord {
     const type = value.type === "consume" || value.type === "refund" || value.type === "credit" ? value.type : "admin-adjust";
-    const amount = Number.isFinite(Number(value.amount)) ? Number(value.amount) : 0;
-    const balanceAfter = normalizePoints(value.balanceAfter, 0);
-    const permanentAmount = Number.isFinite(Number(value.permanentAmount)) ? Number(value.permanentAmount) : amount;
-    const dailyAmount = Number.isFinite(Number(value.dailyAmount)) ? Number(value.dailyAmount) : 0;
+    const amount = normalizeCreditText(value.amount);
+    const balanceAfter = normalizeCreditText(value.balanceAfter);
     return {
         id: value.id || randomUUID(),
         userId: value.userId || "",
         type,
         amount,
         balanceAfter,
-        permanentAmount,
-        dailyAmount,
-        permanentBalanceAfter: normalizePoints(value.permanentBalanceAfter, balanceAfter),
-        dailyBalanceAfter: Math.max(0, normalizePoints(value.dailyBalanceAfter, 0)),
         description: normalizeText(value.description, type === "consume" ? "积分消耗" : "积分增加", 120),
         model: typeof value.model === "string" ? value.model.slice(0, 160) : undefined,
         idempotencyKey: normalizeOptionalText(value.idempotencyKey, 200),
         requestFingerprint: typeof value.requestFingerprint === "string" && /^[a-f0-9]{64}$/i.test(value.requestFingerprint.trim()) ? value.requestFingerprint.trim().toLowerCase() : undefined,
         sourceRecordId: normalizeOptionalText(value.sourceRecordId, 120),
-        sourceDate: normalizeDate(value.sourceDate) || undefined,
         createdAt: value.createdAt || new Date().toISOString(),
     };
 }
 
-export function normalizeDailyPlanPointWallet(value: Partial<StoredDailyPlanPointWallet>): StoredDailyPlanPointWallet {
-    const now = new Date().toISOString();
-    const grantedPoints = Math.max(0, normalizePoints(value.grantedPoints, 0));
-    return {
-        userId: value.userId || "",
-        date: normalizeDate(value.date),
-        planId: normalizePlanId(value.planId) || DEFAULT_ENTITLEMENT_PLAN_ID,
-        assignmentId: normalizeOptionalText(value.assignmentId, 120),
-        grantedPoints,
-        remainingPoints: Math.min(grantedPoints, Math.max(0, normalizePoints(value.remainingPoints, grantedPoints))),
-        createdAt: value.createdAt || now,
-        updatedAt: value.updatedAt || now,
-    };
-}
-
-type PointRecordInput = Omit<StoredPointRecord, "id" | "permanentAmount" | "dailyAmount" | "permanentBalanceAfter" | "dailyBalanceAfter"> &
-    Partial<Pick<StoredPointRecord, "permanentAmount" | "dailyAmount" | "permanentBalanceAfter" | "dailyBalanceAfter">>;
+type PointRecordInput = Omit<StoredPointRecord, "id">;
 
 export function addPointRecord(db: AuthDatabase, record: PointRecordInput) {
     db.pointRecords = db.pointRecords || [];
     db.pointRecords.push(normalizePointRecord({ id: randomUUID(), ...record }));
+}
+
+function normalizeCreditText(value: unknown) {
+    try {
+        const normalized = decimal(value as string);
+        return normalized.hasAtMostDecimalPlaces(8) ? normalized.toString() : "0";
+    } catch {
+        return "0";
+    }
 }
 
 export function normalizeEmailCode(value: Partial<StoredEmailCode>): StoredEmailCode {

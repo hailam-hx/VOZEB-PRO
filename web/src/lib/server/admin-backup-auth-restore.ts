@@ -2,13 +2,14 @@ import { encryptAuthDbSecretsForStorage } from "@/lib/auth/store-normalizers";
 import {
     insertPostgresAnnouncements,
     insertPostgresCdkCodes,
-    insertPostgresDailyPlanPointWallets,
+    insertPostgresWalletHolds,
+    insertPostgresUsageCharges,
+    insertPostgresProviderUsageAttempts,
     insertPostgresEmailCodes,
     insertPostgresPointRecords,
     insertPostgresQuotaUsage,
     insertPostgresSessions,
     insertPostgresUsers,
-    upsertPostgresEntitlementPlans,
     upsertPostgresSettings,
     upsertPostgresSystemChannels,
 } from "@/lib/auth/store-repository";
@@ -21,7 +22,6 @@ export async function restorePostgresAuthSnapshot(client: QueryExecutor, db: Aut
     const userIds = new Set(normalized.users.map((user) => user.id));
     const cdkCodes = normalized.cdkCodes.map((code) => ({ ...code, redemptions: code.redemptions.filter((redemption) => userIds.has(redemption.userId)) }));
 
-    await upsertPostgresEntitlementPlans(client, normalized.settings.entitlements.plans);
     await upsertPostgresSettings(client, normalized.settings);
     await upsertPostgresSystemChannels(client, normalized.settings.systemChannels);
     await insertPostgresUsers(client, normalized.users);
@@ -42,10 +42,18 @@ export async function restorePostgresAuthSnapshot(client: QueryExecutor, db: Aut
         client,
         normalized.pointRecords.filter((record) => userIds.has(record.userId)),
     );
-    await insertPostgresDailyPlanPointWallets(
-        client,
-        normalized.dailyPlanPointWallets.filter((wallet) => userIds.has(wallet.userId)),
-    );
+    const holds = normalized.walletHolds.filter((hold) => userIds.has(hold.userId));
+    await insertPostgresWalletHolds(client, holds.map((hold) => ({ ...hold, status: "active", usageChargeId: undefined, closedAt: undefined })));
+    await insertPostgresProviderUsageAttempts(client, normalized.providerUsageAttempts.filter((attempt) => userIds.has(attempt.userId)));
+    await insertPostgresUsageCharges(client, normalized.usageCharges.filter((charge) => userIds.has(charge.userId)));
+    const walletRepository = (await import("@/lib/server/database")).createPostgresRepositories(client).pointsWallet;
+    for (const hold of holds.filter((item) => item.status !== "active" && item.closedAt)) {
+        await walletRepository.closeHold(hold.id, {
+            status: hold.status === "settled" ? "settled" : "released",
+            usageChargeId: hold.usageChargeId,
+            closedAt: hold.closedAt!,
+        });
+    }
     await insertPostgresCdkCodes(client, cdkCodes);
     await insertPostgresAnnouncements(client, normalized.announcements);
 }

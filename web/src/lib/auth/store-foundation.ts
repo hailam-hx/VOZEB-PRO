@@ -22,9 +22,6 @@ import {
     type GenerationPointMultipliers,
     type GenerationCostControlSettings,
     type DataLifecycleSettings,
-    type EntitlementPlanLimits,
-    type EntitlementPlan,
-    type EntitlementSettings,
     type CdkStatus,
     type PublicCdkRedemption,
     type PublicCdkCode,
@@ -123,42 +120,16 @@ export const DEFAULT_DATA_LIFECYCLE: DataLifecycleSettings = {
     cleanupExpiredTemporaryMedia: true,
     maintenanceBatchSize: 100,
 };
-export const DEFAULT_ENTITLEMENT_LIMITS: EntitlementPlanLimits = {
-    dailyPointSpend: 0,
-    dailyApiCalls: 0,
-    dailyImages: 0,
-    dailyVideos: 0,
-    dailyAudio: 0,
-    dailyText: 0,
-};
-export const DEFAULT_ENTITLEMENT_PLAN_ID = "free";
-export const DEFAULT_ENTITLEMENT_SETTINGS: EntitlementSettings = {
-    enabled: false,
-    defaultPlanId: DEFAULT_ENTITLEMENT_PLAN_ID,
-    plans: [
-        {
-            id: DEFAULT_ENTITLEMENT_PLAN_ID,
-            name: "免费版",
-            enabled: true,
-            dailyPoints: 0,
-            limits: DEFAULT_ENTITLEMENT_LIMITS,
-            features: ["system-api", "points-wallet"],
-        },
-    ],
-};
 export const DEFAULT_SETTINGS: AuthSettings = {
     site: DEFAULT_SITE_SETTINGS,
     registrationEnabled: true,
     emailRegistrationEnabled: false,
-    freeDailyPointsEnabled: true,
-    freeDailyPoints: 0,
     mail: DEFAULT_MAIL_SETTINGS,
     allowUserApiConfig: false,
     modelPointCosts: {},
     generationPointMultipliers: DEFAULT_GENERATION_POINT_MULTIPLIERS,
     generationCostControl: DEFAULT_GENERATION_COST_CONTROL,
     dataLifecycle: DEFAULT_DATA_LIFECYCLE,
-    entitlements: DEFAULT_ENTITLEMENT_SETTINGS,
     generationConcurrency: { agent: 2, image: 4, video: 1, audio: 2, text: 4, render: 1 },
     generationDefaults: {
         canvasImageCount: 1,

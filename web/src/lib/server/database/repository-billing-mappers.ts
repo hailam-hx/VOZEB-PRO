@@ -11,7 +11,6 @@ import type {
     PromotionCampaignRecord,
     PromotionProductRecord,
     UserCouponRecord,
-    UserPlanAssignmentRecord,
 } from "./repository-types";
 import { formatAccountId } from "@/lib/account-id";
 import {
@@ -28,8 +27,6 @@ import {
     optionalNumber,
     optionalString,
     paymentTransactionStatusValue,
-    planAssignmentSourceValue,
-    planAssignmentStatusValue,
     stringValue,
 } from "./repository-utils";
 
@@ -244,22 +241,6 @@ export function mapBillingReconciliationRow(row: Record<string, unknown>): Billi
         localCurrency: optionalString(row.local_currency),
         issueCodes: jsonValue(row.issue_codes),
         issues: jsonValue(row.issues),
-        createdAt: isoValue(row.created_at),
-        updatedAt: isoValue(row.updated_at),
-    };
-}
-
-export function mapUserPlanAssignment(row: Record<string, unknown>): UserPlanAssignmentRecord {
-    return {
-        id: stringValue(row.id),
-        userId: stringValue(row.user_id),
-        planId: stringValue(row.plan_id),
-        status: planAssignmentStatusValue(row.status),
-        source: planAssignmentSourceValue(row.source),
-        sourceId: optionalString(row.source_id),
-        startsAt: isoValue(row.starts_at),
-        endsAt: optionalIso(row.ends_at),
-        metadata: optionalJson(row.metadata),
         createdAt: isoValue(row.created_at),
         updatedAt: isoValue(row.updated_at),
     };

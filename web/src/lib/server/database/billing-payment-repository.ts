@@ -7,11 +7,8 @@ import type {
     PaymentProviderEventRecord,
     PaymentTransactionRecord,
     PaymentTransactionStatus,
-    PlanAssignmentSource,
-    PlanAssignmentStatus,
-    UserPlanAssignmentRecord,
 } from "./repository-shared";
-import { jsonParam, mapBillingReconciliationRow, mapBillingReconciliationRun, mapPaymentProviderEvent, mapPaymentTransaction, mapUserPlanAssignment, normalizePage, normalizePageSize, pageResult } from "./repository-shared";
+import { jsonParam, mapBillingReconciliationRow, mapBillingReconciliationRun, mapPaymentProviderEvent, mapPaymentTransaction, normalizePage, normalizePageSize, pageResult } from "./repository-shared";
 
 export class BillingPaymentRepository {
     constructor(private readonly db: QueryExecutor) {}
@@ -248,98 +245,6 @@ export class BillingPaymentRepository {
             [input.runId, pageSize, (page - 1) * pageSize],
         );
         return pageResult(result.rows.map(mapBillingReconciliationRow), Number(result.rows[0]?.total_count || 0), page, pageSize);
-    }
-
-    async createPlanAssignment(assignment: UserPlanAssignmentRecord) {
-        const result = await this.db.query(
-            `
-            INSERT INTO user_plan_assignments (id, user_id, plan_id, status, source, source_id, starts_at, ends_at, metadata, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (source, source_id) WHERE source_id IS NOT NULL AND source_id <> '' DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                plan_id = EXCLUDED.plan_id,
-                status = EXCLUDED.status,
-                starts_at = EXCLUDED.starts_at,
-                ends_at = EXCLUDED.ends_at,
-                metadata = EXCLUDED.metadata
-            RETURNING *
-            `,
-            [
-                assignment.id,
-                assignment.userId,
-                assignment.planId,
-                assignment.status,
-                assignment.source,
-                assignment.sourceId || null,
-                assignment.startsAt,
-                assignment.endsAt || null,
-                jsonParam(assignment.metadata ?? {}),
-                assignment.createdAt,
-                assignment.updatedAt,
-            ],
-        );
-        return mapUserPlanAssignment(result.rows[0]);
-    }
-
-    async getActivePlanAssignment(userId: string, at = new Date(), forUpdate = false) {
-        const result = await this.db.query(
-            `
-            SELECT *
-            FROM user_plan_assignments
-            WHERE user_id = $1
-              AND status = 'active'
-              AND starts_at <= $2
-              AND (ends_at IS NULL OR ends_at > $2)
-            ORDER BY starts_at DESC, created_at DESC, id DESC
-            LIMIT 1
-            ${forUpdate ? "FOR UPDATE" : ""}
-            `,
-            [userId, at.toISOString()],
-        );
-        return result.rows[0] ? mapUserPlanAssignment(result.rows[0]) : null;
-    }
-
-    async getPlanAssignmentBySource(source: PlanAssignmentSource, sourceId: string) {
-        const result = await this.db.query("SELECT * FROM user_plan_assignments WHERE source = $1 AND source_id = $2 LIMIT 1", [source, sourceId]);
-        return result.rows[0] ? mapUserPlanAssignment(result.rows[0]) : null;
-    }
-
-    async listPlanAssignments(input: PageInput & { userId?: string; planId?: string; status?: PlanAssignmentStatus; source?: PlanAssignmentSource } = {}): Promise<PageResult<UserPlanAssignmentRecord>> {
-        const page = normalizePage(input.page);
-        const pageSize = normalizePageSize(input.pageSize);
-        const result = await this.db.query(
-            `
-            SELECT *, count(*) OVER() AS total_count
-            FROM user_plan_assignments
-            WHERE ($1::text IS NULL OR user_id = $1)
-              AND ($2::text IS NULL OR plan_id = $2)
-              AND ($3::text IS NULL OR status = $3)
-              AND ($4::text IS NULL OR source = $4)
-            ORDER BY created_at DESC
-            LIMIT $5 OFFSET $6
-            `,
-            [input.userId || null, input.planId || null, input.status || null, input.source || null, pageSize, (page - 1) * pageSize],
-        );
-        return pageResult(result.rows.map(mapUserPlanAssignment), Number(result.rows[0]?.total_count || 0), page, pageSize);
-    }
-
-    async updatePlanAssignment(id: string, patch: Partial<Omit<UserPlanAssignmentRecord, "id" | "userId" | "createdAt" | "updatedAt">>) {
-        const result = await this.db.query(
-            `
-            UPDATE user_plan_assignments SET
-                plan_id = COALESCE($2, plan_id),
-                status = COALESCE($3, status),
-                source = COALESCE($4, source),
-                source_id = COALESCE($5, source_id),
-                starts_at = COALESCE($6, starts_at),
-                ends_at = COALESCE($7, ends_at),
-                metadata = COALESCE($8::jsonb, metadata)
-            WHERE id = $1
-            RETURNING *
-            `,
-            [id, patch.planId, patch.status, patch.source, patch.sourceId, patch.startsAt, patch.endsAt, jsonParam(patch.metadata)],
-        );
-        return result.rows[0] ? mapUserPlanAssignment(result.rows[0]) : null;
     }
 
     async upsertProviderEvent(event: PaymentProviderEventRecord) {

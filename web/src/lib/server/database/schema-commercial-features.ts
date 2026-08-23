@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS billing_orders (
     product_id text REFERENCES billing_products(id),
     user_id text REFERENCES users(id) ON DELETE SET NULL,
     product_kind text NOT NULL DEFAULT 'plan',
-    plan_id text REFERENCES entitlement_plans(id),
+    plan_id text,
     status text NOT NULL DEFAULT 'pending',
     subject text NOT NULL,
     amount_cents bigint NOT NULL DEFAULT 0,

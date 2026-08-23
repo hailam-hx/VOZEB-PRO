@@ -193,7 +193,7 @@ export async function listPublicUsersPage(input?: { page?: number; pageSize?: nu
         total,
         page: safePage,
         pageSize,
-        summary: summarizePublicUsers(publicUsers, db.settings.entitlements.defaultPlanId),
+        summary: summarizePublicUsers(publicUsers),
     };
 }
 
@@ -204,10 +204,7 @@ export async function getPublicUserSummary(): Promise<PublicUserSummary> {
         return createPostgresRepositories().users.summarize({ now: clock.now.toISOString(), date: clock.date });
     }
     const db = await readAuthDb();
-    return summarizePublicUsers(
-        db.users.map((user) => toPublicUser(user, db)),
-        db.settings.entitlements.defaultPlanId,
-    );
+    return summarizePublicUsers(db.users.map((user) => toPublicUser(user, db)));
 }
 
 export async function getPublicUsersByIds(userIds: string[]): Promise<PublicUser[]> {
@@ -265,7 +262,7 @@ export async function listPointRecordsPage(userId: string, input?: { page?: numb
     }
     const db = await readAuthDb();
     const records = (db.pointRecords || [])
-        .filter((record) => record.userId === userId && (!direction || (direction === "credit" ? record.amount > 0 : record.amount < 0)))
+        .filter((record) => record.userId === userId && (!direction || (direction === "credit" ? Number(record.amount) > 0 : Number(record.amount) < 0)))
         .map(toPublicPointRecord)
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     const total = records.length;

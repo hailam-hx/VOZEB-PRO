@@ -4,7 +4,6 @@ import { emptyDb } from "@/lib/auth/store-normalizers";
 import type { QueryExecutor } from "@/lib/server/database";
 
 const mocks = vi.hoisted(() => ({
-    upsertPostgresEntitlementPlans: vi.fn(),
     upsertPostgresSettings: vi.fn(),
     upsertPostgresSystemChannels: vi.fn(),
     insertPostgresUsers: vi.fn(),
@@ -12,7 +11,9 @@ const mocks = vi.hoisted(() => ({
     insertPostgresEmailCodes: vi.fn(),
     insertPostgresQuotaUsage: vi.fn(),
     insertPostgresPointRecords: vi.fn(),
-    insertPostgresDailyPlanPointWallets: vi.fn(),
+    insertPostgresWalletHolds: vi.fn(),
+    insertPostgresUsageCharges: vi.fn(),
+    insertPostgresProviderUsageAttempts: vi.fn(),
     insertPostgresCdkCodes: vi.fn(),
     insertPostgresAnnouncements: vi.fn(),
 }));
@@ -41,16 +42,19 @@ describe("PostgreSQL account-config auth restore", () => {
             role: "admin",
             adminPermissions: ["system.manage"],
             status: "active",
-            planId: "free",
-            pointsBalance: 10,
+            settledBalance: "10",
             passwordHash: "hash",
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z",
         });
+        db.walletHolds.push({ id: "hold-a", userId: "user-a", businessId: "generation:a", requestFingerprint: "a".repeat(64), amount: "1.25", status: "active", description: "生成预留", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" });
+        db.providerUsageAttempts.push({ id: "attempt-a", holdId: "hold-a", userId: "user-a", attemptNumber: 1, status: "failed", provider: "vendor", bindingId: "binding", requestFingerprint: "b".repeat(64), nativeCostAmount: "0.1", nativeCostUnit: { kind: "fiat", currency: "USD" }, costUsd: "0.1", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", completedAt: "2026-08-01T00:00:00.000Z" });
 
         await restorePostgresAuthSnapshot(client, db);
 
         expect(mocks.insertPostgresUsers).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "user-a", accountId: "0001" })]);
+        expect(mocks.insertPostgresWalletHolds).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "hold-a", amount: "1.25" })]);
+        expect(mocks.insertPostgresProviderUsageAttempts).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "attempt-a", nativeCostAmount: "0.1" })]);
         expect(query.mock.calls.map(([sql]) => sql.toUpperCase()).some((sql) => sql.includes("DELETE FROM"))).toBe(false);
     });
 });
