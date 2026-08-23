@@ -18,6 +18,7 @@ export type AudioTaskConfig = {
     format?: string;
     speed?: string;
     instructions?: string;
+    usagePricing?: import("@/lib/server/generation-channel").SystemGenerationChannelConfig["usagePricing"];
 };
 export type AudioTask = GenerationTaskContext & {
     id: string;

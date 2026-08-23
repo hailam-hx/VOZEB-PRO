@@ -27,11 +27,29 @@ export class PointsWalletRepository {
 
     private async writeHold(hold: WalletHoldRecord, restore: boolean) {
         const result = await this.db.query(
-            `INSERT INTO wallet_holds (id, user_id, business_id, request_fingerprint, amount, status, description, usage_charge_id, release_business_id, release_request_fingerprint, release_reason, expires_at, closed_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-             ${restore ? `ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, business_id = EXCLUDED.business_id, request_fingerprint = EXCLUDED.request_fingerprint, amount = EXCLUDED.amount, status = EXCLUDED.status, description = EXCLUDED.description, usage_charge_id = EXCLUDED.usage_charge_id, release_business_id = EXCLUDED.release_business_id, release_request_fingerprint = EXCLUDED.release_request_fingerprint, release_reason = EXCLUDED.release_reason, expires_at = EXCLUDED.expires_at, closed_at = EXCLUDED.closed_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at` : ""}
+            `INSERT INTO wallet_holds (id, user_id, business_id, request_fingerprint, amount, status, description, runtime_snapshot, review_reason, usage_charge_id, release_business_id, release_request_fingerprint, release_reason, expires_at, closed_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+             ${restore ? `ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, business_id = EXCLUDED.business_id, request_fingerprint = EXCLUDED.request_fingerprint, amount = EXCLUDED.amount, status = EXCLUDED.status, description = EXCLUDED.description, runtime_snapshot = EXCLUDED.runtime_snapshot, review_reason = EXCLUDED.review_reason, usage_charge_id = EXCLUDED.usage_charge_id, release_business_id = EXCLUDED.release_business_id, release_request_fingerprint = EXCLUDED.release_request_fingerprint, release_reason = EXCLUDED.release_reason, expires_at = EXCLUDED.expires_at, closed_at = EXCLUDED.closed_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at` : ""}
              RETURNING *`,
-            [hold.id, hold.userId, hold.businessId, hold.requestFingerprint, hold.amount, hold.status, hold.description, hold.usageChargeId || null, hold.releaseBusinessId || null, hold.releaseRequestFingerprint || null, hold.releaseReason || null, hold.expiresAt || null, hold.closedAt || null, hold.createdAt, hold.updatedAt],
+            [
+                hold.id,
+                hold.userId,
+                hold.businessId,
+                hold.requestFingerprint,
+                hold.amount,
+                hold.status,
+                hold.description,
+                hold.runtimeSnapshot ? jsonParam(hold.runtimeSnapshot) : null,
+                hold.reviewReason || null,
+                hold.usageChargeId || null,
+                hold.releaseBusinessId || null,
+                hold.releaseRequestFingerprint || null,
+                hold.releaseReason || null,
+                hold.expiresAt || null,
+                hold.closedAt || null,
+                hold.createdAt,
+                hold.updatedAt,
+            ],
         );
         return mapWalletHold(result.rows[0]);
     }
@@ -50,6 +68,16 @@ export class PointsWalletRepository {
         return stringValue(result.rows[0]?.held_balance || "0");
     }
 
+    async listExpiredActiveHolds(now: string, limit: number) {
+        const result = await this.db.query("SELECT * FROM wallet_holds WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= $1 ORDER BY expires_at ASC, id ASC LIMIT $2", [now, limit]);
+        return result.rows.map(mapWalletHold);
+    }
+
+    async markHoldNeedsReview(id: string, reason: string, now: string) {
+        const result = await this.db.query("UPDATE wallet_holds SET review_reason = $2, updated_at = $3 WHERE id = $1 AND status = 'active' RETURNING *", [id, reason, now]);
+        return result.rows[0] ? mapWalletHold(result.rows[0]) : null;
+    }
+
     async getUsageChargeById(id: string) {
         const result = await this.db.query("SELECT * FROM usage_charges WHERE id = $1", [id]);
         return result.rows[0] ? mapUsageCharge(result.rows[0]) : null;
@@ -65,11 +93,28 @@ export class PointsWalletRepository {
 
     private async writeUsageCharge(charge: UsageChargeRecord, restore: boolean) {
         const result = await this.db.query(
-            `INSERT INTO usage_charges (id, user_id, hold_id, request_fingerprint, reserved_credits, settled_credits, normalized_usage, sale_rate_snapshot, final_sale_charge, estimated, total_provider_cost_usd, description, point_record_id, created_at, settled_at)
-             VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11::numeric, $12, $13, $14, $15)
-             ${restore ? `ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, hold_id = EXCLUDED.hold_id, request_fingerprint = EXCLUDED.request_fingerprint, reserved_credits = EXCLUDED.reserved_credits, settled_credits = EXCLUDED.settled_credits, normalized_usage = EXCLUDED.normalized_usage, sale_rate_snapshot = EXCLUDED.sale_rate_snapshot, final_sale_charge = EXCLUDED.final_sale_charge, estimated = EXCLUDED.estimated, total_provider_cost_usd = EXCLUDED.total_provider_cost_usd, description = EXCLUDED.description, point_record_id = EXCLUDED.point_record_id, created_at = EXCLUDED.created_at, settled_at = EXCLUDED.settled_at` : ""}
+            `INSERT INTO usage_charges (id, user_id, hold_id, request_fingerprint, reserved_credits, settled_credits, normalized_usage, sale_rate_snapshot, runtime_snapshot, final_sale_charge, estimated, total_provider_cost_usd, description, point_record_id, created_at, settled_at)
+             VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12::numeric, $13, $14, $15, $16)
+             ${restore ? `ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, hold_id = EXCLUDED.hold_id, request_fingerprint = EXCLUDED.request_fingerprint, reserved_credits = EXCLUDED.reserved_credits, settled_credits = EXCLUDED.settled_credits, normalized_usage = EXCLUDED.normalized_usage, sale_rate_snapshot = EXCLUDED.sale_rate_snapshot, runtime_snapshot = EXCLUDED.runtime_snapshot, final_sale_charge = EXCLUDED.final_sale_charge, estimated = EXCLUDED.estimated, total_provider_cost_usd = EXCLUDED.total_provider_cost_usd, description = EXCLUDED.description, point_record_id = EXCLUDED.point_record_id, created_at = EXCLUDED.created_at, settled_at = EXCLUDED.settled_at` : ""}
              RETURNING *`,
-            [charge.id, charge.userId, charge.holdId, charge.requestFingerprint, charge.reservedCredits, charge.settledCredits, jsonParam(charge.normalizedUsage), jsonParam(charge.saleRateSnapshot), jsonParam(charge.finalSaleCharge), charge.estimated, charge.totalProviderCostUsd, charge.description, charge.pointRecordId || null, charge.createdAt, charge.settledAt],
+            [
+                charge.id,
+                charge.userId,
+                charge.holdId,
+                charge.requestFingerprint,
+                charge.reservedCredits,
+                charge.settledCredits,
+                jsonParam(charge.normalizedUsage),
+                jsonParam(charge.saleRateSnapshot),
+                charge.runtimeSnapshot ? jsonParam(charge.runtimeSnapshot) : null,
+                jsonParam(charge.finalSaleCharge),
+                charge.estimated,
+                charge.totalProviderCostUsd,
+                charge.description,
+                charge.pointRecordId || null,
+                charge.createdAt,
+                charge.settledAt,
+            ],
         );
         return mapUsageCharge(result.rows[0]);
     }
@@ -82,6 +127,11 @@ export class PointsWalletRepository {
     async getProviderAttemptByNumber(holdId: string, attemptNumber: number) {
         const result = await this.db.query("SELECT * FROM provider_usage_attempts WHERE hold_id = $1 AND attempt_number = $2", [holdId, attemptNumber]);
         return result.rows[0] ? mapProviderUsageAttempt(result.rows[0]) : null;
+    }
+
+    async listProviderAttemptsForHold(holdId: string) {
+        const result = await this.db.query("SELECT * FROM provider_usage_attempts WHERE hold_id = $1 ORDER BY attempt_number ASC", [holdId]);
+        return result.rows.map(mapProviderUsageAttempt);
     }
 
     async createProviderAttempt(attempt: ProviderUsageAttemptRecord) {
@@ -98,7 +148,27 @@ export class PointsWalletRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::numeric, $12::jsonb, $13::numeric, $14::numeric, $15::jsonb, $16::jsonb, $17, $18, $19)
              ${restore ? `ON CONFLICT (id) DO UPDATE SET hold_id = EXCLUDED.hold_id, user_id = EXCLUDED.user_id, attempt_number = EXCLUDED.attempt_number, status = EXCLUDED.status, provider = EXCLUDED.provider, binding_id = EXCLUDED.binding_id, request_fingerprint = EXCLUDED.request_fingerprint, provider_idempotency_key = EXCLUDED.provider_idempotency_key, upstream_task_id = EXCLUDED.upstream_task_id, native_cost_amount = EXCLUDED.native_cost_amount, native_cost_unit = EXCLUDED.native_cost_unit, usd_conversion_rate = EXCLUDED.usd_conversion_rate, cost_usd = EXCLUDED.cost_usd, cost_rate_snapshot = EXCLUDED.cost_rate_snapshot, normalized_usage = EXCLUDED.normalized_usage, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, completed_at = EXCLUDED.completed_at` : ""}
              RETURNING *`,
-            [attempt.id, attempt.holdId, attempt.userId, attempt.attemptNumber, attempt.status, attempt.provider, attempt.bindingId, attempt.requestFingerprint, attempt.providerIdempotencyKey || null, attempt.upstreamTaskId || null, attempt.nativeCostAmount, jsonParam(attempt.nativeCostUnit), attempt.usdConversionRate, attempt.costUsd, attempt.costRateSnapshot ? jsonParam(attempt.costRateSnapshot) : null, attempt.normalizedUsage ? jsonParam(attempt.normalizedUsage) : null, attempt.createdAt, attempt.updatedAt, attempt.completedAt || null],
+            [
+                attempt.id,
+                attempt.holdId,
+                attempt.userId,
+                attempt.attemptNumber,
+                attempt.status,
+                attempt.provider,
+                attempt.bindingId,
+                attempt.requestFingerprint,
+                attempt.providerIdempotencyKey || null,
+                attempt.upstreamTaskId || null,
+                attempt.nativeCostAmount,
+                jsonParam(attempt.nativeCostUnit),
+                attempt.usdConversionRate,
+                attempt.costUsd,
+                attempt.costRateSnapshot ? jsonParam(attempt.costRateSnapshot) : null,
+                attempt.normalizedUsage ? jsonParam(attempt.normalizedUsage) : null,
+                attempt.createdAt,
+                attempt.updatedAt,
+                attempt.completedAt || null,
+            ],
         );
         return mapProviderUsageAttempt(result.rows[0]);
     }
@@ -110,7 +180,20 @@ export class PointsWalletRepository {
                 cost_usd = $8::numeric, cost_rate_snapshot = $9::jsonb, normalized_usage = $10::jsonb,
                 completed_at = $11, updated_at = $12
              WHERE id = $1 AND status = 'pending' RETURNING *`,
-            [id, attempt.status, attempt.providerIdempotencyKey || null, attempt.upstreamTaskId || null, attempt.nativeCostAmount, jsonParam(attempt.nativeCostUnit), attempt.usdConversionRate, attempt.costUsd, attempt.costRateSnapshot ? jsonParam(attempt.costRateSnapshot) : null, attempt.normalizedUsage ? jsonParam(attempt.normalizedUsage) : null, attempt.completedAt || null, attempt.updatedAt],
+            [
+                id,
+                attempt.status,
+                attempt.providerIdempotencyKey || null,
+                attempt.upstreamTaskId || null,
+                attempt.nativeCostAmount,
+                jsonParam(attempt.nativeCostUnit),
+                attempt.usdConversionRate,
+                attempt.costUsd,
+                attempt.costRateSnapshot ? jsonParam(attempt.costRateSnapshot) : null,
+                attempt.normalizedUsage ? jsonParam(attempt.normalizedUsage) : null,
+                attempt.completedAt || null,
+                attempt.updatedAt,
+            ],
         );
         return result.rows[0] ? mapProviderUsageAttempt(result.rows[0]) : null;
     }
@@ -140,6 +223,12 @@ export class PointsWalletRepository {
             [userId],
         );
         const row = result.rows[0] || {};
-        return { ledgerBalance: stringValue(row.ledger_balance), settledBalance: stringValue(row.settled_balance), activeHolds: stringValue(row.active_holds), availableBalance: stringValue(row.available_balance), invalidChargeCount: numberValue(row.invalid_charge_count) };
+        return {
+            ledgerBalance: stringValue(row.ledger_balance),
+            settledBalance: stringValue(row.settled_balance),
+            activeHolds: stringValue(row.active_holds),
+            availableBalance: stringValue(row.available_balance),
+            invalidChargeCount: numberValue(row.invalid_charge_count),
+        };
     }
 }

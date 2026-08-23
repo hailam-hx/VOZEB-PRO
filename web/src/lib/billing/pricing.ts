@@ -103,13 +103,11 @@ export function calculatePricingReserve(input: { rateCard: PricingRateCardV1; us
     return { rawCredits: decimalText(rawCredits), credits: rawCredits.ceilToDecimalPlaces(8).toString(), usage };
 }
 
-export function calculateFinalSaleCharge(input: {
-    rateCard: PricingRateCardV1;
-    reserve: PricingReserve;
-    actualUsage?: NormalizedUsage;
-    derivedUsage?: NormalizedUsage;
-    providerCostUsd?: DecimalInput;
-}): FinalSaleCharge {
+export function calculateNormalizedUsagePrice(input: { rateCard: PricingRateCardV1; usage: NormalizedUsage }) {
+    return decimalText(priceUsage(validatePricingRateCard(input.rateCard), input.usage));
+}
+
+export function calculateFinalSaleCharge(input: { rateCard: PricingRateCardV1; reserve: PricingReserve; actualUsage?: NormalizedUsage; derivedUsage?: NormalizedUsage; providerCostUsd?: DecimalInput }): FinalSaleCharge {
     const rateCard = validatePricingRateCard(input.rateCard);
     const usage = input.actualUsage || input.derivedUsage || input.reserve.usage;
     const estimated = !input.actualUsage && !input.derivedUsage;
@@ -157,7 +155,9 @@ function priceComponent(component: PricingComponent, usage: NormalizedUsage) {
         const count = usage.count === undefined ? decimal(1) : decimal(usage.count, "生成数量");
         return decimal(component.unitPrice, "价格组件单价").times(count);
     }
-    return decimal(component.unitPrice, "价格组件单价").times(decimal(value, component.dimension)).dividedBy(decimal(component.per || "1"));
+    return decimal(component.unitPrice, "价格组件单价")
+        .times(decimal(value, component.dimension))
+        .dividedBy(decimal(component.per || "1"));
 }
 
 function textReserveUsage(usage: NormalizedUsage): NormalizedUsage {

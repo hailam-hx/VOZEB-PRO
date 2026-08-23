@@ -15,7 +15,16 @@ import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
-import { readVerifiedSystemAiBusinessRequestId, SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiPointsIdempotencyKey, systemAiRequestFingerprint } from "@/lib/server/system-ai-billing";
+import {
+    readVerifiedSystemAiBusinessRequestId,
+    readVerifiedSystemAiUsageContext,
+    SYSTEM_AI_LOGICAL_MODEL_HEADER,
+    SYSTEM_AI_UPSTREAM_MODEL_HEADER,
+    systemAiPointsIdempotencyKey,
+    systemAiRequestFingerprint,
+    systemAiUsageResponseHeaders,
+    type SystemAiUsageBilling,
+} from "@/lib/server/system-ai-billing";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 import { normalizeYumengModelCenterBaseUrl } from "@/lib/yumeng-model-center";
@@ -23,6 +32,11 @@ import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
 import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
+import { createStreamingUsageAccumulator, deriveProxyBillableUsage, normalizeProxyBillableRequest } from "@/lib/server/usage-billing-adapter";
+import { finishUsageProviderAttempt, recordUsageProviderAttempt, reserveUsageBilling, settleCancelledUsageBilling, settleUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
+import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
+import { usageRecoveryIdentity } from "@/lib/server/generation-usage-context";
+import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,6 +164,58 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     const authConfig = modelConfig?.protocol ? { ...channel.advancedConfig, protocol: modelConfig.protocol } : channel.advancedConfig;
     Object.entries(protocolAuthHeaders(channel.apiKey, authConfig, globalChannel ? "openai" : apiFormat)).forEach(([key, value]) => headers.set(key, value));
     const callType = `${access.capability}:${access.operation}:/${(globalAdaptation?.path || path).join("/")}`;
+    const usageContext = access.operation === "create" ? readVerifiedSystemAiUsageContext(request.headers, access.logicalModelId, upstreamModel) : undefined;
+    let usageBilling: UsageBilling | undefined;
+    let usageAttempt: Parameters<typeof recordUsageProviderAttempt>[0] | undefined;
+    if (usageContext) {
+        const logicalModel = settings.logicalModels.find((model) => model.enabled && model.id === access.logicalModelId);
+        const binding = logicalModel?.bindings.find((item) => item.enabled && item.id === usageContext.bindingId && item.channelId === channel.id && sameModel(item.upstreamModel, upstreamModel));
+        if (!logicalModel?.saleRateCard || !binding?.costRateCard || !binding.providerCostUnit) return NextResponse.json({ error: "逻辑模型缺少完整售卖或供应商成本价格快照" }, { status: 400 });
+        const capabilityProfile = resolveLogicalModelCapabilityProfile(binding, access.capability, channel, upstreamModel);
+        try {
+            const requestUsage = normalizeProxyBillableRequest({
+                capability: access.capability,
+                payload: readRequestBody(contentType, requestBody.pointsPayload),
+                rateCard: logicalModel.saleRateCard,
+                inputLimits: capabilityProfile
+                    ? { maxInputTokens: capabilityProfile.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined, maxOutputTokens: capabilityProfile.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined }
+                    : undefined,
+            });
+            const now = new Date();
+            usageBilling = await reserveUsageBilling({
+                userId,
+                businessId: usageContext.businessRequestId,
+                requestFingerprint: usageContext.requestFingerprint,
+                logicalModelId: logicalModel.id,
+                saleRateSnapshot: logicalModel.saleRateCard,
+                requestUsage,
+                description: `${logicalModel.name}用量预留`,
+                inputLimits: capabilityProfile
+                    ? { maxInputTokens: capabilityProfile.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined, maxOutputTokens: capabilityProfile.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined }
+                    : undefined,
+                providerIdempotency: { supported: usageContext.providerIdempotencySupported, key: usageContext.providerIdempotencyKey },
+                recovery: usageRecoveryIdentity(usageContext.businessRequestId),
+                expiresAt: new Date(now.getTime() + resolveModelRequestTimeoutMs({ capabilityProfile }, access.capability)),
+                now,
+            });
+            usageAttempt = {
+                billing: usageBilling,
+                attemptNumber: usageContext.attemptNumber,
+                status: "pending",
+                provider: channel.advancedConfig?.protocol || channel.id,
+                bindingId: binding.id,
+                providerIdempotencyKey: usageContext.providerIdempotencyKey,
+                nativeCostAmount: "0",
+                nativeCostUnit: binding.providerCostUnit,
+                costRateSnapshot: binding.costRateCard,
+                normalizedUsage: usageBilling.snapshot.reserve.usage,
+            };
+            await recordUsageProviderAttempt(usageAttempt);
+        } catch (error) {
+            if (isQuotaExceededError(error) || isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+            return NextResponse.json({ error: error instanceof Error ? error.message : "用量预留失败" }, { status: 400 });
+        }
+    }
     const businessRequestId = readVerifiedSystemAiBusinessRequestId(request.headers, access.logicalModelId, upstreamModel) || `direct:${randomUUID()}`;
     const pointsIdempotencyKey = pointsRequest ? systemAiPointsIdempotencyKey({ userId, businessRequestId, logicalModel: access.logicalModelId, channelId: channel.id, upstreamModel, callType }) : undefined;
     const requestFingerprint = pointsRequest
@@ -171,9 +237,9 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         if (!pointsResult || pointsSettled) return;
         pointsSettled = true;
         const refundedUser = await refundUserPoints(userId, pointsResult.model, pointsResult.cost, pointsResult.usageKind, pointsResult.units, undefined, pointsResult.recordId);
-        refundedPointsRemaining = typeof refundedUser?.pointsBalance === "number" ? refundedUser.pointsBalance : null;
+        refundedPointsRemaining = refundedUser ? Number(refundedUser.settledBalance) : null;
     };
-    if (pointsRequest) {
+    if (pointsRequest && !usageBilling) {
         try {
             pointsResult = await consumeUserPoints(userId, access.logicalModelId, pointsRequest.amount, pointsRequest.usageKind, pointsIdempotencyKey, requestFingerprint);
         } catch (error) {
@@ -195,6 +261,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             signal: request.signal,
         });
     } catch (error) {
+        if (usageAttempt) await recordUsageProviderAttempt({ ...usageAttempt, status: "failed" });
         await refundConsumedPoints();
         console.error("System API proxy request failed", error instanceof Error ? error.message : error);
         return NextResponse.json({ error: DEFAULT_CHANNEL_CONNECT_ERROR }, { status: 502, headers: responseHeaders(new Headers(), null, refundedPointsRemaining) });
@@ -204,6 +271,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         await refundConsumedPoints();
         pointsResult = null;
     }
+    if (!upstream.ok && usageAttempt) await recordUsageProviderAttempt({ ...usageAttempt, status: "failed" });
     if (isRedirectStatus(upstream.status)) {
         return NextResponse.json({ error: "上游接口不允许重定向，请检查后台渠道地址" }, { status: 502, headers: responseHeaders(new Headers(), null, refundedPointsRemaining) });
     }
@@ -211,14 +279,70 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (globalAdaptation && upstream.ok) {
         const payload = await upstream.json().catch(() => null);
         if (!payload) return NextResponse.json({ error: "上游文本接口返回了无效 JSON" }, { status: 502, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
-        return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), { status: upstream.status, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
+        if (usageBilling && usageContext) await settleTextResponseUsage(usageBilling, usageContext.attemptNumber, deriveProxyBillableUsage({ capability: "text", requestUsage: usageBilling.snapshot.requestUsage, payload }));
+        return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), {
+            status: upstream.status,
+            headers: responseHeaders(
+                upstream.headers,
+                pointsResult,
+                refundedPointsRemaining,
+                target,
+                usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined,
+            ),
+        });
     }
 
-    return new Response(upstream.body, {
+    const responseBody = upstream.ok && usageBilling && usageContext && access.capability === "text" && upstream.body ? meteredTextResponseBody(upstream.body, usageBilling, usageContext.attemptNumber) : upstream.body;
+    return new Response(responseBody, {
         status: upstream.status,
         statusText: upstream.statusText,
-        headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target),
+        headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined),
     });
+}
+
+function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billing: UsageBilling, attemptNumber: number) {
+    const reader = body.getReader();
+    const accumulator = createStreamingUsageAccumulator("text", billing.snapshot.requestUsage);
+    let finalized = false;
+    const finalize = async (status: "succeeded" | "canceled") => {
+        if (finalized) return;
+        finalized = true;
+        const usage = accumulator.finish();
+        try {
+            await finishUsageProviderAttempt({ billing, attemptNumber, status, normalizedUsage: usage });
+            const settlement = { billing, description: status === "canceled" ? "用户取消已由上游接受的文本生成" : "文本生成用量结算", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) };
+            if (status === "canceled") await settleCancelledUsageBilling(settlement);
+            else await settleUsageBilling(settlement);
+        } catch (error) {
+            console.error("System API text usage settlement failed", error instanceof Error ? error.message : error);
+        }
+    };
+    return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            try {
+                const next = await reader.read();
+                if (next.done) {
+                    await finalize("succeeded");
+                    controller.close();
+                    return;
+                }
+                accumulator.push(next.value);
+                controller.enqueue(next.value);
+            } catch (error) {
+                await finalize("canceled");
+                controller.error(error);
+            }
+        },
+        async cancel(reason) {
+            await reader.cancel(reason);
+            await finalize("canceled");
+        },
+    });
+}
+
+async function settleTextResponseUsage(billing: UsageBilling, attemptNumber: number, usage: ReturnType<typeof deriveProxyBillableUsage>) {
+    await finishUsageProviderAttempt({ billing, attemptNumber, status: "succeeded", normalizedUsage: usage });
+    await settleUsageBilling({ billing, description: "文本生成用量结算", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
 }
 
 function channelHasModel(models: string[], requested: string) {
@@ -634,7 +758,7 @@ function normalizeApiBaseUrl(baseUrl: string, apiFormat: "openai" | "gemini", gl
     return `${normalized}/v1`;
 }
 
-function responseHeaders(headers: Headers, pointsResult?: Awaited<ReturnType<typeof consumeUserPoints>> | null, refundedPointsRemaining?: number | null, upstreamUrl?: string) {
+function responseHeaders(headers: Headers, pointsResult?: Awaited<ReturnType<typeof consumeUserPoints>> | null, refundedPointsRemaining?: number | null, upstreamUrl?: string, usageBilling?: SystemAiUsageBilling) {
     const nextHeaders = new Headers();
     const passthrough = ["content-type", "cache-control", "content-disposition"];
     passthrough.forEach((key) => {
@@ -642,6 +766,7 @@ function responseHeaders(headers: Headers, pointsResult?: Awaited<ReturnType<typ
         if (value) nextHeaders.set(key, value);
     });
     if (upstreamUrl) nextHeaders.set("x-vozeb-pro-upstream-url", upstreamUrl);
+    if (usageBilling) Object.entries(systemAiUsageResponseHeaders(usageBilling)).forEach(([key, value]) => nextHeaders.set(key, value));
     if (pointsResult) {
         nextHeaders.set("x-vozeb-pro-points-cost", String(pointsResult.cost));
         nextHeaders.set("x-vozeb-pro-points-remaining", String(pointsResult.remaining));

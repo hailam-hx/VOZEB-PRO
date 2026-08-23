@@ -25,9 +25,11 @@ import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
+import { attachSystemAiUsageUpstreamTask } from "@/lib/server/usage-billing-runtime";
 
 import {
     type CreateImageTaskBody,
@@ -242,7 +244,10 @@ export function taskHeaders(config: ImageTaskConfig, cookie: string, pointsIdemp
     const workerHeaders = maintenanceWorkerContextHeaders(cookie);
     if (internal && workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (internal && cookie) headers.set("cookie", cookie);
-    if (internal) Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey, config.model)).forEach(([key, value]) => headers.set(key, value));
+    if (internal)
+        Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey ? generationSystemAiUsageContext(config, "image", pointsIdempotencyKey) || pointsIdempotencyKey : undefined, config.model)).forEach(([key, value]) =>
+            headers.set(key, value),
+        );
     if (pointsIdempotencyKey?.trim()) {
         headers.set("Idempotency-Key", pointsIdempotencyKey.trim());
         headers.set("X-Client-Request-Id", pointsIdempotencyKey.trim());
@@ -769,7 +774,10 @@ export function readBilling(headers: Headers) {
 
 export async function parseChargedImageResponse(task: ImageTask, response: Response, parse: () => Promise<ImageTaskResult>) {
     try {
-        return { ...(await parse()), ...readBilling(response.headers) };
+        const result = await parse();
+        const upstreamTaskId = result.pending?.id || result.needsReview?.upstream.id;
+        if (upstreamTaskId) await attachSystemAiUsageUpstreamTask(response.headers, upstreamTaskId);
+        return { ...result, ...readBilling(response.headers) };
     } catch (error) {
         await refundChargedImageResponse(task, response.headers);
         throw error;

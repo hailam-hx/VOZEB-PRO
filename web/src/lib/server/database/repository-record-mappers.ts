@@ -147,24 +147,70 @@ export function mapPointRecord(row: Record<string, unknown>): PointRecord {
 
 export function mapWalletHold(row: Record<string, unknown>): WalletHoldRecord {
     return {
-        id: stringValue(row.id), userId: stringValue(row.user_id), businessId: stringValue(row.business_id), requestFingerprint: stringValue(row.request_fingerprint), amount: stringValue(row.amount),
-        status: row.status === "settled" || row.status === "released" ? row.status : "active", description: stringValue(row.description), usageChargeId: optionalString(row.usage_charge_id), releaseBusinessId: optionalString(row.release_business_id), releaseRequestFingerprint: optionalString(row.release_request_fingerprint), releaseReason: optionalString(row.release_reason), expiresAt: optionalIso(row.expires_at), closedAt: optionalIso(row.closed_at), createdAt: isoValue(row.created_at), updatedAt: isoValue(row.updated_at),
+        id: stringValue(row.id),
+        userId: stringValue(row.user_id),
+        businessId: stringValue(row.business_id),
+        requestFingerprint: stringValue(row.request_fingerprint),
+        amount: stringValue(row.amount),
+        status: row.status === "settled" || row.status === "released" ? row.status : "active",
+        description: stringValue(row.description),
+        runtimeSnapshot: optionalJson(row.runtime_snapshot) as WalletHoldRecord["runtimeSnapshot"],
+        reviewReason: optionalString(row.review_reason),
+        usageChargeId: optionalString(row.usage_charge_id),
+        releaseBusinessId: optionalString(row.release_business_id),
+        releaseRequestFingerprint: optionalString(row.release_request_fingerprint),
+        releaseReason: optionalString(row.release_reason),
+        expiresAt: optionalIso(row.expires_at),
+        closedAt: optionalIso(row.closed_at),
+        createdAt: isoValue(row.created_at),
+        updatedAt: isoValue(row.updated_at),
     };
 }
 
 export function mapUsageCharge(row: Record<string, unknown>): UsageChargeRecord {
     return {
-        id: stringValue(row.id), userId: stringValue(row.user_id), holdId: stringValue(row.hold_id), requestFingerprint: stringValue(row.request_fingerprint), reservedCredits: stringValue(row.reserved_credits), settledCredits: stringValue(row.settled_credits),
-        normalizedUsage: jsonValue(row.normalized_usage) as UsageChargeRecord["normalizedUsage"], saleRateSnapshot: jsonValue(row.sale_rate_snapshot) as UsageChargeRecord["saleRateSnapshot"], finalSaleCharge: jsonValue(row.final_sale_charge) as UsageChargeRecord["finalSaleCharge"], estimated: row.estimated === true, totalProviderCostUsd: stringValue(row.total_provider_cost_usd), description: stringValue(row.description), pointRecordId: optionalString(row.point_record_id), createdAt: isoValue(row.created_at), settledAt: isoValue(row.settled_at),
+        id: stringValue(row.id),
+        userId: stringValue(row.user_id),
+        holdId: stringValue(row.hold_id),
+        requestFingerprint: stringValue(row.request_fingerprint),
+        reservedCredits: stringValue(row.reserved_credits),
+        settledCredits: stringValue(row.settled_credits),
+        normalizedUsage: jsonValue(row.normalized_usage) as UsageChargeRecord["normalizedUsage"],
+        saleRateSnapshot: jsonValue(row.sale_rate_snapshot) as UsageChargeRecord["saleRateSnapshot"],
+        runtimeSnapshot: optionalJson(row.runtime_snapshot) as UsageChargeRecord["runtimeSnapshot"],
+        finalSaleCharge: jsonValue(row.final_sale_charge) as UsageChargeRecord["finalSaleCharge"],
+        estimated: row.estimated === true,
+        totalProviderCostUsd: stringValue(row.total_provider_cost_usd),
+        description: stringValue(row.description),
+        pointRecordId: optionalString(row.point_record_id),
+        createdAt: isoValue(row.created_at),
+        settledAt: isoValue(row.settled_at),
     };
 }
 
 export function mapProviderUsageAttempt(row: Record<string, unknown>): ProviderUsageAttemptRecord {
     return {
-        id: stringValue(row.id), holdId: stringValue(row.hold_id), userId: stringValue(row.user_id), attemptNumber: numberValue(row.attempt_number), status: row.status === "succeeded" || row.status === "failed" || row.status === "canceled" ? row.status : "pending", provider: stringValue(row.provider), bindingId: stringValue(row.binding_id), requestFingerprint: stringValue(row.request_fingerprint), providerIdempotencyKey: optionalString(row.provider_idempotency_key), upstreamTaskId: optionalString(row.upstream_task_id), nativeCostAmount: stringValue(row.native_cost_amount), nativeCostUnit: jsonValue(row.native_cost_unit) as ProviderUsageAttemptRecord["nativeCostUnit"], usdConversionRate: stringValue(row.usd_conversion_rate), costUsd: stringValue(row.cost_usd), costRateSnapshot: optionalJson(row.cost_rate_snapshot) as ProviderUsageAttemptRecord["costRateSnapshot"], normalizedUsage: optionalJson(row.normalized_usage) as ProviderUsageAttemptRecord["normalizedUsage"], createdAt: isoValue(row.created_at), updatedAt: isoValue(row.updated_at), completedAt: optionalIso(row.completed_at),
+        id: stringValue(row.id),
+        holdId: stringValue(row.hold_id),
+        userId: stringValue(row.user_id),
+        attemptNumber: numberValue(row.attempt_number),
+        status: row.status === "succeeded" || row.status === "failed" || row.status === "canceled" ? row.status : "pending",
+        provider: stringValue(row.provider),
+        bindingId: stringValue(row.binding_id),
+        requestFingerprint: stringValue(row.request_fingerprint),
+        providerIdempotencyKey: optionalString(row.provider_idempotency_key),
+        upstreamTaskId: optionalString(row.upstream_task_id),
+        nativeCostAmount: stringValue(row.native_cost_amount),
+        nativeCostUnit: jsonValue(row.native_cost_unit) as ProviderUsageAttemptRecord["nativeCostUnit"],
+        usdConversionRate: stringValue(row.usd_conversion_rate),
+        costUsd: stringValue(row.cost_usd),
+        costRateSnapshot: optionalJson(row.cost_rate_snapshot) as ProviderUsageAttemptRecord["costRateSnapshot"],
+        normalizedUsage: optionalJson(row.normalized_usage) as ProviderUsageAttemptRecord["normalizedUsage"],
+        createdAt: isoValue(row.created_at),
+        updatedAt: isoValue(row.updated_at),
+        completedAt: optionalIso(row.completed_at),
     };
 }
-
 
 export function mapQuotaUsage(row: Record<string, unknown>): QuotaUsageRecord {
     return {

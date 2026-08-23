@@ -9,10 +9,12 @@ import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/ge
 import { getTextTask, transitionTextTask, type TextTask, type TextTaskConfig } from "@/lib/server/text-task-store";
 import { updateTextTask } from "@/lib/server/text-task-store";
 import type { AiTextMessage } from "@/types/ai";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, type SystemAiUsageContext } from "@/lib/server/system-ai-billing";
+import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { buildProviderRequest, isProviderBusinessError, providerQueryPaths, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { attachSystemAiUsageUpstreamTask } from "@/lib/server/usage-billing-runtime";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { resolveTextProtocol, type ResolvedTextProtocol } from "@/lib/server/text-protocol-resolver";
 import { refundTextTask, textTaskRefundIdempotencyKey } from "@/lib/server/text-task-refund";
@@ -175,7 +177,10 @@ async function createCustomTextTaskStep(task: TextTask, origin: string, cookie: 
     const content = readProviderString(data, protocol.resultField, TEXT_RESULT_KEYS);
     if (content) return { content, ...readBilling(response.headers) };
     const taskId = readProviderString(data, undefined, TASK_ID_KEYS);
-    if (taskId && config.advancedConfig?.queryPath) return { state: "pending" as const, status: "submitted", upstreamTaskId: taskId, createPath, ...readBilling(response.headers) };
+    if (taskId && config.advancedConfig?.queryPath) {
+        await attachSystemAiUsageUpstreamTask(response.headers, taskId);
+        return { state: "pending" as const, status: "submitted", upstreamTaskId: taskId, createPath, ...readBilling(response.headers) };
+    }
     throw new GenerationSubmissionUncertainError("自定义文本接口没有按配置返回内容或任务 ID");
 }
 
@@ -299,7 +304,7 @@ async function runClaudeTextTask(task: TextTask, origin: string, cookie: string,
         headers,
         body: JSON.stringify({
             model: config.model,
-            max_tokens: 4096,
+            max_tokens: requiredTextOutputLimit(config),
             ...(system ? { system } : {}),
             messages: messages.filter((message) => message.role !== "system"),
         }),
@@ -501,7 +506,7 @@ function isInternalSystemProxyBase(value: string) {
     }
 }
 
-export function taskHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
+export function taskHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKey?: string | SystemAiUsageContext) {
     const headers = new Headers();
     const internal = config.baseUrl.startsWith("/");
     const workerHeaders = maintenanceWorkerContextHeaders(cookie);
@@ -509,6 +514,10 @@ export function taskHeaders(config: TextTaskConfig, cookie: string, pointsIdempo
     else if (internal && cookie) headers.set("cookie", cookie);
     if (internal) {
         Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey, config.model)).forEach(([key, value]) => headers.set(key, value));
+        if (typeof pointsIdempotencyKey === "object" && pointsIdempotencyKey.providerIdempotencyKey) {
+            headers.set("Idempotency-Key", pointsIdempotencyKey.providerIdempotencyKey);
+            headers.set("X-Client-Request-Id", pointsIdempotencyKey.providerIdempotencyKey);
+        }
     }
     if (!internal && config.apiFormat === "gemini") headers.set("x-goog-api-key", config.apiKey);
     else if (!internal) headers.set("authorization", `Bearer ${config.apiKey}`);
@@ -551,14 +560,21 @@ async function persistTextResponseBilling(task: TextTask, headers: Headers) {
     if (hasSystemAiCharge(billing)) await updateTextTask(task.id, { billing: { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, refunded: false } });
 }
 
-function geminiHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
+function geminiHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKey?: string | SystemAiUsageContext) {
     const headers = taskHeaders(config, cookie, pointsIdempotencyKey);
     headers.set("content-type", "application/json");
     return headers;
 }
 
 function pointsIdempotencyKey(task: TextTask, protocol: ResolvedTextProtocol) {
-    return `text-task:${task.id}:attempt:${task.attemptNo || 1}:${protocol.kind}`;
+    const providerKey = `text-task:${task.id}:attempt:${task.attemptNo || 1}:${protocol.kind}`;
+    return generationSystemAiUsageContext(task.config, "text", providerKey) || providerKey;
+}
+
+function requiredTextOutputLimit(config: TextTaskConfig) {
+    const limit = config.capabilityProfile?.maxOutputTokens;
+    if (!Number.isSafeInteger(limit) || Number(limit) < 1) throw new GenerationSubmissionSafeFailure("文本模型缺少最大输出 token 配置");
+    return limit;
 }
 
 function readPointsRemaining(headers: Headers) {

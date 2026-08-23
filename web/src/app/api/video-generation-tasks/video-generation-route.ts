@@ -25,9 +25,11 @@ import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
 import { assertGeminiVideoReferences, buildGeminiVideoRequest, geminiVideoCreatePath, normalizeGeminiVideoDuration, parseGeminiVideoCreateResponse } from "@/lib/server/gemini-video-provider";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
 import { resolvePublicRequestOrigin } from "@/lib/server/public-request-origin";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
+import { attachSystemAiUsageUpstreamTask } from "@/lib/server/usage-billing-runtime";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
 import { normalizeVideoGenerationReferences, regularVideoReferences, videoFrameReferences, type VideoGenerationReference } from "@/lib/video-reference-contract";
 import { assertYumengVideoReferences, buildYumengVideoRequest } from "@/lib/yumeng-model-center";
@@ -166,7 +168,7 @@ export async function POST(request: Request) {
                 lastUpstreamStatus: "submitting",
             });
             try {
-                const upstream = await createUpstream(user.id, origin, cookie, channel, providerPrompt, parameters, references, settings.generationPointMultipliers, billingRequestId);
+                const upstream = await createUpstream(user.id, origin, cookie, channel, providerPrompt, parameters, references, settings.generationPointMultipliers, billingRequestId, localTask.id, started.attempt.attemptNo);
                 await updateVideoTask(localTask.id, { config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts });
                 const task = { ...localTask, config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts };
                 const submittedAt = Date.now();
@@ -217,6 +219,8 @@ export async function createUpstream(
     references: VideoGenerationReference[],
     multipliers: Awaited<ReturnType<typeof getAuthSettings>>["generationPointMultipliers"],
     billingRequestId: string,
+    taskId = "",
+    attemptNumber = 1,
 ) {
     let lastError = "";
     const regularReferences = regularVideoReferences(references);
@@ -231,7 +235,7 @@ export async function createUpstream(
     const dimensions = videoDimensions(raw.size, raw.vquality);
     const generateAudio = raw.videoGenerateAudio !== false && raw.videoGenerateAudio !== "false";
     if (isGeminiVideoChannel(channel)) {
-        return createGeminiVideoUpstream({ userId, origin, cookie, channel, prompt, raw, references, generateAudio, multipliers, billingRequestId });
+        return createGeminiVideoUpstream({ userId, origin, cookie, channel, prompt, raw, references, generateAudio, multipliers, billingRequestId, taskId, attemptNumber });
     }
     const values = {
         model: channel.model,
@@ -338,14 +342,15 @@ export async function createUpstream(
         : JSON.stringify(payload);
     const imageToVideoPath = images.length || firstFrameUrl ? channel.advancedConfig?.imageToVideoPath?.trim() : "";
     const createPaths = globalPreset ? [globalPreset.createPath] : imageToVideoPath ? [imageToVideoPath] : resolvedProviderCreatePaths(channel.advancedConfig, "video", CREATE_PATHS);
+    const providerIdempotencyKey = taskId ? `video-task:${taskId}:attempt:${attemptNumber}` : `video-request:${billingRequestId}`;
     for (const path of createPaths) {
         const response = await proxyFetch(origin, channel.baseUrl, path, cookie, {
             method: "POST",
             headers: {
                 ...(multipart ? {} : { "Content-Type": "application/json" }),
-                "Idempotency-Key": billingRequestId,
-                "X-Client-Request-Id": billingRequestId,
-                ...systemAiBillingHeaders(generationModelId(channel), `video-request:${billingRequestId}`, channel.model),
+                "Idempotency-Key": providerIdempotencyKey,
+                "X-Client-Request-Id": providerIdempotencyKey,
+                ...systemAiBillingHeaders(generationModelId(channel), generationSystemAiUsageContext(channel, "video", providerIdempotencyKey) || providerIdempotencyKey, channel.model),
             },
             body: requestBody,
             signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(channel, "video")),
@@ -380,6 +385,7 @@ export async function createUpstream(
             if (pointsCost !== undefined && pointsRecordId) await refundUserPoints(userId, generationModelId(channel), pointsCost, "video", videoUnits(raw, multipliers), undefined, pointsRecordId);
             throw new Error(providerError || "视频接口没有返回任务 ID");
         }
+        await attachSystemAiUsageUpstreamTask(response.headers, id);
         return {
             id,
             provider: "generation" as const,
@@ -406,6 +412,8 @@ async function createGeminiVideoUpstream(input: {
     generateAudio: boolean;
     multipliers: Awaited<ReturnType<typeof getAuthSettings>>["generationPointMultipliers"];
     billingRequestId: string;
+    taskId?: string;
+    attemptNumber?: number;
 }) {
     const payload = await buildGeminiVideoRequest({
         prompt: input.prompt,
@@ -418,13 +426,14 @@ async function createGeminiVideoUpstream(input: {
         cookie: input.cookie,
     });
     const path = geminiVideoCreatePath(input.channel.model);
+    const providerIdempotencyKey = input.taskId ? `video-task:${input.taskId}:attempt:${input.attemptNumber || 1}` : `video-request:${input.billingRequestId}`;
     const response = await proxyFetch(input.origin, input.channel.baseUrl, path, input.cookie, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": input.billingRequestId,
-            "X-Client-Request-Id": input.billingRequestId,
-            ...systemAiBillingHeaders(generationModelId(input.channel), `video-request:${input.billingRequestId}`, input.channel.model),
+            "Idempotency-Key": providerIdempotencyKey,
+            "X-Client-Request-Id": providerIdempotencyKey,
+            ...systemAiBillingHeaders(generationModelId(input.channel), generationSystemAiUsageContext(input.channel, "video", providerIdempotencyKey) || providerIdempotencyKey, input.channel.model),
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(input.channel, "video")),
@@ -451,6 +460,7 @@ async function createGeminiVideoUpstream(input: {
         throw new SafeCandidateFailure(created.error);
     }
     if (!created.id) throw new Error("Gemini Veo 没有返回 operation ID");
+    await attachSystemAiUsageUpstreamTask(response.headers, created.id);
     return {
         id: created.id,
         provider: "generation" as const,

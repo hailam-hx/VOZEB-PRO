@@ -15,7 +15,9 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
+import { attachSystemAiUsageUpstreamTask } from "@/lib/server/usage-billing-runtime";
 
 export type AudioUpstreamStep =
     | { state: "pending"; status: string; upstreamTaskId: string; createPath: string; pointsCost?: number; pointsRecordId?: string }
@@ -94,6 +96,7 @@ export async function createAudioTaskUpstreamStep(task: AudioTask, origin: strin
             }
             const id = readProviderString(data, undefined, ID_KEYS);
             if (!id) throw new GenerationSubmissionUncertainError("音频接口没有返回音频或任务 ID，创建结果待确认");
+            await attachSystemAiUsageUpstreamTask(response.headers, id);
             await updateAudioTask(task.id, { upstream: { id, createPath: path } });
             const submittedAt = Date.now();
             await scheduleGenerationTask("audio", task.id, {
@@ -180,7 +183,7 @@ async function createAudioUpstream(task: AudioTask, origin: string, cookie: stri
                     "Content-Type": "application/json",
                     "Idempotency-Key": idempotencyKey,
                     "X-Client-Request-Id": idempotencyKey,
-                    ...(task.config.baseUrl.startsWith("/") ? systemAiBillingHeaders(generationModelId(task.config), idempotencyKey, task.config.model) : {}),
+                    ...(task.config.baseUrl.startsWith("/") ? systemAiBillingHeaders(generationModelId(task.config), generationSystemAiUsageContext(task.config, "audio", idempotencyKey) || idempotencyKey, task.config.model) : {}),
                 },
                 body: JSON.stringify(payload),
                 signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(task.config, "audio")),

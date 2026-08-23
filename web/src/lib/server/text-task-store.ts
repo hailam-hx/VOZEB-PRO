@@ -19,6 +19,7 @@ export type TextTaskConfig = {
     capabilityProfile?: LogicalModelCapabilityProfile;
     advancedConfig?: SystemChannelAdvancedConfig;
     systemPrompt?: string;
+    usagePricing?: import("@/lib/server/generation-channel").SystemGenerationChannelConfig["usagePricing"];
 };
 
 export type TextTask = {

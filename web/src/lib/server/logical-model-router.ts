@@ -1,4 +1,4 @@
-import type { AuthSettings, LogicalModelCapability, SystemModelChannel } from "@/lib/auth/store";
+import type { AuthSettings, LogicalModel, LogicalModelBinding, LogicalModelCapability, SystemModelChannel } from "@/lib/auth/store";
 import { channelModelCapability, resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
 import { channelSupportsModel, rawModelName } from "./generation-channel";
 import { filterHealthyRuntimeCandidates } from "./channel-runtime-health";
@@ -10,6 +10,8 @@ export type ResolvedLogicalModel = {
     channelId: string;
     channel: SystemModelChannel;
     capabilityProfile?: ReturnType<typeof resolveLogicalModelCapabilityProfile>;
+    logicalModel: LogicalModel;
+    binding: LogicalModelBinding;
 };
 
 export function resolveLogicalModel(settings: Pick<AuthSettings, "logicalModels" | "systemChannels">, capability: LogicalModelCapability, requestedModelId: string, preferredChannelId = ""): ResolvedLogicalModel | null {
@@ -26,7 +28,16 @@ export function resolveLogicalModelCandidates(settings: Pick<AuthSettings, "logi
         const resolved: ResolvedLogicalModel[] = [];
         for (const binding of preferred ? [preferred, ...bindings.filter((item) => item !== preferred)] : bindings) {
             const channel = settings.systemChannels.find((item) => item.id === binding.channelId && item.enabled && channelConnectionReady(item) && channelSupportsModel(item.models, binding.upstreamModel));
-            if (channel) resolved.push({ logicalModelId: logical.id, upstreamModel: binding.upstreamModel, channelId: channel.id, channel, capabilityProfile: resolveLogicalModelCapabilityProfile(binding, capability, channel, binding.upstreamModel) });
+            if (channel)
+                resolved.push({
+                    logicalModelId: logical.id,
+                    upstreamModel: binding.upstreamModel,
+                    channelId: channel.id,
+                    channel,
+                    logicalModel: logical,
+                    binding,
+                    capabilityProfile: resolveLogicalModelCapabilityProfile(binding, capability, channel, binding.upstreamModel),
+                });
         }
         // Text planning tracks health per channel + upstream model in
         // text-planning-runtime. A channel-level cooldown must not hide a healthy
@@ -37,7 +48,15 @@ export function resolveLogicalModelCandidates(settings: Pick<AuthSettings, "logi
     const ordered = preferredChannelId ? [...settings.systemChannels.filter((channel) => channel.id === preferredChannelId), ...settings.systemChannels.filter((channel) => channel.id !== preferredChannelId)] : settings.systemChannels;
     const resolved = ordered
         .filter((item) => item.enabled && channelConnectionReady(item) && channelSupportsModel(item.models, requested) && channelModelCapability(item, requested) === capability)
-        .map((channel) => ({ logicalModelId: requested, upstreamModel: requested, channelId: channel.id, channel, capabilityProfile: resolveLogicalModelCapabilityProfile({}, capability, channel, requested) }));
+        .map((channel) => ({
+            logicalModelId: requested,
+            upstreamModel: requested,
+            channelId: channel.id,
+            channel,
+            logicalModel: { id: requested, name: requested, capability, enabled: true, bindings: [] },
+            binding: { id: `${channel.id}:${requested}`, channelId: channel.id, upstreamModel: requested, enabled: true, priority: 1 },
+            capabilityProfile: resolveLogicalModelCapabilityProfile({}, capability, channel, requested),
+        }));
     return capability === "text" ? resolved : filterHealthyRuntimeCandidates(resolved, capability);
 }
 

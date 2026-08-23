@@ -583,6 +583,8 @@ CREATE TABLE IF NOT EXISTS wallet_holds (
     amount numeric(30, 8) NOT NULL,
     status text NOT NULL DEFAULT 'active',
     description text NOT NULL,
+    runtime_snapshot jsonb,
+    review_reason text,
     usage_charge_id text UNIQUE,
     release_business_id text,
     release_request_fingerprint text,
@@ -597,6 +599,9 @@ CREATE TABLE IF NOT EXISTS wallet_holds (
     CONSTRAINT wallet_holds_release_identity CHECK ((status = 'released' AND release_business_id IS NOT NULL AND release_request_fingerprint IS NOT NULL AND release_reason IS NOT NULL) OR (status <> 'released' AND release_business_id IS NULL AND release_request_fingerprint IS NULL AND release_reason IS NULL))
 );
 
+ALTER TABLE wallet_holds ADD COLUMN IF NOT EXISTS runtime_snapshot jsonb;
+ALTER TABLE wallet_holds ADD COLUMN IF NOT EXISTS review_reason text;
+
 CREATE INDEX IF NOT EXISTS wallet_holds_user_active_idx ON wallet_holds (user_id, created_at) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS wallet_holds_expires_idx ON wallet_holds (expires_at, id) WHERE status = 'active' AND expires_at IS NOT NULL;
 
@@ -609,6 +614,7 @@ CREATE TABLE IF NOT EXISTS usage_charges (
     settled_credits numeric(30, 8) NOT NULL,
     normalized_usage jsonb NOT NULL,
     sale_rate_snapshot jsonb NOT NULL,
+    runtime_snapshot jsonb,
     final_sale_charge jsonb NOT NULL,
     estimated boolean NOT NULL DEFAULT false,
     total_provider_cost_usd numeric(30, 12) NOT NULL DEFAULT 0,
@@ -620,6 +626,8 @@ CREATE TABLE IF NOT EXISTS usage_charges (
     CONSTRAINT usage_charges_ledger_link CHECK ((settled_credits = 0 AND point_record_id IS NULL) OR (settled_credits <> 0 AND point_record_id IS NOT NULL)),
     CONSTRAINT usage_charges_point_record_user_fk FOREIGN KEY (point_record_id, user_id) REFERENCES point_records(id, user_id) ON DELETE RESTRICT
 );
+
+ALTER TABLE usage_charges ADD COLUMN IF NOT EXISTS runtime_snapshot jsonb;
 
 DO $$
 BEGIN

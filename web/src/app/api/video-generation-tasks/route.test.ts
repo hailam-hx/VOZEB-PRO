@@ -317,8 +317,8 @@ describe("video generation candidate failover", () => {
         expect(imageUrl).toContain("/api/ai/system/one/image-to-video");
         expect(textHeaders.get("x-vozeb-pro-logical-model")).toBe("video");
         expect(textHeaders.get("x-vozeb-pro-upstream-model")).toBe("video-one");
-        expect(textHeaders.get("x-vozeb-pro-points-idempotency-key")).toBe("video-request:video-text");
-        expect(imageHeaders.get("x-vozeb-pro-points-idempotency-key")).toBe("video-request:video-image");
+        expect(textHeaders.get("x-vozeb-pro-points-idempotency-key")).toBe("video-task:local-task");
+        expect(imageHeaders.get("x-vozeb-pro-points-idempotency-key")).toBe("video-task:local-task");
     });
 
     it("builds an OpenAI video multipart request and uses its image-to-video path", async () => {

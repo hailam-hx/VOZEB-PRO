@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { hasSystemAiCharge, readSystemAiBilling, readVerifiedSystemAiBusinessRequestId, systemAiBillingHeaders, systemAiIdempotencyKey, systemAiPointsIdempotencyKey, systemAiRequestFingerprint } from "./system-ai-billing";
+import {
+    hasSystemAiCharge,
+    readSystemAiBilling,
+    readSystemAiUsageBilling,
+    readVerifiedSystemAiBusinessRequestId,
+    readVerifiedSystemAiUsageContext,
+    systemAiBillingHeaders,
+    systemAiIdempotencyKey,
+    systemAiPointsIdempotencyKey,
+    systemAiRequestFingerprint,
+    systemAiUsageRequestFingerprint,
+    systemAiUsageResponseHeaders,
+} from "./system-ai-billing";
 
 describe("system AI billing helpers", () => {
     it("preserves a zero-cost consumption record so its quota can be refunded", () => {
@@ -54,5 +66,41 @@ describe("system AI billing helpers", () => {
         expect(firstKey).toBe(secondKey);
         expect(firstKey).toMatch(/^system-ai:[a-f0-9]{64}$/);
         expect(firstFingerprint).not.toBe(secondFingerprint);
+    });
+
+    it("signs stable usage and provider-attempt identities as one internal contract", () => {
+        const headers = new Headers(
+            systemAiBillingHeaders(
+                "writer",
+                {
+                    businessRequestId: "text-task:one",
+                    requestFingerprint: "a".repeat(64),
+                    attemptNumber: 2,
+                    bindingId: "writer-backup",
+                    providerIdempotencySupported: true,
+                    providerIdempotencyKey: "text-task:one:attempt:2",
+                },
+                "vendor-text",
+            ),
+        );
+
+        expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text")).toEqual({
+            businessRequestId: "text-task:one",
+            requestFingerprint: "a".repeat(64),
+            attemptNumber: 2,
+            bindingId: "writer-backup",
+            providerIdempotencySupported: true,
+            providerIdempotencyKey: "text-task:one:attempt:2",
+        });
+
+        headers.set("x-vozeb-pro-billing-attempt-number", "3");
+        expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text")).toBeUndefined();
+    });
+
+    it("round-trips the server-owned hold and attempt response identity", () => {
+        const fingerprint = systemAiUsageRequestFingerprint({ userId: "user", businessRequestId: "task", logicalModel: "writer", capability: "text", payload: { prompt: "hello", maxTokens: 10 } });
+        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: "hold-one", attemptNumber: 2, requestFingerprint: fingerprint }));
+
+        expect(readSystemAiUsageBilling(headers)).toEqual({ holdId: "hold-one", attemptNumber: 2, requestFingerprint: fingerprint });
     });
 });

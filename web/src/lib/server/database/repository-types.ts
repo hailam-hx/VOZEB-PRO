@@ -2,6 +2,7 @@ import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
 import type { AdminPermission } from "@/lib/admin-permissions";
 import type { ProviderCostUnit } from "@/lib/billing/money";
 import type { NormalizedUsage, PricingRateCardV1 } from "@/lib/billing/pricing";
+import type { UsageBillingHoldSnapshot } from "@/lib/auth/store-types";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -162,6 +163,8 @@ export type WalletHoldRecord = {
     releaseBusinessId?: string;
     releaseRequestFingerprint?: string;
     releaseReason?: string;
+    runtimeSnapshot?: UsageBillingHoldSnapshot;
+    reviewReason?: string;
     expiresAt?: string;
     closedAt?: string;
     createdAt: string;
@@ -177,6 +180,7 @@ export type UsageChargeRecord = {
     settledCredits: string;
     normalizedUsage: NormalizedUsage;
     saleRateSnapshot: PricingRateCardV1;
+    runtimeSnapshot?: UsageBillingHoldSnapshot;
     finalSaleCharge: import("@/lib/billing/pricing").FinalSaleCharge;
     estimated: boolean;
     totalProviderCostUsd: string;

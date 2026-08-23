@@ -99,6 +99,9 @@ export type LogicalModelCapabilityProfile = {
     supportsWebhook?: boolean;
     timeoutMs?: number;
     concurrencyLimit?: number;
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
+    supportsIdempotency?: boolean;
     unitCost?: number;
     unitCostCurrency?: string;
 };
@@ -380,6 +383,19 @@ export type StoredPointRecord = PublicPointRecord & {
 
 export type WalletHoldStatus = "active" | "settled" | "released";
 
+export type UsageBillingHoldSnapshot = {
+    version: 1;
+    logicalModelId: string;
+    capability: import("@/lib/billing/pricing").BillableCapability;
+    saleRateSnapshot: import("@/lib/billing/pricing").PricingRateCardV1;
+    requestUsage: import("@/lib/billing/pricing").NormalizedUsage;
+    reserve: import("@/lib/billing/pricing").PricingReserve;
+    reservedCredits: string;
+    inputLimits?: { maxInputTokens?: string; maxOutputTokens?: string };
+    providerIdempotency?: { supported: boolean; key?: string };
+    recovery?: { taskType: "text" | "image" | "video" | "audio"; taskId: string };
+};
+
 export type WalletHold = {
     id: string;
     userId: string;
@@ -388,6 +404,8 @@ export type WalletHold = {
     amount: string;
     status: WalletHoldStatus;
     description: string;
+    runtimeSnapshot?: UsageBillingHoldSnapshot;
+    reviewReason?: string;
     usageChargeId?: string;
     releaseBusinessId?: string;
     releaseRequestFingerprint?: string;
@@ -407,6 +425,7 @@ export type UsageCharge = {
     settledCredits: string;
     normalizedUsage: import("@/lib/billing/pricing").NormalizedUsage;
     saleRateSnapshot: import("@/lib/billing/pricing").PricingRateCardV1;
+    runtimeSnapshot?: UsageBillingHoldSnapshot;
     finalSaleCharge: import("@/lib/billing/pricing").FinalSaleCharge;
     estimated: boolean;
     totalProviderCostUsd: string;

@@ -187,6 +187,9 @@ export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelB
         supportsWebhook: booleanValue(stored.supportsWebhook),
         timeoutMs: timeoutMilliseconds(stored.timeoutMs),
         concurrencyLimit: positiveInteger(stored.concurrencyLimit),
+        maxInputTokens: positiveInteger(stored.maxInputTokens),
+        maxOutputTokens: positiveInteger(stored.maxOutputTokens),
+        supportsIdempotency: booleanValue(stored.supportsIdempotency),
         unitCost: positiveNumber(stored.unitCost),
         unitCostCurrency: text(stored.unitCostCurrency, 12) || undefined,
     };
@@ -231,6 +234,9 @@ function normalizeStoredCapabilityProfile(value: unknown): LogicalModelCapabilit
         supportsWebhook: optionalBoolean(input.supportsWebhook),
         timeoutMs: timeoutMilliseconds(input.timeoutMs),
         concurrencyLimit: positiveInteger(input.concurrencyLimit),
+        maxInputTokens: positiveInteger(input.maxInputTokens),
+        maxOutputTokens: positiveInteger(input.maxOutputTokens),
+        supportsIdempotency: optionalBoolean(input.supportsIdempotency),
         unitCost: positiveNumber(input.unitCost),
         unitCostCurrency: text(input.unitCostCurrency, 12) || undefined,
     };

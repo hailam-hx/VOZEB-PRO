@@ -188,6 +188,7 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 
 - `POST /api/maintenance/generation-tasks/run`：使用 `Authorization: Bearer <VOZEB_PRO_WORKER_TOKEN>` 领取一个有界恢复批次；可通过 `x-vozeb-pro-worker-id` 同步心跳。
 - `POST /api/maintenance/generation-tasks/heartbeat`：使用相同 Worker Bearer Token 和必填 `x-vozeb-pro-worker-id` 上报心跳。
+- `POST /api/maintenance/usage-holds/run`：使用相同 Worker Bearer Token 检查一个由后台 `dataLifecycle.maintenanceBatchSize` 限定的到期用量预留批次。到期只触发调查：持久任务成功时按冻结快照结算，确认失败或确认未接收时释放，仍在处理时保留，无法确认时保留并标记人工复核；接口不会仅因年龄释放预留，也不会重新创建上游任务。
 - `POST /api/maintenance/data-lifecycle/run`：使用 `Authorization: Bearer <VOZEB_PRO_MAINTENANCE_TOKEN>` 执行一个管理员配置的有界批次，只处理已过期 Session、已过期或已使用邮箱验证码、超过自身 `expires_at` 的生成任务，以及到期且全站引用数为零的临时媒体；返回各类删除数量、媒体字节数和被引用阻止的媒体摘要。
 - `POST /api/generation-webhooks/{channelId}`：接收不超过 1MB 的 JSON；要求稳定的 `x-vozeb-pro-event-id`、5 分钟误差内的 `x-vozeb-pro-timestamp` 和 `x-vozeb-pro-signature`。签名使用当前渠道独立密钥，对 `JSON.stringify([channelId, timestamp, eventId]) + "\n" + rawBody` 生成 HMAC-SHA256 十六进制摘要。
 - `POST /api/admin/generation-operations/{type}/{id}/review`：管理员处理 `needs_review` 的 `text/image/video/audio` 任务，动作仅允许 `resume_upstream`、`provide_result` 或 `confirm_failed`。

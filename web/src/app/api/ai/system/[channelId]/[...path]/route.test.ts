@@ -11,6 +11,11 @@ const mocks = vi.hoisted(() => ({
     release: vi.fn(),
     mediaAccess: vi.fn(),
     taskAccess: vi.fn(),
+    reserveUsageBilling: vi.fn(),
+    recordUsageProviderAttempt: vi.fn(),
+    finishUsageProviderAttempt: vi.fn(),
+    settleUsageBilling: vi.fn(),
+    settleCancelledUsageBilling: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one", role: "user", pointsBalance: 5 })) }));
@@ -26,6 +31,13 @@ vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mock
 vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 vi.mock("@/lib/server/generation-media-access", () => ({ authorizeGenerationMediaProxyRequest: mocks.mediaAccess }));
 vi.mock("@/lib/server/generation-task-authorization", () => ({ userOwnsGenerationUpstreamTask: mocks.taskAccess }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({
+    reserveUsageBilling: mocks.reserveUsageBilling,
+    recordUsageProviderAttempt: mocks.recordUsageProviderAttempt,
+    finishUsageProviderAttempt: mocks.finishUsageProviderAttempt,
+    settleUsageBilling: mocks.settleUsageBilling,
+    settleCancelledUsageBilling: mocks.settleCancelledUsageBilling,
+}));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
     isSafeOutboundUrl: mocks.safeUrl,
@@ -34,7 +46,7 @@ vi.mock("@/lib/server/security", () => ({
 
 import { GET, maxDuration, POST, PUT } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
-import { systemAiBillingHeaders, systemAiPointsIdempotencyKey } from "@/lib/server/system-ai-billing";
+import { readSystemAiUsageBilling, systemAiBillingHeaders, systemAiPointsIdempotencyKey } from "@/lib/server/system-ai-billing";
 
 const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_media"] }) };
 
@@ -56,9 +68,158 @@ describe("system media proxy", () => {
         mocks.wrap.mockImplementation((response: Response) => response);
         mocks.mediaAccess.mockReset().mockResolvedValue(true);
         mocks.taskAccess.mockReset().mockResolvedValue(true);
+        mocks.reserveUsageBilling
+            .mockReset()
+            .mockResolvedValue({
+                holdId: "hold-one",
+                userId: "user-one",
+                businessId: "text-task:one",
+                requestFingerprint: "a".repeat(64),
+                snapshot: { version: 1, requestUsage: { capability: "text", source: "request", inputTokens: "5", maxOutputTokens: "128" }, reserve: { usage: { capability: "text", source: "reserve_fallback", inputTokens: "5", outputTokens: "128" } } },
+            });
+        mocks.recordUsageProviderAttempt.mockReset().mockResolvedValue({});
+        mocks.finishUsageProviderAttempt.mockReset().mockResolvedValue({});
+        mocks.settleUsageBilling.mockReset().mockResolvedValue({});
+        mocks.settleCancelledUsageBilling.mockReset().mockResolvedValue({});
         mocks.getAuthSettings.mockResolvedValue({
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: [] }],
         });
+    });
+
+    it("reserves and records the routed attempt before a signed upstream create", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    id: "writer",
+                    name: "写作",
+                    capability: "text",
+                    enabled: true,
+                    saleRateCard: {
+                        version: 1,
+                        components: [
+                            { id: "output", dimension: "outputTokens", unitPrice: "0.001" },
+                            { id: "input", dimension: "inputTokens", unitPrice: "0.001" },
+                        ],
+                    },
+                    bindings: [
+                        {
+                            id: "writer-binding",
+                            channelId: "channel-one",
+                            upstreamModel: "vendor-text",
+                            enabled: true,
+                            priority: 1,
+                            costRateCard: {
+                                version: 1,
+                                components: [
+                                    { id: "output", dimension: "outputTokens", unitPrice: "0.0005" },
+                                    { id: "input", dimension: "inputTokens", unitPrice: "0.0005" },
+                                ],
+                            },
+                            providerCostUnit: { kind: "fiat", currency: "USD" },
+                            capabilityProfile: { maxOutputTokens: 128, supportsIdempotency: true },
+                        },
+                    ],
+                },
+            ],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }], usage: { prompt_tokens: 2, completion_tokens: 1 } }));
+        const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                ...systemAiBillingHeaders(
+                    "writer",
+                    { businessRequestId: "text-task:one", requestFingerprint: "a".repeat(64), attemptNumber: 1, bindingId: "writer-binding", providerIdempotencySupported: true, providerIdempotencyKey: "text-task:one:attempt:1" },
+                    "vendor-text",
+                ),
+            },
+            body: JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 }),
+        });
+
+        const response = await POST(request, textContext());
+
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", businessId: "text-task:one", requestFingerprint: "a".repeat(64), logicalModelId: "writer" }));
+        expect(mocks.recordUsageProviderAttempt).toHaveBeenCalledWith(expect.objectContaining({ attemptNumber: 1, status: "pending", bindingId: "writer-binding", providerIdempotencyKey: "text-task:one:attempt:1" }));
+        expect(mocks.recordUsageProviderAttempt.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0]);
+        expect(readSystemAiUsageBilling(response.headers)).toEqual({ holdId: "hold-one", attemptNumber: 1, requestFingerprint: "a".repeat(64) });
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("accounts for a text stream incrementally and settles when the consumer reaches the terminal event", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    id: "writer",
+                    name: "写作",
+                    capability: "text",
+                    enabled: true,
+                    saleRateCard: {
+                        version: 1,
+                        components: [
+                            { id: "output", dimension: "outputTokens", unitPrice: "0.001" },
+                            { id: "input", dimension: "inputTokens", unitPrice: "0.001" },
+                        ],
+                    },
+                    bindings: [
+                        {
+                            id: "writer-binding",
+                            channelId: "channel-one",
+                            upstreamModel: "vendor-text",
+                            enabled: true,
+                            priority: 1,
+                            costRateCard: {
+                                version: 1,
+                                components: [
+                                    { id: "output", dimension: "outputTokens", unitPrice: "0.0005" },
+                                    { id: "input", dimension: "inputTokens", unitPrice: "0.0005" },
+                                ],
+                            },
+                            providerCostUnit: { kind: "fiat", currency: "USD" },
+                            capabilityProfile: { maxOutputTokens: 128, supportsIdempotency: true },
+                        },
+                    ],
+                },
+            ],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
+        });
+        const encoder = new TextEncoder();
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"你"}}]}\n\n'));
+                        controller.enqueue(encoder.encode('data: {"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\n'));
+                        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                        controller.close();
+                    },
+                }),
+                { headers: { "content-type": "text/event-stream" } },
+            ),
+        );
+        const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                ...systemAiBillingHeaders(
+                    "writer",
+                    { businessRequestId: "text-task:one", requestFingerprint: "a".repeat(64), attemptNumber: 1, bindingId: "writer-binding", providerIdempotencySupported: true, providerIdempotencyKey: "text-task:one:attempt:1" },
+                    "vendor-text",
+                ),
+            },
+            body: JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 }),
+        });
+
+        const response = await POST(request, textContext());
+        expect(mocks.settleUsageBilling).not.toHaveBeenCalled();
+        const streamed = await response.text();
+
+        expect(response.status, streamed).toBe(200);
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledOnce();
+        expect(mocks.finishUsageProviderAttempt).toHaveBeenCalledWith(expect.objectContaining({ attemptNumber: 1, status: "succeeded", normalizedUsage: expect.objectContaining({ source: "actual", inputTokens: "5", outputTokens: "2" }) }));
+        expect(mocks.settleUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ actualUsage: expect.objectContaining({ source: "actual" }) }));
     });
 
     it("blocks authenticated media requests when the rate limit is exhausted", async () => {
