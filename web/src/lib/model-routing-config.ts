@@ -2,6 +2,8 @@ import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, Logical
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { inferModelCapability, isCreativeGenerationModel, normalizeModelId } from "@/lib/model-capability";
 import { channelConnectionReady, protocolCatalogCapability, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
+import { normalizePricingRateCard } from "@/lib/billing/pricing";
+import { normalizeProviderCostUnit } from "@/lib/billing/money";
 
 const CAPABILITY_DEFAULT_KEYS = {
     text: "textModel",
@@ -56,6 +58,8 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                 const stored = findStoredBinding(existingModels, channel.id, upstreamModel);
                 const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile);
                 const weight = clampWeight(stored?.weight);
+                const costRateCard = normalizePricingRateCard(stored?.costRateCard);
+                const providerCostUnit = normalizeProviderCostUnit(stored?.providerCostUnit);
                 return {
                     id: text(stored?.id, 120) || `${channel.id}:${rawModelName(upstreamModel)}`,
                     channelId: channel.id,
@@ -64,14 +68,18 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                     priority: clampPriority(stored?.priority, channelIndex + 1),
                     ...(weight !== undefined ? { weight } : {}),
                     ...(capabilityProfile ? { capabilityProfile } : {}),
+                    ...(costRateCard ? { costRateCard } : {}),
+                    ...(providerCostUnit ? { providerCostUnit } : {}),
                 };
             })
             .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+        const saleRateCard = normalizePricingRateCard(existing?.saleRateCard);
         return {
             id,
             name: text(existing?.name, 120) || catalogModel.upstreamModel,
             capability: catalogModel.authoritative || !existing ? catalogModel.capability : normalizeCapability(existing.capability),
             enabled: existing?.enabled !== false,
+            ...(saleRateCard ? { saleRateCard } : {}),
             bindings,
         };
     });

@@ -4,6 +4,8 @@ export type { AdminPermission } from "@/lib/admin-permissions";
 import type { AdminPermission } from "@/lib/admin-permissions";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
+import type { PricingRateCardV1 } from "@/lib/billing/pricing";
+import type { ProviderCostUnit } from "@/lib/billing/money";
 import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -116,6 +118,8 @@ export type LogicalModelBinding = {
     priority: number;
     weight?: number;
     capabilityProfile?: LogicalModelCapabilityProfile;
+    costRateCard?: PricingRateCardV1;
+    providerCostUnit?: ProviderCostUnit;
 };
 
 export type LogicalModel = {
@@ -123,6 +127,7 @@ export type LogicalModel = {
     name: string;
     capability: LogicalModelCapability;
     enabled: boolean;
+    saleRateCard?: PricingRateCardV1;
     bindings: LogicalModelBinding[];
 };
 
