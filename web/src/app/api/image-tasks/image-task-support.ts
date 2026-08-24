@@ -245,8 +245,8 @@ export function taskHeaders(config: ImageTaskConfig, cookie: string, pointsIdemp
     if (internal && workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (internal && cookie) headers.set("cookie", cookie);
     if (internal)
-        Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey ? generationSystemAiUsageContext(config, "image", pointsIdempotencyKey, userId || "") || pointsIdempotencyKey : undefined, config.model)).forEach(([key, value]) =>
-            headers.set(key, value),
+        Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey ? generationSystemAiUsageContext(config, "image", pointsIdempotencyKey, userId || "") || pointsIdempotencyKey : undefined, config.model)).forEach(
+            ([key, value]) => headers.set(key, value),
         );
     if (pointsIdempotencyKey?.trim()) {
         headers.set("Idempotency-Key", pointsIdempotencyKey.trim());

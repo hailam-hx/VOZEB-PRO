@@ -9,7 +9,16 @@ describe("generation usage context", () => {
         const first = generationSystemAiUsageContext(config, "image", "image-task:task-one:attempt:1", "user-one");
         const second = generationSystemAiUsageContext(config, "image", "image-task:task-one:attempt:2", "user-one");
 
-        expect(first).toMatchObject({ userId: "user-one", channelId: "channel-backup", capability: "image", businessRequestId: "image-task:task-one", attemptNumber: 1, bindingId: "binding-backup", providerIdempotencySupported: true, providerIdempotencyKey: "image-task:task-one:attempt:1" });
+        expect(first).toMatchObject({
+            userId: "user-one",
+            channelId: "channel-backup",
+            capability: "image",
+            businessRequestId: "image-task:task-one",
+            attemptNumber: 1,
+            bindingId: "binding-backup",
+            providerIdempotencySupported: true,
+            providerIdempotencyKey: "image-task:task-one:attempt:1",
+        });
         expect(second).toMatchObject({ businessRequestId: "image-task:task-one", attemptNumber: 2, requestFingerprint: first?.requestFingerprint });
     });
 

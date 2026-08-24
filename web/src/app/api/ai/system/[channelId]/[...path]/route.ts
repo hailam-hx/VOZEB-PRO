@@ -7,6 +7,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { DEFAULT_CHANNEL_CONNECT_ERROR } from "@/lib/server/generation-errors";
 import { UnsupportedMediaContentError } from "@/lib/server/media-content-validation";
 import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/media-concurrency";
+import { cloneMultipartFormDataWithDigest } from "@/lib/server/multipart-body-digest";
 import { MediaProxyResponseError, fetchSafeUpstreamMedia } from "@/lib/server/media-proxy-service";
 import { MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
@@ -15,14 +16,7 @@ import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
-import {
-    canonicalizeSystemAiQuery,
-    readVerifiedSystemAiUsageContext,
-    SYSTEM_AI_LOGICAL_MODEL_HEADER,
-    SYSTEM_AI_UPSTREAM_MODEL_HEADER,
-    systemAiUsageResponseHeaders,
-    type SystemAiUsageBilling,
-} from "@/lib/server/system-ai-billing";
+import { canonicalizeSystemAiQuery, readVerifiedSystemAiUsageContext, SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiUsageResponseHeaders, type SystemAiUsageBilling } from "@/lib/server/system-ai-billing";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 import { normalizeYumengModelCenterBaseUrl } from "@/lib/yumeng-model-center";
@@ -194,9 +188,24 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             usageBilling = await reuseExistingUsageBilling({ userId, businessId: usageContext.businessRequestId, requestFingerprint: usageContext.requestFingerprint });
             if (!usageBilling) {
                 if (!logicalModel.saleRateCard) return NextResponse.json({ error: "逻辑模型缺少完整售卖价格快照" }, { status: 400 });
-                const inputLimits = capabilityProfile ? { maxInputTokens: capabilityProfile.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined, maxOutputTokens: capabilityProfile.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined } : undefined;
+                const inputLimits = capabilityProfile
+                    ? { maxInputTokens: capabilityProfile.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined, maxOutputTokens: capabilityProfile.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined }
+                    : undefined;
                 const requestUsage = normalizeProxyBillableRequest({ capability: access.capability, payload: readRequestBody(contentType, requestBody.pointsPayload), rateCard: logicalModel.saleRateCard, inputLimits });
-                usageBilling = await reserveUsageBilling({ userId, businessId: usageContext.businessRequestId, requestFingerprint: usageContext.requestFingerprint, logicalModelId: logicalModel.id, saleRateSnapshot: logicalModel.saleRateCard, requestUsage, description: `${logicalModel.name}用量预留`, inputLimits, providerIdempotency: { supported: usageContext.providerIdempotencySupported, key: usageContext.providerIdempotencyKey }, recovery: usageRecoveryIdentity(usageContext.businessRequestId), expiresAt: new Date(now.getTime() + resolveModelRequestTimeoutMs({ capabilityProfile }, access.capability)), now });
+                usageBilling = await reserveUsageBilling({
+                    userId,
+                    businessId: usageContext.businessRequestId,
+                    requestFingerprint: usageContext.requestFingerprint,
+                    logicalModelId: logicalModel.id,
+                    saleRateSnapshot: logicalModel.saleRateCard,
+                    requestUsage,
+                    description: `${logicalModel.name}用量预留`,
+                    inputLimits,
+                    providerIdempotency: { supported: usageContext.providerIdempotencySupported, key: usageContext.providerIdempotencyKey },
+                    recovery: usageRecoveryIdentity(usageContext.businessRequestId),
+                    expiresAt: new Date(now.getTime() + resolveModelRequestTimeoutMs({ capabilityProfile }, access.capability)),
+                    now,
+                });
             }
             usageAttempt = {
                 billing: usageBilling,
@@ -204,7 +213,22 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
                 status: "pending",
                 provider: channel.advancedConfig?.protocol || channel.id,
                 bindingId: binding.id,
-                requestFingerprint: createHash("sha256").update([usageContext.requestFingerprint, usageContext.userId, usageContext.channelId, usageContext.capability, usageContext.method, usageContext.canonicalPath, usageContext.canonicalQuery, usageContext.bodyDigest, String(usageContext.attemptNumber), usageContext.bindingId].join("\0")).digest("hex"),
+                requestFingerprint: createHash("sha256")
+                    .update(
+                        [
+                            usageContext.requestFingerprint,
+                            usageContext.userId,
+                            usageContext.channelId,
+                            usageContext.capability,
+                            usageContext.method,
+                            usageContext.canonicalPath,
+                            usageContext.canonicalQuery,
+                            usageContext.bodyDigest,
+                            String(usageContext.attemptNumber),
+                            usageContext.bindingId,
+                        ].join("\0"),
+                    )
+                    .digest("hex"),
                 providerIdempotencySupported: usageContext.providerIdempotencySupported,
                 providerIdempotencyKey: usageContext.providerIdempotencyKey,
                 nativeCostAmount: "0",
@@ -238,7 +262,12 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     }
 
     if (!upstream.ok && usageBilling && usageContext) {
-        const payload = upstream.headers.get("content-type")?.includes("json") ? await upstream.clone().json().catch(() => undefined) : undefined;
+        const payload = upstream.headers.get("content-type")?.includes("json")
+            ? await upstream
+                  .clone()
+                  .json()
+                  .catch(() => undefined)
+            : undefined;
         const usage = payload ? deriveProxyBillableUsage({ capability: access.capability, requestUsage: usageBilling.snapshot.requestUsage, payload }) : undefined;
         await finishUsageProviderAttempt({ billing: usageBilling, attemptNumber: usageContext.attemptNumber, status: "failed", normalizedUsage: usage });
     }
@@ -257,11 +286,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         }
         return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), {
             status: upstream.status,
-            headers: responseHeaders(
-                upstream.headers,
-                target,
-                usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined,
-            ),
+            headers: responseHeaders(upstream.headers, target, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined),
         });
     }
 
@@ -461,7 +486,7 @@ async function readProxyRequestBody(request: Request, isMultipart: boolean): Pro
     }
 
     const formData = await new Request(request.url, { method: request.method, headers: { "Content-Type": request.headers.get("content-type") || "" }, body: bytes }).formData();
-    const cloned = await cloneFormData(formData);
+    const cloned = await cloneMultipartFormDataWithDigest(formData);
     return { body: cloned.body, pointsPayload: formDataFields(formData), bodyDigest: cloned.bodyDigest };
 }
 
@@ -472,33 +497,6 @@ function formDataFields(formData: FormData): Record<string, string> {
         if (typeof value === "string" && value.trim()) fields[key] = value.trim();
     }
     return fields;
-}
-
-async function cloneFormData(formData: FormData) {
-    const next = new FormData();
-    const digest = createHash("sha256");
-    for (const [key, value] of formData.entries()) {
-        if (typeof value === "string") {
-            next.append(key, value);
-            updateMultipartDigest(digest, ["field", key, value]);
-            continue;
-        }
-        const bytes = new Uint8Array(await value.arrayBuffer());
-        const type = value.type || "application/octet-stream";
-        const name = value.name || "file";
-        next.append(key, new Blob([bytes], { type }), name);
-        updateMultipartDigest(digest, ["file", key, name, type, String(bytes.byteLength), digestBytes(bytes)]);
-    }
-    return { body: next, bodyDigest: digest.digest("hex") };
-}
-
-function updateMultipartDigest(digest: ReturnType<typeof createHash>, parts: string[]) {
-    for (const part of parts)
-        digest
-            .update(String(Buffer.byteLength(part)))
-            .update(":")
-            .update(part)
-            .update("\0");
 }
 
 function digestBytes(bytes: Uint8Array) {

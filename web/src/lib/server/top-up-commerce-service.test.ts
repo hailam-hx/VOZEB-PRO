@@ -19,7 +19,15 @@ vi.mock("@/lib/server/database", async (importOriginal) => ({
     withPostgresTransaction: vi.fn(async (callback: (client: unknown) => unknown) => callback({ query: vi.fn() })),
     createPostgresRepositories: vi.fn(() => ({
         users: { getById: mocks.getUser },
-        topUps: { getPresetById: mocks.getPreset, createOrder: mocks.createOrder, getPromotion: mocks.getPromotion, getAvailableCoupon: mocks.getCoupon, lockCoupon: mocks.lockCoupon, cancelPendingOrder: mocks.cancelOrder, releaseCouponForOrder: mocks.releaseCoupon },
+        topUps: {
+            getPresetById: mocks.getPreset,
+            createOrder: mocks.createOrder,
+            getPromotion: mocks.getPromotion,
+            getAvailableCoupon: mocks.getCoupon,
+            lockCoupon: mocks.lockCoupon,
+            cancelPendingOrder: mocks.cancelOrder,
+            releaseCouponForOrder: mocks.releaseCoupon,
+        },
     })),
 }));
 vi.mock("@/lib/server/payment-config-store", () => ({
@@ -45,7 +53,7 @@ describe("top-up commerce service", () => {
     });
 
     it("releases the coupon bound to a canceled pending order in the same transaction", async () => {
-        mocks.cancelOrder.mockResolvedValue({ ...await createTopUpOrder({ userId: "user-one", customAmountVnd: "250000", provider: "payply" }), userCouponId: "coupon-one" });
+        mocks.cancelOrder.mockResolvedValue({ ...(await createTopUpOrder({ userId: "user-one", customAmountVnd: "250000", provider: "payply" })), userCouponId: "coupon-one" });
 
         await cancelTopUpOrderForUser("user-one", "order-one");
 

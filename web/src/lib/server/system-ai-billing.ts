@@ -62,7 +62,11 @@ export function systemAiBillingHeaders(logicalModel: string, idempotencyKey?: st
         ...(normalizedIdempotencyKey
             ? {
                   [SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER]: normalizedIdempotencyKey,
-                  ...(context ? { [SYSTEM_AI_POINTS_SIGNATURE_HEADER]: signSystemAiUsageContext(normalizedLogicalModel, normalizedUpstreamModel || "", context) } : typeof idempotencyKey === "string" ? { [SYSTEM_AI_POINTS_SIGNATURE_HEADER]: signSystemAiBusinessRequest(normalizedLogicalModel, normalizedIdempotencyKey, normalizedUpstreamModel || "") } : {}),
+                  ...(context
+                      ? { [SYSTEM_AI_POINTS_SIGNATURE_HEADER]: signSystemAiUsageContext(normalizedLogicalModel, normalizedUpstreamModel || "", context) }
+                      : typeof idempotencyKey === "string"
+                        ? { [SYSTEM_AI_POINTS_SIGNATURE_HEADER]: signSystemAiBusinessRequest(normalizedLogicalModel, normalizedIdempotencyKey, normalizedUpstreamModel || "") }
+                        : {}),
               }
             : {}),
         ...(usage
@@ -75,7 +79,9 @@ export function systemAiBillingHeaders(logicalModel: string, idempotencyKey?: st
                   [SYSTEM_AI_BILLING_CHANNEL_HEADER]: usage.channelId,
                   [SYSTEM_AI_BILLING_CAPABILITY_HEADER]: usage.capability,
                   [SYSTEM_AI_BILLING_EXPIRES_AT_HEADER]: String(usage.expiresAtMs),
-                  ...(context ? { [SYSTEM_AI_BILLING_METHOD_HEADER]: context.method, [SYSTEM_AI_BILLING_PATH_HEADER]: context.canonicalPath, [SYSTEM_AI_BILLING_QUERY_HEADER]: context.canonicalQuery, [SYSTEM_AI_BILLING_BODY_DIGEST_HEADER]: context.bodyDigest } : {}),
+                  ...(context
+                      ? { [SYSTEM_AI_BILLING_METHOD_HEADER]: context.method, [SYSTEM_AI_BILLING_PATH_HEADER]: context.canonicalPath, [SYSTEM_AI_BILLING_QUERY_HEADER]: context.canonicalQuery, [SYSTEM_AI_BILLING_BODY_DIGEST_HEADER]: context.bodyDigest }
+                      : {}),
                   ...(usage.providerIdempotencyKey ? { [SYSTEM_AI_PROVIDER_IDEMPOTENCY_KEY_HEADER]: usage.providerIdempotencyKey } : {}),
               }
             : {}),
@@ -107,7 +113,12 @@ export function readVerifiedSystemAiBusinessRequestId(headers: Headers, logicalM
     return businessRequestId;
 }
 
-export function readVerifiedSystemAiUsageContext(headers: Headers, logicalModel: string, upstreamModel: string, expectedBinding?: Pick<SystemAiUsageContext, "userId" | "channelId" | "capability" | "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">): SystemAiUsageContext | undefined {
+export function readVerifiedSystemAiUsageContext(
+    headers: Headers,
+    logicalModel: string,
+    upstreamModel: string,
+    expectedBinding?: Pick<SystemAiUsageContext, "userId" | "channelId" | "capability" | "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">,
+): SystemAiUsageContext | undefined {
     const context = normalizeUsageContext({
         userId: headers.get(SYSTEM_AI_BILLING_USER_HEADER) || "",
         channelId: headers.get(SYSTEM_AI_BILLING_CHANNEL_HEADER) || "",
@@ -217,9 +228,32 @@ function normalizeUsageDraft(value: SystemAiUsageContext | SystemAiUsageContextD
     const bindingId = value.bindingId.trim().slice(0, 200);
     const providerIdempotencyKey = value.providerIdempotencyKey?.trim().slice(0, 200) || undefined;
     const expiresAtMs = value.expiresAtMs;
-    if (!userId || !channelId || !["text", "image", "video", "audio"].includes(capability) || !businessRequestId || !/^[a-f0-9]{64}$/.test(requestFingerprint) || !Number.isSafeInteger(value.attemptNumber) || value.attemptNumber < 1 || !bindingId || !Number.isSafeInteger(expiresAtMs) || expiresAtMs < 1) return undefined;
+    if (
+        !userId ||
+        !channelId ||
+        !["text", "image", "video", "audio"].includes(capability) ||
+        !businessRequestId ||
+        !/^[a-f0-9]{64}$/.test(requestFingerprint) ||
+        !Number.isSafeInteger(value.attemptNumber) ||
+        value.attemptNumber < 1 ||
+        !bindingId ||
+        !Number.isSafeInteger(expiresAtMs) ||
+        expiresAtMs < 1
+    )
+        return undefined;
     if (value.providerIdempotencySupported && !providerIdempotencyKey) return undefined;
-    return { userId, channelId, capability, expiresAtMs, businessRequestId, requestFingerprint, attemptNumber: value.attemptNumber, bindingId, providerIdempotencySupported: value.providerIdempotencySupported, ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}) };
+    return {
+        userId,
+        channelId,
+        capability,
+        expiresAtMs,
+        businessRequestId,
+        requestFingerprint,
+        attemptNumber: value.attemptNumber,
+        bindingId,
+        providerIdempotencySupported: value.providerIdempotencySupported,
+        ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
+    };
 }
 
 function readSystemAiUsageDraft(headers: Headers) {
@@ -238,13 +272,15 @@ function readSystemAiUsageDraft(headers: Headers) {
 }
 
 function sameRequestBinding(context: SystemAiUsageContext, expected: Pick<SystemAiUsageContext, "userId" | "channelId" | "capability" | "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">) {
-    return context.userId === expected.userId.trim()
-        && context.channelId === expected.channelId.trim()
-        && context.capability === expected.capability
-        && context.method === expected.method.trim().toUpperCase()
-        && context.canonicalPath === expected.canonicalPath.trim()
-        && context.canonicalQuery === canonicalizeSystemAiQuery(expected.canonicalQuery)
-        && context.bodyDigest === expected.bodyDigest.trim().toLowerCase();
+    return (
+        context.userId === expected.userId.trim() &&
+        context.channelId === expected.channelId.trim() &&
+        context.capability === expected.capability &&
+        context.method === expected.method.trim().toUpperCase() &&
+        context.canonicalPath === expected.canonicalPath.trim() &&
+        context.canonicalQuery === canonicalizeSystemAiQuery(expected.canonicalQuery) &&
+        context.bodyDigest === expected.bodyDigest.trim().toLowerCase()
+    );
 }
 
 export function canonicalizeSystemAiQuery(value: string | URLSearchParams) {

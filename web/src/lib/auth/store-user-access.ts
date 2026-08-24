@@ -13,17 +13,7 @@ import { ALL_ADMIN_PERMISSIONS, hasAdminPermission, hasAllAdminPermissions, norm
 import { hashPassword, verifyPasswordWithDummy } from "./password";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
 import { AuthInputError, EMAIL_CODE_MAX_AGE_MS, EMAIL_CODE_RESEND_COOLDOWN_MS } from "./store-foundation";
-import {
-    consumeEmailCode,
-    hashToken,
-    normalizeDisplayName,
-    normalizeEmail,
-    normalizeUsername,
-    randomNumericCode,
-    validateEmail,
-    validatePassword,
-    validateUsername,
-} from "./store-normalizers";
+import { consumeEmailCode, hashToken, normalizeDisplayName, normalizeEmail, normalizeUsername, randomNumericCode, validateEmail, validatePassword, validateUsername } from "./store-normalizers";
 import { mutateAuthDb, readAuthDb, readPostgresAuthSettings } from "./store-repository";
 import { publicUserFromAuthenticatedRecord, toPublicUser } from "./store-user-projection";
 import { type AuthDatabase, type EmailCodePurpose, type StoredUser, type UserRole, type UserStatus } from "./store-types";
@@ -207,16 +197,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
     });
 }
 
-export async function createUserByAdmin(input: {
-    actorId: string;
-    username: string;
-    email?: string;
-    displayName?: string;
-    password: string;
-    role?: UserRole;
-    adminPermissions?: AdminPermission[];
-    status?: UserStatus;
-}) {
+export async function createUserByAdmin(input: { actorId: string; username: string; email?: string; displayName?: string; password: string; role?: UserRole; adminPermissions?: AdminPermission[]; status?: UserStatus }) {
     const username = normalizeUsername(input.username);
     const email = normalizeEmail(input.email);
     const displayName = normalizeDisplayName(input.displayName || username);

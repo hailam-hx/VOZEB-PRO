@@ -25,7 +25,14 @@ describe("referral qualification", () => {
             },
         });
         const order = {
-            id: "topup", userId: "invitee", nominalUsdValue: "10", paidUsdValue: "8", creditAmount: "10", provider: "stripe", paymentState: "paid", creditGrantState: "granted",
+            id: "topup",
+            userId: "invitee",
+            nominalUsdValue: "10",
+            paidUsdValue: "8",
+            creditAmount: "10",
+            provider: "stripe",
+            paymentState: "paid",
+            creditGrantState: "granted",
         } as Parameters<typeof prepareReferralRewardsForPaidOrder>[1]["order"];
 
         const rewards = await prepareReferralRewardsForPaidOrder({ query: vi.fn() }, { order, provider: "stripe", paidAt: "2026-08-23T00:00:00.000Z" });
@@ -38,24 +45,56 @@ describe("referral qualification", () => {
         const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./referral-service.ts", import.meta.url), "utf8"));
         expect(source).not.toContain("billing-service-helpers");
         expect(source).not.toContain("coupon-service");
-        expect(source).toContain("issueReferralCoupon");
+        expect(source).not.toContain("issueReferralCoupon");
     });
 
-    it("sends an invalid V1 top-up coupon mapping to manual review", async () => {
+    it("rejects an invalid zero-credit V1 referral reward", async () => {
         const now = "2026-08-23T00:00:00.000Z";
-        const reward = { id: "reward", relationshipId: "rel", beneficiaryUserId: "invitee", beneficiaryRole: "invitee", rewardType: "coupon", pointsAmount: 0, topUpCouponTemplateId: "missing", triggerOrderId: "topup", status: "pending", settleAfter: now, createdAt: now, updatedAt: now };
+        const reward = {
+            id: "reward",
+            relationshipId: "rel",
+            beneficiaryUserId: "invitee",
+            beneficiaryRole: "invitee",
+            rewardType: "points",
+            pointsAmount: 0,
+            triggerOrderId: "topup",
+            status: "pending",
+            settleAfter: now,
+            createdAt: now,
+            updatedAt: now,
+        };
         const updateReward = vi.fn(async (_id, patch) => ({ ...reward, ...patch }));
-        const referrals = { getProgram: vi.fn(async () => ({ enabled: true, inviterMonthlyLimit: 0, campaignTotalLimit: 0 })), lockDueRewards: vi.fn(async () => [reward]), getRelationshipById: vi.fn(async () => ({ id: "rel", inviterUserId: "inviter", riskStatus: "clear" })), getRewardsByRelationship: vi.fn(async () => [reward]), countSettledInviterRewards: vi.fn(async () => ({ monthly: 0 })), countAllSettledInviterRewards: vi.fn(async () => 0), updateReward };
-        mocks.makeRepositories.mockReturnValue({ referrals, users: { getById: vi.fn() }, topUps: { issueReferralCoupon: vi.fn(async () => null) } });
+        const referrals = {
+            getProgram: vi.fn(async () => ({ enabled: true, inviterMonthlyLimit: 0, campaignTotalLimit: 0 })),
+            lockDueRewards: vi.fn(async () => [reward]),
+            getRelationshipById: vi.fn(async () => ({ id: "rel", inviterUserId: "inviter", riskStatus: "clear" })),
+            getRewardsByRelationship: vi.fn(async () => [reward]),
+            countSettledInviterRewards: vi.fn(async () => ({ monthly: 0 })),
+            countAllSettledInviterRewards: vi.fn(async () => 0),
+            updateReward,
+        };
+        mocks.makeRepositories.mockReturnValue({ referrals, users: { getById: vi.fn() } });
         mocks.transaction.mockImplementation(async (handler) => handler({ query: vi.fn(async () => ({ rows: [] })) }));
 
         await settleDueReferralRewards({ now: new Date(now) });
 
-        expect(updateReward).toHaveBeenCalledWith("reward", expect.objectContaining({ status: "manual_review" }));
+        expect(updateReward).toHaveBeenCalledWith("reward", expect.objectContaining({ status: "rejected", reason: "奖励发放失败：邀请积分奖励金额无效" }));
     });
 
     it("marks an unrecoverable settled referral reward for manual review during full refund", async () => {
-        const reward = { id: "reward", relationshipId: "rel", beneficiaryUserId: "inviter", beneficiaryRole: "inviter", rewardType: "points", pointsAmount: 2, triggerOrderId: "topup", status: "settled", settleAfter: "2026-08-23T00:00:00.000Z", createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" };
+        const reward = {
+            id: "reward",
+            relationshipId: "rel",
+            beneficiaryUserId: "inviter",
+            beneficiaryRole: "inviter",
+            rewardType: "points",
+            pointsAmount: 2,
+            triggerOrderId: "topup",
+            status: "settled",
+            settleAfter: "2026-08-23T00:00:00.000Z",
+            createdAt: "2026-08-23T00:00:00.000Z",
+            updatedAt: "2026-08-23T00:00:00.000Z",
+        };
         const updateReward = vi.fn(async (_id, patch) => ({ ...reward, ...patch }));
         const updateRelationship = vi.fn();
         mocks.makeRepositories.mockReturnValue({ referrals: { getRewardsByTriggerOrder: vi.fn(async () => [reward]), updateReward, getRelationshipById: vi.fn(async () => ({ id: "rel", riskSignals: {} })), updateRelationship } });

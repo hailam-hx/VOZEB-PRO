@@ -475,19 +475,7 @@ export class PointsRepository {
     async addRecord(record: PointRecordInput) {
         const result = await this.db.query(
             "INSERT INTO point_records (id, user_id, type, amount, balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, created_at) VALUES ($1, $2, $3, $4::numeric, $5::numeric, $6, $7, $8, $9, $10, $11) RETURNING *",
-            [
-                record.id,
-                record.userId,
-                record.type,
-                record.amount,
-                record.balanceAfter,
-                record.description,
-                record.model || null,
-                record.idempotencyKey || null,
-                record.requestFingerprint || null,
-                record.sourceRecordId || null,
-                record.createdAt,
-            ],
+            [record.id, record.userId, record.type, record.amount, record.balanceAfter, record.description, record.model || null, record.idempotencyKey || null, record.requestFingerprint || null, record.sourceRecordId || null, record.createdAt],
         );
         return mapPointRecord(result.rows[0]);
     }

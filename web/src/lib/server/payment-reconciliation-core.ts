@@ -488,7 +488,10 @@ function parseMoneyToMinor(value: string, currency: string) {
     try {
         const parsed = decimal(text.replace(/[()]/g, ""));
         const absolute = parsed.isNegative() ? decimal(0).minus(parsed) : parsed;
-        return absolute.times(decimal(currency === "VND" ? 1 : 100)).roundHalfUp(0).toString();
+        return absolute
+            .times(decimal(currency === "VND" ? 1 : 100))
+            .roundHalfUp(0)
+            .toString();
     } catch {
         return undefined;
     }

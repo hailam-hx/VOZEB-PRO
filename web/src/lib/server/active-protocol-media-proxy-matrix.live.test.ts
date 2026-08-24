@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,20 +6,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-    consumeUserPoints: vi.fn(),
     fetchInternalApi: vi.fn(),
     getCurrentUser: vi.fn(),
     mediaAccess: vi.fn(),
-    refundUserPoints: vi.fn(),
     safeRecordAuditLog: vi.fn(),
     taskAccess: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
-vi.mock("@/lib/auth/store", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("@/lib/auth/store")>();
-    return { ...actual, consumeUserPoints: mocks.consumeUserPoints, refundUserPoints: mocks.refundUserPoints };
-});
 vi.mock("@/lib/server/generation-media-access", () => ({ authorizeGenerationMediaProxyRequest: mocks.mediaAccess }));
 vi.mock("@/lib/server/generation-task-authorization", () => ({ userOwnsGenerationUpstreamTask: mocks.taskAccess }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "proxy-admin" })), safeRecordAuditLog: mocks.safeRecordAuditLog }));
@@ -35,16 +30,26 @@ import { runOpenAiImageTask } from "@/app/api/image-tasks/image-task-openai";
 import { GET as proxyGet, HEAD as proxyHead, POST as proxyPost } from "@/app/api/ai/system/[channelId]/[...path]/route";
 import { PATCH as saveAdminSettings } from "@/app/api/admin/settings/route";
 import { createUpstream } from "@/app/api/video-generation-tasks/video-generation-route";
+import { createFirstAdmin } from "@/lib/auth/store";
 import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store-types";
+import type { PricingRateCardV1 } from "@/lib/billing/pricing";
 import { channelProtocolDefinitions, emptyAdvancedConfig, protocolAuthHeaders, protocolModelConfig, registeredChannelProtocolDefinitions, type ChannelProtocolDefinition } from "@/lib/channel-protocol-registry";
 import type { SystemGenerationChannelConfig } from "@/lib/server/generation-channel";
+import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import type { ImageTask } from "@/lib/server/image-task-store";
+import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
+import { saveAdminModelPricing } from "@/lib/server/admin-model-pricing-service";
+import { canonicalMultipartBodyDigest } from "@/lib/server/multipart-body-digest";
+import { creditWalletBalance } from "@/lib/server/points-wallet-service";
+import { canonicalizeSystemAiQuery, finalizeSystemAiUsageRequestHeaders, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { requestStructuredText } from "@/lib/server/text-planning-runtime";
+import { finishSystemAiTextAttempt } from "@/lib/server/usage-billing-runtime";
 import type { VideoTask } from "@/lib/server/video-task-store";
 import { queryVideoTaskUpstream } from "@/lib/server/video-task-runtime";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 
 const INTERNAL_ORIGIN = "http://internal.vozeb.test";
+const INSTALL_TOKEN = "protocol-matrix-install-token".padEnd(48, "x");
 const MULTIPLIERS = { imageQuality: { auto: 1, high: 1 }, videoQuality: { "720": 1, "1080": 1 }, videoSeconds: { "5": 1, "8": 1 } };
 const TEXT_PROTOCOLS = protocolCases("text");
 const IMAGE_PROTOCOLS = protocolCases("image");
@@ -54,6 +59,7 @@ const PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYA
 let fixture: ReturnType<typeof createProtocolFixtureServer>;
 let fixtureOrigin = "";
 let dataDir = "";
+let proxyUserId = "";
 
 describe("active protocols through persisted admin settings and the system proxy", () => {
     beforeEach(async () => {
@@ -61,19 +67,21 @@ describe("active protocols through persisted admin settings and the system proxy
         vi.stubEnv("VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1");
         vi.stubEnv("VOZEB_PRO_DATABASE_PROVIDER", "file");
         vi.stubEnv("VOZEB_PRO_ENCRYPTION_KEY", "a".repeat(64));
+        vi.stubEnv("VOZEB_PRO_INSTALL_TOKEN", INSTALL_TOKEN);
         dataDir = await mkdtemp(join(tmpdir(), "vozeb-pro-protocol-roundtrip-"));
         vi.stubEnv("VOZEB_PRO_DATA_DIR", dataDir);
+        const admin = await createFirstAdmin({ username: "proxy-user", password: "password123", installToken: INSTALL_TOKEN });
+        proxyUserId = admin.id;
+        await creditWalletBalance({ userId: proxyUserId, businessId: "protocol-matrix-opening-balance", amount: "100", description: "协议矩阵测试初始余额" });
         fixture = createProtocolFixtureServer();
         await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
         const address = fixture.server.address();
         if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
         fixtureOrigin = `http://127.0.0.1:${address.port}`;
-        mocks.getCurrentUser.mockReset().mockResolvedValue({ id: "proxy-user", role: "admin", status: "active", adminPermissions: ["upstream.manage"], pointsBalance: 100 });
-        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
-        mocks.refundUserPoints.mockReset();
+        mocks.getCurrentUser.mockReset().mockResolvedValue(admin);
         mocks.mediaAccess.mockReset().mockResolvedValue(true);
         mocks.taskAccess.mockReset().mockResolvedValue(true);
-        mocks.fetchInternalApi.mockReset().mockImplementation(dispatchInternalRequest);
+        mocks.fetchInternalApi.mockReset().mockImplementation(dispatchFinalizedInternalRequest);
     });
 
     afterEach(async () => {
@@ -87,6 +95,7 @@ describe("active protocols through persisted admin settings and the system proxy
         const operation = protocolOperation(definition, "text", model);
         const advancedConfig = protocolAdvancedConfig(definition.id, operation, model);
         const channel = await configureProxyChannel(definition, "text", model, advancedConfig);
+        const providerIdempotencyKey = `text-task:${definition.id}:attempt:1`;
 
         const result = await requestStructuredText({
             origin: INTERNAL_ORIGIN,
@@ -95,14 +104,14 @@ describe("active protocols through persisted admin settings and the system proxy
             messages: [{ role: "user", content: "return a protocol test plan" }],
             tool: { name: "make_plan", description: "protocol round-trip", parameters: { type: "object", properties: {} } },
             headers: {
-                "idempotency-key": `text-${definition.id}`,
-                "x-client-request-id": `text-${definition.id}`,
-                "x-vozeb-pro-logical-model": channel.logicalModelId,
-                "x-vozeb-pro-upstream-model": model,
+                "idempotency-key": providerIdempotencyKey,
+                "x-client-request-id": providerIdempotencyKey,
+                ...systemAiBillingHeaders(channel.logicalModelId, usageContext(channel, "text", providerIdempotencyKey), model),
             },
         });
 
         expect(result.arguments).toBe("{}");
+        await finishSystemAiTextAttempt(result.headers, { status: "succeeded" });
         expectProxyRequests(channel, operation.createPath, model, false);
     });
 
@@ -129,14 +138,14 @@ describe("active protocols through persisted admin settings and the system proxy
         const advancedConfig = protocolAdvancedConfig(definition.id, operation, model);
         const channel = await configureProxyChannel(definition, "video", model, advancedConfig);
 
-        const created = await createUpstream("proxy-user", INTERNAL_ORIGIN, "", channel.config, "animate a blue logo", videoParameters(), [], MULTIPLIERS, `text-video-${definition.id}`);
+        const created = await createUpstream(proxyUserId, INTERNAL_ORIGIN, "", channel.config, "animate a blue logo", videoParameters(), [], MULTIPLIERS, `text-video-${definition.id}`);
         await expectVideoResult(channel, created);
         expectProxyRequests(channel, operation.createPath, model, false, operation.queryPath, created.id);
 
         fixture.requests.splice(0);
         const createPath = operation.imageToVideoPath || operation.createPath;
         const referenced = await createUpstream(
-            "proxy-user",
+            proxyUserId,
             INTERNAL_ORIGIN,
             "",
             channel.config,
@@ -156,13 +165,14 @@ describe("active protocols through persisted admin settings and the system proxy
         const advancedConfig = protocolAdvancedConfig(definition.id, operation, model);
         const channel = await configureProxyChannel(definition, "audio", model, advancedConfig);
         const path = (operation.createPath || "/audio/speech").replace(":model", encodeURIComponent(model));
-        const response = await dispatchInternalRequest(`${INTERNAL_ORIGIN}${channel.config.baseUrl}${path}`, {
+        const providerIdempotencyKey = `audio-task:${definition.id}:attempt:1`;
+        const response = await dispatchFinalizedInternalRequest(`${INTERNAL_ORIGIN}${channel.config.baseUrl}${path}`, {
             method: "POST",
             headers: {
                 "content-type": "application/json",
-                "idempotency-key": `audio-${definition.id}`,
-                "x-client-request-id": `audio-${definition.id}`,
-                "x-vozeb-pro-logical-model": channel.logicalModelId,
+                "idempotency-key": providerIdempotencyKey,
+                "x-client-request-id": providerIdempotencyKey,
+                ...systemAiBillingHeaders(channel.logicalModelId, usageContext(channel, "audio", providerIdempotencyKey), model),
             },
             body: JSON.stringify({ model, input: "protocol audio test", voice: "alloy", format: "wav" }),
         });
@@ -263,7 +273,31 @@ async function configureProxyChannel(definition: ChannelProtocolDefinition, capa
     const logicalModelId = `${definition.id}-${capability}`;
     const upstreamBaseUrl = fixtureBaseUrl(definition.id, advancedConfig.protocol === "gemini" ? "gemini" : definition.apiFormat);
     const savedChannel = { id: channelId, name: channelId, enabled: true, baseUrl: upstreamBaseUrl, apiKey: "fixture-key", apiFormat: definition.apiFormat, models: [model], advancedConfig } satisfies SystemModelChannel;
-    const logicalModels = [{ id: logicalModelId, name: logicalModelId, capability, enabled: true, bindings: [{ id: `${logicalModelId}-binding`, channelId, upstreamModel: model, enabled: true, priority: 1 }] }];
+    const rateCard = pricingRateCard(capability);
+    const bindingId = `${logicalModelId}-binding`;
+    const storedCapabilityProfile = capability === "text" ? { maxInputTokens: 32_768, maxOutputTokens: 128, supportsIdempotency: true } : { supportsIdempotency: true };
+    const capabilityProfile = resolveLogicalModelCapabilityProfile({ capabilityProfile: storedCapabilityProfile }, capability, { advancedConfig }, model);
+    const logicalModels = [
+        {
+            id: logicalModelId,
+            name: logicalModelId,
+            capability,
+            enabled: true,
+            saleRateCard: rateCard,
+            bindings: [
+                {
+                    id: bindingId,
+                    channelId,
+                    upstreamModel: model,
+                    enabled: true,
+                    priority: 1,
+                    capabilityProfile: storedCapabilityProfile,
+                    costRateCard: rateCard,
+                    providerCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                },
+            ],
+        },
+    ];
     const defaultModels: SystemDefaultModels = { textModel: "", imageModel: "", videoModel: "", audioModel: "", [`${capability}Model`]: logicalModelId };
     const response = await saveAdminSettings(
         new Request(`${INTERNAL_ORIGIN}/api/admin/settings`, {
@@ -276,6 +310,11 @@ async function configureProxyChannel(definition: ChannelProtocolDefinition, capa
     if (!response.ok) throw new Error(`Admin channel save failed for ${definition.id}/${capability}: ${responseText}`);
     const payload = JSON.parse(responseText) as { settings: { systemChannels: Array<{ apiKey: string; hasApiKey: boolean }> } };
     expect(payload.settings.systemChannels[0]).toMatchObject({ apiKey: "", hasApiKey: true });
+    await saveAdminModelPricing({
+        modelId: logicalModelId,
+        saleRateCard: rateCard,
+        bindings: [{ bindingId, costRateCard: rateCard, providerCostUnit: { kind: "fiat", currency: "USD" } }],
+    });
     const persisted = await readFile(join(dataDir, "auth.json"), "utf8");
     expect(persisted).not.toContain("fixture-key");
     expect(persisted).toContain("vozeb-pro-secret:v1:");
@@ -294,6 +333,14 @@ async function configureProxyChannel(definition: ChannelProtocolDefinition, capa
             logicalModel: logicalModelId,
             channelId,
             advancedConfig,
+            capabilityProfile,
+            usagePricing: {
+                logicalModelId,
+                bindingId,
+                saleRateCard: rateCard,
+                costRateCard: rateCard,
+                providerCostUnit: { kind: "fiat", currency: "USD" },
+            },
         } satisfies SystemGenerationChannelConfig,
     };
 }
@@ -316,7 +363,7 @@ function imageTask(channel: ProxyChannel, edit: boolean): ImageTask {
     const protocol = channel.config.advancedConfig?.protocol || "auto";
     return {
         id: `${edit ? "edit" : "image"}-${protocol}`,
-        userId: "proxy-user",
+        userId: proxyUserId,
         username: "proxy-user",
         displayName: "Proxy User",
         kind: edit ? "edit" : "generation",
@@ -365,7 +412,7 @@ async function expectImageResult(result: { dataUrl?: string; remoteUrl?: string 
 
 async function expectVideoResult(channel: ProxyChannel, upstream: VideoTask["upstream"]) {
     expect(upstream?.id).toBeTruthy();
-    const result = await queryVideoTaskUpstream({ config: channel.config, upstream, userId: "proxy-user" } as unknown as VideoTask, INTERNAL_ORIGIN, "");
+    const result = await queryVideoTaskUpstream({ config: channel.config, upstream, userId: proxyUserId } as unknown as VideoTask, INTERNAL_ORIGIN, "");
     expect(result).toMatchObject({ state: "result_ready" });
     if (result.state !== "result_ready") throw new Error(`video fixture did not return a result: ${result.state}`);
     const proxyUrl = `${INTERNAL_ORIGIN}${channel.config.baseUrl}/_media?url=${encodeURIComponent(result.resultUrl)}`;
@@ -389,7 +436,6 @@ function expectProxyRequests(channel: ProxyChannel, createPath: string | undefin
     Object.entries(channel.expectedAuthHeaders).forEach(([key, value]) => expect(request.headers[key.toLowerCase()]).toBe(value));
     expect(requestContainsReference(request)).toBe(referenceRequired);
     if (queryPath && taskId) expect(fixture.requests.some((request) => request.method === "GET" && request.path === upstreamPath(channel.upstreamBaseUrl, queryPath.replace(":model", model).replace(":task_id", taskId)))).toBe(true);
-    expect(mocks.consumeUserPoints).toHaveBeenCalled();
 }
 
 function upstreamPath(baseUrl: string, path: string) {
@@ -417,6 +463,46 @@ async function dispatchInternalRequest(input: string | URL | Request, init?: Req
     if (request.method === "HEAD") return proxyHead(request, context);
     if (request.method === "POST") return proxyPost(request, context);
     throw new Error(`Unsupported internal fixture method: ${request.method}`);
+}
+
+async function dispatchFinalizedInternalRequest(input: string | URL | Request, init?: RequestInit) {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const target = new URL(request.url);
+    const method = request.method.toUpperCase();
+    const bytes = method === "GET" || method === "HEAD" ? undefined : new Uint8Array(await request.arrayBuffer());
+    const headers = new Headers(request.headers);
+    const multipart = Boolean(bytes && headers.get("content-type")?.toLowerCase().includes("multipart/form-data"));
+    const bodyDigest = multipart
+        ? await canonicalMultipartBodyDigest(await new Request(target, { method, headers: { "content-type": headers.get("content-type") || "" }, body: bytes }).formData())
+        : createHash("sha256")
+              .update(bytes || new Uint8Array())
+              .digest("hex");
+    finalizeSystemAiUsageRequestHeaders(headers, {
+        method,
+        canonicalPath: target.pathname,
+        canonicalQuery: canonicalizeSystemAiQuery(target.searchParams),
+        bodyDigest,
+    });
+    return dispatchInternalRequest(new Request(target, { method, headers, ...(bytes ? { body: bytes } : {}) }));
+}
+
+function usageContext(channel: ProxyChannel, capability: LogicalModelCapability, providerIdempotencyKey: string) {
+    const context = generationSystemAiUsageContext(channel.config, capability, providerIdempotencyKey, proxyUserId);
+    if (!context) throw new Error(`Missing PAYG usage context for ${capability}`);
+    return context;
+}
+
+function pricingRateCard(capability: LogicalModelCapability): PricingRateCardV1 {
+    return {
+        version: 1,
+        components:
+            capability === "text"
+                ? [
+                      { id: "input", dimension: "inputTokens", unitPrice: "0.001" },
+                      { id: "output", dimension: "outputTokens", unitPrice: "0.001" },
+                  ]
+                : [{ id: "count", dimension: "count", unitPrice: "1" }],
+    };
 }
 
 function normalizeModel(model: string) {

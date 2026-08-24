@@ -7,7 +7,31 @@ import { createProviderCheckout } from "./payment-checkout-providers";
 import type { TopUpOrder } from "./top-up-payment";
 
 const order: TopUpOrder = {
-    id: "top-up-one", orderNo: "VZ-TOP-UP-1", userId: "user", status: "pending", paymentState: "pending", creditGrantState: "pending", providerRefundState: "none", creditRecoveryState: "none", subject: "充值", currency: "VND", currencyExponent: 0, nominalNativeAmount: "250000", promotionDiscountNativeAmount: "0", couponDiscountNativeAmount: "0", payableNativeAmount: "250000", nominalUsdValue: "10", paidUsdValue: "10", creditAmount: "10", pricingVersion: "top-up-v1", customerFxVersion: "fx-v1", customerFxRate: "0.00004", paymentAmount: { kind: "fiat", currency: "VND", amountMinor: "250000", minorUnitExponent: 0 }, provider: "stripe", createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z",
+    id: "top-up-one",
+    orderNo: "VZ-TOP-UP-1",
+    userId: "user",
+    status: "pending",
+    paymentState: "pending",
+    creditGrantState: "pending",
+    providerRefundState: "none",
+    creditRecoveryState: "none",
+    subject: "充值",
+    currency: "VND",
+    currencyExponent: 0,
+    nominalNativeAmount: "250000",
+    promotionDiscountNativeAmount: "0",
+    couponDiscountNativeAmount: "0",
+    payableNativeAmount: "250000",
+    nominalUsdValue: "10",
+    paidUsdValue: "10",
+    creditAmount: "10",
+    pricingVersion: "top-up-v1",
+    customerFxVersion: "fx-v1",
+    customerFxRate: "0.00004",
+    paymentAmount: { kind: "fiat", currency: "VND", amountMinor: "250000", minorUnitExponent: 0 },
+    provider: "stripe",
+    createdAt: "2026-08-23T00:00:00.000Z",
+    updatedAt: "2026-08-23T00:00:00.000Z",
 };
 const config: PaymentRuntimeConfig = { saved: { providers: {} }, providers: {}, valuesByEnvName: { VOZEB_PRO_STRIPE_SECRET_KEY: "sk_test_secret", VOZEB_PRO_STRIPE_API_BASE: "https://stripe.test" } };
 

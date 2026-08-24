@@ -108,7 +108,9 @@ function paidOrder(): TopUpOrder {
     };
 }
 
-function memoryRefundStore(balance: string): TopUpRefundStore & { state: { order: TopUpOrder; balance: string; held: string; ledger: Array<{ businessId: string; amount: string; orderId: string }>; paymentStatus: "succeeded" | "refunded"; referralReversals: number } } {
+function memoryRefundStore(
+    balance: string,
+): TopUpRefundStore & { state: { order: TopUpOrder; balance: string; held: string; ledger: Array<{ businessId: string; amount: string; orderId: string }>; paymentStatus: "succeeded" | "refunded"; referralReversals: number } } {
     const state = { order: paidOrder(), balance, held: "0", ledger: [] as Array<{ businessId: string; amount: string; orderId: string }>, paymentStatus: "succeeded" as "succeeded" | "refunded", referralReversals: 0 };
     return {
         state,

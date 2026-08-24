@@ -48,11 +48,36 @@ export class PostgresTopUpPaymentStore implements TopUpPaymentSettlementStore {
                 `INSERT INTO top_up_payments (id, order_id, user_id, provider, provider_event_id, order_snapshot_fingerprint, status, payment_kind, fiat_currency, amount_minor, minor_unit_exponent, provider_trade_id, provider_payment_id, raw_payload, paid_at, created_at, updated_at)
                  VALUES ($1, $2, $3, $4, $5, $6, 'succeeded', 'fiat', $7, $8::numeric, $9, $10, $11, $12::jsonb, $13, $13, $13)
                  ON CONFLICT DO NOTHING RETURNING id`,
-                [paymentId, order.id, order.userId, input.event.provider, input.event.eventId, paymentSnapshotFingerprint, amount.currency, amount.amountMinor, amount.minorUnitExponent, input.event.providerOrderId || null, input.event.providerPaymentId, JSON.stringify(input.event.rawPayload || {}), paidAt],
+                [
+                    paymentId,
+                    order.id,
+                    order.userId,
+                    input.event.provider,
+                    input.event.eventId,
+                    paymentSnapshotFingerprint,
+                    amount.currency,
+                    amount.amountMinor,
+                    amount.minorUnitExponent,
+                    input.event.providerOrderId || null,
+                    input.event.providerPaymentId,
+                    JSON.stringify(input.event.rawPayload || {}),
+                    paidAt,
+                ],
             );
             if (!paymentInsert.rowCount) {
                 const existing = await client.query("SELECT * FROM top_up_payments WHERE provider = $1 AND provider_payment_id = $2 FOR UPDATE", [input.event.provider, input.event.providerPaymentId]);
-                if (!sameOwnedPayment(existing.rows[0], { paymentId, order, eventId: input.event.eventId, provider: input.event.provider, amount, providerTradeId: input.event.providerOrderId, providerPaymentId: input.event.providerPaymentId, paymentSnapshotFingerprint })) {
+                if (
+                    !sameOwnedPayment(existing.rows[0], {
+                        paymentId,
+                        order,
+                        eventId: input.event.eventId,
+                        provider: input.event.provider,
+                        amount,
+                        providerTradeId: input.event.providerOrderId,
+                        providerPaymentId: input.event.providerPaymentId,
+                        paymentSnapshotFingerprint,
+                    })
+                ) {
                     throw new BillingInputError("支付身份已归属于不同充值订单或快照", 409);
                 }
                 await markEventProcessed(client, input.event.provider, input.event.eventId);
@@ -105,26 +130,52 @@ export class PostgresTopUpPaymentStore implements TopUpPaymentSettlementStore {
 
 function authoritativeOrderFingerprint(order: Parameters<TopUpPaymentSettlementStore["settle"]>[0]["order"]) {
     return createHash("sha256")
-        .update(JSON.stringify({ id: order.id, userId: order.userId, paymentAmount: order.paymentAmount, creditAmount: order.creditAmount, nominalNativeAmount: order.nominalNativeAmount, payableNativeAmount: order.payableNativeAmount, nominalUsdValue: order.nominalUsdValue, paidUsdValue: order.paidUsdValue, pricingVersion: order.pricingVersion, customerFxVersion: order.customerFxVersion, customerFxRate: order.customerFxRate }))
+        .update(
+            JSON.stringify({
+                id: order.id,
+                userId: order.userId,
+                paymentAmount: order.paymentAmount,
+                creditAmount: order.creditAmount,
+                nominalNativeAmount: order.nominalNativeAmount,
+                payableNativeAmount: order.payableNativeAmount,
+                nominalUsdValue: order.nominalUsdValue,
+                paidUsdValue: order.paidUsdValue,
+                pricingVersion: order.pricingVersion,
+                customerFxVersion: order.customerFxVersion,
+                customerFxRate: order.customerFxRate,
+            }),
+        )
         .digest("hex");
 }
 
-function sameOwnedPayment(row: Record<string, unknown> | undefined, input: { paymentId: string; order: Parameters<TopUpPaymentSettlementStore["settle"]>[0]["order"]; eventId: string; provider: string; amount: { kind: "fiat"; currency: string; amountMinor: string; minorUnitExponent: number }; providerTradeId?: string; providerPaymentId: string; paymentSnapshotFingerprint: string }) {
+function sameOwnedPayment(
+    row: Record<string, unknown> | undefined,
+    input: {
+        paymentId: string;
+        order: Parameters<TopUpPaymentSettlementStore["settle"]>[0]["order"];
+        eventId: string;
+        provider: string;
+        amount: { kind: "fiat"; currency: string; amountMinor: string; minorUnitExponent: number };
+        providerTradeId?: string;
+        providerPaymentId: string;
+        paymentSnapshotFingerprint: string;
+    },
+) {
     return Boolean(
         row &&
-            String(row.id) === input.paymentId &&
-            String(row.order_id) === input.order.id &&
-            String(row.user_id) === input.order.userId &&
-            String(row.provider) === input.provider &&
-            String(row.provider_event_id) === input.eventId &&
-            String(row.order_snapshot_fingerprint) === input.paymentSnapshotFingerprint &&
-            row.status === "succeeded" &&
-            row.payment_kind === "fiat" &&
-            String(row.fiat_currency) === input.amount.currency &&
-            String(row.amount_minor) === input.amount.amountMinor &&
-            Number(row.minor_unit_exponent) === input.amount.minorUnitExponent &&
-            String(row.provider_trade_id || "") === (input.providerTradeId || "") &&
-            String(row.provider_payment_id) === input.providerPaymentId,
+        String(row.id) === input.paymentId &&
+        String(row.order_id) === input.order.id &&
+        String(row.user_id) === input.order.userId &&
+        String(row.provider) === input.provider &&
+        String(row.provider_event_id) === input.eventId &&
+        String(row.order_snapshot_fingerprint) === input.paymentSnapshotFingerprint &&
+        row.status === "succeeded" &&
+        row.payment_kind === "fiat" &&
+        String(row.fiat_currency) === input.amount.currency &&
+        String(row.amount_minor) === input.amount.amountMinor &&
+        Number(row.minor_unit_exponent) === input.amount.minorUnitExponent &&
+        String(row.provider_trade_id || "") === (input.providerTradeId || "") &&
+        String(row.provider_payment_id) === input.providerPaymentId,
     );
 }
 

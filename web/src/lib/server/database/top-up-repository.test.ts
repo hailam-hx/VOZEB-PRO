@@ -71,15 +71,31 @@ describe("top-up repository", () => {
     });
 
     it("round-trips separate unsigned local paid and refunded reconciliation totals", async () => {
-        const query = vi.fn().mockResolvedValue({ rows: [{
-            id: "run-one", provider: "stripe", source: "csv", status: "completed", total_rows: 1, matched_rows: 1, ok_rows: 1, issue_rows: 0,
-            statement_paid_amount: { kind: "fiat", currency: "VND", amountMinor: "0", minorUnitExponent: 0 },
-            statement_refunded_amount: { kind: "fiat", currency: "VND", amountMinor: "250000", minorUnitExponent: 0 },
-            local_paid_amount: { kind: "fiat", currency: "VND", amountMinor: "0", minorUnitExponent: 0 },
-            local_refunded_amount: { kind: "fiat", currency: "VND", amountMinor: "250000", minorUnitExponent: 0 },
-            difference_amount: { kind: "fiat", currency: "VND", amountMinor: "0", minorUnitExponent: 0 }, difference_direction: "balanced",
-            local_nominal_usd_value: "10", local_paid_usd_value: "10", created_at: "2026-08-23T00:00:00.000Z", updated_at: "2026-08-23T00:00:00.000Z",
-        }], rowCount: 1 });
+        const query = vi.fn().mockResolvedValue({
+            rows: [
+                {
+                    id: "run-one",
+                    provider: "stripe",
+                    source: "csv",
+                    status: "completed",
+                    total_rows: 1,
+                    matched_rows: 1,
+                    ok_rows: 1,
+                    issue_rows: 0,
+                    statement_paid_amount: { kind: "fiat", currency: "VND", amountMinor: "0", minorUnitExponent: 0 },
+                    statement_refunded_amount: { kind: "fiat", currency: "VND", amountMinor: "250000", minorUnitExponent: 0 },
+                    local_paid_amount: { kind: "fiat", currency: "VND", amountMinor: "0", minorUnitExponent: 0 },
+                    local_refunded_amount: { kind: "fiat", currency: "VND", amountMinor: "250000", minorUnitExponent: 0 },
+                    difference_amount: { kind: "fiat", currency: "VND", amountMinor: "0", minorUnitExponent: 0 },
+                    difference_direction: "balanced",
+                    local_nominal_usd_value: "10",
+                    local_paid_usd_value: "10",
+                    created_at: "2026-08-23T00:00:00.000Z",
+                    updated_at: "2026-08-23T00:00:00.000Z",
+                },
+            ],
+            rowCount: 1,
+        });
 
         const run = await new TopUpRepository({ query } as never).getReconciliationRun("run-one");
 

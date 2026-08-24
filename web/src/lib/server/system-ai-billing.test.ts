@@ -111,19 +111,45 @@ describe("system AI billing helpers", () => {
 
     it("rejects an otherwise valid create context after its configured request window", () => {
         const binding = { userId: "user-one", channelId: "channel-one", capability: "text" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/chat/completions", canonicalQuery: "", bodyDigest: "b".repeat(64) };
-        const headers = new Headers(systemAiBillingHeaders("writer", { ...binding, expiresAtMs: Date.now() - 1, businessRequestId: "text-task:expired", requestFingerprint: "a".repeat(64), attemptNumber: 1, bindingId: "binding", providerIdempotencySupported: false }, "vendor-text"));
+        const headers = new Headers(
+            systemAiBillingHeaders(
+                "writer",
+                { ...binding, expiresAtMs: Date.now() - 1, businessRequestId: "text-task:expired", requestFingerprint: "a".repeat(64), attemptNumber: 1, bindingId: "binding", providerIdempotencySupported: false },
+                "vendor-text",
+            ),
+        );
 
         expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text", binding)).toBeUndefined();
     });
 
     it("signs a runtime draft only after exact request bytes and route are known", () => {
-        const draft = { userId: "user-one", channelId: "channel-one", capability: "image" as const, expiresAtMs: Date.now() + 60_000, businessRequestId: "image-task:one", requestFingerprint: "a".repeat(64), attemptNumber: 1, bindingId: "binding-one", providerIdempotencySupported: false };
+        const draft = {
+            userId: "user-one",
+            channelId: "channel-one",
+            capability: "image" as const,
+            expiresAtMs: Date.now() + 60_000,
+            businessRequestId: "image-task:one",
+            requestFingerprint: "a".repeat(64),
+            attemptNumber: 1,
+            bindingId: "binding-one",
+            providerIdempotencySupported: false,
+        };
         const headers = new Headers(systemAiBillingHeaders("image-one", draft, "vendor-image"));
         expect(headers.get("x-vozeb-pro-points-signature")).toBeNull();
 
         finalizeSystemAiUsageRequestHeaders(headers, { method: "POST", canonicalPath: "/api/ai/system/channel-one/images/generations", canonicalQuery: "", bodyDigest: "b".repeat(64) });
 
-        expect(readVerifiedSystemAiUsageContext(headers, "image-one", "vendor-image", { userId: "user-one", channelId: "channel-one", capability: "image", method: "POST", canonicalPath: "/api/ai/system/channel-one/images/generations", canonicalQuery: "", bodyDigest: "b".repeat(64) })).toMatchObject(draft);
+        expect(
+            readVerifiedSystemAiUsageContext(headers, "image-one", "vendor-image", {
+                userId: "user-one",
+                channelId: "channel-one",
+                capability: "image",
+                method: "POST",
+                canonicalPath: "/api/ai/system/channel-one/images/generations",
+                canonicalQuery: "",
+                bodyDigest: "b".repeat(64),
+            }),
+        ).toMatchObject(draft);
     });
 
     it("round-trips the server-owned hold and attempt response identity", () => {

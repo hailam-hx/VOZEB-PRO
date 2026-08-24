@@ -24,9 +24,9 @@ describe("admin help center content", () => {
     });
 
     it("finds administrator-only instructions without using user help content", () => {
-        expect(findAdminHelpArticle("commerce")?.title).toContain("优惠券");
+        expect(findAdminHelpArticle("commerce")?.title).toContain("定价");
         expect(searchAdminHelpArticles("API Key").map((article) => article.id)).toContain("models");
-        expect(searchAdminHelpArticles("删除线").map((article) => article.id)).toContain("commerce");
+        expect(searchAdminHelpArticles("客户汇率 绑定成本").map((article) => article.id)).toContain("commerce");
         expect(searchAdminHelpArticles("邀请 冷静期").map((article) => article.id)).toContain("commerce");
         expect(searchAdminHelpArticles("媒体 引用").map((article) => article.id)).toContain("storage");
         expect(searchAdminHelpArticles("页面没有变化").map((article) => article.id)).toContain("maintenance");

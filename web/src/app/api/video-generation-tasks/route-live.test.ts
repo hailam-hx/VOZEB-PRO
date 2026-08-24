@@ -48,8 +48,8 @@ describe("video creation protocols over a live fixture", () => {
         expect(fixture.requests).toHaveLength(1);
         expect(fixture.requests[0]).toMatchObject({ method: "POST", path: "/seedance-discount/videos" });
         expect(fixture.requests[0]?.headers.authorization).toBeUndefined();
-        expect(fixture.requests[0]?.headers["idempotency-key"]).toBe("video-request-live");
-        expect(fixture.requests[0]?.headers["x-client-request-id"]).toBe("video-request-live");
+        expect(fixture.requests[0]?.headers["idempotency-key"]).toBe("video-request:video-request-live");
+        expect(fixture.requests[0]?.headers["x-client-request-id"]).toBe("video-request:video-request-live");
         expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toMatchObject({ model: config.model, duration: 5, ratio: "16:9" });
 
         const task = { config, upstream, userId: "user-live" } as unknown as VideoTask;
@@ -98,7 +98,7 @@ describe("video creation protocols over a live fixture", () => {
 
         expect(fixture.requests).toHaveLength(1);
         expect(fixture.requests[0]?.path).toBe("/custom/videos");
-        expect(fixture.requests[0]?.headers["idempotency-key"]).toBe("custom-video-request-live");
+        expect(fixture.requests[0]?.headers["idempotency-key"]).toBe("video-request:custom-video-request-live");
         expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toEqual({ deployment: config.model, input: "animate a blue logo", seconds: 8, aspect: "9:16" });
 
         const result = await queryVideoTaskUpstream({ config, upstream, userId: "user-live" } as unknown as VideoTask, "", "");

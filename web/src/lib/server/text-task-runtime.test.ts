@@ -168,7 +168,13 @@ describe("text task runtime recovery", () => {
 
     it("fails a 200 business error without charging and permits failover", async () => {
         state = textTask(openAiConfig("channel-one", "https://one.example"), [openAiConfig("channel-two", "https://two.example")]);
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ error: { message: "业务失败" } })).mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "备用成功" } }] })));
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(Response.json({ error: { message: "业务失败" } }))
+                .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "备用成功" } }] })),
+        );
 
         await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
 
@@ -179,7 +185,13 @@ describe("text task runtime recovery", () => {
 
     it("fails an empty 200 response without charging and permits failover", async () => {
         state = textTask(openAiConfig("channel-one", "https://one.example"), [openAiConfig("channel-two", "https://two.example")]);
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "" } }] })).mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "备用成功" } }] })));
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "" } }] }))
+                .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "备用成功" } }] })),
+        );
 
         await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
 

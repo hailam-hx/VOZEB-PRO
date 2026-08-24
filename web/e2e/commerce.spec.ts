@@ -311,7 +311,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
         });
     await expect(page.getByText(/fal-next:render-unit × 0.031 USD \(provider-fx-v3\)/)).toBeVisible();
 
-    await page.getByRole("radio", { name: "用量毛利" }).click();
+    await page.getByRole("radiogroup").getByText("用量毛利", { exact: true }).click();
     await expect(page.getByRole("heading", { name: "用量、成本与毛利" })).toBeVisible();
     await expect(page.getByText("负毛利", { exact: true }).last()).toBeVisible();
     await expect(page.getByText("零用量有成本", { exact: true }).last()).toBeVisible();
@@ -320,7 +320,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
     await zeroUsageRow.getByRole("button", { name: /expand row|展开行/i }).click();
     await expect(page.getByText("failed", { exact: true })).toBeVisible();
     await expect(page.getByText("fal · binding-fal", { exact: true })).toBeVisible();
-    await page.getByRole("radio", { name: "异常恢复" }).click();
+    await page.getByRole("radiogroup").getByText("异常恢复", { exact: true }).click();
     await expect(page.getByRole("heading", { name: "孤儿预留恢复" })).toBeVisible();
     await expect(page.getByText("任务终态待复核", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "立即检查" }).click();

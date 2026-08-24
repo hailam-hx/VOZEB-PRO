@@ -45,7 +45,18 @@ export type TopUpOrder = Omit<TopUpQuote, "customerFx" | "promotion" | "coupon">
     updatedAt: string;
 };
 export type TopUpSelection = ({ presetId: string; customAmountVnd?: never } | { presetId?: never; customAmountVnd: string }) & { promotionId?: string; userCouponId?: string };
-export type PaymentCheckout = { provider: string; orderId: string; orderNo: string; kind: "manual" | "redirect" | "form" | "qr"; url?: string; form?: { action: string; method: "GET" | "POST"; fields: Array<{ name: string; value: string }> }; qrContent?: string; providerOrderId?: string; providerPaymentId?: string; expiresAt?: string };
+export type PaymentCheckout = {
+    provider: string;
+    orderId: string;
+    orderNo: string;
+    kind: "manual" | "redirect" | "form" | "qr";
+    url?: string;
+    form?: { action: string; method: "GET" | "POST"; fields: Array<{ name: string; value: string }> };
+    qrContent?: string;
+    providerOrderId?: string;
+    providerPaymentId?: string;
+    expiresAt?: string;
+};
 
 const TOP_UP_ROUTE = "/api/billing/top-ups";
 

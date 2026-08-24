@@ -10,9 +10,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/server/database", () => ({
-    withPostgresTransaction: vi.fn(async (handler) => handler({
-        query: mocks.query,
-    })),
+    withPostgresTransaction: vi.fn(async (handler) =>
+        handler({
+            query: mocks.query,
+        }),
+    ),
     createPostgresRepositories: vi.fn(() => ({
         topUps: { getOrderById: vi.fn(async () => mocks.order), redeemCouponForOrder: mocks.redeemCoupon },
         users: { getById: vi.fn(async () => ({ id: "user-one", status: "active", settledBalance: "0" })), update: mocks.userUpdate },
@@ -25,17 +27,52 @@ vi.mock("@/lib/server/referral-service", () => ({ prepareReferralRewardsForPaidO
 import { PostgresTopUpPaymentStore } from "./top-up-postgres-settlement";
 
 const order = {
-    id: "order-one", orderNo: "VZ001", userId: "user-one", status: "pending", paymentState: "pending", creditGrantState: "pending", providerRefundState: "none", creditRecoveryState: "none",
-    subject: "充值", currency: "VND", currencyExponent: 0, nominalNativeAmount: "250000", promotionDiscountNativeAmount: "0", couponDiscountNativeAmount: "0", payableNativeAmount: "250000",
-    nominalUsdValue: "10", paidUsdValue: "10", creditAmount: "10", pricingVersion: "v1", customerFxVersion: "fx1", customerFxRate: "0.00004",
-    paymentAmount: { kind: "fiat", currency: "VND", amountMinor: "250000", minorUnitExponent: 0 }, provider: "stripe", userCouponId: "coupon-one",
-    createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z",
+    id: "order-one",
+    orderNo: "VZ001",
+    userId: "user-one",
+    status: "pending",
+    paymentState: "pending",
+    creditGrantState: "pending",
+    providerRefundState: "none",
+    creditRecoveryState: "none",
+    subject: "充值",
+    currency: "VND",
+    currencyExponent: 0,
+    nominalNativeAmount: "250000",
+    promotionDiscountNativeAmount: "0",
+    couponDiscountNativeAmount: "0",
+    payableNativeAmount: "250000",
+    nominalUsdValue: "10",
+    paidUsdValue: "10",
+    creditAmount: "10",
+    pricingVersion: "v1",
+    customerFxVersion: "fx1",
+    customerFxRate: "0.00004",
+    paymentAmount: { kind: "fiat", currency: "VND", amountMinor: "250000", minorUnitExponent: 0 },
+    provider: "stripe",
+    userCouponId: "coupon-one",
+    createdAt: "2026-08-23T00:00:00.000Z",
+    updatedAt: "2026-08-23T00:00:00.000Z",
 } as const;
 
 const settlement = {
     order,
-    event: { signatureValid: true, provider: "stripe", eventId: "evt-one", eventType: "payment.succeeded", orderId: "order-one", orderNo: "VZ001", status: "succeeded", amount: order.paymentAmount, providerPaymentId: "payment-one", paidAt: "2026-08-23T00:00:00.000Z" },
-    eventFingerprint: "event-fingerprint", businessId: "top-up:order-one:grant", requestFingerprint: "request-fingerprint", creditAmount: "10",
+    event: {
+        signatureValid: true,
+        provider: "stripe",
+        eventId: "evt-one",
+        eventType: "payment.succeeded",
+        orderId: "order-one",
+        orderNo: "VZ001",
+        status: "succeeded",
+        amount: order.paymentAmount,
+        providerPaymentId: "payment-one",
+        paidAt: "2026-08-23T00:00:00.000Z",
+    },
+    eventFingerprint: "event-fingerprint",
+    businessId: "top-up:order-one:grant",
+    requestFingerprint: "request-fingerprint",
+    creditAmount: "10",
 } as const;
 
 describe("PostgreSQL top-up payment identity ownership", () => {
@@ -49,8 +86,19 @@ describe("PostgreSQL top-up payment identity ownership", () => {
         });
         mocks.order = { ...order };
         mocks.existingPayment = {
-            id: "top-up-payment:stripe:payment-one", order_id: "order-two", user_id: "user-two", provider: "stripe", provider_event_id: "evt-two", status: "succeeded", payment_kind: "fiat",
-            order_snapshot_fingerprint: orderFingerprint(), fiat_currency: "VND", amount_minor: "250000", minor_unit_exponent: 0, provider_trade_id: null, provider_payment_id: "payment-one",
+            id: "top-up-payment:stripe:payment-one",
+            order_id: "order-two",
+            user_id: "user-two",
+            provider: "stripe",
+            provider_event_id: "evt-two",
+            status: "succeeded",
+            payment_kind: "fiat",
+            order_snapshot_fingerprint: orderFingerprint(),
+            fiat_currency: "VND",
+            amount_minor: "250000",
+            minor_unit_exponent: 0,
+            provider_trade_id: null,
+            provider_payment_id: "payment-one",
         };
     });
 
@@ -86,6 +134,20 @@ describe("PostgreSQL top-up payment identity ownership", () => {
 
 function orderFingerprint() {
     return createHash("sha256")
-        .update(JSON.stringify({ id: order.id, userId: order.userId, paymentAmount: order.paymentAmount, creditAmount: order.creditAmount, nominalNativeAmount: order.nominalNativeAmount, payableNativeAmount: order.payableNativeAmount, nominalUsdValue: order.nominalUsdValue, paidUsdValue: order.paidUsdValue, pricingVersion: order.pricingVersion, customerFxVersion: order.customerFxVersion, customerFxRate: order.customerFxRate }))
+        .update(
+            JSON.stringify({
+                id: order.id,
+                userId: order.userId,
+                paymentAmount: order.paymentAmount,
+                creditAmount: order.creditAmount,
+                nominalNativeAmount: order.nominalNativeAmount,
+                payableNativeAmount: order.payableNativeAmount,
+                nominalUsdValue: order.nominalUsdValue,
+                paidUsdValue: order.paidUsdValue,
+                pricingVersion: order.pricingVersion,
+                customerFxVersion: order.customerFxVersion,
+                customerFxRate: order.customerFxRate,
+            }),
+        )
         .digest("hex");
 }

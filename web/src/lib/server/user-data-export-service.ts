@@ -170,10 +170,7 @@ async function readBillingData(userId: string) {
     if (!isPostgresDatabaseEnabled()) return { topUpOrders: [], topUpPayments: [] };
     await ensurePostgresSchema();
     const topUps = createPostgresRepositories().topUps;
-    const [topUpOrders, topUpPayments] = await Promise.all([
-        collectPages((page) => topUps.listOrders({ userId, page, pageSize: PAGE_SIZE })),
-        collectPages((page) => topUps.listPayments({ userId, page, pageSize: PAGE_SIZE })),
-    ]);
+    const [topUpOrders, topUpPayments] = await Promise.all([collectPages((page) => topUps.listOrders({ userId, page, pageSize: PAGE_SIZE })), collectPages((page) => topUps.listPayments({ userId, page, pageSize: PAGE_SIZE }))]);
     return { topUpOrders, topUpPayments };
 }
 

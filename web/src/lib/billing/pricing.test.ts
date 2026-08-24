@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-    calculateFinalSaleCharge,
-    calculatePricingReserve,
-    normalizeBillableUsage,
-    validatePricingRateCard,
-    type PricingRateCardV1,
-} from "./pricing";
+import { calculateFinalSaleCharge, calculatePricingReserve, normalizeBillableUsage, validatePricingRateCard, type PricingRateCardV1 } from "./pricing";
 import { decimal } from "./decimal";
 
 const textRateCard: PricingRateCardV1 = {

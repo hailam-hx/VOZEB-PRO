@@ -140,8 +140,17 @@ export class TopUpRepository {
     }
 
     async listUserCoupons(input: { userId: string; page: number; pageSize: number }) {
-        const result = await this.db.query("SELECT id, template_id, status, expires_at, created_at, count(*) OVER()::int AS total FROM top_up_user_coupons WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3", [input.userId, input.pageSize, (input.page - 1) * input.pageSize]);
-        return { items: result.rows.map((row) => ({ id: stringValue(row.id), templateId: stringValue(row.template_id), status: stringValue(row.status), expiresAt: iso(row.expires_at), createdAt: iso(row.created_at) })), total: numberValue(result.rows[0]?.total), page: input.page, pageSize: input.pageSize };
+        const result = await this.db.query("SELECT id, template_id, status, expires_at, created_at, count(*) OVER()::int AS total FROM top_up_user_coupons WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3", [
+            input.userId,
+            input.pageSize,
+            (input.page - 1) * input.pageSize,
+        ]);
+        return {
+            items: result.rows.map((row) => ({ id: stringValue(row.id), templateId: stringValue(row.template_id), status: stringValue(row.status), expiresAt: iso(row.expires_at), createdAt: iso(row.created_at) })),
+            total: numberValue(result.rows[0]?.total),
+            page: input.page,
+            pageSize: input.pageSize,
+        };
     }
 
     async getPaymentByProviderIdentifiers(provider: string, identifiers: string[]) {
@@ -299,7 +308,32 @@ export class TopUpRepository {
                 file_name, file_hash, note, metadata, created_at, updated_at
              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15::numeric,$16::numeric,$17,$18,$19,$20,$21,$22::jsonb,$23,$24)
              ON CONFLICT DO NOTHING RETURNING *`,
-            [run.id, run.provider, run.source, run.status, run.totalRows, run.matchedRows, run.okRows, run.issueRows, jsonParam(run.statementPaidAmount), jsonParam(run.statementRefundedAmount), jsonParam(run.localPaidAmount), jsonParam(run.localRefundedAmount), jsonParam(run.differenceAmount), run.differenceDirection, run.localNominalUsdValue, run.localPaidUsdValue, run.importedByUserId || null, run.importedByUsername || null, run.fileName || null, run.fileHash || null, run.note || null, jsonParam(run.metadata || {}), run.createdAt, run.updatedAt],
+            [
+                run.id,
+                run.provider,
+                run.source,
+                run.status,
+                run.totalRows,
+                run.matchedRows,
+                run.okRows,
+                run.issueRows,
+                jsonParam(run.statementPaidAmount),
+                jsonParam(run.statementRefundedAmount),
+                jsonParam(run.localPaidAmount),
+                jsonParam(run.localRefundedAmount),
+                jsonParam(run.differenceAmount),
+                run.differenceDirection,
+                run.localNominalUsdValue,
+                run.localPaidUsdValue,
+                run.importedByUserId || null,
+                run.importedByUsername || null,
+                run.fileName || null,
+                run.fileHash || null,
+                run.note || null,
+                jsonParam(run.metadata || {}),
+                run.createdAt,
+                run.updatedAt,
+            ],
         );
         if (!inserted.rows[0]) return null;
         for (const row of rows) {
@@ -310,7 +344,30 @@ export class TopUpRepository {
                     local_payment_amount, local_nominal_native_amount, local_payable_native_amount,
                     local_nominal_usd_value, local_paid_usd_value, issue_codes, issues, created_at, updated_at
                  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14::jsonb,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::jsonb,$20::jsonb,$21,$22)`,
-                [row.id, row.runId, row.rowNumber, row.rowKey, row.provider, row.orderNo || null, row.providerOrderId || null, row.providerPaymentId || null, row.statementStatus, jsonParam(row.statementPaymentAmount), row.localOrderId || null, row.localOrderNo || null, row.localOrderStatus || null, jsonParam(row.localPaymentAmount), row.localNominalNativeAmount || null, row.localPayableNativeAmount || null, row.localNominalUsdValue || null, row.localPaidUsdValue || null, jsonParam(row.issueCodes), jsonParam(row.issues), row.createdAt, row.updatedAt],
+                [
+                    row.id,
+                    row.runId,
+                    row.rowNumber,
+                    row.rowKey,
+                    row.provider,
+                    row.orderNo || null,
+                    row.providerOrderId || null,
+                    row.providerPaymentId || null,
+                    row.statementStatus,
+                    jsonParam(row.statementPaymentAmount),
+                    row.localOrderId || null,
+                    row.localOrderNo || null,
+                    row.localOrderStatus || null,
+                    jsonParam(row.localPaymentAmount),
+                    row.localNominalNativeAmount || null,
+                    row.localPayableNativeAmount || null,
+                    row.localNominalUsdValue || null,
+                    row.localPaidUsdValue || null,
+                    jsonParam(row.issueCodes),
+                    jsonParam(row.issues),
+                    row.createdAt,
+                    row.updatedAt,
+                ],
             );
         }
         return mapReconciliationRun(inserted.rows[0]);
@@ -340,11 +397,59 @@ export class TopUpRepository {
 }
 
 function mapReconciliationRun(row: Record<string, unknown>): TopUpReconciliationRunRecord {
-    return { id: stringValue(row.id), provider: stringValue(row.provider), source: row.source === "provider-api" || row.source === "manual" ? row.source : "csv", status: row.status === "failed" ? "failed" : "completed", totalRows: numberValue(row.total_rows), matchedRows: numberValue(row.matched_rows), okRows: numberValue(row.ok_rows), issueRows: numberValue(row.issue_rows), statementPaidAmount: jsonValue(row.statement_paid_amount), statementRefundedAmount: jsonValue(row.statement_refunded_amount), localPaidAmount: jsonValue(row.local_paid_amount), localRefundedAmount: jsonValue(row.local_refunded_amount), differenceAmount: jsonValue(row.difference_amount), differenceDirection: row.difference_direction === "statement_over" || row.difference_direction === "local_over" ? row.difference_direction : "balanced", localNominalUsdValue: stringValue(row.local_nominal_usd_value), localPaidUsdValue: stringValue(row.local_paid_usd_value), importedByUserId: optionalString(row.imported_by_user_id), importedByUsername: optionalString(row.imported_by_username), fileName: optionalString(row.file_name), fileHash: optionalString(row.file_hash), note: optionalString(row.note), metadata: optionalJson(row.metadata), createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
+    return {
+        id: stringValue(row.id),
+        provider: stringValue(row.provider),
+        source: row.source === "provider-api" || row.source === "manual" ? row.source : "csv",
+        status: row.status === "failed" ? "failed" : "completed",
+        totalRows: numberValue(row.total_rows),
+        matchedRows: numberValue(row.matched_rows),
+        okRows: numberValue(row.ok_rows),
+        issueRows: numberValue(row.issue_rows),
+        statementPaidAmount: jsonValue(row.statement_paid_amount),
+        statementRefundedAmount: jsonValue(row.statement_refunded_amount),
+        localPaidAmount: jsonValue(row.local_paid_amount),
+        localRefundedAmount: jsonValue(row.local_refunded_amount),
+        differenceAmount: jsonValue(row.difference_amount),
+        differenceDirection: row.difference_direction === "statement_over" || row.difference_direction === "local_over" ? row.difference_direction : "balanced",
+        localNominalUsdValue: stringValue(row.local_nominal_usd_value),
+        localPaidUsdValue: stringValue(row.local_paid_usd_value),
+        importedByUserId: optionalString(row.imported_by_user_id),
+        importedByUsername: optionalString(row.imported_by_username),
+        fileName: optionalString(row.file_name),
+        fileHash: optionalString(row.file_hash),
+        note: optionalString(row.note),
+        metadata: optionalJson(row.metadata),
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+    };
 }
 
 function mapReconciliationRow(row: Record<string, unknown>): TopUpReconciliationRowRecord {
-    return { id: stringValue(row.id), runId: stringValue(row.run_id), rowNumber: numberValue(row.row_number), rowKey: stringValue(row.row_key), provider: stringValue(row.provider), orderNo: optionalString(row.order_no), providerOrderId: optionalString(row.provider_order_id), providerPaymentId: optionalString(row.provider_payment_id), statementStatus: row.statement_status === "paid" || row.statement_status === "refunded" || row.statement_status === "pending" || row.statement_status === "failed" ? row.statement_status : "unknown", statementPaymentAmount: optionalJson(row.statement_payment_amount), localOrderId: optionalString(row.local_order_id), localOrderNo: optionalString(row.local_order_no), localOrderStatus: optionalString(row.local_order_status), localPaymentAmount: optionalJson(row.local_payment_amount), localNominalNativeAmount: optionalString(row.local_nominal_native_amount), localPayableNativeAmount: optionalString(row.local_payable_native_amount), localNominalUsdValue: optionalString(row.local_nominal_usd_value), localPaidUsdValue: optionalString(row.local_paid_usd_value), issueCodes: jsonValue(row.issue_codes), issues: jsonValue(row.issues), createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
+    return {
+        id: stringValue(row.id),
+        runId: stringValue(row.run_id),
+        rowNumber: numberValue(row.row_number),
+        rowKey: stringValue(row.row_key),
+        provider: stringValue(row.provider),
+        orderNo: optionalString(row.order_no),
+        providerOrderId: optionalString(row.provider_order_id),
+        providerPaymentId: optionalString(row.provider_payment_id),
+        statementStatus: row.statement_status === "paid" || row.statement_status === "refunded" || row.statement_status === "pending" || row.statement_status === "failed" ? row.statement_status : "unknown",
+        statementPaymentAmount: optionalJson(row.statement_payment_amount),
+        localOrderId: optionalString(row.local_order_id),
+        localOrderNo: optionalString(row.local_order_no),
+        localOrderStatus: optionalString(row.local_order_status),
+        localPaymentAmount: optionalJson(row.local_payment_amount),
+        localNominalNativeAmount: optionalString(row.local_nominal_native_amount),
+        localPayableNativeAmount: optionalString(row.local_payable_native_amount),
+        localNominalUsdValue: optionalString(row.local_nominal_usd_value),
+        localPaidUsdValue: optionalString(row.local_paid_usd_value),
+        issueCodes: jsonValue(row.issue_codes),
+        issues: jsonValue(row.issues),
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+    };
 }
 
 function mapTopUpPaymentRow(row: Record<string, unknown>) {

@@ -21,7 +21,20 @@ beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "vozeb-wallet-holds-"));
     process.env.VOZEB_PRO_DATA_DIR = dataDir;
     const db = emptyDb();
-    db.users.push({ id: "user-one", accountId: "0001", username: "wallet-user", displayName: "钱包用户", bio: "", role: "user", adminPermissions: [], status: "active", settledBalance: "10.5", passwordHash: "test", createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" });
+    db.users.push({
+        id: "user-one",
+        accountId: "0001",
+        username: "wallet-user",
+        displayName: "钱包用户",
+        bio: "",
+        role: "user",
+        adminPermissions: [],
+        status: "active",
+        settledBalance: "10.5",
+        passwordHash: "test",
+        createdAt: "2026-08-23T00:00:00.000Z",
+        updatedAt: "2026-08-23T00:00:00.000Z",
+    });
     db.pointRecords.push({ id: "opening-credit", userId: "user-one", type: "credit", amount: "10.5", balanceAfter: "10.5", description: "测试充值", idempotencyKey: "opening-credit", createdAt: "2026-08-23T00:00:00.000Z" });
     await writeAuthDb(db);
 });
@@ -94,7 +107,14 @@ describe("prepaid wallet holds", () => {
 
     it("settles zero credits as an auditable usage charge without a ledger row", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:free", requestFingerprint: "e".repeat(64), amount: "0", description: "免费文本预留" });
-        await settleWalletHold({ holdId: reservation.hold.id, usageChargeId: "charge:free", requestFingerprint: "f".repeat(64), finalCharge: { credits: "0", usage: { capability: "text", source: "actual", inputTokens: "2", outputTokens: "1" }, estimated: false, capped: false, uncappedCredits: "0", platformLossCredits: "0" }, saleRateSnapshot: { version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "0" }] }, description: "免费文本结算" });
+        await settleWalletHold({
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:free",
+            requestFingerprint: "f".repeat(64),
+            finalCharge: { credits: "0", usage: { capability: "text", source: "actual", inputTokens: "2", outputTokens: "1" }, estimated: false, capped: false, uncappedCredits: "0", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "0" }] },
+            description: "免费文本结算",
+        });
         const db = await readAuthDb();
 
         expect(await getWalletSnapshot("user-one")).toEqual({ settledBalance: "10.5", heldBalance: "0", availableBalance: "10.5" });
@@ -116,7 +136,17 @@ describe("prepaid wallet holds", () => {
 
     it("keeps a hold active until its pending provider attempt reaches a terminal status", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:release-pending", requestFingerprint: "8".repeat(64), amount: "2", description: "待完成尝试预留" });
-        const pending = { id: "attempt:release-pending", holdId: reservation.hold.id, attemptNumber: 1, status: "pending" as const, provider: "vendor", bindingId: "binding", requestFingerprint: "9".repeat(64), nativeCostAmount: "0", nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const } };
+        const pending = {
+            id: "attempt:release-pending",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "9".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+        };
         await recordProviderUsageAttempt(pending);
 
         await expect(releaseWalletHold({ holdId: reservation.hold.id, businessId: "release:pending", requestFingerprint: "a".repeat(64), reason: "任务取消" })).rejects.toBeInstanceOf(WalletConflictError);
@@ -128,7 +158,17 @@ describe("prepaid wallet holds", () => {
 
     it("transitions a pending provider attempt once and rejects attempts after the hold closes", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:transition", requestFingerprint: "a".repeat(64), amount: "2", description: "尝试状态预留" });
-        const pending = { id: "attempt:transition", holdId: reservation.hold.id, attemptNumber: 1, status: "pending" as const, provider: "vendor", bindingId: "binding", requestFingerprint: "b".repeat(64), nativeCostAmount: "0", nativeCostUnit: { kind: "provider-native" as const, provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.125" } } };
+        const pending = {
+            id: "attempt:transition",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "b".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "provider-native" as const, provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.125" } },
+        };
         await recordProviderUsageAttempt(pending);
         await expect(recordProviderUsageAttempt({ ...pending, status: "failed", requestFingerprint: "c".repeat(64), nativeCostAmount: "1.25" })).rejects.toBeInstanceOf(WalletConflictError);
         const terminal = await recordProviderUsageAttempt({ ...pending, status: "failed", nativeCostAmount: "1.25" });
@@ -140,7 +180,17 @@ describe("prepaid wallet holds", () => {
 
     it("treats PostgreSQL fixed-scale provider cost strings as the same replay values", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:padded-attempt", requestFingerprint: "b".repeat(64), amount: "2", description: "定标小数预留" });
-        const input = { id: "attempt:padded", holdId: reservation.hold.id, attemptNumber: 1, status: "failed" as const, provider: "vendor", bindingId: "binding", requestFingerprint: "c".repeat(64), nativeCostAmount: "1.25", nativeCostUnit: { kind: "provider-native" as const, provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.125" } } };
+        const input = {
+            id: "attempt:padded",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "failed" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "c".repeat(64),
+            nativeCostAmount: "1.25",
+            nativeCostUnit: { kind: "provider-native" as const, provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.125" } },
+        };
         await recordProviderUsageAttempt(input);
         const db = await readAuthDb();
         Object.assign(db.providerUsageAttempts[0], { nativeCostAmount: "1.250000000000", usdConversionRate: "0.125000000000", costUsd: "0.156250000000" });
@@ -152,20 +202,61 @@ describe("prepaid wallet holds", () => {
     it("persists a provider-native USD conversion rate at the 12-decimal boundary", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:fx-boundary", requestFingerprint: "d".repeat(64), amount: "2", description: "汇率边界预留" });
 
-        await expect(recordProviderUsageAttempt({ id: "attempt:fx-boundary", holdId: reservation.hold.id, attemptNumber: 1, status: "failed", provider: "vendor", bindingId: "binding", requestFingerprint: "e".repeat(64), nativeCostAmount: "1", nativeCostUnit: { kind: "provider-native", provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.123456789012" } } })).resolves.toMatchObject({ attempt: { usdConversionRate: "0.123456789012", costUsd: "0.123456789012", nativeCostUnit: { usdConversion: { usdPerUnit: "0.123456789012" } } } });
+        await expect(
+            recordProviderUsageAttempt({
+                id: "attempt:fx-boundary",
+                holdId: reservation.hold.id,
+                attemptNumber: 1,
+                status: "failed",
+                provider: "vendor",
+                bindingId: "binding",
+                requestFingerprint: "e".repeat(64),
+                nativeCostAmount: "1",
+                nativeCostUnit: { kind: "provider-native", provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.123456789012" } },
+            }),
+        ).resolves.toMatchObject({ attempt: { usdConversionRate: "0.123456789012", costUsd: "0.123456789012", nativeCostUnit: { usdConversion: { usdPerUnit: "0.123456789012" } } } });
     });
 
     it("rejects a provider-native USD conversion rate beyond 12 decimals", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:fx-overflow", requestFingerprint: "f".repeat(64), amount: "2", description: "汇率超限预留" });
 
-        await expect(recordProviderUsageAttempt({ id: "attempt:fx-overflow", holdId: reservation.hold.id, attemptNumber: 1, status: "failed", provider: "vendor", bindingId: "binding", requestFingerprint: "0".repeat(64), nativeCostAmount: "1", nativeCostUnit: { kind: "provider-native", provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.1234567890123" } } })).rejects.toThrow("最多保留 12 位小数");
+        await expect(
+            recordProviderUsageAttempt({
+                id: "attempt:fx-overflow",
+                holdId: reservation.hold.id,
+                attemptNumber: 1,
+                status: "failed",
+                provider: "vendor",
+                bindingId: "binding",
+                requestFingerprint: "0".repeat(64),
+                nativeCostAmount: "1",
+                nativeCostUnit: { kind: "provider-native", provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.1234567890123" } },
+            }),
+        ).rejects.toThrow("最多保留 12 位小数");
     });
 
     it("serializes settlement against pending attempt completion so cost cannot be omitted", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:serialized-attempt", requestFingerprint: "1".repeat(64), amount: "2", description: "串行成本预留" });
-        const pending = { id: "attempt:serialized", holdId: reservation.hold.id, attemptNumber: 1, status: "pending" as const, provider: "vendor", bindingId: "binding", requestFingerprint: "2".repeat(64), nativeCostAmount: "0", nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const } };
+        const pending = {
+            id: "attempt:serialized",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "2".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+        };
         await recordProviderUsageAttempt(pending);
-        const settlement = { holdId: reservation.hold.id, usageChargeId: "charge:serialized", requestFingerprint: "3".repeat(64), finalCharge: { credits: "1", usage: { capability: "image" as const, source: "actual" as const, count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" }, saleRateSnapshot: { version: 1 as const, components: [{ id: "count", dimension: "count" as const, unitPrice: "1" }] }, description: "串行结算" };
+        const settlement = {
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:serialized",
+            requestFingerprint: "3".repeat(64),
+            finalCharge: { credits: "1", usage: { capability: "image" as const, source: "actual" as const, count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1 as const, components: [{ id: "count", dimension: "count" as const, unitPrice: "1" }] },
+            description: "串行结算",
+        };
 
         const [earlySettlement, completion] = await Promise.allSettled([settleWalletHold(settlement), recordProviderUsageAttempt({ ...pending, status: "failed", nativeCostAmount: "0.4" })]);
         expect(earlySettlement.status).toBe("rejected");
@@ -177,19 +268,28 @@ describe("prepaid wallet holds", () => {
     it("rejects a settlement snapshot that was not produced by the supplied sale rate", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:mismatch", requestFingerprint: "d".repeat(64), amount: "2", description: "结算快照预留" });
 
-        await expect(settleWalletHold({
-            holdId: reservation.hold.id,
-            usageChargeId: "charge:mismatch",
-            requestFingerprint: "e".repeat(64),
-            finalCharge: { credits: "1.5", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" },
-            saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1" }] },
-            description: "不匹配结算",
-        } as never)).rejects.toThrow("结算快照");
+        await expect(
+            settleWalletHold({
+                holdId: reservation.hold.id,
+                usageChargeId: "charge:mismatch",
+                requestFingerprint: "e".repeat(64),
+                finalCharge: { credits: "1.5", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" },
+                saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1" }] },
+                description: "不匹配结算",
+            } as never),
+        ).rejects.toThrow("结算快照");
     });
 
     it("reconciles signed ledger balance, active holds, availability, and charge linkage", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:reconcile", requestFingerprint: "1".repeat(64), amount: "2.125", description: "对账预留" });
-        await settleWalletHold({ holdId: reservation.hold.id, usageChargeId: "charge:reconcile", requestFingerprint: "2".repeat(64), finalCharge: { credits: "1.125", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1.125", platformLossCredits: "0" }, saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1.125" }] }, description: "对账结算" });
+        await settleWalletHold({
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:reconcile",
+            requestFingerprint: "2".repeat(64),
+            finalCharge: { credits: "1.125", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1.125", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1.125" }] },
+            description: "对账结算",
+        });
         await reserveWalletCredits({ userId: "user-one", businessId: "generation:active", requestFingerprint: "3".repeat(64), amount: "2.25", description: "活跃预留" });
 
         expect(await reconcileWallet("user-one")).toEqual({ userId: "user-one", ledgerBalance: "9.375", settledBalance: "9.375", activeHolds: "2.25", availableBalance: "7.125", issues: [] });
@@ -197,9 +297,36 @@ describe("prepaid wallet holds", () => {
 
     it("preserves native and USD costs from every provider attempt, including failures", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:attempts", requestFingerprint: "4".repeat(64), amount: "3", description: "尝试成本预留" });
-        await recordProviderUsageAttempt({ id: "attempt:failed", holdId: reservation.hold.id, attemptNumber: 1, status: "failed", provider: "vendor-a", bindingId: "binding-a", requestFingerprint: "5".repeat(64), nativeCostAmount: "3", nativeCostUnit: { kind: "provider-native", provider: "vendor-a", unit: "token-block", usdConversion: { version: "2026-08", usdPerUnit: "0.125" } } });
-        await recordProviderUsageAttempt({ id: "attempt:success", holdId: reservation.hold.id, attemptNumber: 2, status: "succeeded", provider: "vendor-b", bindingId: "binding-b", requestFingerprint: "6".repeat(64), nativeCostAmount: "0.2", nativeCostUnit: { kind: "fiat", currency: "USD" } });
-        const settlement = await settleWalletHold({ holdId: reservation.hold.id, usageChargeId: "charge:attempts", requestFingerprint: "7".repeat(64), finalCharge: { credits: "1", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" }, saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1" }] }, description: "尝试成本结算" });
+        await recordProviderUsageAttempt({
+            id: "attempt:failed",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "failed",
+            provider: "vendor-a",
+            bindingId: "binding-a",
+            requestFingerprint: "5".repeat(64),
+            nativeCostAmount: "3",
+            nativeCostUnit: { kind: "provider-native", provider: "vendor-a", unit: "token-block", usdConversion: { version: "2026-08", usdPerUnit: "0.125" } },
+        });
+        await recordProviderUsageAttempt({
+            id: "attempt:success",
+            holdId: reservation.hold.id,
+            attemptNumber: 2,
+            status: "succeeded",
+            provider: "vendor-b",
+            bindingId: "binding-b",
+            requestFingerprint: "6".repeat(64),
+            nativeCostAmount: "0.2",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+        });
+        const settlement = await settleWalletHold({
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:attempts",
+            requestFingerprint: "7".repeat(64),
+            finalCharge: { credits: "1", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1" }] },
+            description: "尝试成本结算",
+        });
 
         expect(settlement.charge).toMatchObject({ settledCredits: "1", totalProviderCostUsd: "0.575", finalSaleCharge: { credits: "1" } });
         expect(settlement.charge).not.toHaveProperty("marginCredits");
