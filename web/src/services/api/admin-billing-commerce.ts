@@ -1,4 +1,7 @@
-import type { AdminBillingSummary, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
+import type { AdminBillingSummary, AdminProviderUsageAttempt, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
+import type { LogicalModel } from "@/lib/auth/store";
+import type { ProviderCostUnit } from "@/lib/billing/money";
+import type { PricingRateCardV1 } from "@/lib/billing/pricing";
 import type { TopUpOrder, TopUpOrderStatus, TopUpPreset } from "./billing";
 
 type PageResult<T, K extends string> = Record<K, T[]> & { total: number; page: number; pageSize: number };
@@ -47,8 +50,31 @@ export function saveAdminTopUpConfig(input: AdminTopUpConfig) {
     return requestCommerce<{ config: AdminTopUpConfig }>("/api/admin/billing/top-up-config", jsonRequest("PATCH", input));
 }
 
-export function getAdminUsageAudit(input: { page?: number; pageSize?: number } = {}) {
-    return requestCommerce<{ items: AdminUsageAuditItem[]; recovery: AdminRecoveryItem[]; total: number; page: number; pageSize: number; zeroUsage: number; negativeMargin: number }>(`/api/admin/billing/usage?${query(input)}`);
+export function getAdminModelPricing() {
+    return requestCommerce<{ models: LogicalModel[] }>("/api/admin/billing/model-pricing");
+}
+
+export function saveAdminModelPricing(input: { modelId: string; saleRateCard: PricingRateCardV1 | null; bindings: Array<{ bindingId: string; costRateCard: PricingRateCardV1 | null; providerCostUnit: ProviderCostUnit | null }> }) {
+    return requestCommerce<{ model: LogicalModel }>("/api/admin/billing/model-pricing", jsonRequest("PATCH", input));
+}
+
+export function getAdminUsageAudit(input: { page?: number; pageSize?: number; recoveryPage?: number; recoveryPageSize?: number } = {}) {
+    return requestCommerce<{
+        items: AdminUsageAuditItem[];
+        recovery: AdminRecoveryItem[];
+        total: number;
+        page: number;
+        pageSize: number;
+        recoveryTotal: number;
+        recoveryPage: number;
+        recoveryPageSize: number;
+        zeroUsage: number;
+        negativeMargin: number;
+    }>(`/api/admin/billing/usage?${query(input)}`);
+}
+
+export function getAdminUsageAttempts(chargeId: string, input: { page?: number; pageSize?: number } = {}) {
+    return requestCommerce<PageResult<AdminProviderUsageAttempt, "items">>(`/api/admin/billing/usage/${encodeURIComponent(chargeId)}/attempts?${query(input)}`);
 }
 
 export function recoverAdminUsageHolds() {

@@ -248,6 +248,10 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
                 if (!activeFullAdminIds.some((id) => id !== user.id)) throw new AuthInputError("至少需要保留一个可用的全权限管理员");
             }
 
+            const targetBalance = patch.settledBalance === undefined ? undefined : decimal(patch.settledBalance);
+            if (targetBalance?.isNegative()) throw new AuthInputError("结算余额不能为负数");
+            if (targetBalance && decimal(await repos.pointsWallet.getActiveHeldBalance(user.id)).greaterThan(targetBalance)) throw new AuthInputError("结算余额不能低于当前预留积分", 409);
+
             const userPatch: { displayName?: string; email?: string | null; role?: UserRole; adminPermissions?: AdminPermission[]; status?: UserStatus; passwordHash?: string } = {
                 displayName: patch.displayName === undefined ? undefined : normalizeDisplayName(patch.displayName || user.username),
                 role: nextRole,
@@ -270,10 +274,8 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
             }
             await repos.users.update(user.id, userPatch);
 
-            if (patch.settledBalance !== undefined) {
-                const target = decimal(patch.settledBalance);
-                if (target.isNegative()) throw new AuthInputError("结算余额不能为负数");
-                const delta = target.minus(decimal(user.settledBalance));
+            if (targetBalance) {
+                const delta = targetBalance.minus(decimal(user.settledBalance));
                 if (!delta.isZero())
                     await adjustWalletBalanceInPostgresTransaction(client, {
                         userId: user.id,
@@ -306,6 +308,11 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
             throw new AuthInputError("至少需要保留一个可用的全权限管理员");
         }
 
+        const targetBalance = patch.settledBalance === undefined ? undefined : decimal(patch.settledBalance);
+        if (targetBalance?.isNegative()) throw new AuthInputError("结算余额不能为负数");
+        const heldBalance = db.walletHolds.filter((hold) => hold.userId === user.id && hold.status === "active").reduce((total, hold) => total.plus(decimal(hold.amount)), decimal(0));
+        if (targetBalance && heldBalance.greaterThan(targetBalance)) throw new AuthInputError("结算余额不能低于当前预留积分", 409);
+
         if (patch.displayName !== undefined) user.displayName = normalizeDisplayName(patch.displayName || user.username);
         if (patch.email !== undefined) {
             const email = normalizeEmail(patch.email);
@@ -324,17 +331,15 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
         }
         user.role = nextRole;
         user.adminPermissions = nextAdminPermissions;
-        if (patch.settledBalance !== undefined) {
-            const target = decimal(patch.settledBalance);
-            if (target.isNegative()) throw new AuthInputError("结算余额不能为负数");
-            const delta = target.minus(decimal(user.settledBalance));
+        if (targetBalance) {
+            const delta = targetBalance.minus(decimal(user.settledBalance));
             if (nextStatus === "active") user.status = "active";
             if (!delta.isZero()) {
-                user.settledBalance = target.toString();
+                user.settledBalance = targetBalance.toString();
                 addPointRecord(db, {
                     userId: user.id,
                     amount: delta.toString(),
-                    balanceAfter: target.toString(),
+                    balanceAfter: targetBalance.toString(),
                     description: "管理员后台调整",
                     idempotencyKey: `admin-adjust:${user.id}:${randomUUID()}`,
                     type: "admin-adjust",

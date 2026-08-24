@@ -108,6 +108,20 @@ export class PointsWalletRepository {
         return result.rows.map(mapWalletHold);
     }
 
+    async listRecoveryHoldsPage(input: { now: string; page?: number; pageSize?: number }) {
+        const page = normalizePage(input.page);
+        const pageSize = normalizePageSize(input.pageSize);
+        const count = await this.db.query("SELECT count(*) AS total FROM wallet_holds WHERE status = 'active' AND (review_reason IS NOT NULL OR (expires_at IS NOT NULL AND expires_at <= $1))", [input.now]);
+        const total = numberValue(count.rows[0]?.total);
+        const safePage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)));
+        const result = await this.db.query("SELECT * FROM wallet_holds WHERE status = 'active' AND (review_reason IS NOT NULL OR (expires_at IS NOT NULL AND expires_at <= $1)) ORDER BY updated_at DESC, id DESC LIMIT $2 OFFSET $3", [
+            input.now,
+            pageSize,
+            (safePage - 1) * pageSize,
+        ]);
+        return pageResult(result.rows.map(mapWalletHold), total, safePage, pageSize);
+    }
+
     async createUsageCharge(charge: UsageChargeRecord) {
         return this.writeUsageCharge(charge, false);
     }
@@ -157,6 +171,16 @@ export class PointsWalletRepository {
     async listProviderAttemptsForHold(holdId: string) {
         const result = await this.db.query("SELECT * FROM provider_usage_attempts WHERE hold_id = $1 ORDER BY attempt_number ASC", [holdId]);
         return result.rows.map(mapProviderUsageAttempt);
+    }
+
+    async listProviderAttemptsPage(input: { holdId: string; page?: number; pageSize?: number }) {
+        const page = normalizePage(input.page);
+        const pageSize = normalizePageSize(input.pageSize);
+        const count = await this.db.query("SELECT count(*) AS total FROM provider_usage_attempts WHERE hold_id = $1", [input.holdId]);
+        const total = numberValue(count.rows[0]?.total);
+        const safePage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)));
+        const result = await this.db.query("SELECT * FROM provider_usage_attempts WHERE hold_id = $1 ORDER BY attempt_number ASC LIMIT $2 OFFSET $3", [input.holdId, pageSize, (safePage - 1) * pageSize]);
+        return pageResult(result.rows.map(mapProviderUsageAttempt), total, safePage, pageSize);
     }
 
     async createProviderAttempt(attempt: ProviderUsageAttemptRecord) {

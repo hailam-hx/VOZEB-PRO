@@ -13,6 +13,7 @@ import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { Prompt } from "@/services/api/prompts";
+import { createAdminUser, deleteAdminUser, listAdminUsers, updateAdminUser } from "@/services/api/admin-users";
 import { applyPublicSiteSettings, notifyPublicSettingsChanged } from "@/stores/use-public-session-store";
 import { beginAdminSettingsSave, createAdminSettingsSaveSnapshot, finishAdminSettingsSave, mergeAdminSettingsSaveResponse } from "./admin-settings-save";
 import { downloadTextFile, formatCreatedCdkExport, splitTags } from "./admin-dashboard-elements";
@@ -157,11 +158,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         userRequestIdRef.current = requestId;
         setUsersLoading(true);
         try {
-            const params = new URLSearchParams({ page: String(page), pageSize: String(USER_PAGE_SIZE) });
-            if (keyword) params.set("keyword", keyword);
-            const response = await fetch(`/api/admin/users?${params.toString()}`, { cache: "no-store" });
-            const payload = (await response.json().catch(() => null)) as { users?: PublicUser[]; total?: number; page?: number; summary?: PublicUserSummary; error?: string } | null;
-            if (!response.ok || !payload?.users || !payload.summary) throw new Error(payload?.error || "加载用户失败");
+            const payload = await listAdminUsers({ page, pageSize: USER_PAGE_SIZE, keyword: keyword || undefined });
             if (requestId !== userRequestIdRef.current) return;
             const total = Number(payload.total ?? payload.users.length);
             const resolvedPage = Math.max(1, Number(payload.page) || page);
@@ -260,16 +257,10 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     const updateUser = async (userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status" | "settledBalance">> & { password?: string }) => {
         setUpdatingUserId(userId);
         try {
-            const response = await fetch(`/api/admin/users/${userId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(patch),
-            });
-            const payload = (await response.json()) as { user?: PublicUser; error?: string };
-            if (!response.ok || !payload.user) throw new Error(payload.error || "更新用户失败");
+            const user = await updateAdminUser(userId, patch);
             await loadUsers();
             message.success("用户已更新");
-            return payload.user;
+            return user;
         } catch (error) {
             message.error(error instanceof Error ? error.message : "更新用户失败");
             return null;
@@ -281,25 +272,19 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     const createUser = async (value: UserEditorValue) => {
         setUpdatingUserId("__new__");
         try {
-            const response = await fetch("/api/admin/users", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    username: value.username || "",
-                    displayName: value.displayName,
-                    email: value.email || "",
-                    password: value.password || "",
-                    role: value.role,
-                    adminPermissions: value.adminPermissions,
-                    status: value.status,
-                }),
+            const user = await createAdminUser({
+                username: value.username || "",
+                displayName: value.displayName,
+                email: value.email || "",
+                password: value.password || "",
+                role: value.role,
+                adminPermissions: value.adminPermissions,
+                status: value.status,
             });
-            const payload = (await response.json()) as { user?: PublicUser; error?: string };
-            if (!response.ok || !payload.user) throw new Error(payload.error || "Create user failed");
             setUserPage(1);
             await loadUsers(1);
             message.success("用户已新增");
-            return payload.user;
+            return user;
         } catch (error) {
             message.error(error instanceof Error ? error.message : "Create user failed");
             return null;
@@ -311,11 +296,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     const deleteUser = async (userId: string) => {
         setUpdatingUserId(userId);
         try {
-            const response = await fetch(`/api/admin/users/${userId}`, {
-                method: "DELETE",
-            });
-            const payload = (await response.json()) as { error?: string };
-            if (!response.ok) throw new Error(payload.error || "删除用户失败");
+            await deleteAdminUser(userId);
             setSelectedUserIds((items) => items.filter((id) => id !== userId));
             await loadUsers();
             message.success("用户已删除");
@@ -338,14 +319,11 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         const failedMessages: string[] = [];
         try {
             for (const user of deletable) {
-                const response = await fetch(`/api/admin/users/${user.id}`, {
-                    method: "DELETE",
-                });
-                const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-                if (response.ok) {
+                try {
+                    await deleteAdminUser(user.id);
                     deletedIds.push(user.id);
-                } else {
-                    failedMessages.push(`${user.displayName || user.username}：${payload?.error || "删除失败"}`);
+                } catch (error) {
+                    failedMessages.push(`${user.displayName || user.username}：${error instanceof Error ? error.message : "删除失败"}`);
                 }
             }
             if (deletedIds.length) {

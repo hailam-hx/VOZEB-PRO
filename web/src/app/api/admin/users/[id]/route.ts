@@ -15,8 +15,8 @@ type RouteContext = {
 
 export async function PATCH(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (!hasAnyAdminPermission(currentUser, ["users.manage", "administrators.manage", "billing.manage"])) return NextResponse.json({ error: "当前管理员没有编辑用户的职责权限" }, { status: 403 });
+    if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
+    if (!hasAnyAdminPermission(currentUser, ["users.manage", "administrators.manage", "billing.manage"])) return NextResponse.json({ code: 403, data: null, msg: "当前管理员没有编辑用户的职责权限" }, { status: 403 });
 
     try {
         const { id } = await context.params;
@@ -38,7 +38,7 @@ export async function PATCH(request: Request, context: RouteContext) {
             target: { type: "user", id: user.id, label: user.username },
             metadata: { fields: Object.keys(patch), role: user.role, adminPermissions: user.adminPermissions, status: user.status, settledBalance: user.settledBalance },
         });
-        return NextResponse.json({ user });
+        return NextResponse.json({ code: 0, data: { user }, msg: "" });
     } catch (error) {
         await safeRecordAuditLog({
             action: "admin.user.update",
@@ -47,16 +47,16 @@ export async function PATCH(request: Request, context: RouteContext) {
             target: { type: "user" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+        if (isAuthInputError(error)) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
         console.error("Admin user update failed", error);
-        return NextResponse.json({ error: "更新用户失败" }, { status: 500 });
+        return NextResponse.json({ code: 500, data: null, msg: "更新用户失败" }, { status: 500 });
     }
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (!hasAnyAdminPermission(currentUser, ["users.manage", "administrators.manage"])) return NextResponse.json({ error: "当前管理员没有删除用户的职责权限" }, { status: 403 });
+    if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
+    if (!hasAnyAdminPermission(currentUser, ["users.manage", "administrators.manage"])) return NextResponse.json({ code: 403, data: null, msg: "当前管理员没有删除用户的职责权限" }, { status: 403 });
 
     try {
         const { id } = await context.params;
@@ -66,7 +66,7 @@ export async function DELETE(request: Request, context: RouteContext) {
             actor: auditActorFromRequest(request, currentUser),
             target: { type: "user", id },
         });
-        return NextResponse.json({ ok: true });
+        return NextResponse.json({ code: 0, data: { ok: true }, msg: "" });
     } catch (error) {
         await safeRecordAuditLog({
             action: "admin.user.delete",
@@ -75,8 +75,8 @@ export async function DELETE(request: Request, context: RouteContext) {
             target: { type: "user" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+        if (isAuthInputError(error)) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
         console.error("Admin user delete failed", error);
-        return NextResponse.json({ error: "删除用户失败" }, { status: 500 });
+        return NextResponse.json({ code: 500, data: null, msg: "删除用户失败" }, { status: 500 });
     }
 }

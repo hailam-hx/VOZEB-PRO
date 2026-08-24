@@ -14,7 +14,16 @@ export async function GET(request: NextRequest) {
     if (!hasAdminPermission(user, "billing.read")) return NextResponse.json({ code: 403, data: null, msg: "需要财务查看权限" }, { status: 403 });
     try {
         const params = request.nextUrl.searchParams;
-        return NextResponse.json({ code: 0, data: await getAdminUsageAudit({ page: Number(params.get("page")) || 1, pageSize: Number(params.get("pageSize")) || 20 }), msg: "" });
+        return NextResponse.json({
+            code: 0,
+            data: await getAdminUsageAudit({
+                page: Number(params.get("page")) || 1,
+                pageSize: Number(params.get("pageSize")) || 20,
+                recoveryPage: Number(params.get("recoveryPage")) || 1,
+                recoveryPageSize: Number(params.get("recoveryPageSize")) || 20,
+            }),
+            msg: "",
+        });
     } catch (error) {
         console.error("Admin usage audit failed", error);
         return NextResponse.json({ code: 500, data: null, msg: "获取用量审计失败" }, { status: 500 });

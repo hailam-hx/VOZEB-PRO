@@ -150,40 +150,49 @@ test("preset or custom top-up uses a server quote, checks out, receives paid SSE
 test("admin pricing, provider-unit conversion, usage anomaly, and orphan recovery remain responsive", async ({ page }, testInfo) => {
     await setProjectTheme(page, testInfo.project.name === "mobile-390" ? "light" : "dark");
     let recoveryRuns = 0;
-    await page.route(/\/api\/admin\/billing\/top-up-config$/, (route) =>
-        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { config: { pricingVersion: "payg-v3", customerFxVersion: "fx-v7", usdPerVnd: "0.00004" } }, msg: "OK" }) }),
-    );
-    await page.route(/\/api\/admin\/settings$/, (route) =>
-        route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify({
-                settings: {
-                    logicalModels: [
-                        {
-                            id: "logical-image",
-                            name: "商业图片模型",
-                            capability: "image",
-                            enabled: true,
-                            saleRateCard: { version: "sale-v4", components: [{ dimension: "output_image", unitPrice: "12", per: "image" }] },
-                            bindings: [
-                                {
-                                    id: "binding-fal",
-                                    channelId: "fal-channel",
-                                    upstreamModel: "fal-image-v2",
-                                    enabled: true,
-                                    priority: 1,
-                                    weight: 1,
-                                    costRateCard: { version: "cost-v9", components: [{ dimension: "megapixel", unitPrice: "0.03", per: "megapixel" }] },
-                                    providerCostUnit: { kind: "provider-native", provider: "fal", unit: "megapixel", usdConversion: { version: "provider-fx-v2", usdPerUnit: "0.03" } },
-                                },
-                            ],
-                        },
-                    ],
-                },
-            }),
-        }),
-    );
+    let topUpConfig = { pricingVersion: "payg-v3", customerFxVersion: "fx-v7", usdPerVnd: "0.00004" };
+    let modelPricing = {
+        id: "logical-image",
+        name: "商业图片模型",
+        capability: "image",
+        enabled: true,
+        saleRateCard: { version: 1, components: [{ id: "image-count", dimension: "count", unitPrice: "12", per: "1" }] },
+        bindings: [
+            {
+                id: "binding-fal",
+                channelId: "fal-channel",
+                upstreamModel: "fal-image-v2",
+                enabled: true,
+                priority: 1,
+                costRateCard: { version: 1, components: [{ id: "provider-count", dimension: "count", unitPrice: "0.03", per: "1" }] },
+                providerCostUnit: { kind: "provider-native", provider: "fal", unit: "render", usdConversion: { version: "provider-fx-v2", usdPerUnit: "0.03" } },
+            },
+        ],
+    };
+    const topUpPatches: Record<string, unknown>[] = [];
+    const modelPricingPatches: Record<string, unknown>[] = [];
+    await page.route(/\/api\/admin\/billing\/top-up-config$/, async (route) => {
+        if (route.request().method() === "PATCH") {
+            topUpConfig = route.request().postDataJSON() as typeof topUpConfig;
+            topUpPatches.push(topUpConfig);
+        }
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { config: topUpConfig }, msg: "OK" }) });
+    });
+    await page.route(/\/api\/admin\/billing\/model-pricing$/, async (route) => {
+        if (route.request().method() === "PATCH") {
+            const body = route.request().postDataJSON() as Record<string, unknown>;
+            modelPricingPatches.push(body);
+            const binding = (body.bindings as Array<Record<string, unknown>>)[0];
+            modelPricing = {
+                ...modelPricing,
+                saleRateCard: body.saleRateCard as typeof modelPricing.saleRateCard,
+                bindings: [{ ...modelPricing.bindings[0], costRateCard: binding.costRateCard as (typeof modelPricing.bindings)[0]["costRateCard"], providerCostUnit: binding.providerCostUnit as (typeof modelPricing.bindings)[0]["providerCostUnit"] }],
+            };
+            await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { model: modelPricing }, msg: "OK" }) });
+            return;
+        }
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { models: [modelPricing] }, msg: "OK" }) });
+    });
     await page.route(/\/api\/admin\/billing\/usage(?:\?.*)?$/, (route) =>
         route.fulfill({
             status: 200,
@@ -194,7 +203,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
                     items: [
                         {
                             id: "usage-negative",
-                            userId: "user-one",
+                            user: { accountId: "0001", username: "creator" },
                             holdId: "hold-one",
                             capability: "image",
                             usageSource: "provider_reported",
@@ -205,13 +214,59 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
                             anomaly: "negative_margin",
                             createdAt: TIMESTAMP,
                         },
+                        {
+                            id: "usage-zero",
+                            user: { accountId: "0001", username: "creator" },
+                            holdId: "hold-zero",
+                            capability: "image",
+                            usageSource: "actual",
+                            settledCredits: "0",
+                            providerCostUsd: "0.03",
+                            marginUsd: "-0.03",
+                            estimated: false,
+                            anomaly: "zero_usage_cost",
+                            createdAt: TIMESTAMP,
+                        },
                     ],
-                    recovery: [{ id: "hold-orphan", userId: "user-one", businessId: "generation:orphan", amount: "12", reviewReason: "任务终态待复核", createdAt: TIMESTAMP }],
-                    total: 1,
+                    recovery: [{ id: "hold-orphan", user: { accountId: "0001", username: "creator" }, businessId: "generation:orphan", amount: "12", reviewReason: "任务终态待复核", createdAt: TIMESTAMP }],
+                    total: 2,
                     page: 1,
                     pageSize: 20,
-                    zeroUsage: 0,
+                    recoveryTotal: 1,
+                    recoveryPage: 1,
+                    recoveryPageSize: 20,
+                    zeroUsage: 1,
                     negativeMargin: 1,
+                },
+                msg: "OK",
+            }),
+        }),
+    );
+    await page.route(/\/api\/admin\/billing\/usage\/(?:usage-negative|usage-zero)\/attempts(?:\?.*)?$/, (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                code: 0,
+                data: {
+                    items: [
+                        {
+                            id: "attempt-failed",
+                            attemptNumber: 1,
+                            status: "failed",
+                            provider: "fal",
+                            bindingId: "binding-fal",
+                            nativeCostAmount: "1",
+                            nativeCostUnit: { kind: "provider-native", provider: "fal", unit: "render", usdConversion: { version: "provider-fx-v2", usdPerUnit: "0.03" } },
+                            usdConversionRate: "0.03",
+                            costUsd: "0.03",
+                            createdAt: TIMESTAMP,
+                            completedAt: TIMESTAMP,
+                        },
+                    ],
+                    total: 1,
+                    page: 1,
+                    pageSize: 10,
                 },
                 msg: "OK",
             }),
@@ -219,21 +274,58 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
     );
     await page.route(/\/api\/admin\/billing\/usage\/recovery$/, async (route) => {
         recoveryRuns += 1;
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { inspected: 1, retained: 0, settled: 0, released: 1, needsReview: 0 }, msg: "OK" }) });
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { inspected: 1, retained: 1, settled: 0, released: 0, needsReview: 1 }, msg: "OK" }) });
     });
 
     await page.goto("/admin/billing?tab=pricing", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "客户汇率与模型计价" })).toBeVisible();
     await expect(page.getByText("商业图片模型", { exact: true })).toBeVisible();
-    await expect(page.getByText(/fal:megapixel × 0.03 USD \(provider-fx-v2\)/)).toBeVisible();
-    await page.getByText("用量毛利", { exact: true }).click();
+    await expect(page.getByText(/fal:render × 0.03 USD \(provider-fx-v2\)/)).toBeVisible();
+    await page.getByLabel("客户汇率版本").fill("fx-v8");
+    await page.getByLabel("1 VND 对应 USD").fill("0.000041");
+    await page.getByRole("button", { name: "保存汇率" }).click();
+    await expect.poll(() => topUpPatches.at(-1)).toEqual({ pricingVersion: "payg-v3", customerFxVersion: "fx-v8", usdPerVnd: "0.000041" });
+    await expect(page.getByLabel("客户汇率版本")).toHaveValue("fx-v8");
+
+    await page.getByRole("button", { name: "编辑计价" }).click();
+    const pricingDialog = page.getByRole("dialog", { name: "编辑 商业图片模型 计价" });
+    await pricingDialog.getByLabel("单价").nth(0).fill("13.75");
+    await pricingDialog.getByLabel("单价").nth(1).fill("0.031");
+    await pricingDialog.getByLabel("供应商").fill("fal-next");
+    await pricingDialog.getByLabel("原生单位").fill("render-unit");
+    await pricingDialog.getByLabel("换算版本").fill("provider-fx-v3");
+    await pricingDialog.getByLabel("每单位 USD").fill("0.031");
+    await pricingDialog.getByRole("button", { name: "保存模型计价" }).click();
+    await expect
+        .poll(() => modelPricingPatches.at(-1))
+        .toMatchObject({
+            modelId: "logical-image",
+            saleRateCard: { version: 1, components: [{ id: "image-count", dimension: "count", unitPrice: "13.75", per: "1" }] },
+            bindings: [
+                {
+                    bindingId: "binding-fal",
+                    costRateCard: { version: 1, components: [{ id: "provider-count", dimension: "count", unitPrice: "0.031", per: "1" }] },
+                    providerCostUnit: { kind: "provider-native", provider: "fal-next", unit: "render-unit", usdConversion: { version: "provider-fx-v3", usdPerUnit: "0.031" } },
+                },
+            ],
+        });
+    await expect(page.getByText(/fal-next:render-unit × 0.031 USD \(provider-fx-v3\)/)).toBeVisible();
+
+    await page.getByRole("radio", { name: "用量毛利" }).click();
     await expect(page.getByRole("heading", { name: "用量、成本与毛利" })).toBeVisible();
     await expect(page.getByText("负毛利", { exact: true }).last()).toBeVisible();
-    await page.getByText("异常恢复", { exact: true }).click();
+    await expect(page.getByText("零用量有成本", { exact: true }).last()).toBeVisible();
+    await expect(page.getByText("ID：0001", { exact: true }).first()).toBeVisible();
+    const zeroUsageRow = page.getByRole("row").filter({ hasText: "usage-zero" });
+    await zeroUsageRow.getByRole("button", { name: /expand row|展开行/i }).click();
+    await expect(page.getByText("failed", { exact: true })).toBeVisible();
+    await expect(page.getByText("fal · binding-fal", { exact: true })).toBeVisible();
+    await page.getByRole("radio", { name: "异常恢复" }).click();
     await expect(page.getByRole("heading", { name: "孤儿预留恢复" })).toBeVisible();
     await expect(page.getByText("任务终态待复核", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "立即检查" }).click();
     await expect.poll(() => recoveryRuns).toBe(1);
+    await expect(page.getByText("任务终态待复核", { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page, `admin PAYG ${testInfo.project.name}`);
     await expectVisibleControlsWithinViewport(page, `admin PAYG controls ${testInfo.project.name}`);
 });

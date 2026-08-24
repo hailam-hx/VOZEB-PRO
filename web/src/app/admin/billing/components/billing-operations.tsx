@@ -4,24 +4,28 @@ import { App, Button, DatePicker, Form, Input, InputNumber, Modal, Pagination, S
 import type { TableColumnsType } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import { AlertTriangle, CircleDollarSign, FileUp, Pencil, Plus, RefreshCw, Save, Search, Trash2 } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { allowedAdminBillingTabs, type AdminBillingTab } from "@/lib/admin-permissions";
-import type { AdminBillingSummary, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
+import { allowedAdminBillingTabs, hasAdminPermission, type AdminBillingTab } from "@/lib/admin-permissions";
+import type { AdminBillingSummary, AdminProviderUsageAttempt, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
 import type { LogicalModel } from "@/lib/auth/store";
+import type { ProviderCostUnit } from "@/lib/billing/money";
+import type { PricingComponent, PricingDimension } from "@/lib/billing/pricing";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import {
     deleteAdminTopUpPreset,
+    getAdminModelPricing,
     getAdminTopUpConfig,
     getAdminTopUpSummary,
+    getAdminUsageAttempts,
     getAdminUsageAudit,
     listAdminTopUpOrders,
     listAdminTopUpPresets,
     recoverAdminUsageHolds,
     refundAdminTopUpOrder,
     saveAdminTopUpConfig,
+    saveAdminModelPricing,
     saveAdminTopUpPreset,
     type AdminTopUpOrder,
 } from "@/services/api/admin-billing-commerce";
@@ -51,6 +55,17 @@ const orderStatuses: Array<{ label: string; value: TopUpOrderStatus | "" }> = [
 ];
 
 type PresetForm = { id?: string; name: string; description?: string; nominalNativeAmount: string; enabled: boolean; sortOrder: number };
+type PricingComponentForm = PricingComponent;
+type BindingPricingForm = {
+    bindingId: string;
+    costComponents: PricingComponentForm[];
+    unitKind: ProviderCostUnit["kind"];
+    provider?: string;
+    unit?: string;
+    conversionVersion?: string;
+    usdPerUnit?: string;
+};
+type ModelPricingForm = { modelId: string; saleComponents: PricingComponentForm[]; bindings: BindingPricingForm[] };
 
 export function BillingOperations({ initialTab = "orders", initialPaymentConfig, embedded = false, hideTabs = false }: { initialTab?: AdminBillingTab; initialPaymentConfig?: PaymentConfigSummary; embedded?: boolean; hideTabs?: boolean }) {
     const currentUser = useUserStore((state) => state.user);
@@ -83,6 +98,7 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
 
 function OrdersPanel() {
     const { message, modal } = App.useApp();
+    const canManageBilling = useUserStore((state) => hasAdminPermission(state.user, "billing.manage"));
     const [orders, setOrders] = useState<AdminTopUpOrder[]>([]);
     const [summary, setSummary] = useState<AdminBillingSummary | null>(null);
     const [loading, setLoading] = useState(true);
@@ -180,16 +196,20 @@ function OrdersPanel() {
             ),
         },
         { title: "渠道", dataIndex: "provider", width: 100 },
-        {
-            title: "操作",
-            fixed: "right",
-            width: 100,
-            render: (_, order) => (
-                <Button danger size="small" loading={refunding === order.id} disabled={order.status !== "paid"} onClick={() => refund(order)}>
-                    退款
-                </Button>
-            ),
-        },
+        ...(canManageBilling
+            ? [
+                  {
+                      title: "操作",
+                      fixed: "right",
+                      width: 100,
+                      render: (_, order) => (
+                          <Button danger size="small" loading={refunding === order.id} disabled={order.status !== "paid"} onClick={() => refund(order)}>
+                              退款
+                          </Button>
+                      ),
+                  } satisfies TableColumnsType<AdminTopUpOrder>[number],
+              ]
+            : []),
     ];
 
     const currency = summary?.currencies.find((item) => item.currency === "VND");
@@ -357,16 +377,18 @@ function PresetsPanel() {
 function PricingPanel() {
     const { message } = App.useApp();
     const [form] = Form.useForm<AdminTopUpConfig>();
+    const [pricingForm] = Form.useForm<ModelPricingForm>();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [pricingSaving, setPricingSaving] = useState(false);
+    const [editingModel, setEditingModel] = useState<LogicalModel>();
     const [models, setModels] = useState<LogicalModel[]>([]);
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [topUp, settingsResponse] = await Promise.all([getAdminTopUpConfig(), fetch("/api/admin/settings", { cache: "no-store" })]);
+            const [topUp, pricing] = await Promise.all([getAdminTopUpConfig(), getAdminModelPricing()]);
             if (topUp.config) form.setFieldsValue(topUp.config);
-            const settingsPayload = (await settingsResponse.json().catch(() => null)) as { settings?: { logicalModels?: LogicalModel[] } } | null;
-            setModels(settingsPayload?.settings?.logicalModels || []);
+            setModels(pricing.models);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "加载定价配置失败");
         } finally {
@@ -386,93 +408,277 @@ function PricingPanel() {
             setSaving(false);
         }
     };
+    const editPricing = (model: LogicalModel) => {
+        pricingForm.setFieldsValue({
+            modelId: model.id,
+            saleComponents: model.saleRateCard?.components || [defaultPricingComponent(model.capability)],
+            bindings: model.bindings.map((binding) => ({
+                bindingId: binding.id,
+                costComponents: binding.costRateCard?.components || [],
+                unitKind: binding.providerCostUnit?.kind || "fiat",
+                ...(binding.providerCostUnit?.kind === "provider-native"
+                    ? {
+                          provider: binding.providerCostUnit.provider,
+                          unit: binding.providerCostUnit.unit,
+                          conversionVersion: binding.providerCostUnit.usdConversion.version,
+                          usdPerUnit: binding.providerCostUnit.usdConversion.usdPerUnit,
+                      }
+                    : {}),
+            })),
+        });
+        setEditingModel(model);
+    };
+    const savePricing = async () => {
+        const value = await pricingForm.validateFields();
+        setPricingSaving(true);
+        try {
+            await saveAdminModelPricing({
+                modelId: value.modelId,
+                saleRateCard: { version: 1, components: value.saleComponents.map(cleanPricingComponent) },
+                bindings: value.bindings.map((binding) => {
+                    const costRateCard = binding.costComponents.length ? { version: 1 as const, components: binding.costComponents.map(cleanPricingComponent) } : null;
+                    const providerCostUnit: ProviderCostUnit | null = !costRateCard
+                        ? null
+                        : binding.unitKind === "provider-native"
+                          ? { kind: "provider-native", provider: binding.provider || "", unit: binding.unit || "", usdConversion: { version: binding.conversionVersion || "", usdPerUnit: binding.usdPerUnit || "" } }
+                          : { kind: "fiat", currency: "USD" };
+                    return { bindingId: binding.bindingId, costRateCard, providerCostUnit };
+                }),
+            });
+            message.success("模型售价、绑定成本与单位换算已保存");
+            setEditingModel(undefined);
+            await load();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存模型计价失败");
+        } finally {
+            setPricingSaving(false);
+        }
+    };
     return (
-        <Panel
-            title="客户汇率与模型计价"
-            description="客户充值汇率、逻辑模型售价、绑定成本价和供应商原生单位换算分开管理；成本与毛利仅管理员可见。"
-            action={
-                <Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void save()}>
-                    保存汇率
-                </Button>
-            }
-        >
-            <Form form={form} layout="vertical">
-                <div className="grid gap-x-3 sm:grid-cols-3">
-                    <Form.Item label="充值价格版本" name="pricingVersion" rules={[{ required: true }]}>
-                        <Input />
-                    </Form.Item>
-                    <Form.Item label="客户汇率版本" name="customerFxVersion" rules={[{ required: true }]}>
-                        <Input />
-                    </Form.Item>
-                    <Form.Item label="1 VND 对应 USD" name="usdPerVnd" rules={[{ required: true, pattern: /^(?:0|[1-9]\d*)(?:\.\d+)?$/ }]}>
-                        <Input inputMode="decimal" />
-                    </Form.Item>
+        <>
+            <Panel
+                title="客户汇率与模型计价"
+                description="客户充值汇率、逻辑模型售价、绑定成本价和供应商原生单位换算分开管理；成本与毛利仅管理员可见。"
+                action={
+                    <Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void save()}>
+                        保存汇率
+                    </Button>
+                }
+            >
+                <Form form={form} layout="vertical">
+                    <div className="grid gap-x-3 sm:grid-cols-3">
+                        <Form.Item label="充值价格版本" name="pricingVersion" rules={[{ required: true }]}>
+                            <Input />
+                        </Form.Item>
+                        <Form.Item label="客户汇率版本" name="customerFxVersion" rules={[{ required: true }]}>
+                            <Input />
+                        </Form.Item>
+                        <Form.Item label="1 VND 对应 USD" name="usdPerVnd" rules={[{ required: true, pattern: /^(?:0|[1-9]\d*)(?:\.\d+)?$/ }]}>
+                            <Input inputMode="decimal" />
+                        </Form.Item>
+                    </div>
+                </Form>
+                <div className="mt-4 overflow-x-auto">
+                    <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 980 }} dataSource={models} columns={pricingColumns(editPricing)} />
                 </div>
-            </Form>
-            <div className="mt-4 overflow-x-auto">
-                <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 900 }} dataSource={models} columns={pricingColumns} />
-            </div>
-            <div className="mt-3 text-right">
-                <Link className="text-sm font-medium text-sky-600 dark:text-sky-300" href="/admin?section=channels">
-                    前往模型渠道编辑售价与绑定成本 →
-                </Link>
-            </div>
-        </Panel>
+            </Panel>
+            <Modal
+                title={editingModel ? `编辑 ${editingModel.name} 计价` : "编辑模型计价"}
+                open={Boolean(editingModel)}
+                width="min(980px, calc(100vw - 24px))"
+                styles={{ body: { maxHeight: "min(72dvh, 760px)", overflowY: "auto" } }}
+                confirmLoading={pricingSaving}
+                okText="保存模型计价"
+                cancelText="取消"
+                onOk={() => void savePricing()}
+                onCancel={() => (pricingSaving ? undefined : setEditingModel(undefined))}
+            >
+                <Form form={pricingForm} layout="vertical" className="mt-4">
+                    <Form.Item name="modelId" hidden>
+                        <Input />
+                    </Form.Item>
+                    <RateComponentsEditor name="saleComponents" title="逻辑销售价格卡" required />
+                    <Form.List name="bindings">
+                        {(fields) => (
+                            <div className="mt-4 space-y-3">
+                                {fields.map((field, index) => {
+                                    const binding = editingModel?.bindings[index];
+                                    return (
+                                        <section key={field.key} className="rounded-xl border border-stone-200 p-3 dark:border-stone-800">
+                                            <div className="mb-3 text-sm font-semibold">{binding ? `${binding.channelId} / ${binding.upstreamModel}` : `绑定 ${index + 1}`}</div>
+                                            <Form.Item name={[field.name, "bindingId"]} hidden>
+                                                <Input />
+                                            </Form.Item>
+                                            <RateComponentsEditor name={[field.name, "costComponents"]} title="绑定成本价格卡" />
+                                            <div className="mt-3 grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">
+                                                <Form.Item label="成本单位类型" name={[field.name, "unitKind"]}>
+                                                    <Select
+                                                        options={[
+                                                            { value: "fiat", label: "USD 法币" },
+                                                            { value: "provider-native", label: "供应商原生单位" },
+                                                        ]}
+                                                    />
+                                                </Form.Item>
+                                                <Form.Item noStyle shouldUpdate={(previous, current) => previous.bindings?.[index]?.unitKind !== current.bindings?.[index]?.unitKind}>
+                                                    {({ getFieldValue }) =>
+                                                        getFieldValue(["bindings", index, "unitKind"]) === "provider-native" ? (
+                                                            <>
+                                                                <Form.Item label="供应商" name={[field.name, "provider"]} rules={[{ required: true }]}>
+                                                                    <Input />
+                                                                </Form.Item>
+                                                                <Form.Item label="原生单位" name={[field.name, "unit"]} rules={[{ required: true }]}>
+                                                                    <Input />
+                                                                </Form.Item>
+                                                                <Form.Item label="换算版本" name={[field.name, "conversionVersion"]} rules={[{ required: true }]}>
+                                                                    <Input />
+                                                                </Form.Item>
+                                                                <Form.Item label="每单位 USD" name={[field.name, "usdPerUnit"]} rules={[{ required: true, pattern: /^(?:0|[1-9]\d*)(?:\.\d+)?$/ }]}>
+                                                                    <Input inputMode="decimal" />
+                                                                </Form.Item>
+                                                            </>
+                                                        ) : null
+                                                    }
+                                                </Form.Item>
+                                            </div>
+                                        </section>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </Form.List>
+                </Form>
+            </Modal>
+        </>
     );
 }
 
-const pricingColumns: TableColumnsType<LogicalModel> = [
-    {
-        title: "逻辑模型",
-        render: (_, model) => (
-            <div>
-                <b>{model.name}</b>
-                <div className="text-xs text-stone-500">
-                    {model.id} · {model.capability}
+function pricingColumns(onEdit: (model: LogicalModel) => void): TableColumnsType<LogicalModel> {
+    return [
+        {
+            title: "逻辑模型",
+            render: (_, model) => (
+                <div>
+                    <b>{model.name}</b>
+                    <div className="text-xs text-stone-500">
+                        {model.id} · {model.capability}
+                    </div>
                 </div>
-            </div>
-        ),
-    },
-    { title: "销售价格卡", render: (_, model) => <RateCard value={model.saleRateCard} /> },
-    {
-        title: "绑定成本与单位换算",
-        render: (_, model) => (
-            <div className="space-y-2">
-                {model.bindings.map((binding) => (
-                    <div key={binding.id} className="text-xs">
-                        <b>
-                            {binding.channelId} / {binding.upstreamModel}
-                        </b>
-                        <div className="text-stone-500">
-                            成本：{rateCardText(binding.costRateCard)} · 单位：{providerUnitText(binding.providerCostUnit)}
+            ),
+        },
+        { title: "销售价格卡", render: (_, model) => <RateCard value={model.saleRateCard} /> },
+        {
+            title: "绑定成本与单位换算",
+            render: (_, model) => (
+                <div className="space-y-2">
+                    {model.bindings.map((binding) => (
+                        <div key={binding.id} className="text-xs">
+                            <b>
+                                {binding.channelId} / {binding.upstreamModel}
+                            </b>
+                            <div className="text-stone-500">
+                                成本：{rateCardText(binding.costRateCard)} · 单位：{providerUnitText(binding.providerCostUnit)}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ),
+        },
+        {
+            title: "操作",
+            fixed: "right",
+            width: 100,
+            render: (_, model) => (
+                <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => onEdit(model)}>
+                    编辑计价
+                </Button>
+            ),
+        },
+    ];
+}
+
+function RateComponentsEditor({ name, title, required = false }: { name: string | Array<string | number>; title: string; required?: boolean }) {
+    const dimensions: Array<{ value: PricingDimension; label: string }> = [
+        { value: "inputTokens", label: "输入 Token" },
+        { value: "outputTokens", label: "输出 Token" },
+        { value: "count", label: "生成数量" },
+        { value: "durationSeconds", label: "时长（秒）" },
+        { value: "quality", label: "质量" },
+        { value: "resolution", label: "分辨率" },
+        { value: "format", label: "格式" },
+    ];
+    return (
+        <div className="rounded-xl bg-stone-50/70 p-3 dark:bg-stone-900/45">
+            <div className="mb-2 text-xs font-semibold text-stone-700 dark:text-stone-200">{title}</div>
+            <Form.List name={name} rules={required ? [{ validator: async (_, value) => (Array.isArray(value) && value.length ? undefined : Promise.reject(new Error("至少配置一个价格组件"))) }] : undefined}>
+                {(fields, { add, remove }, { errors }) => (
+                    <div className="space-y-2">
+                        {fields.map((field) => (
+                            <div key={field.key} className="grid min-w-0 gap-2 rounded-lg border border-stone-200 bg-white p-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] dark:border-stone-800 dark:bg-stone-950">
+                                <Form.Item className="mb-0" label="组件 ID" name={[field.name, "id"]} rules={[{ required: true }]}>
+                                    <Input />
+                                </Form.Item>
+                                <Form.Item className="mb-0" label="计价维度" name={[field.name, "dimension"]} rules={[{ required: true }]}>
+                                    <Select options={dimensions} />
+                                </Form.Item>
+                                <Form.Item className="mb-0" label="单价" name={[field.name, "unitPrice"]} rules={[{ required: true, pattern: /^(?:0|[1-9]\d*)(?:\.\d+)?$/ }]}>
+                                    <Input inputMode="decimal" />
+                                </Form.Item>
+                                <Form.Item className="mb-0" label="每单位" name={[field.name, "per"]}>
+                                    <Input inputMode="decimal" placeholder="默认 1" />
+                                </Form.Item>
+                                <Form.Item className="mb-0" label="匹配值" name={[field.name, "match"]}>
+                                    <Input placeholder="分类维度必填" />
+                                </Form.Item>
+                                <Button className="self-end" danger aria-label="删除价格组件" icon={<Trash2 className="size-3.5" />} onClick={() => remove(field.name)} />
+                            </div>
+                        ))}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <Form.ErrorList errors={errors} />
+                            <Button size="small" icon={<Plus className="size-3.5" />} onClick={() => add({ id: "", dimension: "count", unitPrice: "0", per: "1", match: "" })}>
+                                添加价格组件
+                            </Button>
                         </div>
                     </div>
-                ))}
-            </div>
-        ),
-    },
-];
+                )}
+            </Form.List>
+        </div>
+    );
+}
+
+function defaultPricingComponent(capability: LogicalModel["capability"]): PricingComponentForm {
+    return { id: capability === "text" ? "input" : "count", dimension: capability === "text" ? "inputTokens" : "count", unitPrice: "0", per: "1" };
+}
+
+function cleanPricingComponent(component: PricingComponentForm): PricingComponent {
+    const per = component.per?.trim();
+    const match = component.match?.trim();
+    return { id: component.id.trim(), dimension: component.dimension, unitPrice: component.unitPrice.trim(), ...(per ? { per } : {}), ...(match ? { match } : {}) };
+}
 
 function UsagePanel({ mode }: { mode: "usage" | "recovery" }) {
     const { message } = App.useApp();
     const [items, setItems] = useState<AdminUsageAuditItem[]>([]);
     const [recovery, setRecovery] = useState<AdminRecoveryItem[]>([]);
     const [stats, setStats] = useState({ total: 0, zeroUsage: 0, negativeMargin: 0 });
+    const [page, setPage] = useState(1);
+    const [recoveryPage, setRecoveryPage] = useState(1);
+    const [recoveryTotal, setRecoveryTotal] = useState(0);
     const [loading, setLoading] = useState(true);
     const [recovering, setRecovering] = useState(false);
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const result = await getAdminUsageAudit({ pageSize: PAGE_SIZE });
+            const result = await getAdminUsageAudit({ page, pageSize: PAGE_SIZE, recoveryPage, recoveryPageSize: PAGE_SIZE });
             setItems(result.items);
             setRecovery(result.recovery);
             setStats({ total: result.total, zeroUsage: result.zeroUsage, negativeMargin: result.negativeMargin });
+            setRecoveryTotal(result.recoveryTotal);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "加载用量审计失败");
         } finally {
             setLoading(false);
         }
-    }, [message]);
+    }, [message, page, recoveryPage]);
     useEffect(() => {
         void load();
     }, [load]);
@@ -497,7 +703,8 @@ function UsagePanel({ mode }: { mode: "usage" | "recovery" }) {
                     </Button>
                 }
             >
-                <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 760 }} dataSource={recovery} columns={recoveryColumns} />
+                <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 880 }} dataSource={recovery} columns={recoveryColumns} />
+                {recoveryTotal > PAGE_SIZE ? <Pagination className="mt-4" current={recoveryPage} total={recoveryTotal} pageSize={PAGE_SIZE} showSizeChanger={false} onChange={setRecoveryPage} /> : null}
             </Panel>
         );
     return (
@@ -515,12 +722,14 @@ function UsagePanel({ mode }: { mode: "usage" | "recovery" }) {
                 <Metric label="零用量有成本" value={stats.zeroUsage} tone={stats.zeroUsage ? "danger" : undefined} />
                 <Metric label="负毛利" value={stats.negativeMargin} tone={stats.negativeMargin ? "danger" : undefined} />
             </div>
-            <Table className="mt-4" rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 900 }} dataSource={items} columns={usageColumns} />
+            <Table className="mt-4" rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 1080 }} dataSource={items} columns={usageColumns} expandable={{ expandedRowRender: (item) => <ProviderAttemptsPanel chargeId={item.id} /> }} />
+            {stats.total > PAGE_SIZE ? <Pagination className="mt-4" current={page} total={stats.total} pageSize={PAGE_SIZE} showSizeChanger={false} onChange={setPage} /> : null}
         </Panel>
     );
 }
 
 const usageColumns: TableColumnsType<AdminUsageAuditItem> = [
+    { title: "用户", dataIndex: "user", width: 210, render: (_, item) => <AdminUserIdentity {...item.user} fallback="用户信息不可用" /> },
     {
         title: "账单",
         dataIndex: "id",
@@ -555,10 +764,63 @@ const usageColumns: TableColumnsType<AdminUsageAuditItem> = [
 ];
 const recoveryColumns: TableColumnsType<AdminRecoveryItem> = [
     { title: "预留 ID", dataIndex: "id", width: 210, render: (value: string) => <span className="font-mono text-xs">{value}</span> },
-    { title: "用户", dataIndex: "userId", width: 160 },
+    { title: "用户", dataIndex: "user", width: 210, render: (_, item) => <AdminUserIdentity {...item.user} fallback="用户信息不可用" /> },
     { title: "预留积分", dataIndex: "amount", width: 110 },
     { title: "业务 ID", dataIndex: "businessId", width: 220 },
     { title: "复核原因", dataIndex: "reviewReason", width: 230, render: (value?: string) => value || "已过期待检查" },
+];
+
+function ProviderAttemptsPanel({ chargeId }: { chargeId: string }) {
+    const { message } = App.useApp();
+    const [items, setItems] = useState<AdminProviderUsageAttempt[]>([]);
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        let active = true;
+        setLoading(true);
+        void getAdminUsageAttempts(chargeId, { page, pageSize: 10 })
+            .then((result) => {
+                if (!active) return;
+                setItems(result.items);
+                setTotal(result.total);
+            })
+            .catch((error) => {
+                if (active) message.error(error instanceof Error ? error.message : "加载供应商尝试失败");
+            })
+            .finally(() => {
+                if (active) setLoading(false);
+            });
+        return () => {
+            active = false;
+        };
+    }, [chargeId, message, page]);
+    return (
+        <div className="min-w-0 rounded-lg border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-900/45">
+            <div className="mb-2 text-xs font-semibold text-stone-700 dark:text-stone-200">供应商尝试（失败尝试同样计入真实成本）</div>
+            <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 980 }} dataSource={items} columns={attemptColumns} />
+            {total > 10 ? <Pagination className="mt-3" size="small" current={page} total={total} pageSize={10} showSizeChanger={false} onChange={setPage} /> : null}
+        </div>
+    );
+}
+
+const attemptColumns: TableColumnsType<AdminProviderUsageAttempt> = [
+    { title: "尝试", dataIndex: "attemptNumber", width: 75, render: (value: number) => `#${value}` },
+    { title: "状态", dataIndex: "status", width: 105, render: (value: AdminProviderUsageAttempt["status"]) => <Tag color={value === "succeeded" ? "green" : value === "failed" ? "red" : value === "pending" ? "blue" : "default"}>{value}</Tag> },
+    {
+        title: "供应商 / 绑定",
+        width: 220,
+        render: (_, item) => (
+            <span className="text-xs">
+                {item.provider} · {item.bindingId}
+            </span>
+        ),
+    },
+    { title: "原生金额", dataIndex: "nativeCostAmount", width: 120 },
+    { title: "成本单位", width: 180, render: (_, item) => providerUnitText(item.nativeCostUnit) },
+    { title: "USD 换算快照", dataIndex: "usdConversionRate", width: 150 },
+    { title: "成本 USD", dataIndex: "costUsd", width: 120 },
+    { title: "完成时间", dataIndex: "completedAt", width: 170, render: (value?: string) => (value ? dayjs(value).format("YYYY-MM-DD HH:mm") : "—") },
 ];
 
 function ReconciliationPanel() {

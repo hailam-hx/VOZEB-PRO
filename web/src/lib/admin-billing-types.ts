@@ -1,4 +1,6 @@
-import type { PaymentAmount } from "@/lib/billing/money";
+import type { PaymentAmount, ProviderCostUnit } from "@/lib/billing/money";
+
+export type AdminBillingUser = { accountId?: string; username?: string; displayName?: string; avatarUrl?: string };
 
 export type AdminBillingSummary = {
     currencies: Array<{ currency: string; paidNativeAmount: string; refundedNativeAmount: string; paidOrders: number; refundedOrders: number }>;
@@ -10,7 +12,7 @@ export type AdminBillingSummary = {
 export type AdminTopUpConfig = { pricingVersion: string; customerFxVersion: string; usdPerVnd: string };
 export type AdminUsageAuditItem = {
     id: string;
-    userId: string;
+    user?: AdminBillingUser;
     holdId: string;
     capability: string;
     usageSource: string;
@@ -21,7 +23,20 @@ export type AdminUsageAuditItem = {
     anomaly: "none" | "zero_usage_cost" | "negative_margin";
     createdAt: string;
 };
-export type AdminRecoveryItem = { id: string; userId: string; businessId: string; amount: string; reviewReason?: string; expiresAt?: string; createdAt: string };
+export type AdminRecoveryItem = { id: string; user?: AdminBillingUser; businessId: string; amount: string; reviewReason?: string; expiresAt?: string; createdAt: string };
+export type AdminProviderUsageAttempt = {
+    id: string;
+    attemptNumber: number;
+    status: "pending" | "succeeded" | "failed" | "canceled";
+    provider: string;
+    bindingId: string;
+    nativeCostAmount: string;
+    nativeCostUnit: ProviderCostUnit;
+    usdConversionRate: string;
+    costUsd: string;
+    createdAt: string;
+    completedAt?: string;
+};
 
 export type BillingStatementStatus = "paid" | "refunded" | "pending" | "failed" | "unknown";
 export type BillingReconciliationSource = "csv" | "provider-api" | "manual";

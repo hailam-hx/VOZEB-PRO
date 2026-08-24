@@ -10,6 +10,7 @@ import { checkRateLimit } from "@/lib/server/security";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 import { rankTextPlanningCandidates, requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody } from "@/lib/server/drama-analysis-input";
+import { pointsResponseHeaders } from "@/lib/server/points-response";
 
 export const runtime = "nodejs";
 
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
     const candidates = resolveLogicalModelCandidates(settings, "text", model);
     if (!model || !candidates.length) return NextResponse.json({ code: 400, data: null, msg: "后台尚未配置可用的默认文本模型" }, { status: 400 });
 
-    let refundedPointsRemaining: number | undefined;
+    let refundedBalance: WalletProjection | undefined;
     try {
         const tool = phase === "visual" ? dramaVisualTool : dramaContentTool;
         const input = phase === "visual" ? visualInput!.payload : { script, summary: dramaAnalysisText(body.summary) };
@@ -73,22 +74,19 @@ export async function POST(request: Request) {
                         console.error("[drama-analyze] normalized output invalid", JSON.stringify({ phase, channelId: candidate.channel.id, model: candidate.upstreamModel, resultCount, expectedCount, shape: describeDramaAnalysisCandidate(parsed) }));
                         throw new Error(phase === "visual" ? "模型没有为全部镜头生成视觉结构" : "模型没有生成有效内容结构");
                     }
-                    const response = NextResponse.json({ code: 0, data, msg: phase === "visual" ? "视觉结构已生成" : "内容结构待审核" });
-                    if (typeof call.pointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(call.pointsRemaining));
-                    return response;
+                    return NextResponse.json({ code: 0, data, msg: phase === "visual" ? "视觉结构已生成" : "内容结构待审核" }, { headers: pointsResponseHeaders(call.balance) });
                 } catch (error) {
-                    if (hasSystemAiCharge(call)) refundedPointsRemaining = Number((await refund(user.id, model, call))?.availableBalance);
+                    if (hasSystemAiCharge(call)) refundedBalance = walletProjection(await refund(user.id, model, call));
                     throw error;
                 }
             } catch (error) {
+                if (error instanceof RefundedDramaAnalysisError) refundedBalance = error.balance;
                 latestError = error;
             }
         }
         throw latestError instanceof Error ? latestError : new Error("没有可用的文本模型渠道");
     } catch (error) {
-        const response = NextResponse.json({ code: 502, data: null, msg: error instanceof Error ? error.message : "剧本分析失败" }, { status: 502 });
-        if (typeof refundedPointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(refundedPointsRemaining));
-        return response;
+        return NextResponse.json({ code: 502, data: null, msg: error instanceof Error ? error.message : "剧本分析失败" }, { status: 502, headers: pointsResponseHeaders(refundedBalance) });
     }
 }
 
@@ -103,28 +101,42 @@ async function requestFunctionCall(
     idempotencyKey: string,
 ) {
     const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, idempotencyKey, candidate.upstreamModel) };
-    const call = await requestStructuredText({
-        origin,
-        cookie,
-        candidate,
-        messages,
-        tool,
-        headers,
-        onInvalidResponse: (responseHeaders) => refund(userId, billingModel, responseHeaders),
-    });
+    let invalidRefund: WalletProjection | undefined;
+    let call: Awaited<ReturnType<typeof requestStructuredText>>;
+    try {
+        call = await requestStructuredText({
+            origin,
+            cookie,
+            candidate,
+            messages,
+            tool,
+            headers,
+            onInvalidResponse: async (responseHeaders) => {
+                invalidRefund = walletProjection(await refund(userId, billingModel, responseHeaders));
+            },
+        });
+    } catch (error) {
+        if (invalidRefund) throw new RefundedDramaAnalysisError(error, invalidRefund);
+        throw error;
+    }
     if (!hasUsableDramaToolArguments(call.arguments, tool.name)) {
         console.error("[drama-analyze] structured output invalid", JSON.stringify({ endpoint: call.protocol, channelId: candidate.channel.id, model: candidate.upstreamModel, argumentShape: describeArgumentsText(call.arguments) }));
-        await refund(userId, billingModel, call.headers);
-        throw new Error("模型没有返回结构化剧本结果");
+        const balance = walletProjection(await refund(userId, billingModel, call.headers));
+        const error = new Error("模型没有返回结构化剧本结果");
+        if (balance) throw new RefundedDramaAnalysisError(error, balance);
+        throw error;
     }
     return readCallResult(call.arguments, call.headers);
 }
 
 function readCallResult(args: string, headers: Headers) {
-    const remaining = Number(headers.get("x-vozeb-pro-points-remaining"));
     return {
         args,
-        pointsRemaining: Number.isFinite(remaining) ? remaining : undefined,
+        balance: walletProjection({
+            settledBalance: headers.get("x-vozeb-pro-balance-settled"),
+            heldBalance: headers.get("x-vozeb-pro-balance-held"),
+            availableBalance: headers.get("x-vozeb-pro-balance-available"),
+        }),
         ...readSystemAiBilling(headers),
     };
 }
@@ -141,4 +153,26 @@ function describeArgumentsText(value: string) {
 async function refund(userId: string, model: string, source: Headers | SystemAiBilling) {
     const billing = source instanceof Headers ? readSystemAiBilling(source) : source;
     return hasSystemAiCharge(billing) ? refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId) : null;
+}
+
+type WalletProjection = { settledBalance: string; heldBalance: string; availableBalance: string };
+
+class RefundedDramaAnalysisError extends Error {
+    constructor(
+        error: unknown,
+        readonly balance: WalletProjection,
+    ) {
+        super(error instanceof Error ? error.message : "剧本分析失败");
+    }
+}
+
+function walletProjection(value: { settledBalance?: unknown; heldBalance?: unknown; availableBalance?: unknown } | null | undefined): WalletProjection | undefined {
+    const settledBalance = decimalHeader(value?.settledBalance);
+    const heldBalance = decimalHeader(value?.heldBalance);
+    const availableBalance = decimalHeader(value?.availableBalance);
+    return settledBalance !== undefined && heldBalance !== undefined && availableBalance !== undefined ? { settledBalance, heldBalance, availableBalance } : undefined;
+}
+
+function decimalHeader(value: unknown) {
+    return typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) ? value : undefined;
 }
