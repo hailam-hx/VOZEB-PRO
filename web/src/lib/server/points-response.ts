@@ -1,20 +1,18 @@
 type PointsResponseValue = {
-    pointsBalance?: unknown;
-    permanentPointsBalance?: unknown;
-    dailyPointsBalance?: unknown;
-    dailyPointsExpiresAt?: unknown;
+    settledBalance?: unknown;
+    heldBalance?: unknown;
+    availableBalance?: unknown;
 };
 
 export function pointsResponseHeaders(value: unknown) {
     const headers = new Headers();
-    const points = typeof value === "object" && value ? (value as PointsResponseValue) : { pointsBalance: value };
-    setNumberHeader(headers, "x-vozeb-pro-points-remaining", points.pointsBalance);
-    setNumberHeader(headers, "x-vozeb-pro-points-permanent", points.permanentPointsBalance);
-    setNumberHeader(headers, "x-vozeb-pro-points-daily", points.dailyPointsBalance);
-    if (typeof points.dailyPointsExpiresAt === "string" && points.dailyPointsExpiresAt) headers.set("x-vozeb-pro-points-daily-expires-at", points.dailyPointsExpiresAt);
+    const points = typeof value === "object" && value ? (value as PointsResponseValue) : {};
+    setDecimalHeader(headers, "x-vozeb-pro-balance-settled", points.settledBalance);
+    setDecimalHeader(headers, "x-vozeb-pro-balance-held", points.heldBalance);
+    setDecimalHeader(headers, "x-vozeb-pro-balance-available", points.availableBalance);
     return headers;
 }
 
-function setNumberHeader(headers: Headers, name: string, value: unknown) {
-    if (typeof value === "number" && Number.isFinite(value)) headers.set(name, String(value));
+function setDecimalHeader(headers: Headers, name: string, value: unknown) {
+    if (typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) headers.set(name, value);
 }

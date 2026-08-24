@@ -2,29 +2,27 @@
 
 import type { ReactNode } from "react";
 import { Button, Input, Pagination, Select, Spin, Tag } from "antd";
-import { CreditCard, History, ReceiptText, RefreshCw, Save, ShieldCheck, TicketPercent, UserCircle, UserPlus, WalletCards } from "lucide-react";
+import { CreditCard, History, ReceiptText, RefreshCw, Save, ShieldCheck, UserCircle, UserPlus, WalletCards } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
-import { BillingPlanGrid } from "@/components/billing/billing-plan-grid";
+import { TopUpPresetGrid } from "@/components/billing/top-up-preset-grid";
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { cn } from "@/lib/utils";
-import { type BillingOrder, type BillingOrderStatus, type BillingProduct } from "@/services/api/billing";
+import { type TopUpOrder, type TopUpOrderStatus, type TopUpPreset } from "@/services/api/billing";
 import type { PointRecord } from "@/services/api/points";
 import { useUserStore } from "@/stores/use-user-store";
 import { ProfileAvatarUploader } from "@/components/profile/profile-avatar-uploader";
 
-export type ProfileSectionKey = "overview" | "profile" | "billing" | "coupons" | "referrals" | "orders" | "consume" | "points" | "security";
+export type ProfileSectionKey = "overview" | "profile" | "billing" | "referrals" | "orders" | "consume" | "points" | "security";
 
 export const RECORD_PAGE_SIZE = 8;
 export const ORDER_PAGE_SIZE = 8;
-export const COUPON_PAGE_SIZE = 8;
 
 const profileSections: Array<{ key: ProfileSectionKey; icon: ReactNode }> = [
     { key: "overview", icon: <WalletCards className="size-4" /> },
     { key: "profile", icon: <UserCircle className="size-4" /> },
     { key: "billing", icon: <CreditCard className="size-4" /> },
-    { key: "coupons", icon: <TicketPercent className="size-4" /> },
     { key: "orders", icon: <ReceiptText className="size-4" /> },
     { key: "points", icon: <CreditSymbol className="text-sm" /> },
     { key: "consume", icon: <History className="size-4" /> },
@@ -86,7 +84,7 @@ export function ProfileSectionNav({ activeKey, onChange, mode }: { activeKey: Pr
     );
 }
 
-export function BillingCenterSection({ products, productsLoading, onRefresh, onCheckout }: { products: BillingProduct[]; productsLoading: boolean; onRefresh: () => void; onCheckout: (product: BillingProduct) => void }) {
+export function BillingCenterSection({ presets, presetsLoading, onRefresh, onCheckout, onCustom }: { presets: TopUpPreset[]; presetsLoading: boolean; onRefresh: () => void; onCheckout: (preset: TopUpPreset) => void; onCustom: () => void }) {
     const t = useTranslations("profile.billingCenter");
     return (
         <section className="rounded-lg border border-border bg-card p-2 text-card-foreground sm:rounded-2xl sm:p-6">
@@ -95,7 +93,7 @@ export function BillingCenterSection({ products, productsLoading, onRefresh, onC
                     <h2 className="text-lg font-semibold tracking-tight text-stone-950 sm:text-xl dark:text-white">{t("title")}</h2>
                     <p className="mt-1 text-xs leading-5 text-stone-500 sm:text-sm sm:leading-6 dark:text-stone-400">{t("description")}</p>
                 </div>
-                <Button className={`${profileSecondaryButtonClass} shrink-0`} icon={<RefreshCw className="size-4" />} onClick={onRefresh} loading={productsLoading}>
+                <Button className={`${profileSecondaryButtonClass} shrink-0`} icon={<RefreshCw className="size-4" />} onClick={onRefresh} loading={presetsLoading}>
                     <span className="hidden sm:inline">{t("refresh")}</span>
                 </Button>
             </div>
@@ -105,9 +103,9 @@ export function BillingCenterSection({ products, productsLoading, onRefresh, onC
                         <h3 className="text-base font-semibold text-stone-950 dark:text-white">{t("available")}</h3>
                         <p className="mt-1 hidden text-sm text-stone-500 sm:block dark:text-stone-400">{t("availableDescription")}</p>
                     </div>
-                    {!productsLoading && products.length ? <span className="shrink-0 text-xs text-stone-400 dark:text-stone-500">{t("count", { count: products.length })}</span> : null}
+                    {!presetsLoading && presets.length ? <span className="shrink-0 text-xs text-stone-400 dark:text-stone-500">{t("count", { count: presets.length })}</span> : null}
                 </div>
-                <div className="mt-2 sm:mt-4">{productsLoading ? <LoadingBlock /> : products.length ? <BillingPlanGrid products={products} onSelect={onCheckout} /> : <CompactEmptyState title={t("emptyTitle")} description={t("emptyDescription")} />}</div>
+                <div className="mt-2 sm:mt-4">{presetsLoading ? <LoadingBlock /> : <TopUpPresetGrid presets={presets} customSelected={false} onSelectPreset={onCheckout} onSelectCustom={onCustom} />}</div>
             </div>
         </section>
     );
@@ -211,7 +209,7 @@ export function AccountEmailForm({
     );
 }
 
-export function OrderList({ loading, orders, total, page, onPageChange, compact }: { loading: boolean; orders: BillingOrder[]; total: number; page: number; onPageChange: (page: number) => void; compact?: boolean }) {
+export function OrderList({ loading, orders, total, page, onPageChange, compact }: { loading: boolean; orders: TopUpOrder[]; total: number; page: number; onPageChange: (page: number) => void; compact?: boolean }) {
     const t = useTranslations("profile.records");
     const format = useFormatter();
     if (loading) return <LoadingBlock />;
@@ -231,7 +229,7 @@ export function OrderList({ loading, orders, total, page, onPageChange, compact 
                         <Tag className="m-0 !px-1 !py-0 text-[10px] leading-[18px] sm:!px-2 sm:text-xs sm:leading-5" color={orderStatusColor(order.status)}>
                             {t(`orderStatuses.${order.status}`)}
                         </Tag>
-                        <div className="text-xs font-semibold tabular-nums text-stone-900 dark:text-stone-100 sm:text-[13px]">{format.number(order.amountCents / 100, { style: "currency", currency: order.currency || "CNY" })}</div>
+                        <div className="text-xs font-semibold tabular-nums text-stone-900 dark:text-stone-100 sm:text-[13px]">{formatVnd(order.payableNativeAmount)}</div>
                     </div>
                 </div>
             ))}
@@ -282,7 +280,7 @@ export function RecordList({ records }: { records: PointRecord[] }) {
     return (
         <div className="divide-y divide-stone-200 dark:divide-stone-800">
             {records.map((record) => {
-                const positive = record.amount >= 0;
+                const positive = !record.amount.startsWith("-");
                 return (
                     <div key={record.id} className="py-1.5 first:pt-0 last:pb-0 sm:px-1 sm:py-3">
                         <div className="flex min-w-0 items-start justify-between gap-3">
@@ -307,10 +305,14 @@ export function parseProfileSection(value: string | null): ProfileSectionKey {
     return profileSections.some((section) => section.key === value) ? (value as ProfileSectionKey) : "overview";
 }
 
-export function orderStatusColor(status: BillingOrderStatus) {
+export function orderStatusColor(status: TopUpOrderStatus) {
     if (status === "pending") return "gold";
     if (status === "paid") return "green";
     if (status === "refunded") return "blue";
     if (status === "refunding") return "orange";
     return "default";
+}
+
+function formatVnd(value: string) {
+    return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(BigInt(value))} ₫`;
 }

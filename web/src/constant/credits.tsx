@@ -38,7 +38,7 @@ function modelCreditCost(modelCosts: Record<string, number> | ModelCreditCost[] 
     return modelCosts[DEFAULT_MODEL_POINT_COST_KEY] ?? 1;
 }
 
-export function formatCreditAmount(value: number) {
+export function formatCreditAmount(value: number | string) {
     const numberValue = Number(value);
     if (!Number.isFinite(numberValue)) return "0";
     return numberValue.toLocaleString("zh-CN", { maximumFractionDigits: 2 });

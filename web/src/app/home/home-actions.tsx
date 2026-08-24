@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { AuthForm } from "@/components/auth/auth-form";
-import { BillingPlansModal } from "@/components/billing/billing-plans-modal";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { createAgentPromptHref, type CreateAgentMode } from "@/lib/create-agent-prompt";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
@@ -19,7 +18,7 @@ type HomeActions = {
     sessionReady: boolean;
     site: HomeSiteSettings;
     openLogin: (nextPath?: string) => void;
-    openBillingPlans: () => void;
+    openTopUp: () => void;
     openProtectedPath: (path: string) => void;
     startCreating: (prompt?: string, mode?: CreateAgentMode) => void;
 };
@@ -31,7 +30,6 @@ export function HomeActionsProvider({ initialSite, children }: { initialSite: Ho
     const router = useRouter();
     const [authOpen, setAuthOpen] = useState(false);
     const [authNextPath, setAuthNextPath] = useState("/create");
-    const [billingPlansOpen, setBillingPlansOpen] = useState(false);
     const user = useUserStore((state) => state.user);
     const session = usePublicSessionStore((state) => state.payload);
     const sessionReady = usePublicSessionStore((state) => state.ready);
@@ -60,7 +58,7 @@ export function HomeActionsProvider({ initialSite, children }: { initialSite: Ho
     const startCreating = (prompt = "", mode: CreateAgentMode = "agent") => openProtectedPath(createAgentPromptHref(prompt, { source: "home", mode }));
 
     return (
-        <HomeActionsContext.Provider value={{ authenticated, sessionReady, site, openLogin, openBillingPlans: () => setBillingPlansOpen(true), openProtectedPath, startCreating }}>
+        <HomeActionsContext.Provider value={{ authenticated, sessionReady, site, openLogin, openTopUp: () => openProtectedPath("/profile?section=billing"), openProtectedPath, startCreating }}>
             {children}
             <Modal centered open={authOpen} width={740} footer={null} title={null} destroyOnHidden onCancel={() => setAuthOpen(false)} className="landing-auth-modal">
                 <div className="landing-auth-modal-shell">
@@ -88,7 +86,6 @@ export function HomeActionsProvider({ initialSite, children }: { initialSite: Ho
                     </div>
                 </div>
             </Modal>
-            <BillingPlansModal open={billingPlansOpen} onClose={() => setBillingPlansOpen(false)} onSelect={(product) => openProtectedPath(`/billing/checkout?product=${encodeURIComponent(product.id)}`)} />
         </HomeActionsContext.Provider>
     );
 }

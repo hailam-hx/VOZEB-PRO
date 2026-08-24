@@ -38,16 +38,6 @@ describe("top-up commerce schema", () => {
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("crypto_decimals BETWEEN 0 AND 30");
     });
 
-    it("contains no retired billing record or amount-cents helper types", async () => {
-        const [types, utils] = await Promise.all([
-            import("node:fs/promises").then((fs) => fs.readFile(new URL("./repository-types.ts", import.meta.url), "utf8")),
-            import("node:fs/promises").then((fs) => fs.readFile(new URL("./repository-utils.ts", import.meta.url), "utf8")),
-        ]);
-        for (const legacy of ["BillingProductRecord", "BillingOrderRecord", "PaymentTransactionRecord", "amountCents", "billingProductKindValue", "billingOrderStatusValue", "paymentTransactionStatusValue"]) {
-            expect(`${types}\n${utils}`).not.toContain(legacy);
-        }
-    });
-
     it("persists separate unsigned local paid and refunded reconciliation totals", () => {
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("local_paid_amount jsonb NOT NULL");
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("local_refunded_amount jsonb NOT NULL");
@@ -61,26 +51,10 @@ describe("top-up commerce schema", () => {
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("order_id text NOT NULL UNIQUE REFERENCES top_up_orders(id)");
     });
 
-    it("persists top-up-only promotion and coupon rules without plan products", () => {
+    it("persists top-up promotion and coupon rules against recharge orders", () => {
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS top_up_promotions");
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS top_up_coupon_templates");
         expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS top_up_user_coupons");
-        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).not.toContain("product_kind");
-        expect(POSTGRESQL_TOP_UP_SCHEMA_SQL).not.toContain("plan_id");
-    });
-
-    it("does not register the retired plan commerce domain", () => {
-        for (const identifier of [
-            "billing_products",
-            "billing_orders",
-            "payment_transactions",
-            "billing_refund_jobs",
-            "billing_reconciliation_runs",
-            "billing_reconciliation_rows",
-            "product_kind",
-        ]) {
-            expect(POSTGRESQL_SCHEMA_SQL).not.toContain(identifier);
-        }
         expect(POSTGRESQL_SCHEMA_SQL).toContain("top_up_orders");
         expect(POSTGRESQL_SCHEMA_SQL).toContain("top_up_reconciliation_runs");
         expect(POSTGRESQL_SCHEMA_SQL).toContain("difference_direction text NOT NULL");

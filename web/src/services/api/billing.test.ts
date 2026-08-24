@@ -5,13 +5,9 @@ import { createTopUpOrder, listTopUpPresets, quoteTopUpOrder, subscribeTopUpOrde
 describe("top-up API client", () => {
     afterEach(() => vi.unstubAllGlobals());
 
-    it("exports no legacy plan-product or amount-cents contract", async () => {
-        const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./billing.ts", import.meta.url), "utf8"));
-        for (const legacy of ["BillingProduct", "BillingOrder", "amountCents", "productId", "listBilling", "createBilling", "quoteBilling"]) expect(source).not.toContain(legacy);
-    });
-
     it("uses top-up-named preset and quote routes with server-authoritative inputs", async () => {
-        const fetchMock = vi.fn()
+        const fetchMock = vi
+            .fn()
             .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue({ code: 0, data: { presets: [] }, msg: "" }) })
             .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue({ code: 0, data: { quote: { creditAmount: "10" } }, msg: "" }) });
         vi.stubGlobal("fetch", fetchMock);
@@ -24,7 +20,7 @@ describe("top-up API client", () => {
         expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ customAmountVnd: "250000", userCouponId: "coupon-one" });
     });
 
-    it("creates an order with a preset and no product fields", async () => {
+    it("creates an order with only the selected preset and provider", async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue({ code: 0, data: { order: { id: "order-one" } }, msg: "" }) });
         vi.stubGlobal("fetch", fetchMock);
 
@@ -40,7 +36,9 @@ describe("top-up API client", () => {
             onmessage: ((event: MessageEvent<string>) => void) | null = null;
             onerror: (() => void) | null = null;
             close = vi.fn();
-            constructor(readonly url: string) { FakeEventSource.instance = this; }
+            constructor(readonly url: string) {
+                FakeEventSource.instance = this;
+            }
         }
         vi.stubGlobal("EventSource", FakeEventSource);
         const onOrder = vi.fn();

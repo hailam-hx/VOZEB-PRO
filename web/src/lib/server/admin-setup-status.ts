@@ -35,21 +35,21 @@ export type AdminSetupSummary = {
 };
 
 export async function getAdminSetupSummary(input?: { settings?: AuthSettings; userSummary?: PublicUserSummary }) {
-    const [settings, userSummary, products, paymentConfig] = await Promise.all([
+    const [settings, userSummary, presets, paymentConfig] = await Promise.all([
         input?.settings ? Promise.resolve(input.settings) : getAuthSettings(),
         input?.userSummary ? Promise.resolve(input.userSummary) : getPublicUserSummary(),
         getTopUpPresetsSafe(),
         getPaymentConfigSummary(),
     ]);
-    return buildAdminSetupSummary({ settings, userSummary, products, paymentConfig });
+    return buildAdminSetupSummary({ settings, userSummary, presets, paymentConfig });
 }
 
-function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: PublicUserSummary; products?: Array<{ enabled: boolean }>; paymentConfig: Awaited<ReturnType<typeof getPaymentConfigSummary>> }): AdminSetupSummary {
+function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: PublicUserSummary; presets?: Array<{ enabled: boolean }>; paymentConfig: Awaited<ReturnType<typeof getPaymentConfigSummary>> }): AdminSetupSummary {
     const { settings, userSummary } = input;
-    const products = input.products || [];
+    const presets = input.presets || [];
     const admins = userSummary.activeAdmins;
     const enabledChannels = settings.systemChannels.filter((channel) => channel.enabled && channelConnectionReady(channel)).length;
-    const enabledProducts = products.filter((product) => product.enabled).length;
+    const enabledPresets = presets.filter((preset) => preset.enabled).length;
     const paymentConfig = input.paymentConfig;
     const paymentProviders = paymentConfig.providers.filter((provider) => provider.ready && provider.id !== "manual").map((provider) => provider.name);
     const databaseProvider = getDatabaseProvider();
@@ -58,7 +58,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
     const channelModels = new Set(settings.systemChannels.flatMap((channel) => channel.models).filter(Boolean));
     const channelReady = enabledChannels > 0 && channelModels.size > 0;
     const defaultModelsReady = Boolean(settings.defaultModels.textModel || settings.defaultModels.imageModel || settings.defaultModels.videoModel);
-    const topUpsReady = enabledProducts > 0;
+    const topUpsReady = enabledPresets > 0;
     const mailReady = Boolean(settings.mail.host.trim() && settings.mail.username.trim() && settings.mail.password.trim());
     const encryptionReady = hasProductionSecret(process.env.VOZEB_PRO_ENCRYPTION_KEY);
 
@@ -97,7 +97,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
             href: "/admin?section=top-ups",
             actionLabel: "配置充值",
             accent: "violet",
-            facts: [`启用充值预设 ${enabledProducts} 个`],
+            facts: [`启用充值预设 ${enabledPresets} 个`],
         },
         {
             id: "payments",
@@ -151,7 +151,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
         totalChannels: settings.systemChannels.length,
         enabledChannels,
         modelCount: channelModels.size,
-        enabledTopUpPresets: enabledProducts,
+        enabledTopUpPresets: enabledPresets,
         databaseProvider,
         steps,
     };

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { adjustPermanentPointsInPostgresTransaction } from "@/lib/server/points-wallet-service";
+import { adjustWalletBalanceInPostgresTransaction } from "@/lib/server/points-wallet-service";
 
 import { createPostgresRepositories, ensurePostgresSchema, withPostgresTransaction } from "./index";
 
@@ -12,10 +12,6 @@ describe("PostgreSQL auth entity concurrency", () => {
     postgresIt("preserves profile, balance, point record and session across concurrent writes", async () => {
         await ensurePostgresSchema();
         const repositories = createPostgresRepositories();
-        const settings = await repositories.settings.getSettings();
-        const planId = settings.settings?.defaultPlanId || settings.plans[0]?.id;
-        if (!planId) throw new Error("No entitlement plan is available for the PostgreSQL integration test");
-
         const suffix = randomUUID();
         const userId = `test-concurrency-user-${suffix}`;
         const sessionId = `test-concurrency-session-${suffix}`;
@@ -30,8 +26,7 @@ describe("PostgreSQL auth entity concurrency", () => {
                 role: "user",
                 adminPermissions: [],
                 status: "active",
-                planId,
-                pointsBalance: 100,
+                settledBalance: "100",
                 passwordHash: "integration-test-only",
                 createdAt: now.toISOString(),
                 updatedAt: now.toISOString(),
@@ -52,9 +47,9 @@ describe("PostgreSQL auth entity concurrency", () => {
                     await users.update(userId, { displayName: "资料更新已保留" });
                 }),
                 withPostgresTransaction((client) =>
-                    adjustPermanentPointsInPostgresTransaction(client, {
+                    adjustWalletBalanceInPostgresTransaction(client, {
                         userId,
-                        amount: 25,
+                        amount: "25",
                         description: "并发积分测试",
                         idempotencyKey,
                         type: "admin-adjust",
@@ -64,9 +59,9 @@ describe("PostgreSQL auth entity concurrency", () => {
             ]);
 
             const [user, session, pointRecord] = await Promise.all([repositories.users.getById(userId), repositories.sessions.getByTokenHash(`test-token-${suffix}`), repositories.points.getRecordByIdempotencyKey(idempotencyKey)]);
-            expect(user).toMatchObject({ displayName: "资料更新已保留", pointsBalance: 125 });
+            expect(user).toMatchObject({ displayName: "资料更新已保留", settledBalance: "125" });
             expect(session).toMatchObject({ id: sessionId, userId });
-            expect(pointRecord).toMatchObject({ userId, amount: 25, permanentBalanceAfter: 125 });
+            expect(pointRecord).toMatchObject({ userId, amount: "25", balanceAfter: "125" });
         } finally {
             await repositories.users.delete(userId);
         }

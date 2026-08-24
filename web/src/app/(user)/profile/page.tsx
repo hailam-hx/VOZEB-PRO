@@ -16,7 +16,6 @@ import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 import { AccountDeletionPanel } from "./account-deletion-panel";
 import { AdminMfaPanel } from "./admin-mfa-panel";
 import { LoginSecurityPanel } from "./login-security-panel";
-import { CouponWalletSection } from "./profile-coupon-wallet";
 import { ProfileReferralCenter } from "./profile-referral-center";
 
 import {
@@ -58,7 +57,7 @@ export default function ProfilePage() {
     const [sendingCode, setSendingCode] = useState(false);
     const [savingPassword, setSavingPassword] = useState(false);
     const [exportingData, setExportingData] = useState(false);
-    const { products, coupons, orders, points, consumption, loading: accountLoading, refresh: refreshAccount } = useProfileData(activeSection);
+    const { presets, orders, points, consumption, loading: accountLoading, refresh: refreshAccount } = useProfileData(activeSection);
 
     const boundEmail = user?.email || "";
     const emailChanged = email.trim().toLowerCase() !== boundEmail.toLowerCase();
@@ -189,8 +188,8 @@ export default function ProfilePage() {
                             <span className="hidden sm:inline">{t("refresh")}</span>
                         </Button>
                         <Button size="small" className={profilePrimaryButtonClass} type="primary" icon={<CreditCard className="size-3.5 sm:size-4" />} onClick={() => switchSection("billing")}>
-                            <span className="sm:hidden">{t("plansShort")}</span>
-                            <span className="hidden sm:inline">{t("buyPlan")}</span>
+                            <span className="sm:hidden">{t("topUpShort")}</span>
+                            <span className="hidden sm:inline">{t("topUpCredits")}</span>
                         </Button>
                     </div>
                 </div>
@@ -201,11 +200,11 @@ export default function ProfilePage() {
 
                 {activeSection === "overview" ? (
                     <section className="mb-2 grid grid-cols-2 gap-1 overflow-hidden rounded-lg border border-border bg-card p-1 sm:mb-5 xl:grid-cols-4 xl:gap-3 xl:overflow-visible xl:rounded-none xl:border-0 xl:bg-transparent xl:p-0">
-                        <AccountMetric label={t("metrics.currentPlan")} value={user?.planName || user?.planId || t("metrics.notLoaded")} icon={<WalletCards className="size-4" />} />
+                        <AccountMetric label={t("metrics.availableBalance")} value={t("metrics.creditValue", { amount: formatCreditAmount(user?.availableBalance || "0") })} icon={<WalletCards className="size-4" />} />
                         <AccountMetric
-                            label={t("metrics.creditBalance")}
-                            value={t("metrics.creditValue", { amount: formatCreditAmount(user?.pointsBalance || 0) })}
-                            detail={t("metrics.creditDetail", { daily: formatCreditAmount(user?.dailyPointsBalance || 0), permanent: formatCreditAmount(user?.permanentPointsBalance ?? user?.pointsBalance ?? 0) })}
+                            label={t("metrics.settledBalance")}
+                            value={t("metrics.creditValue", { amount: formatCreditAmount(user?.settledBalance || "0") })}
+                            detail={t("metrics.heldBalanceDetail", { held: formatCreditAmount(user?.heldBalance || "0") })}
                             icon={<CreditSymbol className="text-base" />}
                         />
                         <AccountMetric label={t("metrics.orders")} value={t("metrics.orderCount", { count: orders.total })} icon={<ReceiptText className="size-4" />} />
@@ -243,26 +242,11 @@ export default function ProfilePage() {
 
                         {activeSection === "billing" ? (
                             <BillingCenterSection
-                                products={products.items}
-                                productsLoading={products.loading}
-                                onRefresh={() => void products.refresh()}
-                                onCheckout={(product) => router.push(`/billing/checkout?product=${encodeURIComponent(product.id)}`)}
-                            />
-                        ) : null}
-
-                        {activeSection === "coupons" ? (
-                            <CouponWalletSection
-                                coupons={coupons.items}
-                                templates={coupons.templates}
-                                templatesTotal={coupons.templatesTotal}
-                                templatePage={coupons.templatePage}
-                                total={coupons.total}
-                                page={coupons.page}
-                                loading={coupons.loading}
-                                onRefresh={coupons.refresh}
-                                onTemplatePageChange={coupons.setTemplatePage}
-                                onPageChange={coupons.setPage}
-                                onClaimed={coupons.refreshAfterClaim}
+                                presets={presets.items}
+                                presetsLoading={presets.loading}
+                                onRefresh={() => void presets.refresh()}
+                                onCheckout={(preset) => router.push(`/billing/checkout?preset=${encodeURIComponent(preset.id)}`)}
+                                onCustom={() => router.push("/billing/checkout?amount=0")}
                             />
                         ) : null}
 

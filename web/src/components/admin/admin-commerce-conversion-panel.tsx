@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Tag } from "antd";
-import { BadgePercent, CircleDollarSign, RefreshCw, TicketPercent, UserPlus } from "lucide-react";
+import { CircleDollarSign, RefreshCw, UserPlus, WalletCards } from "lucide-react";
 
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { formatAdminMoney } from "@/components/admin/admin-values";
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
 import { getAdminReferralOverview, type AdminReferralStats } from "@/services/api/referrals";
 
@@ -44,15 +43,14 @@ export function AdminCommerceConversionPanel({ billingSummary, billingLoading, o
         };
     }, [loadReferralStats]);
 
-    const commerce = billingSummary?.commerce;
-    const orders = billingSummary?.orders;
+    const vnd = billingSummary?.currencies.find((item) => item.currency === "VND");
     const refreshing = billingLoading || referralLoading;
 
     return (
         <Panel>
             <PanelHeader
-                title="商业转化"
-                description="累计订单与邀请转化概览"
+                title="充值与邀请转化"
+                description="按原生币种与不可变 USD 快照查看充值经营结果"
                 actions={
                     <div className="flex items-center gap-2">
                         {referralError ? (
@@ -73,26 +71,14 @@ export function AdminCommerceConversionPanel({ billingSummary, billingLoading, o
                 }
             />
             <div className="admin-resource-grid grid grid-cols-2 xl:grid-cols-4">
+                <ConversionStat label="VND 已收款" value={formatVnd(vnd?.paidNativeAmount)} detail={`${vnd?.paidOrders || 0} 笔已支付充值`} note="原生支付金额，不用浮点金额或分字段换算" icon={<CircleDollarSign className="size-4" />} />
+                <ConversionStat label="已收款 USD 快照" value={`$${billingSummary?.paidUsdValue || "0"}`} detail={`名义价值 $${billingSummary?.nominalUsdValue || "0"}`} note="使用订单创建时冻结的客户汇率版本" icon={<WalletCards className="size-4" />} />
                 <ConversionStat
-                    label="订单成交率"
-                    value={orders && commerce ? formatConversionRate(commerce.convertedOrders, orders.total) : "-"}
-                    detail={orders && commerce ? `${commerce.convertedOrders} / ${orders.total} 笔` : "等待财务摘要"}
-                    note={orders ? `当前实收 ${formatAdminMoney(orders.paidAmountCents)}` : "累计已支付与退款订单"}
-                    icon={<CircleDollarSign className="size-4" />}
-                />
-                <ConversionStat
-                    label="活动订单成交率"
-                    value={commerce ? formatConversionRate(commerce.promotionConvertedOrders, commerce.promotionOrders) : "-"}
-                    detail={commerce ? `${commerce.promotionConvertedOrders} / ${commerce.promotionOrders} 笔` : "等待财务摘要"}
-                    note={commerce ? `累计活动优惠 ${formatAdminMoney(commerce.promotionDiscountCents)}` : "仅统计真实活动订单"}
-                    icon={<BadgePercent className="size-4" />}
-                />
-                <ConversionStat
-                    label="用券订单成交率"
-                    value={commerce ? formatConversionRate(commerce.couponConvertedOrders, commerce.couponOrders) : "-"}
-                    detail={commerce ? `${commerce.couponConvertedOrders} / ${commerce.couponOrders} 笔` : "等待财务摘要"}
-                    note={commerce ? `累计优惠券优惠 ${formatAdminMoney(commerce.couponDiscountCents)}` : "仅统计真实用券订单"}
-                    icon={<TicketPercent className="size-4" />}
+                    label="退款 USD 快照"
+                    value={`$${billingSummary?.refundedUsdValue || "0"}`}
+                    detail={`${vnd?.refundedOrders || 0} 笔退款`}
+                    note={vnd ? `原生退款 ${formatVnd(vnd.refundedNativeAmount)}` : "等待财务摘要"}
+                    icon={<RefreshCw className="size-4" />}
                 />
                 <ConversionStat
                     label="邀请注册率"
@@ -104,6 +90,10 @@ export function AdminCommerceConversionPanel({ billingSummary, billingLoading, o
             </div>
         </Panel>
     );
+}
+
+function formatVnd(value?: string) {
+    return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(Number(value || 0));
 }
 
 function ConversionStat({ label, value, detail, note, icon }: { label: string; value: string; detail: string; note: string; icon: ReactNode }) {

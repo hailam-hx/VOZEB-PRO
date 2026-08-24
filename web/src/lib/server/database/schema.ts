@@ -19,8 +19,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TABLE IF EXISTS check_ins;
-
 CREATE TABLE IF NOT EXISTS app_settings (
     id text PRIMARY KEY DEFAULT 'default',
     site jsonb NOT NULL DEFAULT '{}'::jsonb,

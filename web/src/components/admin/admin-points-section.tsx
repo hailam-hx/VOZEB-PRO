@@ -9,28 +9,14 @@ import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
 import type { AdminDashboardController } from "./use-admin-dashboard-controller";
 
 export function AdminPointsSection({ controller }: { controller: AdminDashboardController }) {
-    const {
-        activeSection,
-        settings,
-        setSettings,
-        settingsLoading,
-        customPointModel,
-        setCustomPointModel,
-        saveSettings,
-        updateFreeDailyPoints,
-        updateModelPointCost,
-        updateGenerationPointMultiplier,
-        deleteGenerationPointMultiplier,
-        addCustomPointModel,
-        deleteModelPointCost,
-    } = controller;
+    const { activeSection, settings, settingsLoading, customPointModel, setCustomPointModel, saveSettings, updateModelPointCost, updateGenerationPointMultiplier, deleteGenerationPointMultiplier, addCustomPointModel, deleteModelPointCost } = controller;
     if (activeSection !== "points") return null;
 
     return (
         <Panel>
             <PanelHeader
                 title="积分规则"
-                description="统一配置免费用户每日额度、模型基础扣费与图片、视频参数倍率。"
+                description="统一配置逻辑模型基础扣费与图片、视频参数倍率。"
                 actions={
                     <Button
                         type="primary"
@@ -41,8 +27,6 @@ export function AdminPointsSection({ controller }: { controller: AdminDashboardC
                         onClick={() =>
                             saveSettings(
                                 {
-                                    freeDailyPointsEnabled: settings.freeDailyPointsEnabled,
-                                    freeDailyPoints: settings.freeDailyPoints,
                                     modelPointCosts: settings.modelPointCosts,
                                     generationPointMultipliers: settings.generationPointMultipliers,
                                 },
@@ -61,8 +45,6 @@ export function AdminPointsSection({ controller }: { controller: AdminDashboardC
                     customModel={customPointModel}
                     onCustomModelChange={setCustomPointModel}
                     onAddCustomModel={addCustomPointModel}
-                    onFreeDailyPointsEnabledChange={(freeDailyPointsEnabled) => setSettings((current) => ({ ...current, freeDailyPointsEnabled }))}
-                    onFreeDailyPointsChange={updateFreeDailyPoints}
                     onModelPointCostChange={updateModelPointCost}
                     onModelPointCostDelete={deleteModelPointCost}
                     onGenerationPointMultiplierChange={updateGenerationPointMultiplier}

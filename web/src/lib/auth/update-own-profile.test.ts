@@ -25,8 +25,7 @@ const user = {
     role: "user" as const,
     adminPermissions: [],
     status: "active" as const,
-    planId: "free",
-    pointsBalance: 0,
+    settledBalance: "0",
     passwordHash: "hash",
     createdAt: "2026-07-27T00:00:00.000Z",
     updatedAt: "2026-07-27T00:00:00.000Z",
@@ -37,7 +36,7 @@ describe("updateOwnProfile", () => {
         vi.clearAllMocks();
         mocks.getById.mockResolvedValue(user);
         mocks.update.mockResolvedValue({ ...user, displayName: "新昵称", bio: "新简介" });
-        mocks.getPublicDetails.mockResolvedValue([{ user: { ...user, displayName: "新昵称", bio: "新简介" }, planId: "free", planName: "免费版", permanentPoints: 0, dailyPoints: 0 }]);
+        mocks.getPublicDetails.mockResolvedValue([{ user: { ...user, displayName: "新昵称", bio: "新简介" }, heldBalance: "0", availableBalance: "0" }]);
     });
 
     it("updates nickname and bio through the directed PostgreSQL repository path", async () => {

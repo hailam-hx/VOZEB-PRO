@@ -9,22 +9,10 @@ export function AdminOrdersSection({ controller }: { controller: AdminDashboardC
     return <BillingOperations initialTab="orders" embedded hideTabs />;
 }
 
-export function AdminProductsSection({ controller }: { controller: AdminDashboardController }) {
+export function AdminTopUpsSection({ controller }: { controller: AdminDashboardController }) {
     const { activeSection } = controller;
-    if (activeSection !== "products") return null;
-    return <BillingOperations initialTab="products" embedded hideTabs />;
-}
-
-export function AdminPromotionsSection({ controller }: { controller: AdminDashboardController }) {
-    const { activeSection } = controller;
-    if (activeSection !== "promotions") return null;
-    return <BillingOperations initialTab="promotions" embedded hideTabs />;
-}
-
-export function AdminCouponsSection({ controller }: { controller: AdminDashboardController }) {
-    const { activeSection } = controller;
-    if (activeSection !== "coupons") return null;
-    return <BillingOperations initialTab="coupons" embedded hideTabs />;
+    if (activeSection !== "top-ups") return null;
+    return <BillingOperations initialTab="presets" embedded />;
 }
 
 export function AdminPaymentsSection({ controller }: { controller: AdminDashboardController }) {

@@ -22,4 +22,14 @@ describe("POST /api/billing/top-ups/quotes", () => {
         expect(mocks.quoteTopUpOrder).toHaveBeenCalledWith({ customAmountVnd: "250000", userCouponId: "coupon-one", userId: "user-one" });
         expect(await response.json()).toMatchObject({ code: 0, data: { quote: { payableNativeAmount: "200000", creditAmount: "10" } } });
     });
+
+    it.each(["creditAmount", "customerFx", "currencyExponent", "nominalUsdValue", "paidUsdValue", "pricingVersion", "providerCostUsd", "marginUsd"])("rejects forged server-authoritative %s", async (field) => {
+        mocks.readJsonBody.mockResolvedValue({ customAmountVnd: "250000", [field]: field === "currencyExponent" ? 2 : "forged" });
+
+        const response = await POST(new Request("http://localhost/api/billing/top-ups/quotes", { method: "POST" }));
+
+        expect(response.status).toBe(400);
+        expect(mocks.quoteTopUpOrder).not.toHaveBeenCalled();
+        expect(await response.json()).toMatchObject({ code: 400, data: null });
+    });
 });

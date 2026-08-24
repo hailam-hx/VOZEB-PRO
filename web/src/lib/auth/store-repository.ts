@@ -434,6 +434,7 @@ export function mapPostgresProviderUsageAttempt(row: Record<string, unknown>): P
         provider: dbText(row.provider),
         bindingId: dbText(row.binding_id),
         requestFingerprint: dbText(row.request_fingerprint),
+        providerIdempotencySupported: row.provider_idempotency_supported === true,
         providerIdempotencyKey: dbOptionalText(row.provider_idempotency_key),
         upstreamTaskId: dbOptionalText(row.upstream_task_id),
         nativeCostAmount: dbText(row.native_cost_amount),

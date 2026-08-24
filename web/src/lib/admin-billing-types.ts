@@ -1,48 +1,27 @@
 import type { PaymentAmount } from "@/lib/billing/money";
 
 export type AdminBillingSummary = {
-    orders: {
-        total: number;
-        pending: number;
-        paid: number;
-        closed: number;
-        canceled: number;
-        refunded: number;
-        grossAmountCents: number;
-        paidAmountCents: number;
-        pendingAmountCents: number;
-        refundedAmountCents: number;
-    };
-    payments: {
-        succeeded: number;
-        refunded: number;
-        succeededAmountCents: number;
-        refundedAmountCents: number;
-    };
-    commerce: {
-        convertedOrders: number;
-        promotionOrders: number;
-        promotionConvertedOrders: number;
-        promotionDiscountCents: number;
-        couponOrders: number;
-        couponConvertedOrders: number;
-        couponDiscountCents: number;
-    };
-    providers: Array<{
-        provider: string;
-        totalOrders: number;
-        pendingOrders: number;
-        paidOrders: number;
-        refundedOrders: number;
-        paidAmountCents: number;
-        refundedAmountCents: number;
-    }>;
-    reconciliation: {
-        paidOrdersWithoutSucceededPayment: number;
-        succeededPaymentsWithoutPaidOrder: number;
-        amountMismatchPayments: number;
-    };
+    currencies: Array<{ currency: string; paidNativeAmount: string; refundedNativeAmount: string; paidOrders: number; refundedOrders: number }>;
+    paidUsdValue: string;
+    refundedUsdValue: string;
+    nominalUsdValue: string;
 };
+
+export type AdminTopUpConfig = { pricingVersion: string; customerFxVersion: string; usdPerVnd: string };
+export type AdminUsageAuditItem = {
+    id: string;
+    userId: string;
+    holdId: string;
+    capability: string;
+    usageSource: string;
+    settledCredits: string;
+    providerCostUsd: string;
+    marginUsd: string;
+    estimated: boolean;
+    anomaly: "none" | "zero_usage_cost" | "negative_margin";
+    createdAt: string;
+};
+export type AdminRecoveryItem = { id: string; userId: string; businessId: string; amount: string; reviewReason?: string; expiresAt?: string; createdAt: string };
 
 export type BillingStatementStatus = "paid" | "refunded" | "pending" | "failed" | "unknown";
 export type BillingReconciliationSource = "csv" | "provider-api" | "manual";

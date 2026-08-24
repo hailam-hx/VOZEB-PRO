@@ -75,15 +75,13 @@ describe("system media proxy", () => {
         mocks.wrap.mockImplementation((response: Response) => response);
         mocks.mediaAccess.mockReset().mockResolvedValue(true);
         mocks.taskAccess.mockReset().mockResolvedValue(true);
-        mocks.reserveUsageBilling
-            .mockReset()
-            .mockResolvedValue({
-                holdId: "hold-one",
-                userId: "user-one",
-                businessId: "text-task:one",
-                requestFingerprint: "a".repeat(64),
-                snapshot: { version: 1, requestUsage: { capability: "text", source: "request", inputTokens: "5", maxOutputTokens: "128" }, reserve: { usage: { capability: "text", source: "reserve_fallback", inputTokens: "5", outputTokens: "128" } } },
-            });
+        mocks.reserveUsageBilling.mockReset().mockResolvedValue({
+            holdId: "hold-one",
+            userId: "user-one",
+            businessId: "text-task:one",
+            requestFingerprint: "a".repeat(64),
+            snapshot: { version: 1, requestUsage: { capability: "text", source: "request", inputTokens: "5", maxOutputTokens: "128" }, reserve: { usage: { capability: "text", source: "reserve_fallback", inputTokens: "5", outputTokens: "128" } } },
+        });
         mocks.reuseExistingUsageBilling.mockReset().mockResolvedValue(undefined);
         mocks.recordUsageProviderAttempt.mockReset().mockResolvedValue({});
         mocks.attachUsageProviderEvidence.mockReset().mockResolvedValue({});
@@ -267,7 +265,11 @@ describe("system media proxy", () => {
         const changedBody = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "changed" }], max_tokens: 128 });
         const requests = [
             new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body, true, { userId: "user-two" }) }, body }),
-            new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body, true, { canonicalPath: "/api/ai/system/channel-one/responses" }) }, body }),
+            new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...signedUsageHeaders(body, true, { canonicalPath: "/api/ai/system/channel-one/responses" }) },
+                body,
+            }),
             new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body) }, body: changedBody }),
         ];
 
@@ -349,7 +351,11 @@ describe("system media proxy", () => {
     });
 
     it("settles accepted user cancellation even when the upstream cancel hook throws", async () => {
-        const upstream = new ReadableStream<Uint8Array>({ cancel() { throw new Error("cancel failed"); } });
+        const upstream = new ReadableStream<Uint8Array>({
+            cancel() {
+                throw new Error("cancel failed");
+            },
+        });
         const stream = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1);
 
         await expect(stream.cancel()).rejects.toThrow("cancel failed");
@@ -358,7 +364,11 @@ describe("system media proxy", () => {
     });
 
     it("classifies a provider stream read failure as failed and releases the hold", async () => {
-        const upstream = new ReadableStream<Uint8Array>({ pull() { throw new Error("read failed"); } });
+        const upstream = new ReadableStream<Uint8Array>({
+            pull() {
+                throw new Error("read failed");
+            },
+        });
         const stream = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1);
 
         await expect(stream.getReader().read()).rejects.toThrow("read failed");
@@ -842,7 +852,7 @@ describe("Gemini Veo native video proxy", () => {
 
     beforeEach(() => {
         vi.restoreAllMocks();
-        mocks.consumeUserPoints.mockReset().mockResolvedValue({ model: "gemini-video", cost: 6, units: 6, recordId: "points-gemini", remaining: 94, permanentRemaining: 94, dailyRemaining: 0, dailyExpiresAt: "" });
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
         mocks.refundUserPoints.mockReset();
         mocks.safeUrl.mockResolvedValue(true);
         mocks.taskAccess.mockReset().mockResolvedValue(true);
@@ -1111,7 +1121,7 @@ function chatRequest(body: unknown) {
     const mapping: Record<string, { logicalModelId: string; capability: "text" | "video"; bindingId: string; path: string }> = {
         "gemini-3.1-pro-preview": { logicalModelId: "gemini-text", capability: "text", bindingId: "gemini-text-binding", path: "/chat/completions" },
         "vendor-text": { logicalModelId: "writer", capability: "text", bindingId: "writer-binding", path: "/chat/completions" },
-        "videos_stable": { logicalModelId: "videos-model", capability: "video", bindingId: "videos-model-binding", path: "/videos/videos" },
+        videos_stable: { logicalModelId: "videos-model", capability: "video", bindingId: "videos-model-binding", path: "/videos/videos" },
         "claude-opus-4-6": { logicalModelId: "claude-text", capability: "text", bindingId: "claude-text-binding", path: "/chat/completions" },
     };
     const selected = mapping[payload.model || ""];
@@ -1149,13 +1159,56 @@ function signedUsageHeaders(body: string, providerIdempotencySupported = true, o
 }
 
 function logicalModel(id: string, capability: "text" | "image" | "video" | "audio", upstreamModel: string) {
-    const components = capability === "text" ? [{ id: "input", dimension: "inputTokens" as const, unitPrice: "0.001" }, { id: "output", dimension: "outputTokens" as const, unitPrice: "0.001" }] : [{ id: "count", dimension: "count" as const, unitPrice: "1" }];
-    return { id, name: id, capability, enabled: true, saleRateCard: { version: 1 as const, components }, bindings: [{ id: `${id}-binding`, channelId: "channel-one", upstreamModel, enabled: true, priority: 1, costRateCard: { version: 1 as const, components }, providerCostUnit: { kind: "fiat" as const, currency: "USD" as const }, capabilityProfile: capability === "text" ? { maxOutputTokens: 128, supportsIdempotency: true } : { supportsIdempotency: true } }] };
+    const components =
+        capability === "text"
+            ? [
+                  { id: "input", dimension: "inputTokens" as const, unitPrice: "0.001" },
+                  { id: "output", dimension: "outputTokens" as const, unitPrice: "0.001" },
+              ]
+            : [{ id: "count", dimension: "count" as const, unitPrice: "1" }];
+    return {
+        id,
+        name: id,
+        capability,
+        enabled: true,
+        saleRateCard: { version: 1 as const, components },
+        bindings: [
+            {
+                id: `${id}-binding`,
+                channelId: "channel-one",
+                upstreamModel,
+                enabled: true,
+                priority: 1,
+                costRateCard: { version: 1 as const, components },
+                providerCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                capabilityProfile: capability === "text" ? { maxOutputTokens: 128, supportsIdempotency: true } : { supportsIdempotency: true },
+            },
+        ],
+    };
 }
 
 function signedModelHeaders(url: string, body: string, logicalModelId: string, upstreamModel: string, capability: "text" | "image" | "video" | "audio", bindingId: string) {
     const target = new URL(url);
-    return systemAiBillingHeaders(logicalModelId, { userId: "user-one", channelId: "channel-one", capability, method: "POST", canonicalPath: target.pathname, canonicalQuery: target.searchParams.toString(), bodyDigest: createHash("sha256").update(body).digest("hex"), expiresAtMs: Date.now() + 60_000, businessRequestId: `${capability}-task:test`, requestFingerprint: createHash("sha256").update(`${logicalModelId}:test`).digest("hex"), attemptNumber: 1, bindingId, providerIdempotencySupported: true, providerIdempotencyKey: `${capability}-task:test:attempt:1` }, upstreamModel);
+    return systemAiBillingHeaders(
+        logicalModelId,
+        {
+            userId: "user-one",
+            channelId: "channel-one",
+            capability,
+            method: "POST",
+            canonicalPath: target.pathname,
+            canonicalQuery: target.searchParams.toString(),
+            bodyDigest: createHash("sha256").update(body).digest("hex"),
+            expiresAtMs: Date.now() + 60_000,
+            businessRequestId: `${capability}-task:test`,
+            requestFingerprint: createHash("sha256").update(`${logicalModelId}:test`).digest("hex"),
+            attemptNumber: 1,
+            bindingId,
+            providerIdempotencySupported: true,
+            providerIdempotencyKey: `${capability}-task:test:attempt:1`,
+        },
+        upstreamModel,
+    );
 }
 
 function pricedTextSettings() {
@@ -1167,8 +1220,31 @@ function pricedTextSettings() {
                 name: "写作",
                 capability: "text" as const,
                 enabled: true,
-                saleRateCard: { version: 1 as const, components: [{ id: "input", dimension: "inputTokens" as const, unitPrice: "0.001" }, { id: "output", dimension: "outputTokens" as const, unitPrice: "0.001" }] },
-                bindings: [{ id: "writer-binding", channelId: "channel-one", upstreamModel: "vendor-text", enabled: true, priority: 1, costRateCard: { version: 1 as const, components: [{ id: "input", dimension: "inputTokens" as const, unitPrice: "0.0005" }, { id: "output", dimension: "outputTokens" as const, unitPrice: "0.0005" }] }, providerCostUnit: { kind: "fiat" as const, currency: "USD" as const }, capabilityProfile: { maxOutputTokens: 128, supportsIdempotency: true } }],
+                saleRateCard: {
+                    version: 1 as const,
+                    components: [
+                        { id: "input", dimension: "inputTokens" as const, unitPrice: "0.001" },
+                        { id: "output", dimension: "outputTokens" as const, unitPrice: "0.001" },
+                    ],
+                },
+                bindings: [
+                    {
+                        id: "writer-binding",
+                        channelId: "channel-one",
+                        upstreamModel: "vendor-text",
+                        enabled: true,
+                        priority: 1,
+                        costRateCard: {
+                            version: 1 as const,
+                            components: [
+                                { id: "input", dimension: "inputTokens" as const, unitPrice: "0.0005" },
+                                { id: "output", dimension: "outputTokens" as const, unitPrice: "0.0005" },
+                            ],
+                        },
+                        providerCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                        capabilityProfile: { maxOutputTokens: 128, supportsIdempotency: true },
+                    },
+                ],
             },
         ],
         systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai" as const, models: ["vendor-text"] }],

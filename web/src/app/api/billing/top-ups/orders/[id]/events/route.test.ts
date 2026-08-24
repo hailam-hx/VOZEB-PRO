@@ -47,7 +47,7 @@ describe("GET /api/billing/top-ups/orders/[id]/events", () => {
         expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
     });
 
-    it("returns an owned terminal order without opening a subscription", async () => {
+    it("returns an owned terminal order without opening a database listener", async () => {
         mocks.getTopUpOrderForUser.mockResolvedValue(paidOrder);
 
         const response = await GET(new Request("http://localhost/api/billing/top-ups/orders/order-one/events"), { params: Promise.resolve({ id: "order-one" }) });

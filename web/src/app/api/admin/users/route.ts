@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
     if (!hasAnyAdminPermission(currentUser, ["users.manage", "administrators.manage"])) return NextResponse.json({ error: "当前管理员没有创建用户的职责权限" }, { status: 403 });
 
-    let body: { username?: unknown; displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; adminPermissions?: unknown; status?: unknown; pointsBalance?: unknown; planId?: unknown } = {};
+    let body: { username?: unknown; displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; adminPermissions?: unknown; status?: unknown } = {};
     try {
         body = await readJsonBody<typeof body>(request);
         const role = body.role === "admin" ? "admin" : "user";
@@ -45,14 +45,12 @@ export async function POST(request: Request) {
             role: role as UserRole,
             adminPermissions: normalizeAdminPermissions(body.adminPermissions),
             status: status as UserStatus,
-            pointsBalance: Number(body.pointsBalance),
-            planId: typeof body.planId === "string" ? body.planId : undefined,
         });
         await safeRecordAuditLog({
             action: "admin.user.create",
             actor: auditActorFromRequest(request, currentUser),
             target: { type: "user", id: user.id, label: user.username },
-            metadata: { role: user.role, adminPermissions: user.adminPermissions, status: user.status, planId: user.planId, pointsBalance: user.pointsBalance },
+            metadata: { role: user.role, adminPermissions: user.adminPermissions, status: user.status, settledBalance: user.settledBalance },
         });
         return NextResponse.json({ user: serializeCurrentUser(user) });
     } catch (error) {

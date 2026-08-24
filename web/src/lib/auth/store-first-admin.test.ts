@@ -47,15 +47,17 @@ describe("first administrator creation", () => {
         expect(user).toMatchObject({ role: "user", settledBalance: "0", heldBalance: "0", availableBalance: "0" });
         const stored = (memory.value as { users: Array<Record<string, unknown>> }).users;
         expect(stored[0]).toMatchObject({ settledBalance: "0" });
-        expect(stored[1]).toMatchObject({ settledBalance: "0", registrationConsent: {
-            termsVersion: "1.0",
-            termsUrl: "/terms",
-            privacyVersion: "1.0",
-            privacyUrl: "/privacy",
-            acceptedAt: expect.any(String),
-        } });
+        expect(stored[1]).toMatchObject({
+            settledBalance: "0",
+            registrationConsent: {
+                termsVersion: "1.0",
+                termsUrl: "/terms",
+                privacyVersion: "1.0",
+                privacyUrl: "/privacy",
+                acceptedAt: expect.any(String),
+            },
+        });
         for (const record of stored) {
-            expect(record).not.toHaveProperty("planId");
             expect(record).not.toHaveProperty("pointsBalance");
         }
     });

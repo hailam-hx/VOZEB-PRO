@@ -23,10 +23,10 @@ describe("split Postgres repositories", () => {
         );
         const loading = createPostgresRepositories({ query } as unknown as QueryExecutor).settings.getSettings();
 
-        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(3));
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
         resolvers.forEach((resolve) => resolve());
 
-        await expect(loading).resolves.toEqual({ settings: undefined, plans: [], channels: [] });
+        await expect(loading).resolves.toEqual({ settings: undefined, channels: [] });
     });
 
     it("loads settings without touching user or billing tables", async () => {
@@ -43,18 +43,6 @@ describe("split Postgres repositories", () => {
                     generation_defaults: {},
                     payment_config: {},
                     default_models: {},
-                    default_plan_id: "free",
-                    created_at: timestamp,
-                    updated_at: timestamp,
-                },
-            ],
-            [
-                {
-                    id: "free",
-                    name: "免费版",
-                    enabled: true,
-                    limits: {},
-                    features: [],
                     created_at: timestamp,
                     updated_at: timestamp,
                 },
@@ -64,25 +52,8 @@ describe("split Postgres repositories", () => {
 
         const settings = await createPostgresRepositories(executor).settings.getSettings();
 
-        expect(settings.settings?.defaultPlanId).toBe("free");
-        expect(settings.plans).toHaveLength(1);
-        expect(query).toHaveBeenCalledTimes(3);
-        expect(query.mock.calls.map((_, index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("FROM app_settings"), expect.stringContaining("FROM entitlement_plans"), expect.stringContaining("FROM system_model_channels")]);
-    });
-
-    it("loads wallet settings without loading model channels", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([
-            [{ id: "default", free_daily_points_enabled: true, free_daily_points: 3, default_plan_id: "free", created_at: timestamp, updated_at: timestamp }],
-            [{ id: "free", name: "免费版", enabled: true, daily_points: 0, limits: {}, features: [], created_at: timestamp, updated_at: timestamp }],
-        ]);
-
-        const settings = await createPostgresRepositories(executor).settings.getWalletSettings();
-
-        expect(settings.plans).toHaveLength(1);
         expect(query).toHaveBeenCalledTimes(2);
-        expect([0, 1].map((index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("FROM app_settings"), expect.stringContaining("FROM entitlement_plans")]);
-        expect(String(queryArgs(query, 0)[0])).not.toContain("system_model_channels");
+        expect(query.mock.calls.map((_, index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("FROM app_settings"), expect.stringContaining("FROM system_model_channels")]);
     });
 
     it("persists channel configuration without validation records", async () => {
@@ -133,13 +104,11 @@ describe("split Postgres repositories", () => {
                     display_name: "User One",
                     role: "user",
                     status: "active",
-                    plan_id: "pro",
-                    points_balance: 120,
+                    settled_balance: "120",
+                    held_balance: "5",
                     password_hash: "hash",
                     created_at: timestamp,
                     updated_at: timestamp,
-                    resolved_plan_id: "pro",
-                    resolved_plan_name: "专业版",
                 },
             ],
         ]);
@@ -147,18 +116,14 @@ describe("split Postgres repositories", () => {
         const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-one", tokenHash: "token-hash", now: timestamp, date: "2026-01-01" });
 
         expect(user).toMatchObject({
-            user: { id: "user-one", username: "user-one", pointsBalance: 120 },
-            planId: "pro",
-            planName: "专业版",
-            hasActivePlan: false,
-            permanentPoints: 120,
-            dailyPoints: 0,
+            user: { id: "user-one", username: "user-one", settledBalance: "120" },
+            heldBalance: "5",
+            availableBalance: "115",
         });
         expect(query).toHaveBeenCalledTimes(1);
         expect(queryArgs(query, 0)[0]).toContain("sessions.id = $1");
         expect(queryArgs(query, 0)[0]).toContain("sessions.token_hash = $2");
         expect(queryArgs(query, 0)[0]).toContain("sessions.expires_at > $3");
-        expect(queryArgs(query, 0)[0]).not.toContain("check_ins");
         expect(queryArgs(query, 0)[1]).toEqual(["session-one", "token-hash", timestamp, "2026-01-01"]);
     });
 
@@ -173,8 +138,7 @@ describe("split Postgres repositories", () => {
                     display_name: "User One",
                     role: "user",
                     status: "active",
-                    plan_id: "free",
-                    points_balance: 20,
+                    settled_balance: "20",
                     password_hash: "hash",
                     created_at: timestamp,
                     updated_at: timestamp,
@@ -231,8 +195,7 @@ describe("split Postgres repositories", () => {
                     display_name: "User One",
                     role: "user",
                     status: "active",
-                    plan_id: "free",
-                    points_balance: 20,
+                    settled_balance: "20",
                     password_hash: "hash",
                     created_at: timestamp,
                     updated_at: timestamp,
@@ -295,25 +258,8 @@ describe("split Postgres repositories", () => {
 
     it("paginates and searches users before loading wallet details", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
-        const userRow = { id: "admin-one", username: "admin-one", display_name: "管理员", role: "admin", status: "active", plan_id: "pro", points_balance: 40, password_hash: "hash", created_at: timestamp, updated_at: timestamp };
-        const { executor, query } = mockExecutor([
-            [{ total: 41 }],
-            [userRow],
-            [
-                {
-                    ...userRow,
-                    resolved_plan_id: "pro",
-                    resolved_plan_name: "专业版",
-                    active_assignment_id: "assignment-one",
-                    active_assignment_metadata: { dailyPoints: 30 },
-                    daily_wallet_user_id: "admin-one",
-                    daily_wallet_plan_id: "pro",
-                    daily_wallet_assignment_id: "assignment-one",
-                    daily_wallet_granted_points: 30,
-                    daily_wallet_remaining_points: 12,
-                },
-            ],
-        ]);
+        const userRow = { id: "admin-one", username: "admin-one", display_name: "管理员", role: "admin", status: "active", settled_balance: "40", password_hash: "hash", created_at: timestamp, updated_at: timestamp };
+        const { executor, query } = mockExecutor([[{ total: 41 }], [userRow], [{ ...userRow, held_balance: "12" }]]);
         const users = createPostgresRepositories(executor).users;
 
         const page = await users.list({ page: 9, pageSize: 20, keyword: "管理员", role: "admin", status: "active" });
@@ -323,25 +269,25 @@ describe("split Postgres repositories", () => {
         );
 
         expect(page).toMatchObject({ total: 41, page: 3, pageSize: 20, items: [{ id: "admin-one" }] });
-        expect(details[0]).toMatchObject({ planId: "pro", planName: "专业版", hasActivePlan: true, permanentPoints: 40, dailyPoints: 12 });
+        expect(details[0]).toMatchObject({ user: { settledBalance: "40" }, heldBalance: "12", availableBalance: "28" });
         expect(queryArgs(query, 0)[0]).toContain("CASE WHEN role = 'admin' THEN '管理员'");
         expect(queryArgs(query, 0)[0]).toContain("lpad(account_id::text, 4, '0') LIKE $2");
         expect(queryArgs(query, 0)[1]).toEqual(["管理员", "%管理员%", "admin", "active"]);
         expect(queryArgs(query, 1)[1]).toEqual(["管理员", "%管理员%", "admin", "active", 20, 40]);
         expect(queryArgs(query, 2)[0]).toContain("users.id = ANY($1::text[])");
-        expect(queryArgs(query, 2)[1]).toEqual([["admin-one"], timestamp, "2026-01-01"]);
+        expect(queryArgs(query, 2)[1]).toEqual([["admin-one"]]);
     });
 
     it("summarizes users without returning the full user table", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([[{ total: 10, active: 8, disabled: 2, admins: 2, active_admins: 1, users_with_plan: 3, total_points_balance: 980.5 }]]);
+        const { executor, query } = mockExecutor([[{ total: 10, active: 8, disabled: 2, admins: 2, active_admins: 1, total_settled_balance: "980.5" }]]);
 
         const summary = await createPostgresRepositories(executor).users.summarize({ now: timestamp, date: "2026-01-01" });
 
-        expect(summary).toEqual({ total: 10, active: 8, disabled: 2, admins: 2, activeAdmins: 1, usersWithPlan: 3, totalPointsBalance: 980.5 });
+        expect(summary).toEqual({ total: 10, active: 8, disabled: 2, admins: 2, activeAdmins: 1, totalSettledBalance: "980.5" });
         expect(query).toHaveBeenCalledTimes(1);
-        expect(queryArgs(query, 0)[0]).toContain("count(*) FILTER (WHERE active_assignment_id IS NOT NULL)");
-        expect(queryArgs(query, 0)[1]).toEqual([timestamp, "2026-01-01"]);
+        expect(queryArgs(query, 0)[0]).toContain("sum(settled_balance)");
+        expect(queryArgs(query, 0)[1]).toEqual([]);
     });
 
     it("paginates CDK codes and loads redemptions only for the current page", async () => {
@@ -378,7 +324,7 @@ describe("split Postgres repositories", () => {
         expect(String(queryArgs(query, 2)[0])).toContain("'account_id', users.account_id");
     });
 
-    it("preserves a negative permanent balance in the authenticated wallet", async () => {
+    it("preserves a negative settled balance in the authenticated wallet", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor } = mockExecutor([
             [
@@ -388,47 +334,18 @@ describe("split Postgres repositories", () => {
                     display_name: "Negative Balance",
                     role: "user",
                     status: "active",
-                    plan_id: "free",
-                    points_balance: -80,
+                    settled_balance: "-80",
+                    held_balance: "0",
                     password_hash: "hash",
                     created_at: timestamp,
                     updated_at: timestamp,
-                    resolved_plan_id: "free",
-                    resolved_plan_name: "免费版",
-                    resolved_plan_daily_points: 0,
-                    free_daily_points_enabled: true,
-                    free_daily_points: 20,
                 },
             ],
         ]);
 
         const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-negative", tokenHash: "token-hash", now: timestamp, date: "2026-01-01" });
 
-        expect(user).toMatchObject({ permanentPoints: -80, dailyPoints: 20 });
-    });
-
-    it("updates only the free-user daily points switch", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([
-            [
-                {
-                    id: "default",
-                    free_daily_points_enabled: false,
-                    free_daily_points: 20,
-                    created_at: timestamp,
-                    updated_at: timestamp,
-                },
-            ],
-        ]);
-
-        const settings = await createPostgresRepositories(executor).settings.updateSettings({ freeDailyPointsEnabled: false, freeDailyPoints: 20 });
-        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
-
-        expect(settings).toMatchObject({ freeDailyPointsEnabled: false, freeDailyPoints: 20 });
-        expect(sql).toContain("free_daily_points_enabled");
-        expect(sql).not.toContain("daily_plan_points_enabled");
-        expect(sql).not.toContain("site =");
-        expect(params).toEqual([false, 20]);
+        expect(user).toMatchObject({ user: { settledBalance: "-80" }, heldBalance: "0", availableBalance: "-80" });
     });
 
     it("persists generation cost controls as structured settings", async () => {
@@ -459,11 +376,10 @@ describe("split Postgres repositories", () => {
         expect(params).toEqual([JSON.stringify(dataLifecycle)]);
     });
 
-
     it("locks wallet rows and resolves point records by idempotency and refund source", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([
-            [{ id: "user-one", username: "user-one", display_name: "User One", role: "user", status: "active", plan_id: "pro", points_balance: 80, password_hash: "hash", created_at: timestamp, updated_at: timestamp }],
+            [{ id: "user-one", username: "user-one", display_name: "User One", role: "user", status: "active", settled_balance: "80", password_hash: "hash", created_at: timestamp, updated_at: timestamp }],
             [
                 {
                     id: "point-one",
@@ -471,14 +387,9 @@ describe("split Postgres repositories", () => {
                     type: "consume",
                     amount: -20,
                     balance_after: 60,
-                    permanent_amount: -10,
-                    daily_amount: -10,
-                    permanent_balance_after: 40,
-                    daily_balance_after: 20,
                     description: "生成图片",
                     idempotency_key: "image:task-one",
                     request_fingerprint: "a".repeat(64),
-                    source_date: "2026-01-01",
                     created_at: timestamp,
                 },
             ],
@@ -489,10 +400,6 @@ describe("split Postgres repositories", () => {
                     type: "refund",
                     amount: 20,
                     balance_after: 80,
-                    permanent_amount: 10,
-                    daily_amount: 10,
-                    permanent_balance_after: 50,
-                    daily_balance_after: 30,
                     description: "生成失败退回",
                     source_record_id: "point-one",
                     source_date: "2026-01-01",
@@ -506,7 +413,7 @@ describe("split Postgres repositories", () => {
         const record = await repos.points.getRecordByIdempotencyKey("image:task-one");
         const refund = await repos.points.getRefundRecordBySourceRecordId("point-one");
 
-        expect(record).toMatchObject({ id: "point-one", permanentAmount: -10, dailyAmount: -10, idempotencyKey: "image:task-one", requestFingerprint: "a".repeat(64) });
+        expect(record).toMatchObject({ id: "point-one", amount: "-20", balanceAfter: "60", idempotencyKey: "image:task-one", requestFingerprint: "a".repeat(64) });
         expect(refund).toMatchObject({ id: "refund-one", sourceRecordId: "point-one" });
         expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE");
         expect(queryArgs(query, 0)[1]).toEqual(["user-one"]);
@@ -526,10 +433,6 @@ describe("split Postgres repositories", () => {
                     type: "consume",
                     amount: -20,
                     balance_after: 60,
-                    permanent_amount: -20,
-                    daily_amount: 0,
-                    permanent_balance_after: 60,
-                    daily_balance_after: 0,
                     description: "生成视频",
                     created_at: timestamp,
                     total_count: "17",
@@ -539,37 +442,9 @@ describe("split Postgres repositories", () => {
 
         const result = await createPostgresRepositories(executor).points.listRecords("user-one", { direction: "debit", page: 2, pageSize: 8 });
 
-        expect(result).toMatchObject({ total: 17, page: 2, pageSize: 8, items: [{ id: "point-one", amount: -20 }] });
+        expect(result).toMatchObject({ total: 17, page: 2, pageSize: 8, items: [{ id: "point-one", amount: "-20", balanceAfter: "60" }] });
         expect(queryArgs(query, 0)[0]).toContain("$2 = 'debit' AND amount < 0");
         expect(queryArgs(query, 0)[1]).toEqual(["user-one", "debit", 8, 8]);
-    });
-
-    it("creates one daily plan wallet and can lock the existing row", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const walletRow = { user_id: "user-one", date: "2026-01-01", plan_id: "pro", assignment_id: "assignment-one", granted_points: 100, remaining_points: 100, created_at: timestamp, updated_at: timestamp };
-        const { executor, query } = mockExecutor([[walletRow], [walletRow]]);
-        const wallet = createPostgresRepositories(executor).pointsWallet;
-
-        const created = await wallet.createDailyWallet({ userId: "user-one", date: "2026-01-01", planId: "pro", assignmentId: "assignment-one", grantedPoints: 100, remainingPoints: 100, createdAt: timestamp, updatedAt: timestamp });
-        const locked = await wallet.getDailyWallet("user-one", "2026-01-01", true);
-
-        expect(created).toMatchObject({ userId: "user-one", planId: "pro", grantedPoints: 100, remainingPoints: 100 });
-        expect(locked?.assignmentId).toBe("assignment-one");
-        expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (user_id, date) DO NOTHING");
-        expect(queryArgs(query, 1)[0]).toContain("FOR UPDATE");
-        expect(queryArgs(query, 1)[1]).toEqual(["user-one", "2026-01-01"]);
-    });
-
-    it("casts decimal daily wallet balances to PostgreSQL numeric", async () => {
-        const walletRow = { user_id: "user-one", date: "2026-01-01", plan_id: "pro", assignment_id: null, granted_points: 2, remaining_points: 1.7 };
-        const { executor, query } = mockExecutor([[walletRow]]);
-
-        const updated = await createPostgresRepositories(executor).pointsWallet.updateRemaining("user-one", "2026-01-01", 1.7);
-
-        expect(updated?.remainingPoints).toBe(1.7);
-        expect(queryArgs(query, 0)[0]).toContain("SET remaining_points = $3::numeric");
-        expect(queryArgs(query, 0)[0]).toContain("$3::numeric >= 0::numeric");
-        expect(queryArgs(query, 0)[1]).toEqual(["user-one", "2026-01-01", 1.7]);
     });
 
     it("replaces generation assets during upsert", async () => {

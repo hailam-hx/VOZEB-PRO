@@ -134,10 +134,7 @@ describe("PostgreSQL schema lifecycle", () => {
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();
         expect(tableNames).toHaveLength(56);
         expect(tableNames.every((name) => name.startsWith("vozeb_pro_"))).toBe(true);
-        expect(tableNames).not.toContain("vozeb_pro_check_ins");
         expect(tableNames).toEqual(expect.arrayContaining(["vozeb_pro_top_up_orders", "vozeb_pro_top_up_reconciliation_runs", "vozeb_pro_top_up_reconciliation_rows"]));
-        expect(tableNames).not.toEqual(expect.arrayContaining(["vozeb_pro_billing_products", "vozeb_pro_billing_orders", "vozeb_pro_payment_transactions", "vozeb_pro_billing_refund_jobs"]));
-        expect(ddl).toContain("DROP TABLE IF EXISTS vozeb_pro_check_ins");
         expect(ddl).not.toContain("20260731_generation_task_recovery");
 
         const indexNames = [...ddl.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]);

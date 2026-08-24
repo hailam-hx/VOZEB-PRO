@@ -42,10 +42,9 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
                 role: currentUser.role,
                 adminPermissions: currentUser.adminPermissions,
                 status: currentUser.status,
-                planId: currentUser.planId,
-                planName: currentUser.planName,
-                hasActivePlan: currentUser.hasActivePlan,
-                pointsBalance: currentUser.pointsBalance,
+                settledBalance: currentUser.settledBalance,
+                heldBalance: currentUser.heldBalance,
+                availableBalance: currentUser.availableBalance,
                 mfaEnabled: currentUser.mfaEnabled,
             }}
         >
@@ -70,7 +69,7 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
                             </span>
                             <div className="min-w-0">
                                 <h1 className="text-2xl font-semibold tracking-normal text-stone-950 dark:text-stone-100">财务钱包</h1>
-                                <p className="mt-1.5 max-w-2xl text-sm leading-6 text-stone-500 dark:text-stone-400">管理套餐商品、限时促销、优惠券、支付配置、订单收款和退款对账。</p>
+                                <p className="mt-1.5 max-w-2xl text-sm leading-6 text-stone-500 dark:text-stone-400">管理充值预设、客户汇率、订单退款、用量成本、异常恢复和支付对账。</p>
                             </div>
                         </div>
                         <Link

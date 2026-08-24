@@ -25,10 +25,10 @@ describe("administrator permissions", () => {
         const finance = { role: "admin", status: "active", adminPermissions: ["billing.read"] };
         const commerce = { role: "admin", status: "active", adminPermissions: ["commerce.manage"] };
 
-        expect(allowedAdminBillingTabs(finance)).toEqual(["orders"]);
+        expect(allowedAdminBillingTabs(finance)).toEqual(["orders", "usage", "reconciliation"]);
         expect(resolveAdminBillingTab(finance, "payments")).toBe("orders");
-        expect(allowedAdminBillingTabs(commerce)).toEqual(["products", "promotions", "coupons"]);
-        expect(resolveAdminBillingTab(commerce, "orders")).toBe("products");
+        expect(allowedAdminBillingTabs(commerce)).toEqual(["presets"]);
+        expect(resolveAdminBillingTab(commerce, "orders")).toBe("presets");
     });
 
     it("uses a preset label or a precise custom responsibility count", () => {

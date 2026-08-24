@@ -28,9 +28,7 @@ export const REFERRAL_COOKIE_NAME = "vozeb_referral";
 export type ReferralProgramInput = {
     enabled?: unknown;
     inviterPoints?: unknown;
-    inviteeRewardType?: unknown;
     inviteePoints?: unknown;
-    inviteeTopUpCouponTemplateId?: unknown;
     minimumPaidUsd?: unknown;
     coolingOffDays?: unknown;
     inviterMonthlyLimit?: unknown;
@@ -61,16 +59,13 @@ export async function saveReferralProgram(input: ReferralProgramInput, operatorU
         const current = await repos.referrals.getProgram(true);
         if (!current) throw new BillingInputError("邀请奖励设置不存在", 500);
         const now = new Date().toISOString();
-        if (input.inviteeRewardType !== undefined && input.inviteeRewardType !== "points" && input.inviteeRewardType !== "coupon") throw new BillingInputError("新用户奖励类型无效");
-        const inviteeRewardType = input.inviteeRewardType === undefined ? current.inviteeRewardType : input.inviteeRewardType;
-        const inviteeTopUpCouponTemplateId = input.inviteeTopUpCouponTemplateId === undefined ? current.inviteeTopUpCouponTemplateId : normalizeId(input.inviteeTopUpCouponTemplateId) || undefined;
         const program: ReferralProgramRecord = {
             ...current,
             enabled: input.enabled === undefined ? current.enabled : input.enabled === true,
             inviterPoints: normalizeMoneyLike(input.inviterPoints, current.inviterPoints, 1_000_000),
-            inviteeRewardType,
+            inviteeRewardType: "points",
             inviteePoints: normalizeMoneyLike(input.inviteePoints, current.inviteePoints, 1_000_000),
-            inviteeTopUpCouponTemplateId: inviteeRewardType === "coupon" ? inviteeTopUpCouponTemplateId : undefined,
+            inviteeTopUpCouponTemplateId: undefined,
             minimumPaidUsd: normalizeDecimal(input.minimumPaidUsd, current.minimumPaidUsd),
             coolingOffDays: normalizeInteger(input.coolingOffDays, 0, 365, current.coolingOffDays),
             inviterMonthlyLimit: normalizeInteger(input.inviterMonthlyLimit, 0, 100_000, current.inviterMonthlyLimit),
@@ -81,12 +76,7 @@ export async function saveReferralProgram(input: ReferralProgramInput, operatorU
             updatedAt: now,
         };
         if (program.enabled && program.inviterPoints <= 0) throw new BillingInputError("启用邀请奖励前，请配置大于 0 的邀请人积分");
-        if (program.enabled && program.inviteeRewardType === "points" && program.inviteePoints <= 0) throw new BillingInputError("启用邀请奖励前，请配置大于 0 的新用户积分");
-        if (program.inviteeRewardType === "coupon") {
-            if (!program.inviteeTopUpCouponTemplateId) throw new BillingInputError("请选择新用户充值优惠券模板");
-            const template = await repos.topUps.getCouponTemplate(program.inviteeTopUpCouponTemplateId, true);
-            if (!template?.enabled) throw new BillingInputError("新用户充值优惠券不存在或已停用", 404);
-        }
+        if (program.enabled && program.inviteePoints <= 0) throw new BillingInputError("启用邀请奖励前，请配置大于 0 的新用户积分");
         return repos.referrals.upsertProgram(program);
     });
 }
@@ -216,9 +206,8 @@ export async function prepareReferralRewardsForPaidOrder(client: QueryExecutor, 
             relationship: nextRelationship,
             role: "invitee",
             userId: nextRelationship.inviteeUserId,
-            type: program.inviteeRewardType,
+            type: "points",
             points: program.inviteePoints,
-            topUpCouponTemplateId: program.inviteeTopUpCouponTemplateId,
             orderId: order.id,
             status: initialStatus,
             reason: rejectionReason,
@@ -433,23 +422,8 @@ async function settleRelationshipRewards(client: QueryExecutor, relationshipId: 
     const savepoint = "referral_reward_settlement";
     await client.query(`SAVEPOINT ${savepoint}`);
     try {
-        const couponRewards = pending.filter((reward) => reward.rewardType === "coupon");
-        const pointRewards = pending.filter((reward) => reward.rewardType === "points");
         let settled = 0;
-        for (const reward of couponRewards) {
-            if (!reward.topUpCouponTemplateId) {
-                await repos.referrals.updateReward(reward.id, { status: "manual_review", reason: "邀请奖励未配置有效的 V1 充值优惠券映射" });
-                continue;
-            }
-            const couponId = await repos.topUps.issueReferralCoupon({ id: randomUUID(), userId: reward.beneficiaryUserId, templateId: reward.topUpCouponTemplateId, now: nowIso });
-            if (!couponId) {
-                await repos.referrals.updateReward(reward.id, { status: "manual_review", reason: "邀请奖励充值优惠券映射无效，需人工复核" });
-                continue;
-            }
-            await repos.referrals.updateReward(reward.id, { status: "settled", topUpUserCouponId: couponId, settledAt: nowIso });
-            settled += 1;
-        }
-        for (const reward of pointRewards) {
+        for (const reward of pending) {
             const adjustment = await adjustWalletBalanceInPostgresTransaction(client, {
                 userId: reward.beneficiaryUserId,
                 amount: reward.pointsAmount,
@@ -478,9 +452,8 @@ function buildReferralReward(input: {
     relationship: ReferralRelationshipRecord;
     role: "inviter" | "invitee";
     userId: string;
-    type: "points" | "coupon";
+    type: "points";
     points: number;
-    topUpCouponTemplateId?: string;
     orderId: string;
     status: "pending" | "rejected";
     reason: string;
@@ -494,7 +467,6 @@ function buildReferralReward(input: {
         beneficiaryRole: input.role,
         rewardType: input.type,
         pointsAmount: input.type === "points" ? input.points : 0,
-        topUpCouponTemplateId: input.type === "coupon" ? input.topUpCouponTemplateId : undefined,
         triggerOrderId: input.orderId,
         status: input.status,
         settleAfter: input.settleAfter,
@@ -508,7 +480,6 @@ function publicReferralProgram(program: ReferralProgramRecord) {
     return {
         enabled: program.enabled,
         inviterPoints: program.inviterPoints,
-        inviteeRewardType: program.inviteeRewardType,
         inviteePoints: program.inviteePoints,
         minimumPaidUsd: program.minimumPaidUsd,
         coolingOffDays: program.coolingOffDays,

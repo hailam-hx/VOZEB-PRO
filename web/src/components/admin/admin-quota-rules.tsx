@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Input, InputNumber, Segmented, Switch, Tag } from "antd";
+import { Button, Input, InputNumber, Segmented, Tag } from "antd";
 import { Plus, Trash2 } from "lucide-react";
 
 import { DEFAULT_MODEL_POINT_COST_KEY } from "@/constant/credits";
@@ -40,8 +40,6 @@ export function QuotaRuleTable({
     customModel,
     onCustomModelChange,
     onAddCustomModel,
-    onFreeDailyPointsEnabledChange,
-    onFreeDailyPointsChange,
     onModelPointCostChange,
     onModelPointCostDelete,
     onGenerationPointMultiplierChange,
@@ -51,8 +49,6 @@ export function QuotaRuleTable({
     customModel: string;
     onCustomModelChange: (value: string) => void;
     onAddCustomModel: () => void;
-    onFreeDailyPointsEnabledChange: (enabled: boolean) => void;
-    onFreeDailyPointsChange: (value: number | null) => void;
     onModelPointCostChange: (model: string, value: number | null) => void;
     onModelPointCostDelete: (model: string) => void;
     onGenerationPointMultiplierChange: (group: keyof AuthSettings["generationPointMultipliers"], key: string, value: number | null) => void;
@@ -65,22 +61,7 @@ export function QuotaRuleTable({
     const visibleModels = groupedModels.find((group) => group.value === activeCapability)?.models || [];
     return (
         <div className="min-w-0">
-            <section className="grid gap-3 border-b border-zinc-200 pb-4 sm:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] sm:items-end sm:gap-6 sm:pb-5 dark:border-zinc-800">
-                <div className="min-w-0">
-                    <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">免费用户每日积分</div>
-                    <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">未购买套餐的用户每天自动获得，仅当日有效；套餐每日赠送由商品配置决定，不受此开关影响。</p>
-                </div>
-                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-3">
-                    <div className="pb-1">
-                        <div className="mb-1.5 text-xs font-medium text-stone-600 dark:text-stone-300">发放状态</div>
-                        <Switch size="small" checked={settings.freeDailyPointsEnabled} checkedChildren="开启" unCheckedChildren="关闭" onChange={onFreeDailyPointsEnabledChange} />
-                    </div>
-                    <LabeledControl label="每日额度">
-                        <InputNumber className="w-full" min={0} precision={0} value={settings.freeDailyPoints} onChange={(value) => onFreeDailyPointsChange(toNumberOrZero(value))} />
-                    </LabeledControl>
-                </div>
-            </section>
-            <section className="border-b border-zinc-200 py-4 sm:py-5 dark:border-zinc-800">
+            <section className="border-b border-zinc-200 pb-4 sm:pb-5 dark:border-zinc-800">
                 <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">模型基础扣费</div>
                 <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">每次生成先扣除模型基础积分；单独配置的模型使用自己的数值，其他模型使用统一默认值。</div>
                 <div className="mt-3 grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)] lg:items-end">

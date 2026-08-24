@@ -1,694 +1,649 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { App, Button, DatePicker, Form, Input, InputNumber, Modal, Select, Segmented, Space, Switch, Table, Tag } from "antd";
+import { App, Button, DatePicker, Form, Input, InputNumber, Modal, Pagination, Segmented, Select, Switch, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import { AlertTriangle, CheckCircle2, CircleDollarSign, Copy, CreditCard, FileText, FileUp, Landmark, Package, Pencil, Plus, QrCode, ReceiptText, RefreshCw, Save, Search, Settings2, Trash2, Undo2, WalletCards, XCircle } from "lucide-react";
+import { AlertTriangle, CircleDollarSign, FileUp, Pencil, Plus, RefreshCw, Save, Search, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { PaymentConfigRequirement, PaymentConfigSummary, PaymentProviderConfig, PaymentProviderConfigField } from "@/lib/payment-config-types";
-import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
-import type { AdminBillingSummary as BillingSummary } from "@/lib/admin-billing-types";
-import type { BillingOrder, BillingOrderStatus, BillingProduct } from "@/services/api/billing";
 import { allowedAdminBillingTabs, type AdminBillingTab } from "@/lib/admin-permissions";
+import type { AdminBillingSummary, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
+import type { LogicalModel } from "@/lib/auth/store";
+import type { PaymentConfigSummary } from "@/lib/payment-config-types";
+import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
+import {
+    deleteAdminTopUpPreset,
+    getAdminTopUpConfig,
+    getAdminTopUpSummary,
+    getAdminUsageAudit,
+    listAdminTopUpOrders,
+    listAdminTopUpPresets,
+    recoverAdminUsageHolds,
+    refundAdminTopUpOrder,
+    saveAdminTopUpConfig,
+    saveAdminTopUpPreset,
+    type AdminTopUpOrder,
+} from "@/services/api/admin-billing-commerce";
+import type { TopUpOrder, TopUpOrderStatus, TopUpPreset } from "@/services/api/billing";
 import { useUserStore } from "@/stores/use-user-store";
 import { BillingReconciliationImport } from "./billing-reconciliation-import";
-import { CouponTemplatePanel } from "./coupon-template-panel";
-import { PromotionCampaignPanel } from "./promotion-campaign-panel";
+import { PaymentConfigPanel } from "./billing-operation-elements";
 
 const PAGE_SIZE = 20;
-const tabOptions: Array<{ label: string; value: AdminBillingTab }> = [
-    { label: "订单运营", value: "orders" },
-    { label: "套餐商品", value: "products" },
-    { label: "促销活动", value: "promotions" },
-    { label: "优惠券", value: "coupons" },
-    { label: "支付配置", value: "payments" },
+const tabs: Array<{ label: string; value: AdminBillingTab }> = [
+    { label: "充值订单", value: "orders" },
+    { label: "充值预设", value: "presets" },
+    { label: "定价与汇率", value: "pricing" },
+    { label: "用量毛利", value: "usage" },
+    { label: "异常恢复", value: "recovery" },
+    { label: "支付对账", value: "reconciliation" },
+    { label: "支付渠道", value: "payments" },
 ];
-const statusOptions: Array<{ label: string; value: BillingOrderStatus | "" }> = [
+
+const orderStatuses: Array<{ label: string; value: TopUpOrderStatus | "" }> = [
     { label: "全部状态", value: "" },
     { label: "待支付", value: "pending" },
     { label: "已支付", value: "paid" },
-    { label: "已关闭", value: "closed" },
     { label: "已取消", value: "canceled" },
+    { label: "退款中", value: "refunding" },
     { label: "已退款", value: "refunded" },
-    { label: "退款处理中", value: "refunding" },
 ];
 
-type ProductFormValue = {
-    id?: string;
-    productKind: "plan" | "points";
-    planId?: string;
-    name: string;
-    description?: string;
-    amountYuan: number;
-    currency: string;
-    pointsAmount: number;
-    dailyPoints: number;
-    periodDays: number;
-    enabled: boolean;
-    sortOrder: number;
-};
-
-function defaultProductFormValue(sortOrder: number): ProductFormValue {
-    return {
-        id: "",
-        productKind: "plan",
-        planId: "creator",
-        name: "",
-        description: "",
-        amountYuan: 0,
-        currency: "CNY",
-        pointsAmount: 0,
-        dailyPoints: 0,
-        periodDays: 30,
-        enabled: true,
-        sortOrder,
-    };
-}
-
-import {
-    ReconciliationPanel,
-    ActiveProductsPanel,
-    ProductFact,
-    PaymentConfigPanel,
-    PaymentProviderCard,
-    PaymentFieldSection,
-    sortPaymentFields,
-    isWidePaymentField,
-    PaymentConfigFieldControl,
-    PaymentFieldHeader,
-    RequirementGrid,
-    providerIcon,
-    normalizePaymentFormValue,
-    copyText,
-    Metric,
-    CheckLine,
-    metricTone,
-    statusLabel,
-    statusColor,
-    providerLabel,
-    formatMoney,
-    formatTime,
-} from "./billing-operation-elements";
+type PresetForm = { id?: string; name: string; description?: string; nominalNativeAmount: string; enabled: boolean; sortOrder: number };
 
 export function BillingOperations({ initialTab = "orders", initialPaymentConfig, embedded = false, hideTabs = false }: { initialTab?: AdminBillingTab; initialPaymentConfig?: PaymentConfigSummary; embedded?: boolean; hideTabs?: boolean }) {
-    const { message, modal } = App.useApp();
     const currentUser = useUserStore((state) => state.user);
     const allowedTabs = useMemo(() => allowedAdminBillingTabs(currentUser), [currentUser]);
-    const availableTabOptions = useMemo(() => tabOptions.filter((option) => allowedTabs.includes(option.value)), [allowedTabs]);
-    const [productForm] = Form.useForm<ProductFormValue>();
-    const [activeTab, setActiveTab] = useState<AdminBillingTab>(initialTab);
-    const [summary, setSummary] = useState<BillingSummary | null>(null);
-    const [orders, setOrders] = useState<BillingOrder[]>([]);
-    const [products, setProducts] = useState<BillingProduct[]>([]);
-    const [editingProductId, setEditingProductId] = useState("");
-    const [productModalOpen, setProductModalOpen] = useState(false);
-    const [reconciliationImportOpen, setReconciliationImportOpen] = useState(false);
-    const [productSaving, setProductSaving] = useState(false);
-    const [paymentConfig, setPaymentConfig] = useState<PaymentConfigSummary | null>(initialPaymentConfig || null);
-    const [paymentConfigLoading, setPaymentConfigLoading] = useState(false);
-    const [total, setTotal] = useState(0);
+    const [activeTab, setActiveTab] = useState<AdminBillingTab>(allowedTabs.includes(initialTab) ? initialTab : allowedTabs[0] || "orders");
+    const visibleTabs = tabs.filter((tab) => allowedTabs.includes(tab.value));
+
+    useEffect(() => {
+        const next = allowedTabs.includes(initialTab) ? initialTab : allowedTabs[0];
+        if (next) setActiveTab(next);
+    }, [allowedTabs, initialTab]);
+
+    return (
+        <div className={embedded ? "min-w-0" : "min-w-0 space-y-4"}>
+            {!hideTabs && visibleTabs.length > 1 ? (
+                <div className="overflow-x-auto">
+                    <Segmented className="min-w-max" value={activeTab} options={visibleTabs} onChange={(value) => setActiveTab(value as AdminBillingTab)} />
+                </div>
+            ) : null}
+            {activeTab === "orders" ? <OrdersPanel /> : null}
+            {activeTab === "presets" ? <PresetsPanel /> : null}
+            {activeTab === "pricing" ? <PricingPanel /> : null}
+            {activeTab === "usage" ? <UsagePanel mode="usage" /> : null}
+            {activeTab === "recovery" ? <UsagePanel mode="recovery" /> : null}
+            {activeTab === "reconciliation" ? <ReconciliationPanel /> : null}
+            {activeTab === "payments" ? <PaymentPanel initial={initialPaymentConfig} embedded={embedded} /> : null}
+        </div>
+    );
+}
+
+function OrdersPanel() {
+    const { message, modal } = App.useApp();
+    const [orders, setOrders] = useState<AdminTopUpOrder[]>([]);
+    const [summary, setSummary] = useState<AdminBillingSummary | null>(null);
+    const [loading, setLoading] = useState(true);
     const [page, setPage] = useState(1);
-    const [status, setStatus] = useState<BillingOrderStatus | "">("");
+    const [total, setTotal] = useState(0);
+    const [status, setStatus] = useState<TopUpOrderStatus | "">("");
     const [keyword, setKeyword] = useState("");
     const [submittedKeyword, setSubmittedKeyword] = useState("");
     const [range, setRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
-    const [loading, setLoading] = useState(initialTab === "orders");
-    const [productsLoading, setProductsLoading] = useState(initialTab !== "payments");
-    const [actionOrderId, setActionOrderId] = useState("");
-    const [deletingProductId, setDeletingProductId] = useState("");
-    const productKind = Form.useWatch("productKind", productForm) || "plan";
+    const [refunding, setRefunding] = useState("");
 
-    const startDate = range?.[0]?.format("YYYY-MM-DD");
-    const endDate = range?.[1]?.format("YYYY-MM-DD");
-
-    const loadProducts = useCallback(async () => {
-        setProductsLoading(true);
-        try {
-            const response = await fetch("/api/admin/billing/products", { cache: "no-store" });
-            const payload = (await response.json().catch(() => null)) as { products?: BillingProduct[]; error?: string } | null;
-            if (!response.ok || !payload?.products) throw new Error(payload?.error || "加载套餐商品失败");
-            setProducts(payload.products);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "加载套餐商品失败");
-        } finally {
-            setProductsLoading(false);
-        }
-    }, [message]);
-
-    const loadPaymentConfig = useCallback(async () => {
-        setPaymentConfigLoading(true);
-        try {
-            const response = await fetch("/api/admin/billing/payment-config", { cache: "no-store" });
-            const payload = (await response.json().catch(() => null)) as { paymentConfig?: PaymentConfigSummary; error?: string } | null;
-            if (!response.ok || !payload?.paymentConfig) throw new Error(payload?.error || "加载支付配置失败");
-            setPaymentConfig(payload.paymentConfig);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "加载支付配置失败");
-        } finally {
-            setPaymentConfigLoading(false);
-        }
-    }, [message]);
-
-    const loadDashboard = useCallback(async () => {
+    const load = useCallback(async () => {
         setLoading(true);
         try {
-            const summaryParams = new URLSearchParams();
-            if (startDate) summaryParams.set("startDate", startDate);
-            if (endDate) summaryParams.set("endDate", endDate);
-
-            const orderParams = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
-            if (status) orderParams.set("status", status);
-            if (submittedKeyword) orderParams.set("keyword", submittedKeyword);
-
-            const [summaryResponse, ordersResponse] = await Promise.all([fetch(`/api/admin/billing/summary?${summaryParams.toString()}`, { cache: "no-store" }), fetch(`/api/admin/billing/orders?${orderParams.toString()}`, { cache: "no-store" })]);
-            const summaryPayload = (await summaryResponse.json().catch(() => null)) as { summary?: BillingSummary; error?: string } | null;
-            const ordersPayload = (await ordersResponse.json().catch(() => null)) as { orders?: BillingOrder[]; total?: number; error?: string } | null;
-            if (!summaryResponse.ok || !summaryPayload?.summary) throw new Error(summaryPayload?.error || "加载运营摘要失败");
-            if (!ordersResponse.ok || !ordersPayload?.orders) throw new Error(ordersPayload?.error || "加载订单失败");
-            setSummary(summaryPayload.summary);
-            setOrders(ordersPayload.orders);
-            setTotal(ordersPayload.total || 0);
+            const [orderResult, summaryResult] = await Promise.all([
+                listAdminTopUpOrders({ page, pageSize: PAGE_SIZE, status, keyword: submittedKeyword }),
+                getAdminTopUpSummary({ startDate: range?.[0]?.format("YYYY-MM-DD"), endDate: range?.[1]?.format("YYYY-MM-DD") }),
+            ]);
+            setOrders(orderResult.orders);
+            setTotal(orderResult.total);
+            setSummary(summaryResult.summary);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "加载财务钱包数据失败");
+            message.error(error instanceof Error ? error.message : "加载充值订单失败");
         } finally {
             setLoading(false);
         }
-    }, [endDate, message, page, startDate, status, submittedKeyword]);
-
+    }, [message, page, range, status, submittedKeyword]);
     useEffect(() => {
-        if (allowedTabs.includes(activeTab) && (activeTab === "orders" || activeTab === "products" || activeTab === "promotions" || activeTab === "coupons")) void loadProducts();
-    }, [activeTab, allowedTabs, loadProducts]);
+        void load();
+    }, [load]);
 
-    useEffect(() => {
-        if (allowedTabs.includes(activeTab) && activeTab === "orders") void loadDashboard();
-    }, [activeTab, allowedTabs, loadDashboard]);
-
-    useEffect(() => {
-        const nextTab = allowedTabs.includes(initialTab) ? initialTab : allowedTabs[0];
-        if (nextTab) setActiveTab(nextTab);
-    }, [allowedTabs, initialTab]);
-
-    useEffect(() => {
-        if (allowedTabs.includes(activeTab) && activeTab === "payments" && !paymentConfig) void loadPaymentConfig();
-    }, [activeTab, allowedTabs, loadPaymentConfig, paymentConfig]);
-
-    const runOrderAction = async (order: BillingOrder, action: "complete" | "close" | "refund", reason?: string) => {
-        setActionOrderId(`${action}:${order.id}`);
-        try {
-            const response = await fetch(`/api/admin/billing/orders/${order.id}/${action}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(action === "complete" ? { provider: order.provider || "manual", channel: "admin-manual", providerTradeId: order.providerOrderId || order.orderNo } : { reason }),
-            });
-            const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-            if (!response.ok) throw new Error(payload?.error || "订单操作失败");
-            message.success(action === "complete" ? "已确认支付" : action === "close" ? "已关闭订单" : "已标记退款");
-            await loadDashboard();
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "订单操作失败");
-        } finally {
-            setActionOrderId("");
-        }
-    };
-
-    const confirmOrderAction = (order: BillingOrder, action: "complete" | "close" | "refund") => {
-        if (action === "complete") {
-            modal.confirm({
-                title: "确认这笔订单已收款？",
-                content: "确认后会开通套餐并发放积分，请先核实支付商或线下收款记录。",
-                okText: "确认收款",
-                cancelText: "取消",
-                onOk: () => runOrderAction(order, action),
-            });
-            return;
-        }
-
+    const refund = (order: TopUpOrder) => {
         let reason = "";
         modal.confirm({
-            title: action === "close" ? "关闭这笔待支付订单？" : "标记这笔订单为已退款？",
+            title: "确认发起全额退款？",
             content: (
                 <Input.TextArea
-                    rows={3}
+                    aria-label="退款原因"
                     maxLength={200}
-                    placeholder={action === "close" ? "例如：用户取消、超时未支付" : "例如：支付商后台已退款、人工售后退款"}
+                    placeholder="填写退款原因"
                     onChange={(event) => {
                         reason = event.target.value;
                     }}
                 />
             ),
-            okText: action === "close" ? "关闭订单" : "标记退款",
-            cancelText: "取消",
-            okButtonProps: { danger: action === "refund" },
-            onOk: () => runOrderAction(order, action, reason),
-        });
-    };
-
-    const reconciliationIssues = summary ? summary.reconciliation.paidOrdersWithoutSucceededPayment + summary.reconciliation.succeededPaymentsWithoutPaidOrder + summary.reconciliation.amountMismatchPayments : 0;
-    const activeProducts = useMemo(() => products.filter((product) => product.enabled), [products]);
-    const openCreateProductModal = () => {
-        setEditingProductId("");
-        productForm.resetFields();
-        productForm.setFieldsValue(defaultProductFormValue(products.length + 1));
-        setProductModalOpen(true);
-    };
-    const closeProductModal = () => {
-        if (productSaving) return;
-        setProductModalOpen(false);
-        setEditingProductId("");
-        productForm.resetFields();
-    };
-    const editProduct = (product: BillingProduct) => {
-        setEditingProductId(product.id);
-        productForm.setFieldsValue({
-            id: product.id,
-            productKind: product.productKind || "plan",
-            planId: product.planId,
-            name: product.name,
-            description: product.description,
-            amountYuan: Number((product.amountCents / 100).toFixed(2)),
-            currency: product.currency,
-            pointsAmount: product.pointsAmount,
-            dailyPoints: product.dailyPoints,
-            periodDays: product.periodDays,
-            enabled: product.enabled,
-            sortOrder: product.sortOrder || 0,
-        });
-        setProductModalOpen(true);
-    };
-    const saveProduct = async (value: ProductFormValue) => {
-        setProductSaving(true);
-        try {
-            const response = await fetch("/api/admin/billing/products", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    id: value.id || undefined,
-                    productKind: value.productKind,
-                    planId: value.productKind === "plan" ? value.planId : undefined,
-                    name: value.name,
-                    description: value.description || "",
-                    amountCents: Math.round(Number(value.amountYuan || 0) * 100),
-                    currency: value.currency,
-                    pointsAmount: value.pointsAmount,
-                    dailyPoints: value.productKind === "plan" ? value.dailyPoints : 0,
-                    periodDays: value.productKind === "plan" ? value.periodDays : 0,
-                    enabled: value.enabled,
-                    sortOrder: value.sortOrder,
-                }),
-            });
-            const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-            if (!response.ok) throw new Error(payload?.error || "保存套餐商品失败");
-            message.success("套餐商品已保存");
-            setProductModalOpen(false);
-            setEditingProductId("");
-            productForm.resetFields();
-            await loadProducts();
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "保存套餐商品失败");
-        } finally {
-            setProductSaving(false);
-        }
-    };
-    const confirmDeleteProduct = (product: BillingProduct) => {
-        modal.confirm({
-            title: `删除“${product.name}”？`,
-            content: "未产生订单的商品会永久删除；已有订单的商品会被保护，请改为编辑后下架。",
-            okText: "确认删除",
+            okText: "确认退款",
             okButtonProps: { danger: true },
-            cancelText: "取消",
             onOk: async () => {
-                setDeletingProductId(product.id);
+                setRefunding(order.id);
                 try {
-                    const response = await fetch(`/api/admin/billing/products/${encodeURIComponent(product.id)}`, { method: "DELETE" });
-                    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-                    if (response.status === 409) {
-                        modal.warning({
-                            title: "该套餐已有订单，不能删除",
-                            content: payload?.error || "为保留订单和财务记录，该套餐只能下架。请在编辑商品中关闭上架状态。",
-                            okText: "去编辑下架",
-                            onOk: () => editProduct(product),
-                        });
-                        return;
-                    }
-                    if (!response.ok) throw new Error(payload?.error || "删除套餐商品失败");
-                    message.success("套餐商品已删除");
-                    await loadProducts();
-                } catch (error) {
-                    message.error(error instanceof Error ? error.message : "删除套餐商品失败");
-                    throw error;
+                    await refundAdminTopUpOrder(order.id, reason);
+                    message.success("退款请求已处理");
+                    await load();
                 } finally {
-                    setDeletingProductId("");
+                    setRefunding("");
                 }
             },
         });
     };
 
-    const columns: TableColumnsType<BillingOrder> = [
+    const columns: TableColumnsType<AdminTopUpOrder> = [
         {
             title: "订单",
             dataIndex: "orderNo",
-            width: 230,
+            width: 210,
             render: (_, order) => (
-                <div className="min-w-0">
-                    <div className="truncate font-medium text-stone-950 dark:text-stone-100">{order.orderNo}</div>
-                    <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{order.subject}</div>
+                <div>
+                    <div className="font-mono text-xs">{order.orderNo}</div>
+                    <div className="mt-1 text-xs text-stone-500">{order.subject}</div>
                 </div>
             ),
         },
+        { title: "用户", dataIndex: "user", width: 210, render: (_, order) => <AdminUserIdentity {...order.user} fallback="用户信息不可用" /> },
+        { title: "VND 实付", dataIndex: "payableNativeAmount", width: 145, render: (value: string) => formatVnd(value) },
+        { title: "积分", dataIndex: "creditAmount", width: 110 },
         {
-            title: "状态",
-            dataIndex: "status",
-            width: 110,
-            render: (value: BillingOrderStatus) => <Tag color={statusColor(value)}>{statusLabel(value)}</Tag>,
-        },
-        {
-            title: "渠道",
-            dataIndex: "provider",
-            width: 110,
-            render: (value: string) => <span className="text-sm text-stone-700 dark:text-stone-200">{providerLabel(value)}</span>,
-        },
-        {
-            title: "金额",
-            dataIndex: "amountCents",
-            width: 130,
-            render: (_, order) => <span className="font-medium">{formatMoney(order.amountCents, order.currency)}</span>,
-        },
-        {
-            title: "权益",
-            width: 150,
+            title: "支付/发放",
+            width: 170,
             render: (_, order) => (
-                <div className="text-sm text-stone-600 dark:text-stone-300">
-                    <div>{order.pointsAmount} 永久积分</div>
-                    <div className="text-xs text-stone-500 dark:text-stone-400">
-                        每日 {order.dailyPoints} · {order.periodDays ? `${order.periodDays} 天` : "长期"}
+                <div className="space-y-1">
+                    <Tag color={statusColor(order.status)}>{statusLabel(order.status)}</Tag>
+                    <div className="text-xs text-stone-500">
+                        {order.paymentState} / {order.creditGrantState}
                     </div>
                 </div>
             ),
         },
         {
-            title: "用户",
-            dataIndex: "userId",
-            width: 220,
-            render: (_, order) => <AdminUserIdentity displayName={order.userDisplayName} username={order.userUsername} accountId={order.userAccountId} fallback={order.userId ? "用户信息不可用" : "未绑定用户"} />,
+            title: "退款/追回",
+            width: 180,
+            render: (_, order) => (
+                <div className="text-xs text-stone-500">
+                    {order.providerRefundState} / {order.creditRecoveryState}
+                </div>
+            ),
         },
-        {
-            title: "创建时间",
-            dataIndex: "createdAt",
-            width: 170,
-            render: (value: string) => formatTime(value),
-        },
+        { title: "渠道", dataIndex: "provider", width: 100 },
         {
             title: "操作",
             fixed: "right",
-            width: 230,
+            width: 100,
             render: (_, order) => (
-                <Space size={6} wrap>
-                    {order.status === "pending" ? (
-                        <>
-                            <Button size="small" icon={<CheckCircle2 className="size-3.5" />} loading={actionOrderId === `complete:${order.id}`} onClick={() => confirmOrderAction(order, "complete")}>
-                                收款
-                            </Button>
-                            <Button size="small" icon={<XCircle className="size-3.5" />} loading={actionOrderId === `close:${order.id}`} onClick={() => confirmOrderAction(order, "close")}>
-                                关单
-                            </Button>
-                        </>
-                    ) : null}
-                    {order.status === "paid" ? (
-                        <Button danger size="small" icon={<Undo2 className="size-3.5" />} loading={actionOrderId === `refund:${order.id}`} onClick={() => confirmOrderAction(order, "refund")}>
-                            退款
-                        </Button>
-                    ) : null}
-                </Space>
+                <Button danger size="small" loading={refunding === order.id} disabled={order.status !== "paid"} onClick={() => refund(order)}>
+                    退款
+                </Button>
             ),
         },
     ];
 
+    const currency = summary?.currencies.find((item) => item.currency === "VND");
     return (
-        <div className="space-y-3 sm:space-y-5">
-            {!hideTabs ? (
-                <section className="rounded-lg border border-stone-200 bg-white p-3 shadow-sm shadow-stone-200/40 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20">
-                    <Segmented
-                        block
-                        value={activeTab}
-                        options={availableTabOptions}
-                        onChange={(value) => setActiveTab(value as AdminBillingTab)}
-                        className="[&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-w-0 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!text-center"
-                    />
-                </section>
-            ) : null}
+        <Panel
+            title="充值订单与退款"
+            description="订单的支付、积分发放、渠道退款和积分追回状态分别展示，避免把不同状态混成一个标签。"
+            action={
+                <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void load()}>
+                    刷新
+                </Button>
+            }
+        >
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <Metric label="VND 实收" value={formatVnd(currency?.paidNativeAmount || "0")} />
+                <Metric label="VND 退款" value={formatVnd(currency?.refundedNativeAmount || "0")} />
+                <Metric label="USD 实收快照" value={formatUsd(summary?.paidUsdValue || "0")} />
+                <Metric label="USD 退款快照" value={formatUsd(summary?.refundedUsdValue || "0")} />
+            </div>
+            <div className="mt-4 grid gap-2 md:grid-cols-[180px_260px_minmax(0,1fr)_auto]">
+                <Select
+                    value={status}
+                    options={orderStatuses}
+                    onChange={(value) => {
+                        setStatus(value);
+                        setPage(1);
+                    }}
+                />
+                <DatePicker.RangePicker value={range} onChange={(value) => setRange(value as [Dayjs | null, Dayjs | null] | null)} />
+                <Input
+                    value={keyword}
+                    allowClear
+                    placeholder="订单号、渠道订单号或用户"
+                    onChange={(event) => setKeyword(event.target.value)}
+                    onPressEnter={() => {
+                        setSubmittedKeyword(keyword.trim());
+                        setPage(1);
+                    }}
+                />
+                <Button
+                    icon={<Search className="size-4" />}
+                    onClick={() => {
+                        setSubmittedKeyword(keyword.trim());
+                        setPage(1);
+                    }}
+                >
+                    查询
+                </Button>
+            </div>
+            <Table className="mt-4" rowKey="id" size="small" scroll={{ x: 1160 }} pagination={false} loading={loading} columns={columns} dataSource={orders} />
+            {total > PAGE_SIZE ? <Pagination className="mt-4" current={page} pageSize={PAGE_SIZE} total={total} showSizeChanger={false} onChange={setPage} /> : null}
+        </Panel>
+    );
+}
 
-            {allowedTabs.includes(activeTab) && activeTab === "orders" ? (
-                <>
-                    <section className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        <Metric title="实收金额" value={formatMoney(summary?.orders.paidAmountCents || 0)} icon={<CircleDollarSign className="size-4" />} tone="emerald" />
-                        <Metric title="待支付金额" value={formatMoney(summary?.orders.pendingAmountCents || 0)} icon={<WalletCards className="size-4" />} tone="amber" />
-                        <Metric title="已支付订单" value={summary?.orders.paid || 0} icon={<ReceiptText className="size-4" />} tone="blue" />
-                        <Metric title="对账异常" value={reconciliationIssues} icon={<AlertTriangle className="size-4" />} tone={reconciliationIssues ? "rose" : "slate"} />
-                    </section>
-
-                    <section
-                        className={
-                            embedded
-                                ? "rounded-lg border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950 sm:p-4"
-                                : "rounded-lg border border-stone-200 bg-white p-3 shadow-sm shadow-stone-200/40 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20 sm:p-4"
-                        }
-                    >
-                        <div>
+function PresetsPanel() {
+    const { message, modal } = App.useApp();
+    const [form] = Form.useForm<PresetForm>();
+    const [presets, setPresets] = useState<TopUpPreset[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [open, setOpen] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            setPresets((await listAdminTopUpPresets()).presets);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "加载充值预设失败");
+        } finally {
+            setLoading(false);
+        }
+    }, [message]);
+    useEffect(() => {
+        void load();
+    }, [load]);
+    const edit = (preset?: TopUpPreset) => {
+        form.setFieldsValue(preset || { name: "", description: "", nominalNativeAmount: "", enabled: true, sortOrder: presets.length + 1 });
+        setOpen(true);
+    };
+    const save = async () => {
+        const value = await form.validateFields();
+        setSaving(true);
+        try {
+            await saveAdminTopUpPreset(value);
+            message.success("充值预设已保存");
+            setOpen(false);
+            await load();
+        } finally {
+            setSaving(false);
+        }
+    };
+    const remove = (preset: TopUpPreset) =>
+        modal.confirm({
+            title: `删除“${preset.name}”？`,
+            content: "删除只影响后续充值入口，不会改变已创建订单。",
+            okText: "删除",
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                await deleteAdminTopUpPreset(preset.id);
+                message.success("充值预设已删除");
+                await load();
+            },
+        });
+    return (
+        <Panel
+            title="充值预设"
+            description="预设只定义 VND 名义充值金额；积分、汇率和价格版本始终由服务端报价生成。"
+            action={
+                <Button type="primary" icon={<Plus className="size-4" />} onClick={() => edit()}>
+                    新建预设
+                </Button>
+            }
+        >
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {presets.map((preset) => (
+                    <article key={preset.id} className="rounded-xl border border-stone-200 p-4 dark:border-stone-800">
+                        <div className="flex items-start justify-between gap-2">
                             <div>
-                                <h2 className="text-base font-semibold text-stone-950 dark:text-stone-100">运营筛选</h2>
-                                <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">日期范围影响摘要；订单列表可按状态和关键词筛选。</p>
+                                <h3 className="font-semibold">{preset.name}</h3>
+                                <p className="mt-1 text-xs text-stone-500">{preset.description || "无说明"}</p>
                             </div>
-                            <div className="mt-4 grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_minmax(128px,0.45fr)_minmax(220px,0.9fr)_auto]">
-                                <DatePicker.RangePicker className="w-full" value={range} onChange={(value) => setRange(value)} />
-                                <Select
-                                    className="w-full"
-                                    value={status}
-                                    options={statusOptions}
-                                    onChange={(value) => {
-                                        setStatus(value);
-                                        setPage(1);
-                                    }}
-                                />
-                                <Input
-                                    className="w-full"
-                                    allowClear
-                                    value={keyword}
-                                    prefix={<Search className="size-4 text-stone-400" />}
-                                    placeholder="订单号 / 商品 / 支付单号 / 用户 ID"
-                                    onChange={(event) => setKeyword(event.target.value)}
-                                    onPressEnter={() => {
-                                        setSubmittedKeyword(keyword.trim());
-                                        setPage(1);
-                                    }}
-                                />
-                                <div className="grid grid-cols-2 gap-2 sm:col-span-2 xl:col-span-1 xl:flex">
-                                    <Button
-                                        className="w-full xl:w-auto"
-                                        icon={<Search className="size-4" />}
-                                        onClick={() => {
-                                            setSubmittedKeyword(keyword.trim());
-                                            setPage(1);
-                                        }}
-                                    >
-                                        查询
-                                    </Button>
-                                    <Button className="w-full xl:w-auto" icon={<RefreshCw className="size-4" />} loading={loading || productsLoading} onClick={() => void Promise.all([loadProducts(), loadDashboard()])}>
-                                        刷新
-                                    </Button>
-                                </div>
-                            </div>
+                            <Tag color={preset.enabled ? "green" : "default"}>{preset.enabled ? "启用" : "停用"}</Tag>
                         </div>
-
-                        <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-                            <div className="min-w-0 overflow-hidden rounded-lg border border-stone-200 dark:border-stone-800">
-                                <Table
-                                    rowKey="id"
-                                    size="middle"
-                                    columns={columns}
-                                    dataSource={orders}
-                                    loading={loading}
-                                    scroll={{ x: 1300 }}
-                                    pagination={{
-                                        current: page,
-                                        pageSize: PAGE_SIZE,
-                                        total,
-                                        showSizeChanger: false,
-                                        onChange: setPage,
-                                    }}
-                                />
-                            </div>
-
-                            <aside className="min-w-0 space-y-3">
-                                <ReconciliationPanel reconciliationIssues={reconciliationIssues} summary={summary} onImport={() => setReconciliationImportOpen(true)} />
-                                <ActiveProductsPanel activeProducts={activeProducts} />
-                            </aside>
+                        <div className="mt-4 text-xl font-semibold">{formatVnd(preset.nominalNativeAmount)}</div>
+                        <div className="mt-4 flex gap-2">
+                            <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => edit(preset)}>
+                                编辑
+                            </Button>
+                            <Button danger size="small" icon={<Trash2 className="size-3.5" />} onClick={() => remove(preset)}>
+                                删除
+                            </Button>
                         </div>
-                    </section>
-                    <BillingReconciliationImport open={reconciliationImportOpen} onClose={() => setReconciliationImportOpen(false)} />
-                </>
-            ) : null}
+                    </article>
+                ))}
+                {!loading && !presets.length ? <div className="col-span-full rounded-xl border border-dashed p-8 text-center text-sm text-stone-500">暂无充值预设</div> : null}
+            </div>
+            <Modal title={form.getFieldValue("id") ? "编辑充值预设" : "新建充值预设"} open={open} confirmLoading={saving} onOk={() => void save()} onCancel={() => setOpen(false)} okText="保存" cancelText="取消" width="min(560px, calc(100vw - 24px))">
+                <Form form={form} layout="vertical" className="mt-4">
+                    <Form.Item name="id" hidden>
+                        <Input />
+                    </Form.Item>
+                    <div className="grid gap-x-3 sm:grid-cols-2">
+                        <Form.Item label="名称" name="name" rules={[{ required: true }]}>
+                            <Input />
+                        </Form.Item>
+                        <Form.Item label="VND 名义金额" name="nominalNativeAmount" rules={[{ required: true, pattern: /^[1-9]\d*$/, message: "请输入正整数 VND" }]}>
+                            <InputNumber stringMode min="1" precision={0} className="w-full" />
+                        </Form.Item>
+                        <Form.Item label="排序" name="sortOrder">
+                            <InputNumber min={0} precision={0} className="w-full" />
+                        </Form.Item>
+                        <Form.Item label="启用" name="enabled" valuePropName="checked">
+                            <Switch />
+                        </Form.Item>
+                        <Form.Item className="sm:col-span-2" label="说明" name="description">
+                            <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} />
+                        </Form.Item>
+                    </div>
+                </Form>
+            </Modal>
+        </Panel>
+    );
+}
 
-            {allowedTabs.includes(activeTab) && activeTab === "products" ? (
-                <>
-                    <section className="grid min-w-0 items-start gap-4">
-                        <div
-                            className={`min-w-0 overflow-hidden ${embedded ? "rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950" : "rounded-lg border border-stone-200 bg-white shadow-sm shadow-stone-200/40 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20"}`}
-                        >
-                            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5 border-b border-stone-200 p-3 sm:flex sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:p-4 dark:border-stone-800">
-                                <div className="contents sm:block">
-                                    <h2 className="text-base font-semibold text-stone-950 dark:text-stone-100">套餐商品</h2>
-                                    <div className="col-span-2 line-clamp-2 text-xs leading-5 text-stone-500 sm:mt-1 sm:block sm:text-sm dark:text-stone-400">上架后会出现在用户端充值中心；创建和编辑都在弹窗中完成。</div>
-                                </div>
-                                <div className="col-start-2 row-start-1 flex flex-wrap justify-end gap-1.5 sm:gap-2">
-                                    <Button type="primary" aria-label="创建商品" title="创建商品" icon={<Plus className="size-4" />} onClick={openCreateProductModal}>
-                                        <span className="sm:hidden">新建</span>
-                                        <span className="hidden sm:inline">创建商品</span>
-                                    </Button>
-                                    <Button aria-label="刷新套餐商品" title="刷新套餐商品" icon={<RefreshCw className="size-4" />} loading={productsLoading} onClick={() => void loadProducts()}>
-                                        <span className="hidden sm:inline">刷新</span>
-                                    </Button>
-                                </div>
-                            </div>
-                            <div className="grid min-w-0 gap-2 p-3 sm:gap-3 sm:p-4 md:grid-cols-2">
-                                {productsLoading && !products.length ? (
-                                    <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-stone-200 px-3 py-6 text-sm text-stone-500 sm:py-10 md:col-span-2 dark:border-stone-800 dark:text-stone-400">
-                                        <RefreshCw className="size-4 animate-spin" />
-                                        <span>正在加载套餐商品</span>
-                                    </div>
-                                ) : products.length ? (
-                                    products.map((product) => (
-                                        <article
-                                            key={product.id}
-                                            className={`min-w-0 rounded-lg border p-3 text-left transition sm:p-4 ${productModalOpen && editingProductId === product.id ? "border-stone-400 bg-stone-100/80 dark:border-stone-500 dark:bg-stone-800/55" : "border-stone-200 bg-stone-50/70 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-900/40 dark:hover:border-stone-700"}`}
-                                        >
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0">
-                                                    <div className="truncate text-sm font-semibold text-stone-950 dark:text-stone-100">{product.name}</div>
-                                                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-stone-500 dark:text-stone-400">{product.description || (product.productKind === "points" ? "积分充值商品" : product.planId || "未关联套餐")}</div>
-                                                    {product.pricing.discountCents > 0 ? (
-                                                        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-                                                            <Tag className="m-0" color="red">
-                                                                {product.pricing.promotion?.label || "活动进行中"}
-                                                            </Tag>
-                                                            <span className="font-semibold text-rose-600 dark:text-rose-300">活动价 {formatMoney(product.pricing.saleUnitAmountCents, product.currency)}</span>
-                                                            <span className="text-stone-400 line-through dark:text-stone-500">日常价 {formatMoney(product.amountCents, product.currency)}</span>
-                                                        </div>
-                                                    ) : null}
-                                                </div>
-                                                <div className="flex shrink-0 items-center gap-1.5">
-                                                    <Tag color={product.productKind === "points" ? "gold" : "blue"}>{product.productKind === "points" ? "积分" : "套餐"}</Tag>
-                                                    <Tag color={product.enabled ? "green" : "default"}>{product.enabled ? "上架" : "下架"}</Tag>
-                                                </div>
-                                            </div>
-                                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-stone-500 sm:mt-4 sm:grid-cols-4 dark:text-stone-400">
-                                                <ProductFact label="日常价" value={formatMoney(product.amountCents, product.currency)} />
-                                                <ProductFact label={product.productKind === "points" ? "充值积分" : "永久积分"} value={`${product.pointsAmount}`} />
-                                                <ProductFact label="每日赠送" value={product.productKind === "plan" ? `${product.dailyPoints}` : "-"} />
-                                                <ProductFact label="周期" value={product.productKind === "plan" ? (product.periodDays ? `${product.periodDays} 天` : "长期") : "一次性"} />
-                                            </div>
-                                            <div className="mt-3 flex justify-end gap-2 border-t border-stone-200 pt-2.5 sm:mt-4 sm:pt-3 dark:border-stone-800">
-                                                <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => editProduct(product)}>
-                                                    编辑
-                                                </Button>
-                                                <Button danger size="small" icon={<Trash2 className="size-3.5" />} loading={deletingProductId === product.id} onClick={() => confirmDeleteProduct(product)}>
-                                                    删除
-                                                </Button>
-                                            </div>
-                                        </article>
-                                    ))
-                                ) : (
-                                    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-stone-200 px-3 py-6 text-center text-sm text-stone-500 sm:gap-3 sm:py-10 md:col-span-2 dark:border-stone-800 dark:text-stone-400">
-                                        <span>暂无套餐商品</span>
-                                    </div>
-                                )}
-                            </div>
+function PricingPanel() {
+    const { message } = App.useApp();
+    const [form] = Form.useForm<AdminTopUpConfig>();
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [models, setModels] = useState<LogicalModel[]>([]);
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [topUp, settingsResponse] = await Promise.all([getAdminTopUpConfig(), fetch("/api/admin/settings", { cache: "no-store" })]);
+            if (topUp.config) form.setFieldsValue(topUp.config);
+            const settingsPayload = (await settingsResponse.json().catch(() => null)) as { settings?: { logicalModels?: LogicalModel[] } } | null;
+            setModels(settingsPayload?.settings?.logicalModels || []);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "加载定价配置失败");
+        } finally {
+            setLoading(false);
+        }
+    }, [form, message]);
+    useEffect(() => {
+        void load();
+    }, [load]);
+    const save = async () => {
+        setSaving(true);
+        try {
+            await saveAdminTopUpConfig(await form.validateFields());
+            message.success("客户汇率与充值版本已保存");
+            await load();
+        } finally {
+            setSaving(false);
+        }
+    };
+    return (
+        <Panel
+            title="客户汇率与模型计价"
+            description="客户充值汇率、逻辑模型售价、绑定成本价和供应商原生单位换算分开管理；成本与毛利仅管理员可见。"
+            action={
+                <Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void save()}>
+                    保存汇率
+                </Button>
+            }
+        >
+            <Form form={form} layout="vertical">
+                <div className="grid gap-x-3 sm:grid-cols-3">
+                    <Form.Item label="充值价格版本" name="pricingVersion" rules={[{ required: true }]}>
+                        <Input />
+                    </Form.Item>
+                    <Form.Item label="客户汇率版本" name="customerFxVersion" rules={[{ required: true }]}>
+                        <Input />
+                    </Form.Item>
+                    <Form.Item label="1 VND 对应 USD" name="usdPerVnd" rules={[{ required: true, pattern: /^(?:0|[1-9]\d*)(?:\.\d+)?$/ }]}>
+                        <Input inputMode="decimal" />
+                    </Form.Item>
+                </div>
+            </Form>
+            <div className="mt-4 overflow-x-auto">
+                <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 900 }} dataSource={models} columns={pricingColumns} />
+            </div>
+            <div className="mt-3 text-right">
+                <Link className="text-sm font-medium text-sky-600 dark:text-sky-300" href="/admin?section=channels">
+                    前往模型渠道编辑售价与绑定成本 →
+                </Link>
+            </div>
+        </Panel>
+    );
+}
+
+const pricingColumns: TableColumnsType<LogicalModel> = [
+    {
+        title: "逻辑模型",
+        render: (_, model) => (
+            <div>
+                <b>{model.name}</b>
+                <div className="text-xs text-stone-500">
+                    {model.id} · {model.capability}
+                </div>
+            </div>
+        ),
+    },
+    { title: "销售价格卡", render: (_, model) => <RateCard value={model.saleRateCard} /> },
+    {
+        title: "绑定成本与单位换算",
+        render: (_, model) => (
+            <div className="space-y-2">
+                {model.bindings.map((binding) => (
+                    <div key={binding.id} className="text-xs">
+                        <b>
+                            {binding.channelId} / {binding.upstreamModel}
+                        </b>
+                        <div className="text-stone-500">
+                            成本：{rateCardText(binding.costRateCard)} · 单位：{providerUnitText(binding.providerCostUnit)}
                         </div>
-                    </section>
-                    <Modal
-                        title={editingProductId ? "编辑商品" : "创建商品"}
-                        open={productModalOpen}
-                        width={760}
-                        centered
-                        destroyOnHidden
-                        onCancel={closeProductModal}
-                        styles={{ body: { maxHeight: "min(68dvh, 640px)", overflowY: "auto", paddingTop: 8 } }}
-                        footer={[
-                            <Button key="cancel" onClick={closeProductModal} disabled={productSaving}>
-                                取消
-                            </Button>,
-                            <Button key="save" type="primary" icon={<Save className="size-4" />} loading={productSaving} onClick={() => productForm.submit()}>
-                                保存商品
-                            </Button>,
-                        ]}
-                    >
-                        <Form form={productForm} layout="vertical" initialValues={defaultProductFormValue(products.length + 1)} onFinish={(value) => void saveProduct(value)}>
-                            <div className="mb-4 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-500 dark:border-stone-800 dark:bg-stone-900/50 dark:text-stone-400">
-                                保存后会立即影响充值中心展示。积分充值只增加永久积分；套餐可同时配置有效期内的每日赠送积分。
-                            </div>
-                            <Form.Item name="id" hidden>
-                                <Input />
-                            </Form.Item>
-                            <Form.Item name="name" label="商品名称" rules={[{ required: true, message: "请填写商品名称" }]}>
-                                <Input maxLength={80} placeholder="例如：创作者版月卡" />
-                            </Form.Item>
-                            <Form.Item name="description" label="商品描述">
-                                <Input.TextArea rows={3} maxLength={500} placeholder="展示给用户看的套餐说明" />
-                            </Form.Item>
-                            <Form.Item name="productKind" label="商品类型" rules={[{ required: true, message: "请选择商品类型" }]}>
-                                <Segmented
-                                    block
-                                    options={[
-                                        { label: "套餐权益", value: "plan" },
-                                        { label: "积分充值", value: "points" },
-                                    ]}
-                                />
-                            </Form.Item>
-                            <div className="grid gap-3 sm:grid-cols-2">
-                                {productKind === "plan" ? (
-                                    <Form.Item name="planId" label="关联套餐" rules={[{ required: true, message: "请填写套餐 ID" }]}>
-                                        <Input maxLength={80} placeholder="creator / pro" />
-                                    </Form.Item>
-                                ) : null}
-                                <Form.Item name="currency" label="币种" rules={[{ required: true, message: "请填写币种" }]}>
-                                    <Input maxLength={8} placeholder="CNY" />
-                                </Form.Item>
-                                <Form.Item name="amountYuan" label="价格" rules={[{ required: true, message: "请填写价格" }]}>
-                                    <InputNumber min={0} precision={2} className="w-full" prefix="¥" />
-                                </Form.Item>
-                                <Form.Item name="pointsAmount" label="一次性永久积分" rules={[{ required: true, message: "请填写永久积分" }]} extra="支付成功后一次性加入永久余额，不会按日过期。">
-                                    <InputNumber min={0} precision={0} className="w-full" />
-                                </Form.Item>
-                                {productKind === "plan" ? (
-                                    <>
-                                        <Form.Item name="dailyPoints" label="每日赠送积分" rules={[{ required: true, message: "请填写每日赠送积分" }]} extra="套餐有效期内每天自动补充，仅当日有效，不会跨日累积。">
-                                            <InputNumber min={0} precision={0} className="w-full" />
-                                        </Form.Item>
-                                        <Form.Item name="periodDays" label="生效天数" rules={[{ required: true, message: "请填写天数" }]}>
-                                            <InputNumber min={1} precision={0} className="w-full" />
-                                        </Form.Item>
-                                    </>
-                                ) : null}
-                                <Form.Item name="sortOrder" label="排序">
-                                    <InputNumber min={0} precision={0} className="w-full" />
-                                </Form.Item>
-                            </div>
-                            <Form.Item name="enabled" label="上架状态" valuePropName="checked">
-                                <Switch checkedChildren="上架" unCheckedChildren="下架" />
-                            </Form.Item>
-                        </Form>
-                    </Modal>
-                </>
-            ) : null}
+                    </div>
+                ))}
+            </div>
+        ),
+    },
+];
 
-            {allowedTabs.includes(activeTab) && activeTab === "promotions" ? <PromotionCampaignPanel products={products} productsLoading={productsLoading} /> : null}
+function UsagePanel({ mode }: { mode: "usage" | "recovery" }) {
+    const { message } = App.useApp();
+    const [items, setItems] = useState<AdminUsageAuditItem[]>([]);
+    const [recovery, setRecovery] = useState<AdminRecoveryItem[]>([]);
+    const [stats, setStats] = useState({ total: 0, zeroUsage: 0, negativeMargin: 0 });
+    const [loading, setLoading] = useState(true);
+    const [recovering, setRecovering] = useState(false);
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const result = await getAdminUsageAudit({ pageSize: PAGE_SIZE });
+            setItems(result.items);
+            setRecovery(result.recovery);
+            setStats({ total: result.total, zeroUsage: result.zeroUsage, negativeMargin: result.negativeMargin });
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "加载用量审计失败");
+        } finally {
+            setLoading(false);
+        }
+    }, [message]);
+    useEffect(() => {
+        void load();
+    }, [load]);
+    const runRecovery = async () => {
+        setRecovering(true);
+        try {
+            const result = await recoverAdminUsageHolds();
+            message.success(`已检查 ${result.inspected} 项，结算 ${result.settled} 项，释放 ${result.released} 项`);
+            await load();
+        } finally {
+            setRecovering(false);
+        }
+    };
+    if (mode === "recovery")
+        return (
+            <Panel
+                title="孤儿预留恢复"
+                description="仅检查已到期或已进入人工复核的钱包预留，复用 Worker 的真实任务证据检查与恢复编排。"
+                action={
+                    <Button type="primary" loading={recovering} icon={<RefreshCw className="size-4" />} onClick={() => void runRecovery()}>
+                        立即检查
+                    </Button>
+                }
+            >
+                <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 760 }} dataSource={recovery} columns={recoveryColumns} />
+            </Panel>
+        );
+    return (
+        <Panel
+            title="用量、成本与毛利"
+            description="销售积分按 USD 等值口径与真实供应商成本对照，并标出零用量成本和负毛利异常。"
+            action={
+                <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void load()}>
+                    刷新
+                </Button>
+            }
+        >
+            <div className="grid grid-cols-3 gap-2">
+                <Metric label="用量账单" value={stats.total} />
+                <Metric label="零用量有成本" value={stats.zeroUsage} tone={stats.zeroUsage ? "danger" : undefined} />
+                <Metric label="负毛利" value={stats.negativeMargin} tone={stats.negativeMargin ? "danger" : undefined} />
+            </div>
+            <Table className="mt-4" rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 900 }} dataSource={items} columns={usageColumns} />
+        </Panel>
+    );
+}
 
-            {allowedTabs.includes(activeTab) && activeTab === "coupons" ? <CouponTemplatePanel products={products} productsLoading={productsLoading} /> : null}
+const usageColumns: TableColumnsType<AdminUsageAuditItem> = [
+    {
+        title: "账单",
+        dataIndex: "id",
+        width: 190,
+        render: (value: string, item) => (
+            <div className="font-mono text-xs">
+                {value}
+                <div className="mt-1 text-stone-500">
+                    {item.capability} · {item.usageSource}
+                    {item.estimated ? " · 估算" : ""}
+                </div>
+            </div>
+        ),
+    },
+    { title: "销售积分 / USD", dataIndex: "settledCredits", width: 140 },
+    { title: "供应商成本 USD", dataIndex: "providerCostUsd", width: 150 },
+    { title: "毛利 USD", dataIndex: "marginUsd", width: 120, render: (value: string) => <span className={value.startsWith("-") ? "text-rose-600" : "text-emerald-600"}>{value}</span> },
+    {
+        title: "异常",
+        dataIndex: "anomaly",
+        width: 150,
+        render: (value: AdminUsageAuditItem["anomaly"]) =>
+            value === "none" ? (
+                <Tag color="green">正常</Tag>
+            ) : (
+                <Tag color="red" icon={<AlertTriangle className="mr-1 inline size-3" />}>
+                    {value === "zero_usage_cost" ? "零用量有成本" : "负毛利"}
+                </Tag>
+            ),
+    },
+    { title: "时间", dataIndex: "createdAt", width: 170, render: (value: string) => dayjs(value).format("YYYY-MM-DD HH:mm") },
+];
+const recoveryColumns: TableColumnsType<AdminRecoveryItem> = [
+    { title: "预留 ID", dataIndex: "id", width: 210, render: (value: string) => <span className="font-mono text-xs">{value}</span> },
+    { title: "用户", dataIndex: "userId", width: 160 },
+    { title: "预留积分", dataIndex: "amount", width: 110 },
+    { title: "业务 ID", dataIndex: "businessId", width: 220 },
+    { title: "复核原因", dataIndex: "reviewReason", width: 230, render: (value?: string) => value || "已过期待检查" },
+];
 
-            {allowedTabs.includes(activeTab) && activeTab === "payments" ? (
-                <PaymentConfigPanel paymentConfig={paymentConfig} loading={paymentConfigLoading} embedded={embedded} onRefresh={loadPaymentConfig} onCopy={(value) => void copyText(value, message)} />
-            ) : null}
+function ReconciliationPanel() {
+    const [open, setOpen] = useState(false);
+    return (
+        <Panel
+            title="支付商对账"
+            description="导入支付商账单，按 PaymentAmount 比较 VND 最小单位或加密资产原子单位，不使用模糊的分值字段。"
+            action={
+                <Button type="primary" icon={<FileUp className="size-4" />} onClick={() => setOpen(true)}>
+                    导入账单
+                </Button>
+            }
+        >
+            <div className="rounded-xl border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500 dark:border-stone-700">选择“导入账单”查看近期批次、差异金额和逐行异常。</div>
+            <BillingReconciliationImport open={open} onClose={() => setOpen(false)} />
+        </Panel>
+    );
+}
+
+function PaymentPanel({ initial, embedded }: { initial?: PaymentConfigSummary; embedded: boolean }) {
+    const { message } = App.useApp();
+    const [config, setConfig] = useState<PaymentConfigSummary | null>(initial || null);
+    const [loading, setLoading] = useState(!initial);
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const response = await fetch("/api/admin/billing/payment-config", { cache: "no-store" });
+            const payload = (await response.json().catch(() => null)) as { paymentConfig?: PaymentConfigSummary; error?: string } | null;
+            if (!response.ok || !payload?.paymentConfig) throw new Error(payload?.error || "加载支付配置失败");
+            setConfig(payload.paymentConfig);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "加载支付配置失败");
+        } finally {
+            setLoading(false);
+        }
+    }, [message]);
+    useEffect(() => {
+        if (!config) void load();
+    }, [config, load]);
+    return <PaymentConfigPanel paymentConfig={config} loading={loading} embedded={embedded} onRefresh={load} onCopy={(value) => void navigator.clipboard.writeText(value)} />;
+}
+
+function Panel({ title, description, action, children }: { title: string; description: string; action?: React.ReactNode; children: React.ReactNode }) {
+    return (
+        <section className="min-w-0 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950">
+            <header className="flex items-start justify-between gap-3 border-b border-stone-200 p-3 sm:p-5 dark:border-stone-800">
+                <div>
+                    <h2 className="text-lg font-semibold">{title}</h2>
+                    <p className="mt-1 max-w-3xl text-sm leading-6 text-stone-500 dark:text-stone-400">{description}</p>
+                </div>
+                {action}
+            </header>
+            <div className="min-w-0 p-3 sm:p-5">{children}</div>
+        </section>
+    );
+}
+function Metric({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "danger" }) {
+    return (
+        <div
+            className={`min-w-0 rounded-xl border p-3 ${tone === "danger" ? "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200" : "border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/50"}`}
+        >
+            <div className="text-xs opacity-65">{label}</div>
+            <div className="mt-1 truncate text-lg font-semibold">{value}</div>
         </div>
     );
+}
+function RateCard({ value }: { value?: LogicalModel["saleRateCard"] }) {
+    return <span className="text-xs text-stone-500">{rateCardText(value)}</span>;
+}
+function rateCardText(value: LogicalModel["saleRateCard"] | undefined) {
+    return value?.components?.length ? value.components.map((item) => `${item.dimension}=${item.unitPrice}${item.per ? `/${item.per}` : ""}`).join("；") : "未配置";
+}
+function providerUnitText(value: LogicalModel["bindings"][number]["providerCostUnit"]) {
+    return !value ? "未配置" : value.kind === "fiat" ? value.currency : `${value.provider}:${value.unit} × ${value.usdConversion.usdPerUnit} USD (${value.usdConversion.version})`;
+}
+function formatVnd(value: string) {
+    return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(BigInt(value))} ₫`;
+}
+function formatUsd(value: string) {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 8 }).format(Number(value));
+}
+function statusLabel(status: TopUpOrderStatus) {
+    return ({ pending: "待支付", paid: "已支付", canceled: "已取消", refunding: "退款中", refunded: "已退款" } as const)[status];
+}
+function statusColor(status: TopUpOrderStatus) {
+    return status === "paid" ? "green" : status === "pending" ? "gold" : status === "refunding" ? "orange" : status === "refunded" ? "blue" : "default";
 }

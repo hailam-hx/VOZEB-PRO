@@ -85,13 +85,10 @@ async function createFixture() {
         storageKey: `permanent/backup-test-${suffix}.png`,
         dramaId: `backup-drama-${suffix}`,
     };
-    const planResult = await postgresQuery<{ id: string }>("SELECT id FROM entitlement_plans ORDER BY sort_order ASC LIMIT 1");
-    const planId = planResult.rows[0]?.id;
-    if (!planId) throw new Error("No entitlement plan is available for the PostgreSQL backup integration test");
     await postgresQuery(
-        `INSERT INTO users (id, username, display_name, password_hash, status, plan_id)
-         VALUES ($1, $2, $3, 'integration-test-only', 'active', $4)`,
-        [fixture.userId, fixture.username, fixture.displayName, planId],
+        `INSERT INTO users (id, username, display_name, password_hash, status, settled_balance)
+         VALUES ($1, $2, $3, 'integration-test-only', 'active', 0)`,
+        [fixture.userId, fixture.username, fixture.displayName],
     );
     await postgresQuery("INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')", [fixture.sessionId, fixture.userId, `backup-token-${suffix}`]);
     await postgresQuery("INSERT INTO canvas_projects (id, user_id, title, project_json) VALUES ($1, $2, '备份画布', '{}'::jsonb)", [fixture.canvasId, fixture.userId]);

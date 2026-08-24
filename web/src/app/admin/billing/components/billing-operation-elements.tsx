@@ -5,73 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { App, Button, DatePicker, Form, Input, InputNumber, Modal, Select, Segmented, Space, Switch, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import { AlertTriangle, CheckCircle2, CircleDollarSign, Copy, CreditCard, FileText, FileUp, Landmark, Package, Plus, QrCode, ReceiptText, RefreshCw, Save, Search, Settings2, Undo2, WalletCards, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDollarSign, Copy, CreditCard, FileText, Landmark, Plus, QrCode, ReceiptText, RefreshCw, Save, Settings2, Undo2, WalletCards, XCircle } from "lucide-react";
 
 import { DEFAULT_ALIPAY_PAYMENT_MODE, getAlipayPaymentModePresentation, type PaymentConfigRequirement, type PaymentConfigSummary, type PaymentProviderConfig, type PaymentProviderConfigField } from "@/lib/payment-config-types";
-import type { AdminBillingSummary as BillingSummary } from "@/lib/admin-billing-types";
-import type { BillingOrder, BillingOrderStatus, BillingProduct } from "@/services/api/billing";
-import { BillingReconciliationImport } from "./billing-reconciliation-import";
-
-export function ReconciliationPanel({ reconciliationIssues, summary, onImport }: { reconciliationIssues: number; summary: BillingSummary | null; onImport: () => void }) {
-    return (
-        <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
-            <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">对账检查</div>
-                <Tag color={reconciliationIssues ? "red" : "green"}>{reconciliationIssues ? "需处理" : "正常"}</Tag>
-            </div>
-            <div className="mt-3 space-y-2 text-sm text-stone-600 dark:text-stone-300">
-                <CheckLine label="已支付但缺少成功流水" value={summary?.reconciliation.paidOrdersWithoutSucceededPayment || 0} />
-                <CheckLine label="成功流水未对应已支付订单" value={summary?.reconciliation.succeededPaymentsWithoutPaidOrder || 0} />
-                <CheckLine label="流水金额与订单金额不一致" value={summary?.reconciliation.amountMismatchPayments || 0} />
-            </div>
-            <div className="mt-4 border-t border-stone-200 pt-3 dark:border-stone-800">
-                <Button className="w-full" icon={<FileUp className="size-4" />} onClick={onImport}>
-                    导入支付商账单
-                </Button>
-            </div>
-        </div>
-    );
-}
-
-export function ActiveProductsPanel({ activeProducts }: { activeProducts: BillingProduct[] }) {
-    return (
-        <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
-            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-stone-950 dark:text-stone-100">
-                <Package className="size-4" />
-                在售商品
-            </div>
-            <div className="space-y-2">
-                {activeProducts.length ? (
-                    activeProducts.map((product) => (
-                        <div key={product.id} className="rounded-md border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950">
-                            <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0">
-                                    <div className="truncate text-sm font-medium text-stone-950 dark:text-stone-100">{product.name}</div>
-                                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-stone-500 dark:text-stone-400">{product.description || product.planId}</div>
-                                </div>
-                                <Tag color="green">{formatMoney(product.amountCents, product.currency)}</Tag>
-                            </div>
-                            <div className="mt-2 text-xs text-stone-500 dark:text-stone-400">
-                                {product.pointsAmount} 积分 / {product.periodDays ? `${product.periodDays} 天` : "长期"}
-                            </div>
-                        </div>
-                    ))
-                ) : (
-                    <div className="rounded-md border border-dashed border-stone-200 px-3 py-6 text-center text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">暂无在售商品</div>
-                )}
-            </div>
-        </div>
-    );
-}
-
-export function ProductFact({ label, value }: { label: string; value: string }) {
-    return (
-        <div className="min-w-0 rounded-md bg-white px-2 py-2 ring-1 ring-stone-200 dark:bg-stone-950 dark:ring-stone-800">
-            <div>{label}</div>
-            <div className="mt-1 truncate font-semibold text-stone-950 dark:text-stone-100">{value}</div>
-        </div>
-    );
-}
 
 export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh, onCopy }: { paymentConfig: PaymentConfigSummary | null; loading: boolean; embedded?: boolean; onRefresh: () => Promise<void> | void; onCopy: (value: string) => void }) {
     const { message } = App.useApp();
@@ -460,23 +396,6 @@ export function metricTone(tone: "emerald" | "amber" | "blue" | "rose" | "slate"
     if (tone === "blue") return "bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200";
     if (tone === "rose") return "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200";
     return "bg-stone-100 text-stone-700 dark:bg-stone-900 dark:text-stone-200";
-}
-
-export function statusLabel(status: BillingOrderStatus) {
-    if (status === "pending") return "待支付";
-    if (status === "paid") return "已支付";
-    if (status === "refunding") return "退款处理中";
-    if (status === "closed") return "已关闭";
-    if (status === "canceled") return "已取消";
-    return "已退款";
-}
-
-export function statusColor(status: BillingOrderStatus) {
-    if (status === "pending") return "gold";
-    if (status === "paid") return "green";
-    if (status === "refunded") return "red";
-    if (status === "refunding") return "orange";
-    return "default";
 }
 
 export function providerLabel(value: string) {

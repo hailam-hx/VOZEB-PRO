@@ -15,8 +15,6 @@ describe("serializePublicSettings", () => {
         const settings: AuthSettings = structuredClone(DEFAULT_SETTINGS);
         settings.mail = { ...settings.mail, host: "smtp.internal", username: "mail-user", password: "mail-secret" };
         settings.allowUserApiConfig = true;
-        settings.freeDailyPointsEnabled = true;
-        settings.freeDailyPoints = 99;
         settings.agentSkills = [
             {
                 id: "secret-skill",
@@ -109,7 +107,6 @@ describe("serializePublicSettings", () => {
         expect(result).not.toHaveProperty("agentSkills");
         expect(result).not.toHaveProperty("entitlements");
         expect(result).not.toHaveProperty("allowUserApiConfig");
-        expect(result).not.toHaveProperty("freeDailyPoints");
         expect(result.site).not.toHaveProperty("homeShowcaseMode");
         expect(result.site).not.toHaveProperty("homeShowcaseItems");
         expect(result.site.socials).toEqual(settings.site.socials);

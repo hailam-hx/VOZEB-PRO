@@ -64,29 +64,14 @@ export function masonryLayoutIsReady(layout: Awaited<ReturnType<typeof readMason
     return layout.columnCount === expectedColumns && layout.firstRowLefts.length === expectedColumns && new Set(layout.firstRowLefts).size === expectedColumns && layout.firstRowTopRange <= 1 && layout.nextItemLeft === layout.shortestColumnLeft;
 }
 
-export function billingProductsFixture() {
-    const timestamp = "2026-08-02T00:00:00.000Z";
+export function topUpPresetsFixture() {
     return Array.from({ length: 8 }, (_, index) => ({
-        id: `e2e-plan-${index + 1}`,
-        productKind: "points",
-        name: `E2E 创作积分包 ${index + 1}`,
-        description: `用于验证多套餐响应式布局 ${index + 1}`,
-        amountCents: (index + 1) * 900,
-        currency: "CNY",
-        pointsAmount: (index + 1) * 100,
-        dailyPoints: 0,
-        periodDays: 0,
+        id: `e2e-top-up-${index + 1}`,
+        name: `E2E 充值预设 ${index + 1}`,
+        description: `用于验证充值网格响应式布局 ${index + 1}`,
+        nominalNativeAmount: String((index + 1) * 100000),
         enabled: true,
         sortOrder: index,
-        metadata: { recommended: index === 2, features: ["图片与视频创作", "订单和积分流水可查", "支付成功自动到账"] },
-        pricing: {
-            listUnitAmountCents: (index + 1) * 1_000,
-            saleUnitAmountCents: (index + 1) * 900,
-            discountCents: (index + 1) * 100,
-            promotion: { id: `promo-${index + 1}`, label: "限时优惠", unitAmountCents: (index + 1) * 900, startsAt: timestamp, endsAt: timestamp },
-        },
-        createdAt: timestamp,
-        updatedAt: timestamp,
     }));
 }
 

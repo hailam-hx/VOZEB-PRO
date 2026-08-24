@@ -20,8 +20,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     try {
         const { id } = await context.params;
-        const body = await readJsonBody<{ displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; adminPermissions?: unknown; status?: unknown; pointsBalance?: unknown; planId?: unknown }>(request);
-        const patch: { displayName?: string; email?: string; password?: string; role?: UserRole; adminPermissions?: ReturnType<typeof normalizeAdminPermissions>; status?: UserStatus; pointsBalance?: number; planId?: string } = {};
+        const body = await readJsonBody<{ displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; adminPermissions?: unknown; status?: unknown; settledBalance?: unknown }>(request);
+        const patch: { displayName?: string; email?: string; password?: string; role?: UserRole; adminPermissions?: ReturnType<typeof normalizeAdminPermissions>; status?: UserStatus; settledBalance?: string } = {};
 
         if (typeof body.displayName === "string") patch.displayName = body.displayName;
         if (typeof body.email === "string") patch.email = body.email;
@@ -29,15 +29,14 @@ export async function PATCH(request: Request, context: RouteContext) {
         if (body.role === "admin" || body.role === "user") patch.role = body.role;
         if (Array.isArray(body.adminPermissions)) patch.adminPermissions = normalizeAdminPermissions(body.adminPermissions);
         if (body.status === "active" || body.status === "disabled") patch.status = body.status;
-        if (body.pointsBalance !== undefined) patch.pointsBalance = Number(body.pointsBalance);
-        if (typeof body.planId === "string") patch.planId = body.planId;
+        if (typeof body.settledBalance === "string") patch.settledBalance = body.settledBalance;
 
         const user = await updateUserByAdmin(currentUser.id, id, patch);
         await safeRecordAuditLog({
             action: "admin.user.update",
             actor: auditActorFromRequest(request, currentUser),
             target: { type: "user", id: user.id, label: user.username },
-            metadata: { fields: Object.keys(patch), role: user.role, adminPermissions: user.adminPermissions, status: user.status, planId: user.planId, pointsBalance: user.pointsBalance },
+            metadata: { fields: Object.keys(patch), role: user.role, adminPermissions: user.adminPermissions, status: user.status, settledBalance: user.settledBalance },
         });
         return NextResponse.json({ user });
     } catch (error) {

@@ -326,7 +326,12 @@ async function runClaudeTextTask(task: TextTask, origin: string, cookie: string,
     return { content, ...readBilling(response.headers), usageHeaders: response.headers, usagePayload: payload };
 }
 
-async function completeTextTask(task: TextTask, content: string, billing: { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string; usageHeaders?: Headers; usagePayload?: unknown }, attempts: NonNullable<TextTask["attempts"]>): Promise<TextTaskStep> {
+async function completeTextTask(
+    task: TextTask,
+    content: string,
+    billing: { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string; usageHeaders?: Headers; usagePayload?: unknown },
+    attempts: NonNullable<TextTask["attempts"]>,
+): Promise<TextTaskStep> {
     const succeeded = finishGenerationAttempt(attempts, task.attemptNo || attempts.at(-1)?.attemptNo || 1, {
         status: "succeeded",
         pointsCost: billing.pointsCost,
@@ -480,7 +485,7 @@ async function readFetchError(response: Response, fallback: string) {
 }
 
 function readStatusError(status: number | undefined, fallback: string) {
-    if (status === 401 || status === 403) return "鉴权失败，请检查 API Key、套餐权限或模型权限";
+    if (status === 401 || status === 403) return "鉴权失败，请检查 API Key、账号权限或模型权限";
     if (status === 429) return "请求被限流或额度不足，请稍后重试";
     return status ? `${fallback}，状态码 ${status}` : fallback;
 }

@@ -6,6 +6,7 @@ import type { TableColumnsType } from "antd";
 import { AlertTriangle, FileUp, RefreshCw, Search } from "lucide-react";
 
 import type { BillingReconciliationResult, BillingReconciliationRow, BillingReconciliationRun } from "@/lib/admin-billing-types";
+import type { PaymentAmount } from "@/lib/billing/money";
 
 type BillingReconciliationImportProps = {
     open: boolean;
@@ -20,7 +21,7 @@ const providerOptions = [
     { label: "人工确认", value: "manual" },
 ];
 
-const sampleCsv = "商户订单号,支付流水号,金额,币种,状态\nVZ202607160001,ch_123,19.90,CNY,succeeded";
+const sampleCsv = "商户订单号,支付流水号,金额,币种,状态\nVZ202607160001,ch_123,250000,VND,succeeded";
 
 export function BillingReconciliationImport({ open, onClose }: BillingReconciliationImportProps) {
     const { message } = App.useApp();
@@ -38,9 +39,9 @@ export function BillingReconciliationImport({ open, onClose }: BillingReconcilia
         setRecentLoading(true);
         try {
             const response = await fetch("/api/admin/billing/reconciliation?page=1&pageSize=6", { cache: "no-store" });
-            const payload = (await response.json().catch(() => null)) as { runs?: BillingReconciliationRun[]; error?: string } | null;
-            if (!response.ok || !payload?.runs) throw new Error(payload?.error || "加载最近对账记录失败");
-            setRecentRuns(payload.runs);
+            const payload = (await response.json().catch(() => null)) as { code?: number; data?: { runs?: BillingReconciliationRun[] }; msg?: string } | null;
+            if (!response.ok || payload?.code !== 0 || !payload.data?.runs) throw new Error(payload?.msg || "加载最近对账记录失败");
+            setRecentRuns(payload.data.runs);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "加载最近对账记录失败");
         } finally {
@@ -60,10 +61,10 @@ export function BillingReconciliationImport({ open, onClose }: BillingReconcilia
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ provider, csvText, fileName }),
             });
-            const payload = (await response.json().catch(() => null)) as { reconciliation?: BillingReconciliationResult; error?: string } | null;
-            if (!response.ok || !payload?.reconciliation) throw new Error(payload?.error || "支付账单对账失败");
-            setResult(payload.reconciliation);
-            message.success(payload.reconciliation.issueRows ? "对账已保存，发现需要处理的差异" : "对账已保存，未发现异常");
+            const payload = (await response.json().catch(() => null)) as { code?: number; data?: { reconciliation?: BillingReconciliationResult }; msg?: string } | null;
+            if (!response.ok || payload?.code !== 0 || !payload.data?.reconciliation) throw new Error(payload?.msg || "支付账单对账失败");
+            setResult(payload.data.reconciliation);
+            message.success(payload.data.reconciliation.issueRows ? "对账已保存，发现需要处理的差异" : "对账已保存，未发现异常");
             await loadRecentRuns();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "支付账单对账失败");
@@ -76,9 +77,9 @@ export function BillingReconciliationImport({ open, onClose }: BillingReconcilia
         setDetailLoadingId(runId);
         try {
             const response = await fetch(`/api/admin/billing/reconciliation?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
-            const payload = (await response.json().catch(() => null)) as { reconciliation?: BillingReconciliationResult; error?: string } | null;
-            if (!response.ok || !payload?.reconciliation) throw new Error(payload?.error || "加载对账明细失败");
-            setResult(payload.reconciliation);
+            const payload = (await response.json().catch(() => null)) as { code?: number; data?: { reconciliation?: BillingReconciliationResult }; msg?: string } | null;
+            if (!response.ok || payload?.code !== 0 || !payload.data?.reconciliation) throw new Error(payload?.msg || "加载对账明细失败");
+            setResult(payload.data.reconciliation);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "加载对账明细失败");
         } finally {
@@ -178,9 +179,9 @@ function ReconciliationResultView({ result }: { result: BillingReconciliationRes
                 <ResultMetric label="异常行" value={result.issueRows} tone={result.issueRows ? "rose" : "emerald"} />
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
-                <ResultMetric label="支付商收款" value={formatMoney(result.totals.statementPaidAmountCents)} />
-                <ResultMetric label="支付商退款" value={formatMoney(result.totals.statementRefundedAmountCents)} />
-                <ResultMetric label="差额" value={formatMoney(result.totals.differenceAmountCents)} tone={result.totals.differenceAmountCents ? "rose" : "slate"} />
+                <ResultMetric label="支付商收款" value={formatPaymentAmount(result.totals.statementPaidAmount)} />
+                <ResultMetric label="支付商退款" value={formatPaymentAmount(result.totals.statementRefundedAmount)} />
+                <ResultMetric label="差额" value={formatPaymentAmount(result.totals.differenceAmount)} tone={isNonZeroAmount(result.totals.differenceAmount) ? "rose" : "slate"} />
             </div>
             <Table rowKey={(row) => `${row.rowNumber}:${row.key}`} size="small" columns={columns} dataSource={result.rows} scroll={{ x: 980 }} pagination={{ pageSize: 8, showSizeChanger: false }} />
         </div>
@@ -216,7 +217,7 @@ function RecentRunsTable({ runs, loading, detailLoadingId, onRefresh, onOpen }: 
         {
             title: "差额",
             width: 120,
-            render: (_, run) => <span className={run.differenceAmountCents ? "text-rose-600 dark:text-rose-300" : ""}>{formatMoney(run.differenceAmountCents)}</span>,
+            render: (_, run) => <span className={isNonZeroAmount(run.differenceAmount) ? "text-rose-600 dark:text-rose-300" : ""}>{formatPaymentAmount(run.differenceAmount)}</span>,
         },
         {
             title: "操作",
@@ -255,7 +256,7 @@ const columns: TableColumnsType<BillingReconciliationRow> = [
             <div className="min-w-0">
                 <div className="truncate font-medium text-stone-950 dark:text-stone-100">{row.orderNo || row.providerPaymentId || row.providerOrderId || "-"}</div>
                 <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">
-                    {statusLabel(row.statementStatus)} / {row.amountCents === undefined ? "-" : formatMoney(row.amountCents, row.currency)}
+                    {statusLabel(row.statementStatus)} / {row.statementPaymentAmount ? formatPaymentAmount(row.statementPaymentAmount) : "-"}
                 </div>
             </div>
         ),
@@ -267,7 +268,7 @@ const columns: TableColumnsType<BillingReconciliationRow> = [
             <div className="min-w-0">
                 <div className="truncate font-medium text-stone-950 dark:text-stone-100">{row.localOrderNo || "-"}</div>
                 <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">
-                    {row.localOrderStatus || "-"} / {row.localAmountCents === undefined ? "-" : formatMoney(row.localAmountCents, row.localCurrency)}
+                    {row.localOrderStatus || "-"} / {row.localPaymentAmount ? formatPaymentAmount(row.localPaymentAmount) : "-"}
                 </div>
             </div>
         ),
@@ -323,9 +324,18 @@ function providerLabel(provider: string) {
     return provider || "-";
 }
 
-function formatMoney(cents: number, currency = "CNY") {
-    const amount = (Number(cents || 0) / 100).toFixed(2);
-    return currency === "CNY" ? `¥${amount}` : `${currency} ${amount}`;
+function formatPaymentAmount(amount: PaymentAmount) {
+    if (amount.kind === "fiat") {
+        const divisor = 10 ** amount.minorUnitExponent;
+        return new Intl.NumberFormat("vi-VN", { style: "currency", currency: amount.currency, maximumFractionDigits: amount.minorUnitExponent }).format(Number(amount.amountMinor) / divisor);
+    }
+    const digits = amount.amountAtomic.padStart(amount.decimals + 1, "0");
+    const value = amount.decimals ? `${digits.slice(0, -amount.decimals)}.${digits.slice(-amount.decimals)}` : digits;
+    return `${value} ${amount.asset} (${amount.network})`;
+}
+
+function isNonZeroAmount(amount: PaymentAmount) {
+    return BigInt(amount.kind === "fiat" ? amount.amountMinor : amount.amountAtomic) !== BigInt(0);
 }
 
 function formatDateTime(value: string) {

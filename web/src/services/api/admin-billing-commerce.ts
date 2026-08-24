@@ -1,64 +1,64 @@
-import type { BillingProduct, CouponTemplate, UserCoupon } from "@/services/api/billing";
-
-export type PromotionCampaign = {
-    id: string;
-    name: string;
-    label: string;
-    enabled: boolean;
-    startsAt: string;
-    endsAt: string;
-    products: Array<{ productId: string; promotionalAmountCents: number }>;
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type PromotionCampaignInput = Pick<PromotionCampaign, "name" | "label" | "enabled" | "startsAt" | "endsAt" | "products">;
-
-export type CouponTemplateInput = Pick<
-    CouponTemplate,
-    "code" | "name" | "description" | "discountType" | "discountValue" | "minimumAmountCents" | "maximumDiscountCents" | "stackWithPromotion" | "claimable" | "enabled" | "startsAt" | "endsAt" | "totalLimit" | "perUserLimit" | "productIds"
->;
+import type { AdminBillingSummary, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
+import type { TopUpOrder, TopUpOrderStatus, TopUpPreset } from "./billing";
 
 type PageResult<T, K extends string> = Record<K, T[]> & { total: number; page: number; pageSize: number };
+export type AdminTopUpOrder = TopUpOrder & { user?: { accountId?: string; username?: string; displayName?: string; avatarUrl?: string } };
+export type AdminTopUpRefundResult = {
+    orderId: string;
+    applied?: boolean;
+    duplicate?: boolean;
+    failed?: boolean;
+    manualReview?: boolean;
+    recoveredCreditAmount?: string;
+    recoveryState?: "recovered" | "released";
+    reason?: string;
+    providerRefund?: { status: "succeeded" | "failed" | "manual"; providerRefundId?: string };
+};
 
-export function listAdminPromotions(page = 1, pageSize = 20) {
-    return requestCommerce<PageResult<PromotionCampaign, "campaigns">>(`/api/admin/billing/promotions?page=${page}&pageSize=${pageSize}`);
+export function listAdminTopUpOrders(input: { page?: number; pageSize?: number; status?: TopUpOrderStatus | ""; keyword?: string } = {}) {
+    return requestCommerce<PageResult<AdminTopUpOrder, "orders">>(`/api/admin/billing/orders?${query(input)}`);
 }
 
-export function createAdminPromotion(input: PromotionCampaignInput) {
-    return requestCommerce<{ campaign: PromotionCampaign }>("/api/admin/billing/promotions", jsonRequest("POST", input));
+export function refundAdminTopUpOrder(id: string, reason: string) {
+    return requestCommerce<AdminTopUpRefundResult>(`/api/admin/billing/orders/${encodeURIComponent(id)}/refund`, jsonRequest("POST", { reason }));
 }
 
-export function updateAdminPromotion(id: string, input: PromotionCampaignInput) {
-    return requestCommerce<{ campaign: PromotionCampaign }>(`/api/admin/billing/promotions/${encodeURIComponent(id)}`, jsonRequest("PATCH", input));
+export function getAdminTopUpSummary(input: { startDate?: string; endDate?: string } = {}) {
+    return requestCommerce<{ summary: AdminBillingSummary }>(`/api/admin/billing/summary?${query(input)}`);
 }
 
-export function deleteAdminPromotion(id: string) {
-    return requestCommerce<{ campaign: PromotionCampaign }>(`/api/admin/billing/promotions/${encodeURIComponent(id)}`, { method: "DELETE" });
+export function listAdminTopUpPresets() {
+    return requestCommerce<{ presets: TopUpPreset[] }>("/api/admin/billing/top-up-presets");
 }
 
-export function listAdminCouponTemplates(page = 1, pageSize = 20) {
-    return requestCommerce<PageResult<CouponTemplate, "templates">>(`/api/admin/billing/coupon-templates?page=${page}&pageSize=${pageSize}`);
+export function saveAdminTopUpPreset(input: Partial<TopUpPreset>) {
+    return requestCommerce<{ preset: TopUpPreset }>(input.id ? `/api/admin/billing/top-up-presets/${encodeURIComponent(input.id)}` : "/api/admin/billing/top-up-presets", jsonRequest(input.id ? "PATCH" : "POST", input));
 }
 
-export function createAdminCouponTemplate(input: CouponTemplateInput) {
-    return requestCommerce<{ template: CouponTemplate }>("/api/admin/billing/coupon-templates", jsonRequest("POST", input));
+export function deleteAdminTopUpPreset(id: string) {
+    return requestCommerce<{ id: string }>(`/api/admin/billing/top-up-presets/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export function updateAdminCouponTemplate(id: string, input: CouponTemplateInput) {
-    return requestCommerce<{ template: CouponTemplate }>(`/api/admin/billing/coupon-templates/${encodeURIComponent(id)}`, jsonRequest("PATCH", input));
+export function getAdminTopUpConfig() {
+    return requestCommerce<{ config: AdminTopUpConfig | null }>("/api/admin/billing/top-up-config");
 }
 
-export function deleteAdminCouponTemplate(id: string) {
-    return requestCommerce<{ template: CouponTemplate }>(`/api/admin/billing/coupon-templates/${encodeURIComponent(id)}`, { method: "DELETE" });
+export function saveAdminTopUpConfig(input: AdminTopUpConfig) {
+    return requestCommerce<{ config: AdminTopUpConfig }>("/api/admin/billing/top-up-config", jsonRequest("PATCH", input));
 }
 
-export function grantAdminCoupon(input: { userId: string; templateId: string }) {
-    return requestCommerce<{ coupon: UserCoupon }>("/api/admin/billing/coupons/grant", jsonRequest("POST", input));
+export function getAdminUsageAudit(input: { page?: number; pageSize?: number } = {}) {
+    return requestCommerce<{ items: AdminUsageAuditItem[]; recovery: AdminRecoveryItem[]; total: number; page: number; pageSize: number; zeroUsage: number; negativeMargin: number }>(`/api/admin/billing/usage?${query(input)}`);
 }
 
-export function adminProductLabel(products: BillingProduct[], productId: string) {
-    return products.find((product) => product.id === productId)?.name || productId;
+export function recoverAdminUsageHolds() {
+    return requestCommerce<{ inspected: number; retained: number; settled: number; released: number; needsReview: number }>("/api/admin/billing/usage/recovery", { method: "POST" });
+}
+
+function query(input: Record<string, unknown>) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(input)) if (value !== undefined && value !== "") params.set(key, String(value));
+    return params.toString();
 }
 
 function jsonRequest(method: "POST" | "PATCH", body: unknown): RequestInit {

@@ -27,7 +27,7 @@ VOZEB_PRO_DATABASE_PROVIDER=file
 
 ## 表名前缀
 
-VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。业务代码里仍然使用逻辑表名，例如 `users`、`billing_orders`、`generation_logs`；数据库执行层会统一映射为真实表名：
+VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。业务代码里仍然使用逻辑表名，例如 `users`、`top_up_orders`、`generation_logs`；数据库执行层会统一映射为真实表名：
 
 - `users` -> `vozeb_pro_users`
 - `top_up_orders` -> `vozeb_pro_top_up_orders`
@@ -38,15 +38,15 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 ## 核心表
 
 - `vozeb_pro_schema_migrations`：已应用的数据库结构版本。
-- `vozeb_pro_app_settings`：站点、注册、邮箱、积分、生成、支付配置、逻辑模型目录、渠道绑定和默认模型等全局设置；`logical_models` JSONB 保存用户可见模型及其能力、上游模型、渠道、启用状态和优先级，`generation_cost_control` JSONB 保存管理员配置的单任务、单用户每日和全站每日积分成本上限，三个值为 `0` 时均表示不限制；`data_lifecycle` JSONB 保存四类技术到期清理开关和单类批次大小，不承载对话、支付、审计等长期业务数据的法律保留期限。
+- `vozeb_pro_app_settings`：站点、注册、邮箱、积分、生成、支付配置、逻辑模型目录、渠道绑定和默认模型等全局设置；`logical_models` JSONB 保存用户可见模型及其能力、上游模型、渠道、启用状态和优先级，`generation_cost_control` JSONB 保存管理员配置的单任务、单用户日消费和全站日消费积分成本上限，三个值为 `0` 时均表示不限制；`data_lifecycle` JSONB 保存四类技术到期清理开关和单类批次大小，不承载对话、支付、审计等长期业务数据的法律保留期限。
 - `vozeb_pro_object_storage_settings`：S3 兼容外部存储单例配置，保存启用状态、Endpoint、Region、Bucket、对象前缀、path-style 模式及加密后的 Access Key/Secret Key；管理接口只返回密钥是否已配置，不回传明文。
 - `vozeb_pro_system_model_channels`：系统模型渠道、分别加密保存的 API Key 与渠道生成回调密钥、模型列表和高级配置；后台不保存渠道验证记录。
-- `vozeb_pro_users`：用户账号、角色、状态、头像存储键、最多 160 字的个人简介、`numeric(30,8)` 已结算余额和密码哈希。新用户的已结算余额从零开始；可用余额由已结算余额减去有效预留实时派生，不保存套餐、每日余额或永久/每日拆分字段。`admin_permissions` JSONB 保存管理员的显式职责列表，并由 CHECK 约束保证为数组，普通用户保持空数组。管理员 TOTP MFA 使用 `mfa_secret_ciphertext` 保存 AES-GCM 密文，`mfa_enabled_at` 表示已完成验证并启用，CHECK 约束禁止启用时间存在但密文缺失。公开注册还原子保存当时的服务条款版本/链接、隐私政策版本/链接和同意时间，五个留痕字段必须同时为空或同时存在。管理员代建账号不伪造用户同意记录。公开创作者接口只按用户名返回允许公开的资料字段，不暴露邮箱、内部用户 ID、职责、MFA 密文或协议留痕。
+- `vozeb_pro_users`：用户账号、角色、状态、头像存储键、最多 160 字的个人简介、`numeric(30,8)` 已结算余额和密码哈希。新用户的已结算余额从零开始；冻结余额由有效预留聚合，可用余额由已结算余额减去冻结余额实时派生，不保存任何周期性额度或余额分桶字段。`admin_permissions` JSONB 保存管理员的显式职责列表，并由 CHECK 约束保证为数组，普通用户保持空数组。管理员 TOTP MFA 使用 `mfa_secret_ciphertext` 保存 AES-GCM 密文，`mfa_enabled_at` 表示已完成验证并启用，CHECK 约束禁止启用时间存在但密文缺失。公开注册还原子保存当时的服务条款版本/链接、隐私政策版本/链接和同意时间，五个留痕字段必须同时为空或同时存在。管理员代建账号不伪造用户同意记录。公开创作者接口只按用户名返回允许公开的资料字段，不暴露邮箱、内部用户 ID、职责、MFA 密文或协议留痕。
 - `vozeb_pro_sessions`：登录会话 token 哈希和过期时间。
 - `vozeb_pro_account_deletion_requests`：账号注销申请、用户资料快照、申请状态、管理员处理备注与处理人快照；同一用户同一时间只能存在一条待处理申请，受理不会自动停用账号或删除业务数据。
 - `vozeb_pro_rate_limits`：PostgreSQL 多实例共享的接口限流窗口，保存哈希后的业务键、原子请求计数和重置时间；数据库不可用时服务端临时退回进程内保护。
 - `vozeb_pro_email_codes`：注册、换绑邮箱、找回密码验证码及失败尝试次数。
-- `vozeb_pro_quota_usage`：按用户、日期和生成能力保存每日积分与次数占用；套餐关闭但生成成本保护启用时仍会写入，以便按用户和全站聚合实际积分成本，退款会原子回退对应日期的占用。
+- `vozeb_pro_quota_usage`：按用户、自然日和生成能力累计积分成本与次数占用；它是管理员生成成本保护的审计数据，不是可消费余额，所有真实调用都会写入，退款会原子回退对应日期的占用。
 - `vozeb_pro_point_records`：已结算余额流水。`amount` 和 `balance_after` 使用 `numeric(30,8)`，金额不得为零；只记录真实的入账、退款、管理员调整和已结算消费，不记录预留。
 - `vozeb_pro_wallet_holds`：独立积分预留，使用稳定业务 ID、请求指纹和 `numeric(30,8)` 金额保证幂等；状态为 `active/settled/released`，只有 `active` 记录计入 held balance。`runtime_snapshot` 冻结逻辑模型、完整售卖费率、规范化预留用量、输入/输出限制、预留明细、稳定业务 ID、原始请求指纹、稳定任务身份与供应商幂等能力，`review_reason` 保存无法自动判定的恢复原因；进入人工复核的 active hold 不再被自动恢复批次重复选中。预留、余额检查和用户行锁在同一事务完成；释放身份、指纹和原因随关闭状态持久化，冲突重放会被拒绝。
 - `vozeb_pro_usage_charges`：一次用量结算审计，复制 hold 的完整运行时计费快照，并保存 Task 1 权威最终售卖结算、规范化用量、售卖费率快照、预留/结算积分和所有供应商尝试的总美元成本。积分和美元不直接相减；非零结算必须通过同用户复合外键唯一关联一条消费流水，零结算不得关联流水。
@@ -54,10 +54,10 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_top_up_presets`：VND 法币充值预设，只保存服务端标称金额、名称、排序和上下架状态；自定义 VND 金额不需要伪造一条预设。
 - `vozeb_pro_top_up_promotions` / `vozeb_pro_top_up_coupon_templates` / `vozeb_pro_top_up_user_coupons`：充值专用活动、固定币种或比例优惠券及用户券；创建订单时在事务内校验并绑定锁定，支付成功仅核销同一订单绑定的用户券，取消或确认过期仅释放同一订单的锁定。
 - `vozeb_pro_coupon_redemptions`：订单优惠券核销凭证，每个订单最多一条；整单退款将核销标记为 `refunded`，不自动返券，避免退款套利。
-- `vozeb_pro_referral_programs`：单例邀请计划设置，保存功能开关、首单实付门槛、冷静期、邀请人积分、新用户积分或优惠券、月度/活动上限和自动冻结策略。
+- `vozeb_pro_referral_programs`：单例邀请计划设置，保存功能开关、首单实付门槛、冷静期、邀请人积分、新用户积分、月度/活动上限和自动冻结策略。
 - `vozeb_pro_referral_codes`：每个用户唯一的稳定邀请码；新邀请码由数据库唯一的公开账号 ID 生成，不再依赖随机碰撞重试。表内只保存聚合点击数和最后访问时间，不保存原始 IP、完整 User-Agent 或设备指纹。
 - `vozeb_pro_referral_relationships`：单层邀请关系和归因摘要，受邀用户唯一；保存 HMAC 网络/支付身份风险信号、人工风险状态和处置证据，禁止自邀、重复绑定和两层循环邀请。
-- `vozeb_pro_referral_rewards`：首笔有效实付订单生成的邀请人/新用户奖励记录，保存待结算、已发放、已撤销、已拒绝和撤销待复核状态，并关联积分流水、优惠券和触发订单。
+- `vozeb_pro_referral_rewards`：首笔有效实付订单生成的邀请人/新用户奖励记录，保存待结算、已发放、已撤销、已拒绝和撤销待复核状态，并关联积分流水和触发订单。
 - `vozeb_pro_top_up_orders`：充值订单主表。服务端一次性快照标称/应付 VND、标称/实付 USD、VND 指数、价格版本、客户 FX 版本与汇率、活动/券/预设和最终授信积分；客户端与支付商载荷不能覆盖这些字段。原生支付状态、积分授信状态、支付商退款状态和积分恢复状态分别保存，禁止用一个 `status` 推断全部财务阶段。
 - `vozeb_pro_top_up_payments`：支付流水使用 fiat/crypto-ready 联合结构。V1 只创建 VND fiat Checkout；crypto 的资产、网络、原子金额、小数位与交易哈希仅保留协议和唯一索引，不开放下单。
 - `vozeb_pro_top_up_payment_events`：按 `provider + event_id` 和载荷指纹登记回调。签名、渠道、事件、订单、金额、币种与已支付状态全部核验后，才允许使用稳定业务 ID 授信一次。
@@ -138,7 +138,7 @@ Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，�
 
 外部存储开关只决定新媒体写入位置。开启后新上传和新生成媒体只写对象存储，不保留本地持久副本；关闭后新媒体恢复写入 `VOZEB_PRO_DATA_DIR`。后台可把已有本地登记分批迁移到对象存储，迁移候选和过期清理均通过带条件和上限的批次查询读取；只有对象上传和登记更新成功后才删除本地源文件，失败文件保留用于重试。
 
-`topUps` Repository 提供充值预设、权威报价快照和订单读写。`GET /api/billing/top-ups/presets` 返回 `presets`，`POST /api/billing/top-ups/quotes` 接受 `presetId` 或 `customAmountVnd`，`POST /api/billing/top-ups/orders` 保存服务端报价并忽略客户端财务字段；这些接口统一返回 `{ code, data, msg }`。推荐门槛只读取已核验订单的 `nominalUsdValue`，财务汇总按原生支付币种分组并只汇总订单上的 USD 快照。
+`topUps` Repository 提供充值预设、权威报价快照和订单读写。`GET /api/billing/top-ups/presets` 返回 `presets`，`POST /api/billing/top-ups/quotes` 接受 `presetId` 或 `customAmountVnd`，`POST /api/billing/top-ups/orders` 保存服务端报价；客户端一旦提交积分、FX、定价版本、币种指数、USD 快照、成本或毛利字段就会被拒绝。这些接口统一返回 `{ code, data, msg }`。推荐门槛只读取已核验订单的 `nominalUsdValue`，财务汇总按原生支付币种分组并只汇总订单上的 USD 快照。
 
 后台支付配置已通过 `vozeb_pro_app_settings.payment_config` 保存；Stripe、支付宝、微信支付、PayPly 和人工确认的密钥会按字段加密存储。支付宝在同一个 Provider 配置内保存 `mode=official|face_to_face`，因此官方支付和当面付天然互斥，不会向用户暴露两个支付宝渠道。支付下单、回调验签和后台配置状态读取时优先使用后台保存值，环境变量仍作为服务器部署兜底。
 

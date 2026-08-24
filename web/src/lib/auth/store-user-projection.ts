@@ -4,7 +4,11 @@ import type { AuthenticatedUserRecord, UserSummaryRecord } from "@/lib/server/da
 import type { AuthDatabase, PublicUser, PublicUserSummary, StoredUser } from "./store-types";
 
 export function toPublicUser(user: StoredUser, db?: Pick<AuthDatabase, "walletHolds">): PublicUser {
-    const heldBalance = db?.walletHolds.filter((hold) => hold.userId === user.id && hold.status === "active").reduce((sum, hold) => sum.plus(decimal(hold.amount)), decimal(0)).toString() || "0";
+    const heldBalance =
+        db?.walletHolds
+            .filter((hold) => hold.userId === user.id && hold.status === "active")
+            .reduce((sum, hold) => sum.plus(decimal(hold.amount)), decimal(0))
+            .toString() || "0";
     return buildPublicUser(user, heldBalance);
 }
 
@@ -13,7 +17,7 @@ export function publicUserFromAuthenticatedRecord(record: AuthenticatedUserRecor
 }
 
 export function toPublicUserSummary(summary: UserSummaryRecord): PublicUserSummary;
-export function toPublicUserSummary(users: StoredUser[], _defaultPlanId?: string): PublicUserSummary;
+export function toPublicUserSummary(users: StoredUser[]): PublicUserSummary;
 export function toPublicUserSummary(input: UserSummaryRecord | StoredUser[]): PublicUserSummary {
     if (!Array.isArray(input)) return input;
     return {
@@ -26,7 +30,7 @@ export function toPublicUserSummary(input: UserSummaryRecord | StoredUser[]): Pu
     };
 }
 
-export const summarizePublicUsers = (users: PublicUser[], _defaultPlanId?: string): PublicUserSummary => ({
+export const summarizePublicUsers = (users: PublicUser[]): PublicUserSummary => ({
     total: users.length,
     active: users.filter((user) => user.status === "active").length,
     disabled: users.filter((user) => user.status === "disabled").length,
@@ -37,9 +41,7 @@ export const summarizePublicUsers = (users: PublicUser[], _defaultPlanId?: strin
 
 export function matchesPublicUser(user: PublicUser, input: { keyword?: string; role?: string; status?: string }) {
     const keyword = input.keyword?.trim().toLowerCase();
-    return (!input.role || user.role === input.role)
-        && (!input.status || user.status === input.status)
-        && (!keyword || [user.accountId, user.username, user.email, user.displayName].some((value) => value?.toLowerCase().includes(keyword)));
+    return (!input.role || user.role === input.role) && (!input.status || user.status === input.status) && (!keyword || [user.accountId, user.username, user.email, user.displayName].some((value) => value?.toLowerCase().includes(keyword)));
 }
 
 function buildPublicUser(user: StoredUser | AuthenticatedUserRecord["user"], heldBalance: string): PublicUser {

@@ -66,7 +66,6 @@ const POSTGRES_TABLES = [
     "drama_project_versions",
     "creative_run_events",
     "audit_logs",
-    "check_ins",
 ] as const;
 
 const POSTGRES_SCHEMA_OBJECTS = [

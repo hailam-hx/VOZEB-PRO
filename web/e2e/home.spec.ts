@@ -25,8 +25,6 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         galleryRequest = route.request().url();
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) });
     });
-    await page.route("**/api/billing/products", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ products: [], paymentProviders: [] }) }));
-
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { level: 1, name: "一个入口 完成所有 AI 创作" })).toBeVisible();
     await expect(page.locator("h1")).toHaveCount(1);
@@ -68,7 +66,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         await expect(headerNavigation.getByRole("button", { name: "创作 Agent" })).toHaveCount(1);
         await expect(headerNavigation.getByRole("button", { name: "短剧制作" })).toHaveCount(1);
         await expect(headerNavigation.getByRole("link", { name: "作品广场" })).toHaveCount(1);
-        await expect(headerNavigation.getByRole("button", { name: "价格方案" })).toHaveCount(1);
+        await expect(headerNavigation.getByRole("button", { name: "积分充值" })).toHaveCount(1);
         await expect(headerNavigation.getByText("图片工作台", { exact: true })).toHaveCount(0);
         await expect(headerNavigation.getByText("视频工作台", { exact: true })).toHaveCount(0);
         await page
@@ -80,18 +78,17 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
 
         const navGlass = page.getByTestId("home-nav-glass");
         const firstNavItem = headerNavigation.getByRole("button", { name: "创作 Agent" });
-        const lastNavItem = headerNavigation.getByRole("button", { name: "价格方案" });
+        const lastNavItem = headerNavigation.getByRole("button", { name: "积分充值" });
         await firstNavItem.hover();
         await expect(navGlass).toHaveCSS("opacity", "1");
         await expect.poll(() => centerOffset(navGlass, firstNavItem)).toBeLessThanOrEqual(1);
         await lastNavItem.hover();
         await expect.poll(() => centerOffset(navGlass, lastNavItem)).toBeLessThanOrEqual(1);
         await lastNavItem.click();
-        const plansDialog = page.getByRole("dialog");
-        await expect(plansDialog.getByText("选择适合的套餐", { exact: true })).toBeVisible();
-        await expect(plansDialog.getByText("暂无可用套餐", { exact: true })).toBeVisible();
-        await plansDialog.getByRole("button", { name: "关闭套餐选择" }).click();
-        await expect(plansDialog).toBeHidden();
+        const loginDialog = page.getByRole("dialog");
+        await expect(loginDialog).toBeVisible();
+        await loginDialog.getByRole("button", { name: "Close" }).click();
+        await expect(loginDialog).toBeHidden();
     } else {
         await expect(headerNavigation).toHaveCount(0);
         const menuButton = page.getByRole("button", { name: "打开导航菜单" });
@@ -101,7 +98,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         await expect(mobileNavigation.getByRole("button", { name: "创作 Agent" })).toHaveCount(1);
         await expect(mobileNavigation.getByRole("button", { name: "短剧制作" })).toHaveCount(1);
         await expect(mobileNavigation.getByRole("link", { name: "作品广场" })).toHaveCount(1);
-        await expect(mobileNavigation.getByRole("button", { name: "价格方案" })).toHaveCount(1);
+        await expect(mobileNavigation.getByRole("button", { name: "积分充值" })).toHaveCount(1);
         await page.getByRole("button", { name: "关闭导航菜单" }).click();
         await expect(mobileNavigation).toHaveCount(0);
     }

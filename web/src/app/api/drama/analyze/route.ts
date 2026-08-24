@@ -77,7 +77,7 @@ export async function POST(request: Request) {
                     if (typeof call.pointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(call.pointsRemaining));
                     return response;
                 } catch (error) {
-                    if (hasSystemAiCharge(call)) refundedPointsRemaining = (await refund(user.id, model, call))?.pointsBalance;
+                    if (hasSystemAiCharge(call)) refundedPointsRemaining = Number((await refund(user.id, model, call))?.availableBalance);
                     throw error;
                 }
             } catch (error) {

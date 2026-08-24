@@ -177,7 +177,7 @@ function generateOrderNo() {
 }
 
 function orderExpiresMinutes() {
-    const value = Number.parseInt(process.env.VOZEB_PRO_BILLING_ORDER_EXPIRES_MINUTES || "30", 10);
+    const value = Number.parseInt(process.env.VOZEB_PRO_TOP_UP_ORDER_EXPIRES_MINUTES || "30", 10);
     return Number.isSafeInteger(value) && value >= 1 && value <= 24 * 60 ? value : 30;
 }
 

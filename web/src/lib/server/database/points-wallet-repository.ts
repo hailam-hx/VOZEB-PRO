@@ -2,7 +2,7 @@ import type { QueryExecutor } from "@/lib/server/database/postgres";
 
 import type { ProviderUsageAttemptRecord, UsageChargeRecord, WalletHoldRecord } from "./repository-shared";
 import { mapProviderUsageAttempt, mapUsageCharge, mapWalletHold } from "./repository-record-mappers";
-import { jsonParam, numberValue, stringValue } from "./repository-shared";
+import { jsonParam, normalizePage, normalizePageSize, numberValue, pageResult, stringValue } from "./repository-shared";
 
 export class PointsWalletRepository {
     constructor(private readonly db: QueryExecutor) {}
@@ -81,6 +81,31 @@ export class PointsWalletRepository {
     async getUsageChargeById(id: string) {
         const result = await this.db.query("SELECT * FROM usage_charges WHERE id = $1", [id]);
         return result.rows[0] ? mapUsageCharge(result.rows[0]) : null;
+    }
+
+    async listUsageCharges(input: { page?: number; pageSize?: number } = {}) {
+        const page = normalizePage(input.page);
+        const pageSize = normalizePageSize(input.pageSize);
+        const count = await this.db.query("SELECT count(*) AS total FROM usage_charges");
+        const total = numberValue(count.rows[0]?.total);
+        const safePage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)));
+        const result = await this.db.query("SELECT * FROM usage_charges ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2", [pageSize, (safePage - 1) * pageSize]);
+        return pageResult(result.rows.map(mapUsageCharge), total, safePage, pageSize);
+    }
+
+    async getUsageAuditStats() {
+        const result = await this.db.query(
+            `SELECT
+                count(*) FILTER (WHERE settled_credits = 0 AND total_provider_cost_usd > 0) AS zero_usage,
+                count(*) FILTER (WHERE settled_credits <> 0 AND settled_credits < total_provider_cost_usd) AS negative_margin
+             FROM usage_charges`,
+        );
+        return { zeroUsage: numberValue(result.rows[0]?.zero_usage), negativeMargin: numberValue(result.rows[0]?.negative_margin) };
+    }
+
+    async listRecoveryHolds(now: string, limit: number) {
+        const result = await this.db.query("SELECT * FROM wallet_holds WHERE status = 'active' AND (review_reason IS NOT NULL OR (expires_at IS NOT NULL AND expires_at <= $1)) ORDER BY updated_at DESC, id DESC LIMIT $2", [now, limit]);
+        return result.rows.map(mapWalletHold);
     }
 
     async createUsageCharge(charge: UsageChargeRecord) {

@@ -257,7 +257,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         }
     };
 
-    const updateUser = async (userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status" | "pointsBalance">> & { password?: string }) => {
+    const updateUser = async (userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status" | "settledBalance">> & { password?: string }) => {
         setUpdatingUserId(userId);
         try {
             const response = await fetch(`/api/admin/users/${userId}`, {
@@ -292,7 +292,6 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
                     role: value.role,
                     adminPermissions: value.adminPermissions,
                     status: value.status,
-                    pointsBalance: toNumberOrZero(value.pointsBalance),
                 }),
             });
             const payload = (await response.json()) as { user?: PublicUser; error?: string };

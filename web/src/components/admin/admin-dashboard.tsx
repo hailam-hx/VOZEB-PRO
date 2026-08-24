@@ -36,9 +36,7 @@ const loadUpdatesSection = () => import("./admin-system-sections").then((module)
 const loadWalletSection = () => import("./admin-wallet-section").then((module) => module.AdminWalletSection);
 const loadPointsSection = () => import("./admin-points-section").then((module) => module.AdminPointsSection);
 const loadOrdersSection = () => import("./admin-billing-sections").then((module) => module.AdminOrdersSection);
-const loadProductsSection = () => import("./admin-billing-sections").then((module) => module.AdminProductsSection);
-const loadPromotionsSection = () => import("./admin-billing-sections").then((module) => module.AdminPromotionsSection);
-const loadCouponsSection = () => import("./admin-billing-sections").then((module) => module.AdminCouponsSection);
+const loadTopUpsSection = () => import("./admin-billing-sections").then((module) => module.AdminTopUpsSection);
 const loadPaymentsSection = () => import("./admin-billing-sections").then((module) => module.AdminPaymentsSection);
 const loadCdkSection = () => import("./admin-cdk-section").then((module) => module.AdminCdkSection);
 const loadReferralsSection = () => import("./admin-marketing-sections").then((module) => module.AdminReferralsSection);
@@ -63,11 +61,9 @@ const sectionLoaders: Partial<Record<AdminSectionKey, () => Promise<unknown>>> =
     wallet: loadWalletSection,
     points: loadPointsSection,
     orders: loadOrdersSection,
-    products: loadProductsSection,
+    "top-ups": loadTopUpsSection,
     payments: loadPaymentsSection,
     cdk: loadCdkSection,
-    promotions: loadPromotionsSection,
-    coupons: loadCouponsSection,
     referrals: loadReferralsSection,
     channels: loadChannelsSection,
     skills: loadSkillsSection,
@@ -90,9 +86,7 @@ const AdminUpdatesSection = dynamic(loadUpdatesSection, { loading: AdminSectionL
 const AdminWalletSection = dynamic(loadWalletSection, { loading: AdminSectionLoading });
 const AdminPointsSection = dynamic(loadPointsSection, { loading: AdminSectionLoading });
 const AdminOrdersSection = dynamic(loadOrdersSection, { loading: AdminSectionLoading });
-const AdminProductsSection = dynamic(loadProductsSection, { loading: AdminSectionLoading });
-const AdminPromotionsSection = dynamic(loadPromotionsSection, { loading: AdminSectionLoading });
-const AdminCouponsSection = dynamic(loadCouponsSection, { loading: AdminSectionLoading });
+const AdminTopUpsSection = dynamic(loadTopUpsSection, { loading: AdminSectionLoading });
 const AdminReferralsSection = dynamic(loadReferralsSection, { loading: AdminSectionLoading });
 const AdminPaymentsSection = dynamic(loadPaymentsSection, { loading: AdminSectionLoading });
 const AdminCdkSection = dynamic(loadCdkSection, { loading: AdminSectionLoading });
@@ -226,7 +220,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                             operationsSummary={operationsSummary}
                             promptCount={promptCount}
                             assetStats={assetStats}
-                            enabledProducts={setupSummary?.enabledProducts || 0}
+                            enabledTopUpPresets={setupSummary?.enabledTopUpPresets || 0}
                             billingLoading={billingSummaryLoading}
                             loading={operationsSummaryLoading}
                             onRefreshBilling={loadBillingSummary}
@@ -242,9 +236,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     {activeSection === "wallet" ? <AdminWalletSection controller={controller} /> : null}
                     {activeSection === "points" ? <AdminPointsSection controller={controller} /> : null}
                     {activeSection === "orders" ? <AdminOrdersSection controller={controller} /> : null}
-                    {activeSection === "products" ? <AdminProductsSection controller={controller} /> : null}
-                    {activeSection === "promotions" ? <AdminPromotionsSection controller={controller} /> : null}
-                    {activeSection === "coupons" ? <AdminCouponsSection controller={controller} /> : null}
+                    {activeSection === "top-ups" ? <AdminTopUpsSection controller={controller} /> : null}
                     {activeSection === "referrals" ? <AdminReferralsSection controller={controller} /> : null}
                     {activeSection === "payments" ? <AdminPaymentsSection controller={controller} /> : null}
                     {activeSection === "updates" ? <AdminUpdatesSection controller={controller} /> : null}

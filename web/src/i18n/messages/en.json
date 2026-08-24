@@ -29,13 +29,9 @@
         "logoutFailed": "Failed to log out",
         "accountMenu": "Account menu",
         "keyboardShortcuts": "Keyboard shortcuts",
-        "currentPlan": "Current plan",
-        "freePlan": "Free",
-        "renewPlan": "Renew plan",
-        "upgradePlan": "Upgrade plan",
         "creditBalance": "Credit balance",
         "profileCenter": "Profile",
-        "billingCenter": "Plans and billing",
+        "billingCenter": "Top-ups and billing",
         "adminConsole": "Admin console",
         "modelChannelMissing": "Ask an administrator to configure an available model channel",
         "notifications": {
@@ -226,7 +222,7 @@
         "createAgent": "Create Agent",
         "shortDrama": "Short drama",
         "gallery": "Works gallery",
-        "pricing": "Pricing",
+        "pricing": "Top up credits",
         "startCreating": "Start creating",
         "tryNow": "Try it now",
         "heroTitle": "One place for every kind of AI creation",
@@ -547,7 +543,7 @@
                 "0": {
                     "title": "Scope and acceptance",
                     "paragraphs": {
-                        "0": "These Terms apply to your use of the {site} website, Creative Agent, image and video generation, Canvas, short dramas, assets, publishing, plans, and credits.",
+                        "0": "These Terms apply to your use of the {site} website, Creative Agent, image and video generation, Canvas, short dramas, assets, publishing, and credit top-ups.",
                         "1": "By registering, signing in, or continuing to use the service, you confirm that you have read and accepted these Terms and the Privacy Policy. If you act for an organization, you confirm that you are authorized to accept them on its behalf."
                     }
                 },
@@ -574,11 +570,11 @@
                     }
                 },
                 "4": {
-                    "title": "Plans, credits, payments, and refunds",
+                    "title": "Top-ups, credits, payments, and refunds",
                     "paragraphs": {
-                        "0": "Product names, prices, credits, benefits, and payment methods are defined by the purchase page and order snapshot. Review the order before paying; payment is complete only after the channel confirms it and the system verifies the order status.",
+                        "0": "The top-up amount, server-quoted credits, promotion, exchange-rate version, and payment method are defined by the top-up page and order snapshot. Review the order before paying; payment is complete only after the channel confirms it and the system verifies the order status.",
                         "1": "Generation tasks deduct credits according to the displayed model, parameters, quantity, and rules. Eligible credits are automatically returned when the system classifies a task as failed or cancelled. Successfully delivered or consumed work, and costs caused by illegal submissions, are not automatically refundable.",
-                        "2": "For an order refund, submit the order number and reason through the operator's published support channel. Eligibility, scope, arrival time through the original payment channel, and benefit reversal depend on the product terms, applicable law, and final decision. Do not pay or apply for the same order twice."
+                        "2": "For an order refund, submit the order number and reason through the operator's published support channel. Eligibility, scope, arrival time through the original payment channel, and reversal of credited funds depend on the top-up terms, applicable law, and final decision. Do not pay or apply for the same order twice."
                     }
                 },
                 "5": {
@@ -628,7 +624,7 @@
                     "paragraphs": {
                         "0": "Account data includes username, display name, email, avatar, encrypted password credentials, sign-in and security records, and the versions and times when you accepted this policy and the Terms.",
                         "1": "Creative and project data includes text, prompts, attachments, creative conversations, Canvas, short dramas, assets, generation parameters, task status, and generated results.",
-                        "2": "Transaction and entitlement data includes orders, payment-channel transaction status, plans, credit balances and activity, coupons, and refunds. We do not store or display complete bank-card information on the page.",
+                        "2": "Top-up and transaction data includes orders, payment-channel transaction status, quote snapshots, credit balances and activity, and refunds. We do not store or display complete bank-card information on the page.",
                         "3": "Device and operational data includes IP address, browser information, request times, errors, and necessary audit records used for sign-in security, rate limiting, and troubleshooting."
                     }
                 },
@@ -2916,8 +2912,7 @@
         }
     },
     "billing": {
-        "title": "Plans and billing",
-        "plans": "Plans",
+        "title": "Top-ups and billing",
         "credits": "Credits",
         "transactions": "Transactions",
         "checkout": "Checkout",
@@ -2928,52 +2923,12 @@
         "pointsUsageSummary": "Balance and usage history",
         "recordCount": "{count} records, newest first",
         "balance": "Balance",
-        "availableToday": "Available today",
-        "permanentCredits": "Permanent credits",
         "redeemCdk": "Redeem CDK",
         "autoRefreshAfterRedeem": "Refreshes automatically after redemption",
         "enterRedeemKey": "Enter redemption key",
         "redeem": "Redeem",
-        "buyCreditsAndPlans": "Buy credits and plans",
+        "topUp": { "customAmount": "Custom amount", "customAmountDescription": "Enter any positive whole VND amount" },
         "usageDetails": "Usage details",
-        "plansGrid": {
-            "selectPlan": "Select a plan",
-            "planSelection": "Plan selection",
-            "recommendedPlan": "Recommended plan",
-            "recommended": "Recommended",
-            "defaultDescription": "A flexible credit plan for your creative workflow.",
-            "compactDescription": "Expand your creative capacity with credits and included benefits.",
-            "oneTime": "one time",
-            "topUpNow": "Top up now",
-            "buyPlan": "Buy plan",
-            "selectPlanAction": "Select plan",
-            "regularPrice": "Regular ¥{price}",
-            "saveAmount": "Save ¥{amount}",
-            "standardPrice": "Standard price",
-            "permanentCredits": "permanent credits",
-            "creativeCredits": "creative credits",
-            "credits": "credits",
-            "features": {
-                "instant": "Credits added immediately after payment",
-                "permanent": "Credits never expire",
-                "traceable": "Clear records in your credit history",
-                "multimedia": "Use for image, video, and audio creation",
-                "delivery": "Benefits are added automatically after payment",
-                "management": "Manage usage and history in one place",
-                "days": "Benefits valid for {count} days",
-                "longTerm": "Long-term benefits"
-            },
-            "period": { "longTerm": "long term", "month": "month", "year": "year", "days": "{count} days" }
-        },
-        "plansModal": {
-            "loadFailed": "Failed to load plans",
-            "closeAria": "Close plan selection",
-            "close": "Close",
-            "title": "Choose the right plan",
-            "description": "Compare credits, validity, and benefits in one place",
-            "automaticCredit": "Benefits added automatically",
-            "empty": "No plans are currently available"
-        },
         "result": {
             "missingOrder": "Order information is missing",
             "connectionInterrupted": "The payment confirmation connection was interrupted. Check again.",
@@ -2984,16 +2939,15 @@
             "currentStatus": "Current status",
             "backToBilling": "Back to billing",
             "viewOrders": "View orders",
-            "titles": { "paid": "Payment successful", "closed": "Order closed", "canceled": "Payment canceled", "refunded": "Payment refunded", "refunding": "Refund in progress", "pending": "Awaiting confirmation" },
+            "titles": { "paid": "Payment successful", "canceled": "Payment canceled", "refunded": "Payment refunded", "refunding": "Refund in progress", "pending": "Awaiting confirmation" },
             "descriptions": {
-                "paid": "Credits or plan benefits have been added to your account.",
-                "closed": "This order has expired and can no longer be paid.",
+                "paid": "Credits have been added to your unified balance.",
                 "canceled": "The order was canceled without a completed payment.",
                 "refunded": "The payment has been refunded.",
                 "refunding": "Your refund is being processed.",
                 "pending": "The system is waiting for confirmation from the payment provider."
             },
-            "statuses": { "paid": "Paid", "closed": "Closed", "canceled": "Canceled", "refunded": "Refunded", "refunding": "Refunding", "pending": "Pending" }
+            "statuses": { "paid": "Paid", "canceled": "Canceled", "refunded": "Refunded", "refunding": "Refunding", "pending": "Pending" }
         },
         "checkout": {
             "manualConfirmation": "Follow the manual payment instructions to complete the order",
@@ -3001,55 +2955,33 @@
             "paymentCopied": "Payment information copied",
             "windowBlocked": "The browser blocked the payment window",
             "invalidPaymentUrl": "The payment link is invalid",
-            "productUnavailable": "This plan does not exist or is no longer available",
-            "backToPlans": "Back to plans",
+            "presetUnavailable": "No top-up presets are available; enter a custom amount",
+            "customAmount": "Custom top-up amount",
+            "customAmountHint": "Enter a positive whole VND amount. Credits and FX are quoted by the server.",
+            "backToTopUp": "Back to top-up center",
+            "title": "Top up credits",
+            "description": "Choose a preset or enter a VND amount, then pay securely after the server quote.",
+            "selectAmount": "Choose a preset or enter a custom top-up amount",
+            "noPaymentProvider": "No payment provider is available",
+            "nominalAmount": "Nominal top-up amount",
+            "couponApplied": "Coupon applied",
+            "creditsUnit": "credits",
+            "quoteSnapshot": "Quote locked to server pricing version {version}",
             "secureCheckout": "Secure checkout",
-            "checkoutSteps": "Checkout steps",
-            "orderDetails": "Order details",
-            "paymentMethod": "Payment method",
-            "payToday": "due today",
-            "regularPrice": "Regular price",
-            "quantity": "Quantity",
             "promotionDiscount": "Current promotion",
             "coupon": "Coupon",
             "amountDue": "Amount due",
             "topUpCredits": "Top-up credits",
-            "creativeCredits": "Creative credits",
-            "creditAmount": "{count} credits",
-            "benefitPeriod": "Benefit period",
-            "instantCredit": "Added instantly · never expires",
-            "days": "{count} days",
-            "longTerm": "Long term",
-            "orderNotice": "Price and benefits are locked to the order after you confirm payment.",
-            "currentOrder": "CURRENT ORDER",
             "selectPaymentMethod": "Select a payment method",
             "encrypted": "Encrypted",
-            "couponsAvailable": "{count} available",
-            "selectCoupon": "Select a coupon",
-            "reading": "Loading…",
-            "select": "Select",
             "calculating": "Recalculating price…",
-            "quoteRetry": "{error} Try again.",
-            "quantityDescription": "Buy multiple units in the same order",
-            "decreaseQuantity": "Decrease quantity",
-            "decrease": "Decrease",
-            "increaseQuantity": "Increase quantity",
-            "increase": "Increase",
             "confirmAndPay": "Confirm and pay",
-            "paymentRequiredNotice": "Credits or benefits are added only after the payment is confirmed.",
+            "paymentRequiredNotice": "Credits are added only after the payment provider confirms payment.",
             "orderCreated": "Order created",
             "orderNumber": "Order: {number}",
             "copyPaymentInfo": "Copy payment info",
             "viewInstructions": "View instructions",
             "goToPayment": "Continue to payment",
-            "backToOrders": "Back to my orders",
-            "refreshCoupons": "Refresh coupons",
-            "noCoupon": "Do not use a coupon",
-            "currentPromotionPrice": "Use the current promotional price",
-            "noCoupons": "No coupons are available",
-            "ruleUnavailable": "Rule information unavailable",
-            "fixedDiscount": "Save ¥{amount}",
-            "percentDiscount": "Save {percent}%",
             "providers": {
                 "stripe": { "label": "International card", "description": "Pay securely by card through Stripe" },
                 "alipay": { "label": "Alipay", "description": "Pay with Alipay" },
@@ -3057,7 +2989,7 @@
                 "payply": { "label": "PayPly", "description": "Pay through PayPly" },
                 "manual": { "label": "Manual payment", "description": "Follow transfer and confirmation instructions" }
             },
-            "errors": { "couponsFailed": "Failed to load coupons", "paymentInfoFailed": "Failed to load payment information", "quoteFailed": "Failed to calculate the order price.", "createOrderFailed": "Failed to create the order" }
+            "errors": { "paymentInfoFailed": "Failed to load payment information", "quoteFailed": "Failed to calculate the order price.", "createOrderFailed": "Failed to create the order" }
         }
     },
     "profile": {
@@ -3075,8 +3007,7 @@
             "switchAria": "Switch profile section",
             "overview": { "label": "Account overview", "shortDescription": "Asset summary" },
             "profile": { "label": "Profile", "shortDescription": "Avatar and details" },
-            "billing": { "label": "Plan center", "shortDescription": "Buy plans" },
-            "coupons": { "label": "My coupons", "shortDescription": "Claim and status" },
+            "billing": { "label": "Top-up center", "shortDescription": "Top up credits" },
             "orders": { "label": "Orders", "shortDescription": "Payment status" },
             "points": { "label": "Credit history", "shortDescription": "Balance activity" },
             "consume": { "label": "Usage history", "shortDescription": "Credits deducted" },
@@ -3085,11 +3016,11 @@
         },
         "page": {
             "title": "Profile",
-            "description": "Manage your profile, plan offers, orders, usage, and credit history in one place.",
+            "description": "Manage your profile, top-up orders, usage, and unified credit activity in one place.",
             "refreshShort": "Refresh",
             "refresh": "Refresh records",
-            "plansShort": "Plans",
-            "buyPlan": "Buy a plan",
+            "topUpShort": "Top up",
+            "topUpCredits": "Top up credits",
             "profileSaved": "Profile saved",
             "emailSaved": "Email updated",
             "emailUnchanged": "The email has not changed, so no verification code is needed",
@@ -3104,11 +3035,10 @@
                 "exportData": "Failed to export personal data"
             },
             "metrics": {
-                "currentPlan": "Current plan",
-                "notLoaded": "Not loaded",
-                "creditBalance": "Credit balance",
+                "availableBalance": "Available credits",
+                "settledBalance": "Settled credits",
+                "heldBalanceDetail": "{held} credits held",
                 "creditValue": "{amount} credits",
-                "creditDetail": "Today {daily} · Permanent {permanent}",
                 "orders": "Top-up orders",
                 "orderCount": "{count} orders",
                 "creditHistory": "Credit history",
@@ -3118,18 +3048,18 @@
                 "title": "Recent credit activity",
                 "description": "Shows the latest changes; find more in credit history.",
                 "emptyTitle": "No credit history",
-                "emptyDescription": "Daily credits, top-ups, and model usage will appear here."
+                "emptyDescription": "Top-ups, model usage, and refunds will appear here."
             },
-            "recentOrders": { "title": "Recent orders", "description": "Shows recent top-up orders; benefits activate after payment is completed." },
+            "recentOrders": { "title": "Recent orders", "description": "Shows recent top-up orders; credits arrive after payment is completed." },
             "profilePanel": { "title": "Profile", "description": "Change your avatar, display name, and bio." },
-            "ordersPanel": { "title": "Orders", "description": "View top-up orders, payment channels, statuses, and plan activation results." },
+            "ordersPanel": { "title": "Orders", "description": "View top-up orders, payment channels, payment states, and credit grants." },
             "consumptionPanel": {
                 "title": "Usage history",
                 "description": "Recent model calls, generation tasks, and API usage that deducted credits.",
                 "emptyTitle": "No usage history",
                 "emptyDescription": "Model calls and generation tasks will appear here."
             },
-            "creditsPanel": { "title": "Credit history", "description": "Daily credits, top-up grants, adjustments, and failed-task refunds.", "emptyTitle": "No credit history", "emptyDescription": "Every credit change is recorded here by time." },
+            "creditsPanel": { "title": "Credit history", "description": "Top-up grants, adjustments, model usage, and failed-task refunds.", "emptyTitle": "No credit history", "emptyDescription": "Every credit change is recorded here by time." },
             "securityPanel": { "title": "Account & security", "description": "Manage your linked email, sign-in password, and personal data." },
             "password": {
                 "title": "Sign-in password",
@@ -3142,14 +3072,14 @@
             "data": { "title": "Personal data", "description": "Export account, credits, orders, and creation records. Original media and security credentials are not included in the JSON.", "export": "Export my data" }
         },
         "billingCenter": {
-            "title": "Plan center",
-            "description": "Choose a plan for your creative pace; checkout opens on a separate secure page.",
+            "title": "Top-up center",
+            "description": "Choose a VND preset or custom amount; the server creates the checkout quote.",
             "refresh": "Refresh",
-            "available": "Available plans",
-            "availableDescription": "Prices, credits, and validity are synced from products currently on sale.",
-            "count": "{count} options",
-            "emptyTitle": "No plans are on sale",
-            "emptyDescription": "Plans appear here after an administrator makes them available."
+            "available": "Top-up presets",
+            "availableDescription": "Presets define only VND amounts; credits and FX come from the server quote.",
+            "count": "{count} presets",
+            "emptyTitle": "No top-up presets",
+            "emptyDescription": "You can still enter a custom whole VND amount."
         },
         "form": { "username": "Username", "displayName": "Display name", "bio": "Bio", "bioPlaceholder": "Share your creative focus, strengths, or frequently used styles", "save": "Save profile" },
         "email": {
@@ -3166,35 +3096,12 @@
         },
         "records": {
             "emptyOrders": "No orders yet",
-            "emptyOrdersDescription": "After buying a plan, you can view its payment status here.",
+            "emptyOrdersDescription": "After a top-up, you can view payment and credit-grant status here.",
             "balanceAfter": "Balance {amount}",
-            "orderStatuses": { "pending": "Awaiting payment", "paid": "Activated", "refunding": "Refunding", "closed": "Closed", "canceled": "Canceled", "refunded": "Refunded" },
+            "orderStatuses": { "pending": "Awaiting payment", "paid": "Paid", "refunding": "Refunding", "canceled": "Canceled", "refunded": "Refunded" },
             "pointTypes": { "consume": "Model usage", "refund": "Usage refund", "credit": "Credit top-up", "admin-adjust": "System adjustment" }
         },
-        "dataErrors": { "products": "Failed to load top-up plans", "orders": "Failed to load orders", "coupons": "Failed to load coupons", "points": "Failed to load credit history", "consumption": "Failed to load usage history" },
-        "coupons": {
-            "title": "My coupons",
-            "description": "Claim and view coupons for plan checkout; the final discount follows the server quote.",
-            "refresh": "Refresh",
-            "claimed": "Coupon claimed",
-            "claimFailed": "Failed to claim the coupon",
-            "codePlaceholder": "Enter a coupon claim code",
-            "claimCoupon": "Claim coupon",
-            "claimable": "Available to claim",
-            "campaignCount": "{count} campaigns",
-            "minimum": "Valid on orders from ¥{amount}",
-            "noMinimum": "No minimum spend",
-            "until": "until {date}",
-            "claim": "Claim",
-            "owned": "Claimed coupons",
-            "couponCount": "{count} coupons",
-            "coupon": "Coupon",
-            "validUntil": "Valid until {date}",
-            "stackable": "Can be combined with promotions",
-            "emptyTitle": "No coupons",
-            "emptyDescription": "Coupons claimed by code or from active campaigns appear here.",
-            "statuses": { "available": "Available", "locked": "Locked to order", "redeemed": "Used", "expired": "Expired", "revoked": "Revoked" }
-        },
+        "dataErrors": { "presets": "Failed to load top-up presets", "orders": "Failed to load orders", "points": "Failed to load credit history", "consumption": "Failed to load usage history" },
         "referrals": {
             "title": "Referral rewards",
             "description": "Share your link; rewards are issued after a new user completes a valid first payment and the cooling-off period ends.",
@@ -3213,11 +3120,9 @@
             "metrics": { "clicks": "Link visits", "registrations": "Successful registrations", "qualified": "Qualified first orders", "settled": "Rewards issued" },
             "rules": { "inviter": "Inviter reward", "invitee": "New-user reward", "settlement": "Settlement conditions" },
             "points": "{count} credits",
-            "newUserCoupon": "New-user coupon",
             "settlementCondition": "Paid amount from {amount} · {days}-day cooling-off period",
             "progress": { "title": "Referral progress", "description": "Only masked names and current risk status are shown; invitee privacy is not disclosed.", "empty": "No referred users have registered yet" },
             "rewards": { "title": "Reward history", "description": "Track pending, issued, revoked, and manual-review statuses.", "empty": "No referral rewards yet" },
-            "coupon": "Coupon",
             "risk": { "clear": "Clear", "review": "Under review", "frozen": "Frozen", "rejected": "Rejected" },
             "rewardStatuses": { "pending": "Pending", "settled": "Issued", "revoked": "Revoked", "rejected": "Rejected", "reversal_pending": "Revocation review" }
         },

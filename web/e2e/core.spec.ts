@@ -307,41 +307,58 @@ test("new Agent Skill is saved before leaving the administrator page", async ({ 
     }
 });
 
-test("PostgreSQL payment flow verifies missing fields, rejects trade reuse, and refunds", async ({ request }) => {
+test("PostgreSQL top-up flow verifies payment snapshots, rejects trade reuse, and reviews non-automatic refunds", async ({ request }) => {
     test.skip(!process.env.VOZEB_PRO_E2E_DATABASE_URL, "需要专用 PostgreSQL E2E 数据库");
-    const productResponse = await request.post("/api/admin/billing/products", {
-        data: { productKind: "points", name: `E2E 积分包 ${randomUUID().slice(0, 8)}`, description: "E2E", amountCents: 100, currency: "CNY", pointsAmount: 100, enabled: true },
+    const configResponse = await request.patch("/api/admin/billing/top-up-config", {
+        data: { pricingVersion: `e2e-${randomUUID().slice(0, 8)}`, customerFxVersion: "e2e-fx-v1", usdPerVnd: "0.00004" },
     });
-    expect(productResponse.ok(), await productResponse.text()).toBe(true);
-    const product = ((await productResponse.json()) as { product: { id: string } }).product;
+    expect(configResponse.ok(), await configResponse.text()).toBe(true);
+    const presetResponse = await request.post("/api/admin/billing/top-up-presets", {
+        data: { name: `E2E 充值预设 ${randomUUID().slice(0, 8)}`, description: "E2E", nominalNativeAmount: "100000", enabled: true, sortOrder: 0 },
+    });
+    expect(presetResponse.ok(), await presetResponse.text()).toBe(true);
+    const preset = ((await presetResponse.json()) as { code: 0; data: { preset: { id: string } } }).data.preset;
 
-    const firstOrder = await createOrder(request, product.id);
-    const checkout = await request.post(`/api/billing/orders/${firstOrder.id}/checkout`, { data: { provider: "payply" } });
+    const firstOrder = await createOrder(request, preset.id);
+    const checkout = await request.post(`/api/billing/top-ups/orders/${firstOrder.id}/checkout`, { data: { provider: "payply" } });
     expect(checkout.ok(), await checkout.text()).toBe(true);
     expect(await checkout.json()).toMatchObject({ code: 0, data: { checkout: { kind: "redirect", provider: "payply" } } });
 
-    const firstWebhookBody = JSON.stringify({ eventId: `event-${randomUUID()}`, status: "succeeded", orderId: firstOrder.id, orderNo: firstOrder.orderNo, providerTradeId: "payply_trade_e2e", providerPaymentId: "payply_payment_e2e" });
+    const eventId = `event-${randomUUID()}`;
+    const incompleteWebhook = await postSignedWebhook(request, JSON.stringify({ eventId, status: "succeeded", orderId: firstOrder.id, orderNo: firstOrder.orderNo, providerTradeId: "payply_trade_e2e", providerPaymentId: "payply_payment_e2e" }));
+    expect(incompleteWebhook.status()).toBe(409);
+
+    const firstWebhookBody = JSON.stringify({ eventId, status: "succeeded", orderId: firstOrder.id, orderNo: firstOrder.orderNo, providerTradeId: "payply_trade_e2e", providerPaymentId: "payply_payment_e2e", amountMinor: "100000", currency: "VND" });
     const firstWebhook = await postSignedWebhook(request, firstWebhookBody);
     expect(firstWebhook.ok(), await firstWebhook.text()).toBe(true);
-    expect(await firstWebhook.json()).toMatchObject({ orderId: firstOrder.id, orderStatus: "paid" });
+    expect(await firstWebhook.json()).toMatchObject({ code: 0, data: { orderId: firstOrder.id, orderStatus: "paid" } });
     const duplicate = await postSignedWebhook(request, firstWebhookBody);
     expect(duplicate.ok()).toBe(true);
-    expect(await duplicate.json()).toMatchObject({ duplicate: true, orderId: firstOrder.id });
+    expect(await duplicate.json()).toMatchObject({ code: 0, data: { duplicate: true, orderId: firstOrder.id } });
 
-    const secondOrder = await createOrder(request, product.id);
-    const conflictBody = JSON.stringify({ eventId: `event-${randomUUID()}`, status: "succeeded", orderId: secondOrder.id, orderNo: secondOrder.orderNo, providerTradeId: "payply_trade_e2e", providerPaymentId: "payply_payment_conflict" });
+    const secondOrder = await createOrder(request, preset.id);
+    const conflictBody = JSON.stringify({
+        eventId: `event-${randomUUID()}`,
+        status: "succeeded",
+        orderId: secondOrder.id,
+        orderNo: secondOrder.orderNo,
+        providerTradeId: "payply_trade_e2e",
+        providerPaymentId: "payply_payment_conflict",
+        amountMinor: "100000",
+        currency: "VND",
+    });
     const conflict = await postSignedWebhook(request, conflictBody);
     expect(conflict.status()).toBe(409);
 
     const refund = await request.post(`/api/admin/billing/orders/${firstOrder.id}/refund`, { data: { reason: "E2E 退款" } });
     expect(refund.ok(), await refund.text()).toBe(true);
-    expect(await refund.json()).toMatchObject({ order: { id: firstOrder.id, status: "refunded" }, providerRefund: { provider: "payply", status: "succeeded" } });
+    expect(await refund.json()).toMatchObject({ code: 0, data: { orderId: firstOrder.id, manualReview: true, recoveryState: "released", providerRefund: { status: "manual" } } });
 });
 
-async function createOrder(request: APIRequestContext, productId: string) {
-    const response = await request.post("/api/billing/orders", { data: { productId, quantity: 1, provider: "payply" } });
+async function createOrder(request: APIRequestContext, presetId: string) {
+    const response = await request.post("/api/billing/top-ups/orders", { data: { presetId, provider: "payply" } });
     expect(response.ok(), await response.text()).toBe(true);
-    return ((await response.json()) as { order: { id: string; orderNo: string } }).order;
+    return ((await response.json()) as { code: 0; data: { order: { id: string; orderNo: string } } }).data.order;
 }
 
 async function postSignedWebhook(request: APIRequestContext, rawBody: string) {
