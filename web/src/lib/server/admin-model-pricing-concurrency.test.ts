@@ -32,6 +32,27 @@ describe("atomic file-provider model pricing", () => {
         expect(saved.bindings[0].providerCostUnit).toBeUndefined();
     });
 
+    it("strips pricing snapshots from a new binding added to an existing model upstream", async () => {
+        await setAuthSettings({ systemChannels: [channelFixture()], logicalModels: [modelFixture()] });
+        const upstreamWorkspace = structuredClone((await getFreshAuthSettings()).logicalModels);
+        upstreamWorkspace[0].bindings.push({
+            id: "binding-two",
+            channelId: "channel-two",
+            upstreamModel: "writer-v1",
+            enabled: true,
+            priority: 2,
+            costRateCard: rateCard("99"),
+            providerCostUnit: { kind: "fiat", currency: "USD" },
+        });
+
+        await setAuthSettings({ systemChannels: [channelFixture(), secondChannelFixture()], logicalModels: upstreamWorkspace });
+
+        const added = (await getFreshAuthSettings()).logicalModels[0].bindings.find((binding) => binding.id === "binding-two");
+        expect(added).toMatchObject({ id: "binding-two", upstreamModel: "writer-v1" });
+        expect(added?.costRateCard).toBeUndefined();
+        expect(added?.providerCostUnit).toBeUndefined();
+    });
+
     it("preserves a pricing edit when a stale upstream workspace saves non-pricing model changes", async () => {
         await setAuthSettings({ systemChannels: [channelFixture()], logicalModels: [modelFixture()] });
         await saveAdminModelPricing(pricingPatch("2", "0.5"));
@@ -60,15 +81,37 @@ describe("atomic file-provider model pricing", () => {
         });
     });
 
-    it("serializes same-target pricing writes as last-completed sale fields while preserving omitted binding fields", async () => {
+    it("serializes concurrently queued same-target pricing writes in lock order while preserving omitted binding fields", async () => {
         await setAuthSettings({ systemChannels: [channelFixture()], logicalModels: [modelFixture()] });
+        const firstWriteStarted = deferred<void>();
+        const releaseFirstWrite = deferred<void>();
+        const secondWriteStarted = deferred<void>();
+        const releaseSecondWrite = deferred<void>();
+        let writeNumber = 0;
+        memory.beforeWrite = async () => {
+            writeNumber += 1;
+            if (writeNumber === 1) {
+                firstWriteStarted.resolve();
+                await releaseFirstWrite.promise;
+            } else if (writeNumber === 2) {
+                secondWriteStarted.resolve();
+                await releaseSecondWrite.promise;
+            }
+        };
+        const first = saveAdminModelPricing(pricingPatch("2.5", "0.125"));
+        await firstWriteStarted.promise;
+        const second = saveAdminModelPricing({ modelId: "writer", saleRateCard: rateCard("3.75"), bindings: [] });
+        releaseFirstWrite.resolve();
+        await secondWriteStarted.promise;
+        releaseSecondWrite.resolve();
 
-        await saveAdminModelPricing(pricingPatch("2.5", "0.125"));
-        await saveAdminModelPricing({ modelId: "writer", saleRateCard: rateCard("3.75"), bindings: [] });
+        await Promise.all([first, second]);
 
         const saved = (await getFreshAuthSettings()).logicalModels[0];
+        expect(writeNumber).toBe(2);
         expect(saved.saleRateCard?.components[0].unitPrice).toBe("3.75");
         expect(saved.bindings[0].costRateCard?.components[0].unitPrice).toBe("0.125");
+        expect(saved.bindings[0].providerCostUnit).toEqual({ kind: "provider-native", provider: "vendor", unit: "compute", usdConversion: { version: "fx-v2", usdPerUnit: "0.004" } });
     });
 });
 
@@ -95,6 +138,10 @@ function modelFixture() {
 
 function channelFixture() {
     return { id: "channel-one", name: "Channel one", baseUrl: "https://provider.example.com", apiKey: "secret", apiFormat: "openai" as const, models: ["writer-v1"], enabled: true };
+}
+
+function secondChannelFixture() {
+    return { id: "channel-two", name: "Channel two", baseUrl: "https://backup.example.com", apiKey: "secret", apiFormat: "openai" as const, models: ["writer-v1"], enabled: true };
 }
 
 function pricingPatch(sale: string, cost: string) {

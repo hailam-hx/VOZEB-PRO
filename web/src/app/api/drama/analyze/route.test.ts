@@ -9,14 +9,14 @@ const mocks = vi.hoisted(() => ({
     normalizeDramaContentAnalysis: vi.fn(),
     requestStructuredText: vi.fn(),
     finishSystemAiTextAttempt: vi.fn(),
-    releaseUsageBillingForBusiness: vi.fn(),
+    resolveSystemAiTextFailure: vi.fn(),
     verifiedContexts: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings, isAuthInputError: vi.fn(() => false) }));
 vi.mock("@/lib/server/points-wallet-service", () => ({ getWalletSnapshot: mocks.getWalletSnapshot }));
-vi.mock("@/lib/server/usage-billing-runtime", () => ({ finishSystemAiTextAttempt: mocks.finishSystemAiTextAttempt, releaseUsageBillingForBusiness: mocks.releaseUsageBillingForBusiness }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({ finishSystemAiTextAttempt: mocks.finishSystemAiTextAttempt, resolveSystemAiTextFailure: mocks.resolveSystemAiTextFailure }));
 vi.mock("@/lib/server/drama-analysis", () => ({
     describeDramaAnalysisCandidate: vi.fn(() => ({})),
     describeDramaModelOutput: vi.fn(() => ({})),
@@ -41,7 +41,7 @@ describe("drama analysis PAYG contract", () => {
         mocks.getWalletSnapshot.mockResolvedValue({ settledBalance: "12345678901234567890.12345678", heldBalance: "0.00000001", availableBalance: "12345678901234567890.12345677" });
         mocks.normalizeDramaContentAnalysis.mockReturnValue({ characters: [], scenes: [], shots: [{ id: "shot-one" }] });
         mocks.finishSystemAiTextAttempt.mockResolvedValue(undefined);
-        mocks.releaseUsageBillingForBusiness.mockResolvedValue(undefined);
+        mocks.resolveSystemAiTextFailure.mockImplementation(async (input) => ({ state: input.final ? "released" : "safe_to_failover" }));
         mocks.requestStructuredText.mockImplementation(async (input) => signedProxyResponse(input));
     });
 
@@ -64,7 +64,7 @@ describe("drama analysis PAYG contract", () => {
         expect(mocks.verifiedContexts[1].providerIdempotencyKey).toBeUndefined();
         expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledOnce();
         expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "succeeded" });
-        expect(mocks.releaseUsageBillingForBusiness).not.toHaveBeenCalled();
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledOnce();
         expect(mocks.getWalletSnapshot).toHaveBeenCalledWith("user-one");
         expect(response.headers.get("x-vozeb-pro-balance-settled")).toBe("12345678901234567890.12345678");
         expect(response.headers.get("x-vozeb-pro-balance-held")).toBe("0.00000001");
@@ -83,8 +83,8 @@ describe("drama analysis PAYG contract", () => {
         expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledTimes(2);
         expect(mocks.finishSystemAiTextAttempt).toHaveBeenNthCalledWith(1, expect.any(Headers), { status: "failed" });
         expect(mocks.finishSystemAiTextAttempt).toHaveBeenNthCalledWith(2, expect.any(Headers), { status: "failed" });
-        expect(mocks.releaseUsageBillingForBusiness).toHaveBeenCalledOnce();
-        expect(mocks.releaseUsageBillingForBusiness).toHaveBeenCalledWith("user-one", mocks.verifiedContexts[0].businessRequestId, "invalid drama output");
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledTimes(3);
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenLastCalledWith(expect.objectContaining({ userId: "user-one", businessId: mocks.verifiedContexts[0].businessRequestId, reason: "invalid drama output", final: true }));
         expect(response.headers.get("x-vozeb-pro-balance-settled")).toBe("99999999999999999999.00000001");
         expect(response.headers.get("x-vozeb-pro-balance-held")).toBe("12.00000000");
         expect(response.headers.get("x-vozeb-pro-balance-available")).toBe("99999999999999999987.00000001");

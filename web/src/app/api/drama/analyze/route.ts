@@ -15,7 +15,7 @@ import { systemAiBillingHeaders, systemAiIdempotencyKey, systemAiUsageRequestFin
 import { rankTextPlanningCandidates, requestStructuredText } from "@/lib/server/text-planning-runtime";
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody } from "@/lib/server/drama-analysis-input";
 import { pointsResponseHeaders } from "@/lib/server/points-response";
-import { finishSystemAiTextAttempt, releaseUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
+import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 
 export const runtime = "nodejs";
 
@@ -97,10 +97,25 @@ export async function POST(request: Request) {
                 return NextResponse.json({ code: 0, data, msg: phase === "visual" ? "视觉结构已生成" : "内容结构待审核" }, { headers: pointsResponseHeaders(balance) });
             } catch (error) {
                 latestError = error;
+                const resolution = await resolveSystemAiTextFailure({
+                    userId: user.id,
+                    businessId: businessRequestId,
+                    reason: error instanceof Error ? error.message : "剧本分析请求状态未知",
+                    final: false,
+                });
+                if (resolution.state !== "safe_to_failover") {
+                    failureBalance = await getWalletSnapshot(user.id);
+                    throw error;
+                }
             }
         }
         const message = latestError instanceof Error ? latestError.message : "没有可用的文本模型渠道";
-        await releaseUsageBillingForBusiness(user.id, businessRequestId, message);
+        await resolveSystemAiTextFailure({
+            userId: user.id,
+            businessId: businessRequestId,
+            reason: message,
+            final: true,
+        });
         failureBalance = await getWalletSnapshot(user.id);
         throw latestError instanceof Error ? latestError : new Error("没有可用的文本模型渠道");
     } catch (error) {

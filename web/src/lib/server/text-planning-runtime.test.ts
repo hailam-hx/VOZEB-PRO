@@ -123,6 +123,55 @@ describe("text planning runtime protocol matrix", () => {
         expect(requestBody()).toMatchObject({ deployment: "model-one", conversation: expect.arrayContaining([{ role: "user", content: "test" }]) });
     });
 
+    it("成功响应包含无效 JSON 时携带真实响应头调用终止钩子", async () => {
+        const terminalHeaders: string[] = [];
+        mockedFetch.mockResolvedValue(new Response("{", { status: 200, headers: { "content-type": "application/json", "x-vozeb-pro-usage-hold-id": "hold-invalid-json" } }));
+
+        await expect(
+            requestStructuredText({
+                ...requestInput(candidate("newapi")),
+                onInvalidResponse: async (headers) => {
+                    terminalHeaders.push(headers.get("x-vozeb-pro-usage-hold-id") || "");
+                },
+            }),
+        ).rejects.toThrow("无效 JSON");
+
+        expect(terminalHeaders).toEqual(["hold-invalid-json"]);
+    });
+
+    it("HTTP 200 供应商业务错误携带真实响应头调用终止钩子", async () => {
+        const terminalHeaders: string[] = [];
+        const configured = candidate("custom", { createPath: "/planner/run", requestTemplate: '{"prompt":"{{prompt}}"}', resultField: "data.plan" });
+        mockedFetch.mockResolvedValue(Response.json({ code: "204", msg: "登录验证失败" }, { headers: { "x-vozeb-pro-usage-hold-id": "hold-business-error" } }));
+
+        await expect(
+            requestStructuredText({
+                ...requestInput(configured),
+                onInvalidResponse: async (headers) => {
+                    terminalHeaders.push(headers.get("x-vozeb-pro-usage-hold-id") || "");
+                },
+            }),
+        ).rejects.toThrow("登录验证失败");
+
+        expect(terminalHeaders).toEqual(["hold-business-error"]);
+    });
+
+    it("成功响应缺少结构化参数时携带真实响应头调用终止钩子", async () => {
+        const terminalHeaders: string[] = [];
+        mockedFetch.mockResolvedValue(Response.json({ choices: [{ message: { content: "不是 JSON" } }] }, { headers: { "x-vozeb-pro-usage-hold-id": "hold-missing-arguments" } }));
+
+        await expect(
+            requestStructuredText({
+                ...requestInput(candidate("newapi")),
+                onInvalidResponse: async (headers) => {
+                    terminalHeaders.push(headers.get("x-vozeb-pro-usage-hold-id") || "");
+                },
+            }),
+        ).rejects.toThrow("结构化结果");
+
+        expect(terminalHeaders).toEqual(["hold-missing-arguments"]);
+    });
+
     it("只为上游协议作用域追加后缀，不改写服务端计费身份", async () => {
         mockedFetch.mockResolvedValue(chatJsonResponse());
 
@@ -139,7 +188,7 @@ describe("text planning runtime protocol matrix", () => {
     it("上游返回 422 时不会在同一候选内自动重复请求", async () => {
         mockedFetch.mockResolvedValueOnce(new Response("/backend-api/conversation failed: status=422, body=", { status: 422 }));
 
-        await expect(requestStructuredText(requestInput(candidate("newapi")))).rejects.toMatchObject({ status: 422 });
+        await expect(requestStructuredText(requestInput(candidate("newapi")))).rejects.toMatchObject({ status: 422, requestAcceptance: "response" });
         expect(mockedFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -199,7 +248,7 @@ describe("text planning runtime protocol matrix", () => {
     it("把超时转换为可读且可切换渠道的错误", async () => {
         mockedFetch.mockRejectedValue(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
 
-        await expect(requestStructuredText(requestInput(candidate("newapi")))).rejects.toThrow("文本模型规划响应超时");
+        await expect(requestStructuredText(requestInput(candidate("newapi")))).rejects.toMatchObject({ message: "文本模型规划响应超时", requestAcceptance: "unknown" });
     });
 
     it("所有文本规划候选都使用三分钟超时", async () => {

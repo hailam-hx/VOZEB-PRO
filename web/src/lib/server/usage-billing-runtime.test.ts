@@ -15,6 +15,7 @@ import {
     finishUsageProviderAttempt,
     loadUsageBilling,
     recordUsageProviderAttempt,
+    resolveSystemAiTextFailure,
     releaseUsageBilling,
     reserveUsageBilling,
     reserveOrReuseUsageBilling,
@@ -199,7 +200,17 @@ describe("usage billing runtime", () => {
 
     it("freezes business identity and provider idempotency capability in audit snapshots", async () => {
         const billing = await reservation("audit-identities");
-        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "vendor", bindingId: "binding", providerIdempotencySupported: true, providerIdempotencyKey: "task:attempt:1", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "vendor",
+            bindingId: "binding",
+            providerIdempotencySupported: true,
+            providerIdempotencyKey: "task:attempt:1",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+        });
         const db = await readAuthDb();
 
         expect(db.walletHolds[0].runtimeSnapshot).toMatchObject({ businessId: "runtime:audit-identities", originalRequestFingerprint: createHash("sha256").update("audit-identities").digest("hex") });
@@ -209,9 +220,30 @@ describe("usage billing runtime", () => {
     it("retains failed-attempt cost evidence and sums it with the successful failover", async () => {
         const billing = await reservation("failover-cost");
         const costRateSnapshot = { version: 1 as const, components: [{ id: "count", dimension: "count" as const, unitPrice: "0.25" }] };
-        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "primary", bindingId: "primary", providerIdempotencySupported: false, nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" }, costRateSnapshot });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "primary",
+            bindingId: "primary",
+            providerIdempotencySupported: false,
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot,
+        });
         await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed", normalizedUsage: normalizeBillableUsage({ capability: "image", source: "derived", count: 1 }) });
-        await recordUsageProviderAttempt({ billing, attemptNumber: 2, status: "pending", provider: "backup", bindingId: "backup", providerIdempotencySupported: true, providerIdempotencyKey: "backup:2", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" }, costRateSnapshot });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 2,
+            status: "pending",
+            provider: "backup",
+            bindingId: "backup",
+            providerIdempotencySupported: true,
+            providerIdempotencyKey: "backup:2",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot,
+        });
         await finishUsageProviderAttempt({ billing, attemptNumber: 2, status: "succeeded", normalizedUsage: normalizeBillableUsage({ capability: "image", source: "actual", count: 1 }) });
         await settleUsageBilling({ billing, actualUsage: normalizeBillableUsage({ capability: "image", source: "actual", count: 1 }), description: "failover" });
 
@@ -220,7 +252,15 @@ describe("usage billing runtime", () => {
 
     it("reuses the first sale snapshot when pricing changes between failover attempts", async () => {
         const first = await reservation("pricing-failover");
-        const second = await reserveOrReuseUsageBilling({ userId: first.userId, businessId: first.businessId, requestFingerprint: first.requestFingerprint, logicalModelId: "image-pro", saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "99" }] }, requestUsage: imageRequest, description: "edited price" });
+        const second = await reserveOrReuseUsageBilling({
+            userId: first.userId,
+            businessId: first.businessId,
+            requestFingerprint: first.requestFingerprint,
+            logicalModelId: "image-pro",
+            saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "99" }] },
+            requestUsage: imageRequest,
+            description: "edited price",
+        });
 
         expect(second.holdId).toBe(first.holdId);
         expect(second.snapshot.saleRateSnapshot).toEqual(imageSale);
@@ -268,6 +308,60 @@ describe("usage billing runtime", () => {
 
         await expect(recordUsageProviderAttempt({ ...pending, status: "succeeded", providerIdempotencyKey: "changed-key", nativeCostAmount: "0.375" })).rejects.toThrow("参数不一致");
         await expect(recordUsageProviderAttempt({ ...pending, status: "succeeded", costRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "99" }] }, nativeCostAmount: "99" })).rejects.toThrow("参数不一致");
+    });
+
+    it("retains and marks an ambiguous pending system text attempt for review", async () => {
+        const billing = await reservation("system-text-pending");
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "primary",
+            bindingId: "binding-primary",
+            providerIdempotencySupported: true,
+            providerIdempotencyKey: "system-text-pending:attempt:1",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "0.25" }] },
+            normalizedUsage: imageRequest,
+        });
+
+        const resolution = await resolveSystemAiTextFailure({ userId: "user-one", businessId: billing.businessId, reason: "transport acceptance unknown", final: true });
+        const db = await readAuthDb();
+
+        expect(resolution).toEqual({ state: "needs_review" });
+        expect(db.walletHolds[0]).toMatchObject({ status: "active", reviewReason: "transport acceptance unknown" });
+        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ status: "pending" })]);
+        expect(db.usageCharges).toEqual([]);
+    });
+
+    it("allows failover only after a terminal failure and releases all-failed work without erasing cost evidence", async () => {
+        const billing = await reservation("system-text-terminal");
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "primary",
+            bindingId: "binding-primary",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "0.25" }] },
+            normalizedUsage: imageRequest,
+        });
+        await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed", normalizedUsage: normalizeBillableUsage({ capability: "image", source: "derived", count: 1 }) });
+
+        await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: billing.businessId, reason: "invalid response", final: false })).resolves.toEqual({ state: "safe_to_failover" });
+        expect((await readAuthDb()).walletHolds[0]).toMatchObject({ status: "active" });
+        await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: billing.businessId, reason: "all candidates failed", final: true })).resolves.toEqual({ state: "released" });
+
+        const db = await readAuthDb();
+        expect(db.walletHolds[0]).toMatchObject({ status: "released", releaseReason: "all candidates failed" });
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "failed", nativeCostAmount: "0.25", costUsd: "0.25" });
+    });
+
+    it("distinguishes a proven non-receipt from an ambiguous transport with no persisted hold", async () => {
+        await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: "runtime:not-received", reason: "proxy rejected before provider", final: false, requestNotReceived: true })).resolves.toEqual({ state: "safe_to_failover" });
+        await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: "runtime:unknown-transport", reason: "transport unknown", final: false })).resolves.toEqual({ state: "needs_review" });
     });
 });
 

@@ -55,6 +55,7 @@ export class TextPlanningRequestError extends Error {
         message: string,
         readonly status = 502,
         readonly retryable = status >= 500 || status === 408 || status === 429,
+        readonly requestAcceptance: "response" | "unknown" = "response",
     ) {
         super(message);
         this.name = "TextPlanningRequestError";
@@ -148,7 +149,7 @@ async function requestTextProtocol(input: StructuredTextRequest, request: Protoc
         return await fetchInternalApi(`${base}${normalizePath(request.path)}`, { method: "POST", headers, body: JSON.stringify(request.body), cache: "no-store", signal });
     } catch (error) {
         if (input.signal?.aborted) throw error;
-        throw new TextPlanningRequestError(isTimeoutError(error) ? "文本模型规划响应超时，正在切换备用渠道" : "文本模型渠道暂时无法连接", 504);
+        throw new TextPlanningRequestError(isTimeoutError(error) ? "文本模型规划响应超时" : "文本模型渠道暂时无法连接", 504, true, "unknown");
     }
 }
 
@@ -165,8 +166,14 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
         throw new TextPlanningRequestError(safeUpstreamError(raw, response.status), response.status, retryableStatus(response.status));
     }
     const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!payload) throw new TextPlanningRequestError("文本模型返回了无效 JSON");
-    if (request.protocol === "custom" && isProviderBusinessError(payload)) throw new TextPlanningRequestError(readProviderError(payload) || "自定义文本协议返回失败");
+    if (!payload) {
+        await input.onInvalidResponse?.(response.headers);
+        throw new TextPlanningRequestError("文本模型返回了无效 JSON");
+    }
+    if (request.protocol === "custom" && isProviderBusinessError(payload)) {
+        await input.onInvalidResponse?.(response.headers);
+        throw new TextPlanningRequestError(readProviderError(payload) || "自定义文本协议返回失败");
+    }
     const argumentsText = readProtocolArguments(payload, input.tool.name, request, input.allowNaturalLanguage);
     if (!argumentsText) {
         await input.onInvalidResponse?.(response.headers);

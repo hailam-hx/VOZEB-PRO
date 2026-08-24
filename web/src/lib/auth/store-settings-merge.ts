@@ -11,7 +11,7 @@ export function preserveLogicalModelPricing(current: LogicalModel[], incoming: L
             saleRateCard: currentModel.saleRateCard,
             bindings: model.bindings.map((binding) => {
                 const currentBinding = currentBindings.get(binding.id);
-                return currentBinding ? { ...binding, costRateCard: currentBinding.costRateCard, providerCostUnit: currentBinding.providerCostUnit } : binding;
+                return currentBinding ? { ...binding, costRateCard: currentBinding.costRateCard, providerCostUnit: currentBinding.providerCostUnit } : withoutBindingPricing(binding);
             }),
         };
     });

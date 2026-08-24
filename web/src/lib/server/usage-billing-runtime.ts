@@ -9,7 +9,17 @@ import { getTextTask } from "./text-task-store";
 import { getImageTask } from "./image-task-store";
 import { getVideoTask } from "./video-task-store";
 import { getAudioTask } from "./audio-task-store";
-import { listExpiredActiveWalletHolds, getWalletHoldByBusinessId, getWalletHoldById, listProviderUsageAttemptsForHold, markWalletHoldNeedsReview, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold } from "./points-wallet-service";
+import {
+    listExpiredActiveWalletHolds,
+    getWalletHoldByBusinessId,
+    getWalletHoldById,
+    listProviderUsageAttemptsForHold,
+    markWalletHoldNeedsReview,
+    recordProviderUsageAttempt,
+    releaseWalletHold,
+    reserveWalletCredits,
+    settleWalletHold,
+} from "./points-wallet-service";
 
 export type UsageBilling = {
     holdId: string;
@@ -213,6 +223,29 @@ export async function releaseUsageBillingForBusiness(userId: string, businessId:
     const billing = billingFromHold(hold);
     await finishPendingAttempts(billing, "failed", new Date());
     return releaseUsageBilling({ billing, reason });
+}
+
+export async function resolveSystemAiTextFailure(input: { userId: string; businessId: string; reason: string; final: boolean; requestNotReceived?: boolean }) {
+    const hold = await getWalletHoldByBusinessId(input.businessId);
+    if (!hold) return { state: input.requestNotReceived ? "safe_to_failover" : "needs_review" } as const;
+    if (hold.userId !== input.userId) return { state: "needs_review" } as const;
+    if (hold.status !== "active") return { state: "closed" } as const;
+    if (!hold.runtimeSnapshot) {
+        await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
+        return { state: "needs_review" } as const;
+    }
+    const attempts = await listProviderUsageAttemptsForHold(hold.id);
+    if (attempts.some((attempt) => attempt.status === "pending")) {
+        await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
+        return { state: "needs_review" } as const;
+    }
+    if (attempts.length && !attempts.every((attempt) => attempt.status === "failed")) {
+        await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
+        return { state: "needs_review" } as const;
+    }
+    if (!input.final) return { state: "safe_to_failover" } as const;
+    await releaseUsageBilling({ billing: billingFromHold(hold), reason: input.reason });
+    return { state: "released" } as const;
 }
 
 export async function attachSystemAiUsageUpstreamTask(headers: Headers, upstreamTaskId: string) {
