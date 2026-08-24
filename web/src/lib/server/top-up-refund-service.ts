@@ -9,6 +9,7 @@ import { getPaymentRuntimeConfig, getPaymentRuntimeValue } from "@/lib/server/pa
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { reverseReferralRewardsForRefundedOrder } from "@/lib/server/referral-service";
 import { requestTopUpRefund, type TopUpRefundKind, type TopUpRefundProvider, type TopUpRefundProviderResult, type TopUpRefundStore } from "./top-up-refund";
+import type { TopUpOrder } from "./top-up-payment";
 
 export async function refundTopUpOrder(orderId: string, input: { kind?: TopUpRefundKind; reason?: unknown; operatorUserId: string }) {
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("充值退款需要启用 PostgreSQL", 501);
@@ -104,6 +105,27 @@ class PostgresTopUpRefundStore implements TopUpRefundStore {
         });
     }
 
+    async recordPendingRecovery(input: { orderId: string; businessId: string; requestFingerprint: string; reason: string; providerRefund?: TopUpRefundProviderResult }) {
+        await withPostgresTransaction(async (client) => {
+            await lockAuthMutation(client);
+            const repos = createPostgresRepositories(client);
+            const order = await repos.topUps.getOrderById(input.orderId, true);
+            if (!order) throw new BillingInputError("充值订单不存在", 404);
+            const refund = await client.query("SELECT recovery_hold_id, request_fingerprint, status FROM top_up_refunds WHERE order_id = $1 FOR UPDATE", [order.id]);
+            const row = refund.rows[0];
+            if (!row || String(row.request_fingerprint) !== input.requestFingerprint) throw new BillingInputError("退款回收记录不存在或不匹配", 409);
+            const hold = await repos.pointsWallet.getHoldById(String(row.recovery_hold_id), true);
+            if (!hold || hold.status !== "active") throw new BillingInputError("退款回收预留无效", 409);
+            await client.query(
+                `UPDATE top_up_refunds
+                 SET status = 'manual_review', reason = $2, provider_refund_id = COALESCE($3, provider_refund_id), raw_payload = $4::jsonb, updated_at = now()
+                 WHERE order_id = $1`,
+                [order.id, input.reason, input.providerRefund?.providerRefundId || null, JSON.stringify(input.providerRefund?.rawPayload || {})],
+            );
+            await client.query("UPDATE top_up_orders SET status = 'refunding', provider_refund_state = 'pending', credit_recovery_state = 'held' WHERE id = $1", [order.id]);
+        });
+    }
+
     async finalizeRecovery(input: { orderId: string; creditAmount: string; businessId: string; requestFingerprint: string; providerRefund: TopUpRefundProviderResult }) {
         return withPostgresTransaction(async (client) => {
             await lockAuthMutation(client);
@@ -169,8 +191,9 @@ class ConfiguredTopUpRefundProvider implements TopUpRefundProvider {
         if (order.provider !== "stripe") return { status: "manual" as const, rawPayload: { provider: order.provider, reason: "automatic_refund_not_configured" } };
         const config = await getPaymentRuntimeConfig();
         const secret = getPaymentRuntimeValue(config, "VOZEB_PRO_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
-        if (!secret || !order.providerPaymentId) return { status: "manual" as const, rawPayload: { provider: "stripe", reason: "missing_refund_configuration" } };
-        const params = new URLSearchParams({ payment_intent: order.providerPaymentId, amount: order.paymentAmount.kind === "fiat" ? order.paymentAmount.amountMinor : "", reason: "requested_by_customer" });
+        const refundTarget = resolveStripeRefundTarget(order);
+        if (!secret || !refundTarget) return { status: "manual" as const, rawPayload: { provider: "stripe", reason: "missing_refund_configuration_or_identifier" } };
+        const params = new URLSearchParams({ ...refundTarget, amount: order.paymentAmount.kind === "fiat" ? order.paymentAmount.amountMinor : "", reason: "requested_by_customer" });
         params.set("metadata[orderId]", order.id);
         params.set("metadata[operatorUserId]", this.operatorUserId);
         params.set("metadata[creditRecoveryAmount]", context.recoveryHeldAmount);
@@ -180,9 +203,18 @@ class ConfiguredTopUpRefundProvider implements TopUpRefundProvider {
             body: params,
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-        if (!response.ok || payload.status !== "succeeded") return { status: "failed" as const, rawPayload: payload };
-        return { status: "succeeded" as const, providerRefundId: typeof payload.id === "string" ? payload.id : undefined, rawPayload: payload };
+        const providerRefundId = typeof payload.id === "string" ? payload.id : undefined;
+        if (!response.ok || payload.status === "failed" || payload.status === "canceled") return { status: "failed" as const, providerRefundId, rawPayload: payload };
+        if (payload.status !== "succeeded") return { status: "pending" as const, providerRefundId, rawPayload: payload };
+        return { status: "succeeded" as const, providerRefundId, rawPayload: payload };
     }
+}
+
+export function resolveStripeRefundTarget(order: Pick<TopUpOrder, "providerOrderId" | "providerPaymentId">): { payment_intent: string } | { charge: string } | null {
+    if (order.providerOrderId?.startsWith("pi_")) return { payment_intent: order.providerOrderId };
+    if (order.providerPaymentId?.startsWith("pi_")) return { payment_intent: order.providerPaymentId };
+    if (order.providerPaymentId?.startsWith("ch_")) return { charge: order.providerPaymentId };
+    return null;
 }
 
 function required(value: unknown, message: string) {

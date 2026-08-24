@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { decimal } from "@/lib/billing/decimal";
 import { requestTopUpRefund, type TopUpRefundProvider, type TopUpRefundStore } from "./top-up-refund";
+import { resolveStripeRefundTarget } from "./top-up-refund-service";
 import type { TopUpOrder } from "./top-up-payment";
 
 describe("top-up full refund recovery", () => {
@@ -44,6 +45,46 @@ describe("top-up full refund recovery", () => {
         const retry = await requestTopUpRefund({ orderId: "order-one", kind: "full", reason: "retry" }, store, provider);
         expect(retry).toMatchObject({ manualReview: true, reason: "provider_retry_review" });
         expect(provider.state.calls).toBe(1);
+    });
+
+    it("keeps the recovery hold when the provider result is unknown", async () => {
+        const store = memoryRefundStore("10.12345678");
+        const provider: TopUpRefundProvider = {
+            async refund() {
+                throw new Error("connection reset after request upload");
+            },
+        };
+
+        const first = await requestTopUpRefund({ orderId: "order-one", kind: "full", reason: "客户申请" }, store, provider);
+        const retry = await requestTopUpRefund({ orderId: "order-one", kind: "full", reason: "retry" }, store, provider);
+
+        expect(first).toMatchObject({ manualReview: true, reason: "provider_state_unknown", recoveryState: "held" });
+        expect(retry).toMatchObject({ manualReview: true, reason: "provider_reconciliation_required", recoveryState: "held" });
+        expect(store.state.balance).toBe("10.12345678");
+        expect(store.state.held).toBe("10.12345678");
+        expect(store.state.ledger).toEqual([]);
+    });
+
+    it("keeps the recovery hold while an accepted provider refund is pending", async () => {
+        const store = memoryRefundStore("10.12345678");
+        const provider: TopUpRefundProvider = {
+            async refund() {
+                return { status: "pending", providerRefundId: "re_pending" };
+            },
+        };
+
+        const result = await requestTopUpRefund({ orderId: "order-one", kind: "full", reason: "客户申请" }, store, provider);
+
+        expect(result).toMatchObject({ manualReview: true, reason: "provider_refund_pending", recoveryState: "held" });
+        expect(store.state.balance).toBe("10.12345678");
+        expect(store.state.held).toBe("10.12345678");
+    });
+
+    it("selects the correct Stripe refund identifier", () => {
+        expect(resolveStripeRefundTarget({ providerOrderId: "pi_from_webhook", providerPaymentId: "ch_latest" })).toEqual({ payment_intent: "pi_from_webhook" });
+        expect(resolveStripeRefundTarget({ providerPaymentId: "pi_from_checkout" })).toEqual({ payment_intent: "pi_from_checkout" });
+        expect(resolveStripeRefundTarget({ providerPaymentId: "ch_latest" })).toEqual({ charge: "ch_latest" });
+        expect(resolveStripeRefundTarget({ providerOrderId: "cs_checkout", providerPaymentId: "evt_unknown" })).toBeNull();
     });
 
     it("recovers the exact full grant once after provider success", async () => {
@@ -130,6 +171,9 @@ function memoryRefundStore(
         async releaseRecovery() {
             state.held = "0";
             state.order = { ...state.order, status: "paid", providerRefundState: "failed", creditRecoveryState: "released" };
+        },
+        async recordPendingRecovery() {
+            state.order = { ...state.order, status: "refunding", providerRefundState: "pending", creditRecoveryState: "held" };
         },
         async finalizeRecovery(input) {
             if (state.order.creditRecoveryState === "recovered") return "duplicate";

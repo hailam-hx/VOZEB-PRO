@@ -6,7 +6,7 @@ import type { TopUpOrder } from "./top-up-payment";
 
 export type TopUpRefundKind = "full" | "partial" | "chargeback";
 
-export type TopUpRefundProviderResult = { status: "succeeded" | "failed" | "manual"; providerRefundId?: string; rawPayload?: unknown };
+export type TopUpRefundProviderResult = { status: "succeeded" | "failed" | "pending" | "manual"; providerRefundId?: string; rawPayload?: unknown };
 
 export type TopUpRefundProvider = {
     refund(order: TopUpOrder, context: { recoveryHeldAmount: string; reason: string }): Promise<TopUpRefundProviderResult>;
@@ -17,6 +17,7 @@ export type TopUpRefundStore = {
     markManualReview(orderId: string, reason: string): Promise<void>;
     beginRecovery(input: { orderId: string; creditAmount: string; businessId: string; requestFingerprint: string }): Promise<"held" | "duplicate" | "insufficient">;
     releaseRecovery(input: { orderId: string; businessId: string; requestFingerprint: string; reason: string }): Promise<void>;
+    recordPendingRecovery(input: { orderId: string; businessId: string; requestFingerprint: string; reason: string; providerRefund?: TopUpRefundProviderResult }): Promise<void>;
     finalizeRecovery(input: { orderId: string; creditAmount: string; businessId: string; requestFingerprint: string; providerRefund: TopUpRefundProviderResult }): Promise<"applied" | "duplicate">;
 };
 
@@ -33,6 +34,9 @@ export async function requestTopUpRefund(input: { orderId: string; kind: TopUpRe
     if (order.creditRecoveryState === "released" && order.providerRefundState === "failed") {
         await store.markManualReview(order.id, "provider_retry_review");
         return { orderId: order.id, manualReview: true, reason: "provider_retry_review" as const };
+    }
+    if (order.creditRecoveryState === "held" && order.providerRefundState === "pending") {
+        return { orderId: order.id, manualReview: true, reason: "provider_reconciliation_required" as const, recoveryState: "held" as const };
     }
     if (order.paymentState !== "paid" || order.creditGrantState !== "granted") throw new BillingInputError("只有已完成授信的充值订单可以全额退款", 409);
     const credits = decimal(order.creditAmount, "原始授信积分");
@@ -52,8 +56,12 @@ export async function requestTopUpRefund(input: { orderId: string; kind: TopUpRe
     try {
         providerRefund = await provider.refund(order, { recoveryHeldAmount: credits.toString(), reason: input.reason });
     } catch (error) {
-        await store.releaseRecovery({ orderId: order.id, businessId, requestFingerprint, reason: "provider_failed" });
-        return { orderId: order.id, failed: true, recoveryState: "released" as const, error: error instanceof Error ? error.message : "退款渠道调用失败" };
+        await store.recordPendingRecovery({ orderId: order.id, businessId, requestFingerprint, reason: "provider_state_unknown" });
+        return { orderId: order.id, manualReview: true, reason: "provider_state_unknown" as const, recoveryState: "held" as const, error: error instanceof Error ? error.message : "退款渠道状态未知" };
+    }
+    if (providerRefund.status === "pending") {
+        await store.recordPendingRecovery({ orderId: order.id, businessId, requestFingerprint, reason: "provider_refund_pending", providerRefund });
+        return { orderId: order.id, manualReview: true, reason: "provider_refund_pending" as const, providerRefund, recoveryState: "held" as const };
     }
     if (providerRefund.status !== "succeeded") {
         await store.releaseRecovery({ orderId: order.id, businessId, requestFingerprint, reason: "provider_failed" });
