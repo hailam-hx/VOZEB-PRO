@@ -7,17 +7,18 @@ const mocks = vi.hoisted(() => ({
     readAuthDb: vi.fn(),
     readPostgresAuthSettings: vi.fn(),
     updatePostgresAuthSettings: vi.fn(),
+    mutatePostgresAuthLogicalModels: vi.fn(),
 }));
 
 vi.mock("@/lib/server/database", () => ({ isPostgresDatabaseEnabled: vi.fn(() => mocks.postgresEnabled) }));
-vi.mock("./postgres-auth-settings-service", () => ({ updatePostgresAuthSettings: mocks.updatePostgresAuthSettings }));
+vi.mock("./postgres-auth-settings-service", () => ({ updatePostgresAuthSettings: mocks.updatePostgresAuthSettings, mutatePostgresAuthLogicalModels: mocks.mutatePostgresAuthLogicalModels }));
 vi.mock("./store-repository", () => ({
     mutateAuthDb: vi.fn(),
     readAuthDb: mocks.readAuthDb,
     readPostgresAuthSettings: mocks.readPostgresAuthSettings,
 }));
 
-import { getAuthSettings, getFreshAuthSettings } from "./store-settings-actions";
+import { getAuthSettings, getFreshAuthSettings, mutateAuthLogicalModels } from "./store-settings-actions";
 
 describe("auth settings cache", () => {
     beforeEach(() => {
@@ -32,12 +33,25 @@ describe("auth settings cache", () => {
         fresh.dataLifecycle.maintenanceBatchSize = 101;
         mocks.readPostgresAuthSettings.mockResolvedValueOnce(cached).mockResolvedValueOnce(fresh);
 
-        await expect(getAuthSettings()).resolves.toEqual(cached);
+        await expect(getFreshAuthSettings()).resolves.toEqual(cached);
         await expect(getAuthSettings()).resolves.toEqual(cached);
         expect(mocks.readPostgresAuthSettings).toHaveBeenCalledTimes(1);
 
         await expect(getFreshAuthSettings()).resolves.toEqual(fresh);
         await expect(getAuthSettings()).resolves.toEqual(fresh);
         expect(mocks.readPostgresAuthSettings).toHaveBeenCalledTimes(2);
+    });
+
+    it("replaces a warm PostgreSQL cache immediately after an atomic pricing mutation", async () => {
+        const cached = structuredClone(DEFAULT_SETTINGS);
+        const saved = structuredClone(DEFAULT_SETTINGS);
+        saved.logicalModels = [{ id: "writer", name: "Writer", capability: "text", enabled: true, saleRateCard: { version: 1, components: [] }, bindings: [] }];
+        mocks.readPostgresAuthSettings.mockResolvedValue(cached);
+        mocks.mutatePostgresAuthLogicalModels.mockResolvedValue(saved);
+
+        await expect(getFreshAuthSettings()).resolves.toEqual(cached);
+        await expect(mutateAuthLogicalModels((models) => models)).resolves.toEqual(saved);
+        await expect(getAuthSettings()).resolves.toEqual(saved);
+        expect(mocks.readPostgresAuthSettings).toHaveBeenCalledOnce();
     });
 });

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getFreshAuthSettings: vi.fn(), setAuthSettings: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getFreshAuthSettings: vi.fn(), mutateAuthLogicalModels: vi.fn() }));
 
-vi.mock("@/lib/auth/store", () => ({ getFreshAuthSettings: mocks.getFreshAuthSettings, setAuthSettings: mocks.setAuthSettings }));
+vi.mock("@/lib/auth/store", () => ({ getFreshAuthSettings: mocks.getFreshAuthSettings, mutateAuthLogicalModels: mocks.mutateAuthLogicalModels }));
 
 import { getAdminModelPricing, saveAdminModelPricing } from "./admin-model-pricing-service";
 
@@ -31,7 +31,7 @@ describe("admin model pricing service", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getFreshAuthSettings.mockResolvedValue({ logicalModels, systemChannels: [] });
-        mocks.setAuthSettings.mockImplementation(async (patch) => ({ logicalModels: patch.logicalModels, systemChannels: [] }));
+        mocks.mutateAuthLogicalModels.mockImplementation(async (mutator) => ({ logicalModels: mutator(logicalModels), systemChannels: [] }));
     });
 
     it("round-trips exact sale, cost, and versioned provider-unit conversion decimal strings", async () => {
@@ -58,7 +58,7 @@ describe("admin model pricing service", () => {
                 },
             ],
         });
-        expect(mocks.setAuthSettings).toHaveBeenCalledWith({ logicalModels: [expect.objectContaining({ id: "image-pro", capability: "image", enabled: true })] });
+        expect(mocks.mutateAuthLogicalModels).toHaveBeenCalledOnce();
         await expect(getAdminModelPricing()).resolves.toEqual({ models: logicalModels });
     });
 
@@ -70,6 +70,6 @@ describe("admin model pricing service", () => {
                 bindings: [{ bindingId: "binding-one", costRateCard: logicalModels[0].bindings[0].costRateCard, providerCostUnit: null }],
             }),
         ).rejects.toMatchObject({ status: 400, message: "绑定成本价格卡与供应商成本单位必须同时配置" });
-        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+        expect(mocks.mutateAuthLogicalModels).toHaveBeenCalledOnce();
     });
 });

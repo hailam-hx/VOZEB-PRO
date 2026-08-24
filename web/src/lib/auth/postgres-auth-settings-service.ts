@@ -3,17 +3,20 @@ import type { AppSettingsRecord } from "@/lib/server/database/repository-types";
 
 import { encryptAuthSettingsSecrets, normalizeSettings } from "./store-normalizers";
 import { readPostgresAuthSettings } from "./store-repository";
-import type { AuthSettings } from "./store-types";
+import { preserveLogicalModelPricing } from "./store-settings-merge";
+import type { AuthSettings, LogicalModel } from "./store-types";
 
 export async function updatePostgresAuthSettings(patch: Partial<AuthSettings>) {
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {
         const settingsRepository = createPostgresRepositories(client).settings;
         await settingsRepository.lock();
-        const settings = normalizeSettings({ ...(await readPostgresAuthSettings(client)), ...patch });
+        const current = await readPostgresAuthSettings(client);
+        const currentPatch = patch.logicalModels === undefined ? patch : { ...patch, logicalModels: preserveLogicalModelPricing(current.logicalModels, patch.logicalModels) };
+        const settings = normalizeSettings({ ...current, ...currentPatch });
         const encrypted = encryptAuthSettingsSecrets(settings);
 
-        const settingsPatch = postgresSettingsPatch(patch, encrypted);
+        const settingsPatch = postgresSettingsPatch(currentPatch, encrypted);
         if (Object.keys(settingsPatch).length) await settingsRepository.updateSettings(settingsPatch);
 
         if (patch.systemChannels !== undefined) {
@@ -33,6 +36,19 @@ export async function updatePostgresAuthSettings(patch: Partial<AuthSettings>) {
             }
             await settingsRepository.deleteSystemModelChannelsNotIn(encrypted.systemChannels.map((channel) => channel.id));
         }
+        return settings;
+    });
+}
+
+export async function mutatePostgresAuthLogicalModels(mutator: (models: LogicalModel[]) => LogicalModel[]) {
+    await ensurePostgresSchema();
+    return withPostgresTransaction(async (client) => {
+        const settingsRepository = createPostgresRepositories(client).settings;
+        await settingsRepository.lock();
+        const current = await readPostgresAuthSettings(client);
+        const settings = normalizeSettings({ ...current, logicalModels: mutator(current.logicalModels) });
+        const encrypted = encryptAuthSettingsSecrets(settings);
+        await settingsRepository.updateSettings({ logicalModels: asJson(encrypted.logicalModels) });
         return settings;
     });
 }

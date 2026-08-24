@@ -1,4 +1,4 @@
-import { getFreshAuthSettings, setAuthSettings, type LogicalModel, type LogicalModelBinding } from "@/lib/auth/store";
+import { getFreshAuthSettings, mutateAuthLogicalModels, type LogicalModel, type LogicalModelBinding } from "@/lib/auth/store";
 import { validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/money";
 import { validatePricingRateCard, type PricingRateCardV1 } from "@/lib/billing/pricing";
 import { BillingInputError } from "@/lib/server/billing-errors";
@@ -12,18 +12,18 @@ export async function getAdminModelPricing() {
 }
 
 export async function saveAdminModelPricing(input: AdminModelPricingInput) {
-    const settings = await getFreshAuthSettings();
-    const model = settings.logicalModels.find((item) => item.id === input.modelId);
-    if (!model) throw new BillingInputError("逻辑模型不存在", 404);
     try {
-        const saleRateCard = input.saleRateCard === undefined ? model.saleRateCard : input.saleRateCard === null ? undefined : validatePricingRateCard(input.saleRateCard);
-        const updates = new Map((input.bindings || []).map((binding) => [binding.bindingId, binding]));
-        if (updates.size !== (input.bindings || []).length) throw new BillingInputError("绑定计价配置重复");
-        for (const bindingId of updates.keys()) if (!model.bindings.some((binding) => binding.id === bindingId)) throw new BillingInputError("模型绑定不存在", 404);
-        const bindings = model.bindings.map((binding) => applyBindingPricing(binding, updates.get(binding.id)));
-        const logicalModels = settings.logicalModels.map((item) => (item.id === model.id ? { ...item, ...(saleRateCard ? { saleRateCard } : { saleRateCard: undefined }), bindings } : item));
-        const saved = await setAuthSettings({ logicalModels });
-        const savedModel = saved.logicalModels.find((item) => item.id === model.id);
+        const saved = await mutateAuthLogicalModels((logicalModels) => {
+            const model = logicalModels.find((item) => item.id === input.modelId);
+            if (!model) throw new BillingInputError("逻辑模型不存在", 404);
+            const saleRateCard = input.saleRateCard === undefined ? model.saleRateCard : input.saleRateCard === null ? undefined : validatePricingRateCard(input.saleRateCard);
+            const updates = new Map((input.bindings || []).map((binding) => [binding.bindingId, binding]));
+            if (updates.size !== (input.bindings || []).length) throw new BillingInputError("绑定计价配置重复");
+            for (const bindingId of updates.keys()) if (!model.bindings.some((binding) => binding.id === bindingId)) throw new BillingInputError("模型绑定不存在", 404);
+            const bindings = model.bindings.map((binding) => applyBindingPricing(binding, updates.get(binding.id)));
+            return logicalModels.map((item) => (item.id === model.id ? { ...item, ...(saleRateCard ? { saleRateCard } : { saleRateCard: undefined }), bindings } : item));
+        });
+        const savedModel = saved.logicalModels.find((item) => item.id === input.modelId);
         if (!savedModel) throw new BillingInputError("逻辑模型保存失败", 409);
         return { model: presentModel(savedModel) };
     } catch (error) {

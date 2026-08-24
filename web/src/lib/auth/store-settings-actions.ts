@@ -1,8 +1,9 @@
 import { isPostgresDatabaseEnabled } from "@/lib/server/database";
-import { updatePostgresAuthSettings } from "./postgres-auth-settings-service";
+import { mutatePostgresAuthLogicalModels, updatePostgresAuthSettings } from "./postgres-auth-settings-service";
 import { normalizeSettings } from "./store-normalizers";
 import { mutateAuthDb, readAuthDb, readPostgresAuthSettings } from "./store-repository";
-import type { AuthSettings } from "./store-types";
+import { preserveLogicalModelPricing } from "./store-settings-merge";
+import type { AuthSettings, LogicalModel } from "./store-types";
 
 const AUTH_SETTINGS_CACHE_TTL_MS = 1000;
 let postgresAuthSettingsCache: { value: AuthSettings; expiresAt: number } | null = null;
@@ -44,7 +45,19 @@ export async function setAuthSettings(patch: Partial<AuthSettings>) {
     const settings = isPostgresDatabaseEnabled()
         ? await updatePostgresAuthSettings(patch)
         : await mutateAuthDb((db) => {
-              db.settings = normalizeSettings({ ...db.settings, ...patch });
+              const currentPatch = patch.logicalModels === undefined ? patch : { ...patch, logicalModels: preserveLogicalModelPricing(db.settings.logicalModels, patch.logicalModels) };
+              db.settings = normalizeSettings({ ...db.settings, ...currentPatch });
+              return db.settings;
+          });
+    updatePostgresCache(settings);
+    return settings;
+}
+
+export async function mutateAuthLogicalModels(mutator: (models: LogicalModel[]) => LogicalModel[]) {
+    const settings = isPostgresDatabaseEnabled()
+        ? await mutatePostgresAuthLogicalModels(mutator)
+        : await mutateAuthDb((db) => {
+              db.settings = normalizeSettings({ ...db.settings, logicalModels: mutator(db.settings.logicalModels) });
               return db.settings;
           });
     updatePostgresCache(settings);
