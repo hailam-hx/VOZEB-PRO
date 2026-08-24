@@ -1,10 +1,12 @@
-import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
+import { getAuthSettings } from "@/lib/auth/store";
 import { CREATE_AGENT_PROMPT_MAX_LENGTH } from "@/lib/create-agent-prompt";
 import type { CreativeGenerationMode } from "@/lib/creative-runtime-contract";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
+import { systemAiTextUsageContext } from "@/lib/server/generation-usage-context";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey } from "@/lib/server/system-ai-billing";
-import { rankTextPlanningCandidates, requestStructuredText } from "@/lib/server/text-planning-runtime";
+import { systemAiBillingHeaders, systemAiIdempotencyKey, systemAiUsageRequestFingerprint } from "@/lib/server/system-ai-billing";
+import { rankTextPlanningCandidates, requestStructuredText, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
+import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 
 type PromptOptimizationMode = "agent" | CreativeGenerationMode;
 
@@ -24,9 +26,13 @@ export async function optimizeCreativePrompt(input: { origin: string; cookie: st
     const candidates = resolveLogicalModelCandidates(settings, "text", model);
     if (!model || !candidates.length) throw new PromptOptimizationError("后台尚未配置可用的默认文本模型", 503);
 
+    const businessRequestId = systemAiIdempotencyKey("prompt-optimize", input.userId, input.requestId);
+    const requestFingerprint = systemAiUsageRequestFingerprint({ userId: input.userId, businessRequestId, logicalModel: model, capability: "text", payload: { prompt: input.prompt, mode: input.mode, tool: promptOptimizationTool.name } });
     let latestError: unknown;
-    for (const candidate of rankTextPlanningCandidates(candidates)) {
-        const idempotencyKey = systemAiIdempotencyKey("prompt-optimize", input.userId, input.requestId, candidate.channelId, candidate.upstreamModel);
+    const ranked = rankTextPlanningCandidates(candidates);
+    for (const [index, candidate] of ranked.entries()) {
+        const attemptNumber = index + 1;
+        const usageContext = systemAiTextUsageContext({ candidate, userId: input.userId, logicalModelId: model, businessRequestId, requestFingerprint, attemptNumber });
         try {
             const call = await requestStructuredText({
                 origin: input.origin,
@@ -39,22 +45,30 @@ export async function optimizeCreativePrompt(input: { origin: string; cookie: st
                 tool: promptOptimizationTool,
                 headers: {
                     "Content-Type": "application/json",
-                    "Idempotency-Key": idempotencyKey,
-                    "X-Client-Request-Id": idempotencyKey,
-                    ...systemAiBillingHeaders(model, idempotencyKey, candidate.upstreamModel),
+                    ...systemAiBillingHeaders(model, usageContext, candidate.upstreamModel),
                 },
-                onInvalidResponse: (headers) => refundInvalidResponse(input.userId, model, headers),
+                onInvalidResponse: (headers) => finishSystemAiTextAttempt(headers, { status: "failed" }),
             });
             const optimizedPrompt = parseOptimizedPrompt(call.arguments);
             if (!optimizedPrompt) {
-                await refundInvalidResponse(input.userId, model, call.headers);
+                await finishSystemAiTextAttempt(call.headers, { status: "failed" });
                 throw new PromptOptimizationError("默认文本模型没有返回有效提示词");
             }
+            await finishSystemAiTextAttempt(call.headers, { status: "succeeded" });
             return optimizedPrompt;
         } catch (error) {
             latestError = error;
+            const resolution = await resolveSystemAiTextFailure({
+                userId: input.userId,
+                businessId: businessRequestId,
+                reason: error instanceof Error ? error.message : "提示词优化请求状态未知",
+                final: false,
+                currentAttempt: { attemptNumber, acceptance: error instanceof TextPlanningRequestError ? error.requestAcceptance : "response" },
+            });
+            if (resolution.state !== "safe_to_failover") throw error;
         }
     }
+    await resolveSystemAiTextFailure({ userId: input.userId, businessId: businessRequestId, reason: latestError instanceof Error ? latestError.message : "提示词优化失败", final: true });
     throw new PromptOptimizationError(toSafeGenerationErrorMessage(latestError, "提示词优化失败，请稍后重试"));
 }
 
@@ -71,11 +85,6 @@ function parseOptimizedPrompt(value: string) {
     } catch {
         return "";
     }
-}
-
-async function refundInvalidResponse(userId: string, model: string, headers: Headers) {
-    const billing = readSystemAiBilling(headers);
-    if (hasSystemAiCharge(billing)) await refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
 }
 
 const promptOptimizationTool = {

@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
     fetchInternalApi: vi.fn(),
     getAuthSettings: vi.fn(),
     refundUserPoints: vi.fn(async () => undefined),
+    finishSystemAiTextAttempt: vi.fn(async () => undefined),
+    resolveSystemAiTextFailure: vi.fn(),
     getCreativeAssetsByIds: vi.fn(async (_ids: string[] = []): Promise<Array<Record<string, unknown>>> => []),
     listRecentCreativeMediaAssets: vi.fn(async (): Promise<Array<Record<string, unknown>>> => []),
     getCreativeConversationContext: vi.fn(async (): Promise<CreativeConversationContext> => ({ summary: "", summaryThroughSequence: 0, recentMessages: [] })),
@@ -35,6 +37,7 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
 vi.mock("@/lib/server/generation-task-store", () => ({ linkStoredGenerationTask: mocks.linkStoredGenerationTask }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/creative-review-service", () => ({ reviewCreativeOutputs: mocks.reviewCreativeOutputs }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({ finishSystemAiTextAttempt: mocks.finishSystemAiTextAttempt, resolveSystemAiTextFailure: mocks.resolveSystemAiTextFailure }));
 vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/server/agent-run-store")>();
     return {
@@ -58,6 +61,10 @@ describe("executeAgentRun backend settings", () => {
         mocks.listRecentCreativeMediaAssets.mockResolvedValue([]);
         mocks.getCreativeConversationContext.mockResolvedValue({ summary: "", summaryThroughSequence: 0, recentMessages: [] });
         mocks.reviewCreativeOutputs.mockResolvedValue({ mode: "visual", status: "passed", summary: "检查通过", issues: [], retryTaskIds: [] });
+        mocks.resolveSystemAiTextFailure.mockImplementation(async (input: { final: boolean; currentAttempt?: { acceptance: "response" | "unknown" } }) => {
+            if (input.currentAttempt?.acceptance === "unknown") return { state: "needs_review" };
+            return { state: input.final ? "released" : "safe_to_failover" };
+        });
         mocks.registerCreativeAssets.mockImplementation(async (inputs: Array<Record<string, unknown>>) => inputs.map((input, index) => ({ ...input, id: `asset-${index}`, status: "ready", createdAt: 1, updatedAt: 1 })));
         mocks.updateAgentRunById.mockImplementation(async (_id, patch, event, allowedStatuses, expectedExecutionId) => {
             if (!mocks.run || (allowedStatuses && !allowedStatuses.includes(mocks.run.status)) || (expectedExecutionId && mocks.run.executionId !== expectedExecutionId)) return null;
@@ -544,6 +551,10 @@ describe("executeAgentRun backend settings", () => {
         const planEvent = mocks.events.find((event) => event.type === "canvas.ops") as { data?: { reply?: string } } | undefined;
         expect(planEvent?.data?.reply).toBe("已收到，我会按你的要求完成这次画布创作。");
         expect(mocks.run?.status).toBe("completed");
+        const billingHeaders = new Headers(planningCall?.[1]?.headers);
+        expect(billingHeaders.get("x-vozeb-pro-billing-user-id")).toBe("user");
+        expect(billingHeaders.get("x-vozeb-pro-billing-binding-id")).toBe("planner-binding");
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "succeeded" });
     });
 
     it("passes the persistent summary and recent messages to the planner", async () => {
@@ -735,7 +746,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.events.some((event) => event.type === "run.completed")).toBe(true);
     });
 
-    it("automatically switches to the next planning model after a timeout", async () => {
+    it("does not switch to another planning model when a timeout leaves upstream acceptance unknown", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(plannerFailoverSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockImplementation(async (url: string) => {
@@ -750,9 +761,9 @@ describe("executeAgentRun backend settings", () => {
         const primaryCalls = mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/planner-primary/"));
         const backupCalls = mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/planner-backup/"));
         expect(primaryCalls).toHaveLength(1);
-        expect(backupCalls).toHaveLength(1);
-        expect(mocks.run?.status).toBe("completed");
-        expect(mocks.events.some((event) => event.type === "run.completed")).toBe(true);
+        expect(backupCalls).toHaveLength(0);
+        expect(mocks.run?.status).toBe("failed");
+        expect(mocks.events.some((event) => event.type === "run.completed")).toBe(false);
     });
 
     it("plans chat media without canvas ops, links the child task and registers a stable asset", async () => {
@@ -1043,7 +1054,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.tasks[0].model).toBe("image-default");
     });
 
-    it("refunds text planning cost when chat fallback returns prose instead of structured JSON", async () => {
+    it("voids text planning usage when chat fallback returns prose instead of structured JSON", async () => {
         mocks.run = planningRun();
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockImplementation(async (url: string) => {
@@ -1054,11 +1065,12 @@ describe("executeAgentRun backend settings", () => {
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 2, "text", 1, undefined, "points-agent-plan");
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ userId: "user", final: true }));
         expect(mocks.run?.status).toBe("failed");
     });
 
-    it("refunds a zero-cost planning record when persisting the conversation reply fails", async () => {
+    it("releases the planning hold when persisting the conversation reply fails", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockResolvedValue(
@@ -1077,11 +1089,12 @@ describe("executeAgentRun backend settings", () => {
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 0, "text", 1, undefined, "points-agent-free");
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ final: true }));
         expect(mocks.run?.status).toBe("failed");
     });
 
-    it("refunds a completed planning call when the run is cancelled before persistence", async () => {
+    it("releases a completed planning hold when the run is cancelled before persistence", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockImplementation(async () => {
@@ -1094,7 +1107,8 @@ describe("executeAgentRun backend settings", () => {
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 3, "text", 1, undefined, "points-agent-cancelled");
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ final: true }));
         expect(mocks.run?.status).toBe("cancelled");
     });
 });

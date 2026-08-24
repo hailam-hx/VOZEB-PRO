@@ -11,6 +11,13 @@ type PricedGenerationConfig = {
     usagePricing?: { logicalModelId: string; bindingId: string };
 };
 
+type PricedTextCandidate = {
+    channelId: string;
+    upstreamModel: string;
+    binding: { id: string };
+    capabilityProfile?: { supportsIdempotency?: boolean; timeoutMs?: number };
+};
+
 export function generationSystemAiUsageContext(config: PricedGenerationConfig, capability: BillableCapability, providerIdempotencyKey: string, userId: string): SystemAiUsageContextDraft | undefined {
     const pricing = config.usagePricing;
     const parsed = parseAttemptKey(providerIdempotencyKey);
@@ -25,6 +32,23 @@ export function generationSystemAiUsageContext(config: PricedGenerationConfig, c
         requestFingerprint: systemAiUsageRequestFingerprint({ userId: userId.trim(), businessRequestId: parsed.businessRequestId, logicalModel: pricing.logicalModelId, capability, payload: { businessRequestId: parsed.businessRequestId } }),
         attemptNumber: parsed.attemptNumber,
         bindingId: pricing.bindingId,
+        providerIdempotencySupported,
+        ...(providerIdempotencySupported ? { providerIdempotencyKey } : {}),
+    };
+}
+
+export function systemAiTextUsageContext(input: { candidate: PricedTextCandidate; userId: string; logicalModelId: string; businessRequestId: string; requestFingerprint: string; attemptNumber: number }): SystemAiUsageContextDraft {
+    const providerIdempotencySupported = input.candidate.capabilityProfile?.supportsIdempotency === true;
+    const providerIdempotencyKey = `${input.businessRequestId}:attempt:${input.attemptNumber}:${input.candidate.channelId}:${input.candidate.upstreamModel}`;
+    return {
+        userId: input.userId,
+        channelId: input.candidate.channelId,
+        capability: "text",
+        expiresAtMs: Date.now() + resolveModelRequestTimeoutMs(input.candidate, "text"),
+        businessRequestId: input.businessRequestId,
+        requestFingerprint: input.requestFingerprint,
+        attemptNumber: input.attemptNumber,
+        bindingId: input.candidate.binding.id,
         providerIdempotencySupported,
         ...(providerIdempotencySupported ? { providerIdempotencyKey } : {}),
     };

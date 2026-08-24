@@ -3,7 +3,17 @@ import type { CreativeGenerationMode } from "@/lib/creative-runtime-contract";
 import type { TextPlanningProtocol } from "./text-planning-runtime";
 import { validateAgentPlan, validateAgentPlanGenerationMode, type AgentPlan } from "./agent-run-validation";
 
-export type AgentFunctionCallResult = { arguments: string; protocol?: TextPlanningProtocol; elapsedMs?: number; pointsCost?: number; pointsRemaining?: number; pointsRecordId?: string };
+export type AgentFunctionCallResult = {
+    arguments: string;
+    protocol?: TextPlanningProtocol;
+    elapsedMs?: number;
+    pointsCost?: number;
+    pointsRemaining?: number;
+    pointsRecordId?: string;
+    usageHeaders?: Headers;
+    usageBusinessId?: string;
+    usageAttemptNumber?: number;
+};
 
 export async function parseAgentPlanCall(
     call: AgentFunctionCallResult,

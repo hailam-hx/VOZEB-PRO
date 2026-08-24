@@ -11,7 +11,7 @@ export type TextPlanningCandidate = {
     channelId: string;
     upstreamModel: string;
     channel: SystemModelChannel;
-    capabilityProfile?: { timeoutMs?: number };
+    capabilityProfile?: { timeoutMs?: number; supportsIdempotency?: boolean };
 };
 export type TextPlanningTool = { name: string; description: string; parameters: Record<string, unknown> };
 export type TextPlanningCall = { arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number };

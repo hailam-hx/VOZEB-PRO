@@ -1,17 +1,19 @@
 import { getAuthSettings } from "@/lib/auth/store";
 import { nanoid } from "nanoid";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
-import { systemAiIdempotencyKey } from "@/lib/server/system-ai-billing";
+import { systemAiIdempotencyKey, systemAiUsageRequestFingerprint } from "@/lib/server/system-ai-billing";
+import { systemAiTextUsageContext } from "@/lib/server/generation-usage-context";
 import { getAgentRun, updateAgentRunById, type AgentRun } from "@/lib/server/agent-run-store";
 import { agentPlannerSystemPrompt, agentPlanReply, buildAgentPlannerInput, conversationFallbackReply, plannerAgentSkills, prioritizeAgentPlannerModels, selectAgentSkills, taskPlanSummary } from "@/lib/server/agent-run-surface-policy";
 import { getCreativeAssetsByIds, getCreativeConversationContext, listRecentCreativeMediaAssets } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { parseAgentPlanCall, type AgentFunctionCallResult } from "./agent-function-call";
-import { agentModelOptions, agentPlanFallbackExample, agentPlanTool, canContinue, directAgentPlan, executeTasks, normalizeTasks, planToOps, refundFunctionCall, requestFunctionCall } from "./agent-run-execution";
+import { agentModelOptions, agentPlanFallbackExample, agentPlanTool, canContinue, directAgentPlan, executeTasks, normalizeTasks, planToOps, releaseFunctionCall, requestFunctionCall, voidFunctionCall } from "./agent-run-execution";
 import { isExplicitProjectHandoffRequest, normalizeAgentProjectHandoff } from "./agent-run-project-handoff";
 import { normalizeCanvasPlanForSelection } from "./agent-run-task-input";
 import { GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
-import { rankTextPlanningCandidates } from "@/lib/server/text-planning-runtime";
+import { rankTextPlanningCandidates, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
+import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 import { filterAgentPlannerModels } from "@/lib/server/agent-run-planning-profile";
 import { buildAgentRunPlannerAudit } from "@/lib/server/agent-run-audit";
 import { orderCreativeAssetsByIds } from "@/lib/creative-asset-references";
@@ -29,10 +31,15 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
     const executionId = nanoid();
     let acceptedPlan: { userId: string; model: string; channelId: string; upstreamModel: string; call: AgentFunctionCallResult } | undefined;
     let planningPersisted = false;
-    const refundAcceptedPlan = async () => {
+    const releaseAcceptedPlan = async () => {
         if (!acceptedPlan || planningPersisted) return;
-        await refundFunctionCall(acceptedPlan.userId, acceptedPlan.model, acceptedPlan.call);
+        await releaseFunctionCall(acceptedPlan.userId, acceptedPlan.call, "Agent 规划结果未持久化");
         acceptedPlan = undefined;
+    };
+    const settleAcceptedPlan = async () => {
+        if (!acceptedPlan || planningPersisted) return;
+        planningPersisted = true;
+        if (acceptedPlan.call.usageHeaders) await finishSystemAiTextAttempt(acceptedPlan.call.usageHeaders, { status: "succeeded" });
     };
     controllers.set(run.id, controller);
     try {
@@ -98,24 +105,17 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 content: JSON.stringify(plannerContext.input),
             },
         ];
+        const businessRequestId = systemAiIdempotencyKey("agent-plan", run.userId, run.id);
+        const requestFingerprint = systemAiUsageRequestFingerprint({ userId: run.userId, businessRequestId, logicalModel: model, capability: "text", payload: { input: planningInput, tool: agentPlanTool.name } });
         let plan: Awaited<ReturnType<typeof parseAgentPlanCall>> | undefined;
         let latestPlanningError: unknown;
-        for (const candidate of rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })))) {
+        const rankedCandidates = rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })));
+        for (const [index, candidate] of rankedCandidates.entries()) {
+            const attemptNumber = index + 1;
+            const usageContext = systemAiTextUsageContext({ candidate, userId: run.userId, logicalModelId: model, businessRequestId, requestFingerprint, attemptNumber });
             try {
-                const planCall = await requestFunctionCall(
-                    origin,
-                    cookie,
-                    candidate,
-                    planningInput,
-                    agentPlanTool,
-                    "create_agent_plan",
-                    controller.signal,
-                    run.userId,
-                    model,
-                    false,
-                    systemAiIdempotencyKey("agent-plan", run.userId, run.id, candidate.channel.id, candidate.upstreamModel),
-                );
-                plan = await parseAgentPlanCall(planCall, () => refundFunctionCall(claimed.userId, model, planCall), undefined, {
+                const planCall = await requestFunctionCall(origin, cookie, candidate, planningInput, agentPlanTool, "create_agent_plan", controller.signal, run.userId, model, false, usageContext);
+                plan = await parseAgentPlanCall(planCall, () => voidFunctionCall(planCall), undefined, {
                     allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),
                     requiredGenerationMode: claimed.generationPreferences?.mode,
                 });
@@ -125,9 +125,20 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 if (controller.signal.aborted) throw error;
                 if (error instanceof GenerationSubmissionUncertainError) throw error;
                 latestPlanningError = error;
+                const resolution = await resolveSystemAiTextFailure({
+                    userId: run.userId,
+                    businessId: businessRequestId,
+                    reason: error instanceof Error ? error.message : "Agent 规划请求状态未知",
+                    final: false,
+                    currentAttempt: { attemptNumber, acceptance: error instanceof TextPlanningRequestError ? error.requestAcceptance : "response" },
+                });
+                if (resolution.state !== "safe_to_failover") throw error;
             }
         }
-        if (!plan) throw latestPlanningError instanceof Error ? latestPlanningError : new Error("没有可用的文本模型渠道");
+        if (!plan) {
+            await resolveSystemAiTextFailure({ userId: run.userId, businessId: businessRequestId, reason: latestPlanningError instanceof Error ? latestPlanningError.message : "没有可用的文本模型渠道", final: true });
+            throw latestPlanningError instanceof Error ? latestPlanningError : new Error("没有可用的文本模型渠道");
+        }
         if (claimed.surface === "canvas") plan = normalizeCanvasPlanForSelection(plan, claimed.snapshot, claimed.prompt);
         const plannerAudit = buildAgentRunPlannerAudit({
             mode: "model",
@@ -141,7 +152,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             skills,
         });
         if (!(await canContinue(run.id, executionId))) {
-            await refundAcceptedPlan();
+            await releaseAcceptedPlan();
             return;
         }
         if (plan.intent === "conversation") {
@@ -160,10 +171,10 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 executionId,
             );
             if (!completed) {
-                await refundAcceptedPlan();
+                await releaseAcceptedPlan();
                 return;
             }
-            planningPersisted = true;
+            await settleAcceptedPlan();
             return;
         }
         const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize, claimed.generationPreferences);
@@ -178,15 +189,15 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             executionId,
         );
         if (!planned) {
-            await refundAcceptedPlan();
+            await releaseAcceptedPlan();
             return;
         }
-        planningPersisted = true;
+        await settleAcceptedPlan();
         await executeTasks(run.id, origin, cookie, executionId, settings);
     } catch (error) {
         let failure = error;
         try {
-            await refundAcceptedPlan();
+            await releaseAcceptedPlan();
         } catch (refundError) {
             console.error("Agent planning refund failed", refundError instanceof Error ? refundError.message : refundError);
             failure = refundError;
