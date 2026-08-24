@@ -5,7 +5,9 @@ describe("requestCreditCost", () => {
     it("uses the shared Decimal sale rate card and keeps custom channels free", () => {
         const options = {
             model: "gpt-image",
-            logicalModels: [{ id: "gpt-image", name: "GPT Image", capability: "image" as const, enabled: true, saleRateCard: { version: 1 as const, revision: "image-v2", components: [{ id: "count", dimension: "count" as const, unitPrice: "2" }] }, bindings: [] }],
+            logicalModels: [
+                { id: "gpt-image", name: "GPT Image", capability: "image" as const, enabled: true, saleRateCard: { version: 1 as const, revision: "image-v2", components: [{ id: "count", dimension: "count" as const, unitPrice: "2" }] }, bindings: [] },
+            ],
             kind: "image" as const,
             count: 3,
         };

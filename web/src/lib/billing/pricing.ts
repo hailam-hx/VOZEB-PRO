@@ -220,5 +220,17 @@ function isUsageSource(value: unknown): value is UsageSource {
 }
 
 function isDimension(value: unknown): value is PricingDimension {
-    return value === "request" || value === "inputTokens" || value === "cachedInputTokens" || value === "outputTokens" || value === "count" || value === "megapixels" || value === "characters" || value === "quality" || value === "resolution" || value === "durationSeconds" || value === "format";
+    return (
+        value === "request" ||
+        value === "inputTokens" ||
+        value === "cachedInputTokens" ||
+        value === "outputTokens" ||
+        value === "count" ||
+        value === "megapixels" ||
+        value === "characters" ||
+        value === "quality" ||
+        value === "resolution" ||
+        value === "durationSeconds" ||
+        value === "format"
+    );
 }

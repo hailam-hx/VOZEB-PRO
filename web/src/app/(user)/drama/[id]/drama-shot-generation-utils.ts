@@ -67,7 +67,10 @@ export function estimateEpisodePoints(config: ReturnType<typeof useEffectiveConf
         const text = (shot.subtitle || shot.dialogue || shot.narration).trim();
         const image = mode === "storyboard" ? decimal(estimateTaskCredits(config, "image")).times(decimal(shot.storyboardFrameMode === "first_last" ? 2 : 1)) : decimal(0);
         const audio = shot.audioMode === "voiceover" && text ? decimal(estimateTaskCredits(config, "audio", 5, text)) : decimal(0);
-        return sum.plus(image).plus(decimal(estimateTaskCredits(config, "video", shot.duration))).plus(audio);
+        return sum
+            .plus(image)
+            .plus(decimal(estimateTaskCredits(config, "video", shot.duration)))
+            .plus(audio);
     }, decimal(0));
     return Number(total.toString());
 }

@@ -18,7 +18,9 @@ export function AdminPointsSection({ controller }: { controller: AdminDashboardC
                 description="套餐与参数倍率计费已移除。模型售价、供应商成本和汇率统一使用版本化价格卡。"
                 actions={
                     <Link href="/admin/billing?tab=pricing">
-                        <Button type="primary" icon={<ArrowRight className="size-4" />}>前往定价与汇率</Button>
+                        <Button type="primary" icon={<ArrowRight className="size-4" />}>
+                            前往定价与汇率
+                        </Button>
                     </Link>
                 }
             />

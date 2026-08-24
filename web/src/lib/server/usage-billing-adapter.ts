@@ -48,7 +48,14 @@ export function deriveProxyBillableUsage(input: { capability: BillableCapability
         if (actual) return normalizeBillableUsage({ ...requestUsage, capability: "text", source: "actual", ...actual });
         const output = responseText(payload);
         if (!output) return undefined;
-        return normalizeBillableUsage({ ...requestUsage, capability: "text", source: "derived", inputTokens: input.requestUsage.inputTokens || "0", cachedInputTokens: input.requestUsage.cachedInputTokens || "0", outputTokens: Buffer.byteLength(output, "utf8") });
+        return normalizeBillableUsage({
+            ...requestUsage,
+            capability: "text",
+            source: "derived",
+            inputTokens: input.requestUsage.inputTokens || "0",
+            cachedInputTokens: input.requestUsage.cachedInputTokens || "0",
+            outputTokens: Buffer.byteLength(output, "utf8"),
+        });
     }
     const count = resultCount(payload);
     if (!count) return undefined;
