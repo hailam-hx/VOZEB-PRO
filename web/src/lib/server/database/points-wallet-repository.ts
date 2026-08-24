@@ -27,9 +27,9 @@ export class PointsWalletRepository {
 
     private async writeHold(hold: WalletHoldRecord, restore: boolean) {
         const result = await this.db.query(
-            `INSERT INTO wallet_holds (id, user_id, business_id, request_fingerprint, amount, status, description, runtime_snapshot, review_reason, usage_charge_id, release_business_id, release_request_fingerprint, release_reason, expires_at, closed_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-             ${restore ? `ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, business_id = EXCLUDED.business_id, request_fingerprint = EXCLUDED.request_fingerprint, amount = EXCLUDED.amount, status = EXCLUDED.status, description = EXCLUDED.description, runtime_snapshot = EXCLUDED.runtime_snapshot, review_reason = EXCLUDED.review_reason, usage_charge_id = EXCLUDED.usage_charge_id, release_business_id = EXCLUDED.release_business_id, release_request_fingerprint = EXCLUDED.release_request_fingerprint, release_reason = EXCLUDED.release_reason, expires_at = EXCLUDED.expires_at, closed_at = EXCLUDED.closed_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at` : ""}
+            `INSERT INTO wallet_holds (id, user_id, business_id, request_fingerprint, amount, status, description, runtime_snapshot, review_reason, recovery_checked_at, usage_charge_id, release_business_id, release_request_fingerprint, release_reason, expires_at, closed_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+             ${restore ? `ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, business_id = EXCLUDED.business_id, request_fingerprint = EXCLUDED.request_fingerprint, amount = EXCLUDED.amount, status = EXCLUDED.status, description = EXCLUDED.description, runtime_snapshot = EXCLUDED.runtime_snapshot, review_reason = EXCLUDED.review_reason, recovery_checked_at = EXCLUDED.recovery_checked_at, usage_charge_id = EXCLUDED.usage_charge_id, release_business_id = EXCLUDED.release_business_id, release_request_fingerprint = EXCLUDED.release_request_fingerprint, release_reason = EXCLUDED.release_reason, expires_at = EXCLUDED.expires_at, closed_at = EXCLUDED.closed_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at` : ""}
              RETURNING *`,
             [
                 hold.id,
@@ -41,6 +41,7 @@ export class PointsWalletRepository {
                 hold.description,
                 hold.runtimeSnapshot ? jsonParam(hold.runtimeSnapshot) : null,
                 hold.reviewReason || null,
+                hold.recoveryCheckedAt || null,
                 hold.usageChargeId || null,
                 hold.releaseBusinessId || null,
                 hold.releaseRequestFingerprint || null,
@@ -69,7 +70,21 @@ export class PointsWalletRepository {
     }
 
     async listExpiredActiveHolds(now: string, limit: number) {
-        const result = await this.db.query("SELECT * FROM wallet_holds WHERE status = 'active' AND review_reason IS NULL AND expires_at IS NOT NULL AND expires_at <= $1 ORDER BY expires_at ASC, id ASC LIMIT $2", [now, limit]);
+        const result = await this.db.query(
+            `WITH candidates AS (
+                SELECT id FROM wallet_holds
+                WHERE status = 'active' AND review_reason IS NULL AND expires_at IS NOT NULL AND expires_at <= $1::timestamptz
+                ORDER BY COALESCE(recovery_checked_at, expires_at) ASC, id ASC
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED
+             )
+             UPDATE wallet_holds AS hold
+             SET recovery_checked_at = $1::timestamptz
+             FROM candidates
+             WHERE hold.id = candidates.id
+             RETURNING hold.*`,
+            [now, limit],
+        );
         return result.rows.map(mapWalletHold);
     }
 

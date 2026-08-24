@@ -392,6 +392,7 @@ export function mapPostgresWalletHold(row: Record<string, unknown>): WalletHold 
         description: dbText(row.description),
         runtimeSnapshot: dbJson(row.runtime_snapshot, undefined) as WalletHold["runtimeSnapshot"],
         reviewReason: dbOptionalText(row.review_reason),
+        recoveryCheckedAt: dbOptionalIso(row.recovery_checked_at),
         usageChargeId: dbOptionalText(row.usage_charge_id),
         releaseBusinessId: dbOptionalText(row.release_business_id),
         releaseRequestFingerprint: dbOptionalText(row.release_request_fingerprint),

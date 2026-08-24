@@ -23,7 +23,7 @@ export type AdminUsageAuditItem = {
     anomaly: "none" | "zero_usage_cost" | "negative_margin";
     createdAt: string;
 };
-export type AdminRecoveryItem = { id: string; user?: AdminBillingUser; businessId: string; amount: string; reviewReason?: string; expiresAt?: string; createdAt: string };
+export type AdminRecoveryItem = { id: string; user?: AdminBillingUser; businessId: string; amount: string; reviewReason?: string; expiresAt?: string; recoveryCheckedAt?: string; createdAt: string };
 export type AdminProviderUsageAttempt = {
     id: string;
     attemptNumber: number;

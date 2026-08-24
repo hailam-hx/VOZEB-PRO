@@ -707,7 +707,7 @@ function UsagePanel({ mode }: { mode: "usage" | "recovery" }) {
                     </Button>
                 }
             >
-                <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 880 }} dataSource={recovery} columns={recoveryColumns} />
+                <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 1050 }} dataSource={recovery} columns={recoveryColumns} />
                 {recoveryTotal > PAGE_SIZE ? <Pagination className="mt-4" current={recoveryPage} total={recoveryTotal} pageSize={PAGE_SIZE} showSizeChanger={false} onChange={setRecoveryPage} /> : null}
             </Panel>
         );
@@ -772,6 +772,7 @@ const recoveryColumns: TableColumnsType<AdminRecoveryItem> = [
     { title: "预留积分", dataIndex: "amount", width: 110 },
     { title: "业务 ID", dataIndex: "businessId", width: 220 },
     { title: "复核原因", dataIndex: "reviewReason", width: 230, render: (value?: string) => value || "已过期待检查" },
+    { title: "最近证据检查", dataIndex: "recoveryCheckedAt", width: 170, render: (value?: string) => (value ? dayjs(value).format("YYYY-MM-DD HH:mm") : "尚未检查") },
 ];
 
 function ProviderAttemptsPanel({ chargeId }: { chargeId: string }) {

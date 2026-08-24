@@ -52,7 +52,7 @@ export async function getAdminUsageAudit(input: { page?: number; pageSize?: numb
     const usersById = new Map(users.map((user) => [user.id, presentUser(user)]));
     return {
         items: charges.map((charge) => presentCharge(charge, usersById.get(charge.userId))),
-        recovery: recovery.map(({ id, userId, businessId, amount, reviewReason, expiresAt, createdAt }) => ({ id, user: usersById.get(userId), businessId, amount, reviewReason, expiresAt, createdAt })),
+        recovery: recovery.map(({ id, userId, businessId, amount, reviewReason, expiresAt, recoveryCheckedAt, createdAt }) => ({ id, user: usersById.get(userId), businessId, amount, reviewReason, expiresAt, recoveryCheckedAt, createdAt })),
         total,
         page: safePage,
         pageSize,

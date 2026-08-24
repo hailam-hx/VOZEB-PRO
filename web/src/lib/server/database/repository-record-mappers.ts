@@ -156,6 +156,7 @@ export function mapWalletHold(row: Record<string, unknown>): WalletHoldRecord {
         description: stringValue(row.description),
         runtimeSnapshot: optionalJson(row.runtime_snapshot) as WalletHoldRecord["runtimeSnapshot"],
         reviewReason: optionalString(row.review_reason),
+        recoveryCheckedAt: optionalIso(row.recovery_checked_at),
         usageChargeId: optionalString(row.usage_charge_id),
         releaseBusinessId: optionalString(row.release_business_id),
         releaseRequestFingerprint: optionalString(row.release_request_fingerprint),

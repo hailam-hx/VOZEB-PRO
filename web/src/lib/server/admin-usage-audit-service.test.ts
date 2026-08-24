@@ -44,6 +44,7 @@ describe("admin usage audit", () => {
                     status: "active",
                     description: "待恢复",
                     reviewReason: "需要任务证据",
+                    recoveryCheckedAt: "2026-08-23T00:30:00.000Z",
                     createdAt: "2026-08-23T00:00:00.000Z",
                     updatedAt: "2026-08-23T00:00:00.000Z",
                 },
@@ -141,7 +142,7 @@ describe("admin usage audit", () => {
             { id: "1", marginUsd: "-0.25", anomaly: "zero_usage_cost" },
         ]);
         expect(result.items[0]).toMatchObject({ user: { accountId: "0001", username: "creator-1" } });
-        expect(result.recovery).toEqual([expect.objectContaining({ id: "orphan", reviewReason: "需要任务证据", user: expect.objectContaining({ accountId: "0004" }) })]);
+        expect(result.recovery).toEqual([expect.objectContaining({ id: "orphan", reviewReason: "需要任务证据", recoveryCheckedAt: "2026-08-23T00:30:00.000Z", user: expect.objectContaining({ accountId: "0004" }) })]);
         expect(result).toMatchObject({ recoveryTotal: 3, recoveryPage: 2, recoveryPageSize: 2 });
         expect(result.items[0]).not.toHaveProperty("userId");
         expect(result.recovery[0]).not.toHaveProperty("userId");

@@ -408,6 +408,7 @@ export type WalletHold = {
     description: string;
     runtimeSnapshot?: UsageBillingHoldSnapshot;
     reviewReason?: string;
+    recoveryCheckedAt?: string;
     usageChargeId?: string;
     releaseBusinessId?: string;
     releaseRequestFingerprint?: string;

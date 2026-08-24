@@ -48,7 +48,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_email_codes`：注册、换绑邮箱、找回密码验证码及失败尝试次数。
 - `vozeb_pro_quota_usage`：按用户、自然日和生成能力累计积分成本与次数占用；它是管理员生成成本保护的审计数据，不是可消费余额，所有真实调用都会写入，退款会原子回退对应日期的占用。
 - `vozeb_pro_point_records`：已结算余额流水。`amount` 和 `balance_after` 使用 `numeric(30,8)`，金额不得为零；只记录真实的入账、退款、管理员调整和已结算消费，不记录预留。
-- `vozeb_pro_wallet_holds`：独立积分预留，使用稳定业务 ID、请求指纹和 `numeric(30,8)` 金额保证幂等；状态为 `active/settled/released`，只有 `active` 记录计入 held balance。`runtime_snapshot` 冻结逻辑模型、完整售卖费率、规范化预留用量、输入/输出限制、预留明细、稳定业务 ID、原始请求指纹、稳定任务身份与供应商幂等能力，`review_reason` 保存无法自动判定的恢复原因；进入人工复核的 active hold 不再被自动恢复批次重复选中。预留、余额检查和用户行锁在同一事务完成；释放身份、指纹和原因随关闭状态持久化，冲突重放会被拒绝。
+- `vozeb_pro_wallet_holds`：独立积分预留，使用稳定业务 ID、请求指纹和 `numeric(30,8)` 金额保证幂等；状态为 `active/settled/released`，只有 `active` 记录计入 held balance。`runtime_snapshot` 冻结逻辑模型、完整售卖费率、规范化预留用量、输入/输出限制、预留明细、稳定业务 ID、原始请求指纹、稳定任务身份与供应商幂等能力，`review_reason` 保存无法自动判定的恢复原因；进入人工复核的 active hold 不再被自动恢复批次重复选中。`recovery_checked_at` 记录最近一次证据检查并轮转有界恢复批次，pending hold 始终保留且不会阻塞后续 terminal hold，检查 cadence 继续由运维调度与 Provider 契约决定。预留、余额检查和用户行锁在同一事务完成；释放身份、指纹和原因随关闭状态持久化，冲突重放会被拒绝。
 - `vozeb_pro_usage_charges`：一次用量结算审计，复制 hold 的完整运行时计费快照，并保存 Task 1 权威最终售卖结算、规范化用量、售卖费率快照、预留/结算积分和所有供应商尝试的总美元成本。积分和美元不直接相减；非零结算必须通过同用户复合外键唯一关联一条消费流水，零结算不得关联流水。
 - `vozeb_pro_provider_usage_attempts`：每次上游调用尝试，包含失败尝试；原生成本、显式 USD 转换率和美元成本使用 `numeric(30,12)`，并保存绑定身份、供应商幂等能力标记与原始幂等键、原生计价单位、转换版本、成本费率快照、规范化预留用量、流式观察用量、供应商任务 ID 和尝试终态。尝试写入与结算在同一 hold 行锁上串行化，pending 只允许一次转为终态，身份与成本快照不可在完成时替换；仅显式支持幂等且复用原键时允许重复创建，关闭后不接受新尝试。
 - `vozeb_pro_top_up_presets`：VND 法币充值预设，只保存服务端标称金额、名称、排序和上下架状态；自定义 VND 金额不需要伪造一条预设。

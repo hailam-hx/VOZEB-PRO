@@ -159,6 +159,7 @@ export type WalletHoldRecord = {
     releaseReason?: string;
     runtimeSnapshot?: UsageBillingHoldSnapshot;
     reviewReason?: string;
+    recoveryCheckedAt?: string;
     expiresAt?: string;
     closedAt?: string;
     createdAt: string;

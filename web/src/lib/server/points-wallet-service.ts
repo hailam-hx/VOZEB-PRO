@@ -137,8 +137,13 @@ export async function listExpiredActiveWalletHolds(input: { now: Date; limit: nu
     return mutateAuthDb((db) =>
         db.walletHolds
             .filter((hold) => hold.status === "active" && !hold.reviewReason && hold.expiresAt && Date.parse(hold.expiresAt) <= input.now.getTime())
-            .sort((left, right) => String(left.expiresAt).localeCompare(String(right.expiresAt)) || left.id.localeCompare(right.id))
-            .slice(0, input.limit),
+            .sort((left, right) => String(left.recoveryCheckedAt || left.expiresAt).localeCompare(String(right.recoveryCheckedAt || right.expiresAt)) || left.id.localeCompare(right.id))
+            .slice(0, input.limit)
+            .map((hold) => {
+                hold.recoveryCheckedAt = input.now.toISOString();
+                hold.updatedAt = input.now.toISOString();
+                return hold;
+            }),
     );
 }
 

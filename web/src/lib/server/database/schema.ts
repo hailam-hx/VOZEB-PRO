@@ -584,6 +584,7 @@ CREATE TABLE IF NOT EXISTS wallet_holds (
     description text NOT NULL,
     runtime_snapshot jsonb,
     review_reason text,
+    recovery_checked_at timestamptz,
     usage_charge_id text UNIQUE,
     release_business_id text,
     release_request_fingerprint text,
@@ -600,9 +601,11 @@ CREATE TABLE IF NOT EXISTS wallet_holds (
 
 ALTER TABLE wallet_holds ADD COLUMN IF NOT EXISTS runtime_snapshot jsonb;
 ALTER TABLE wallet_holds ADD COLUMN IF NOT EXISTS review_reason text;
+ALTER TABLE wallet_holds ADD COLUMN IF NOT EXISTS recovery_checked_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS wallet_holds_user_active_idx ON wallet_holds (user_id, created_at) WHERE status = 'active';
-CREATE INDEX IF NOT EXISTS wallet_holds_expires_idx ON wallet_holds (expires_at, id) WHERE status = 'active' AND expires_at IS NOT NULL;
+DROP INDEX IF EXISTS wallet_holds_expires_idx;
+CREATE INDEX wallet_holds_expires_idx ON wallet_holds (COALESCE(recovery_checked_at, expires_at), id) WHERE status = 'active' AND review_reason IS NULL AND expires_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS usage_charges (
     id text PRIMARY KEY,

@@ -398,6 +398,19 @@ describe("orphan usage recovery", () => {
         expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ businessId: "runtime:later" }));
     });
 
+    it("rotates a retained pending hold behind other eligible work in the bounded batch", async () => {
+        await reservation("pending-first", new Date("2026-08-23T00:00:00.000Z"));
+        await reservation("terminal-later", new Date("2026-08-23T00:01:00.000Z"));
+        const now = new Date("2026-08-23T01:00:00.000Z");
+
+        await recoverOrphanUsageHolds({ limit: 1, now, inspect: vi.fn(async () => ({ state: "pending" as const, upstreamTaskId: "upstream-pending" })) });
+        const inspect = vi.fn(async () => ({ state: "failed" as const, reason: "确认失败" }));
+        await recoverOrphanUsageHolds({ limit: 1, now, inspect });
+
+        expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ businessId: "runtime:terminal-later" }));
+        expect((await readAuthDb()).walletHolds.find((hold) => hold.businessId === "runtime:pending-first")).toMatchObject({ status: "active", recoveryCheckedAt: now.toISOString() });
+    });
+
     it("releases confirmed failures and settles confirmed successes from snapshots", async () => {
         await reservation("orphan-failure", new Date("2026-08-23T00:00:00.000Z"));
         await reservation("orphan-success", new Date("2026-08-23T00:00:00.000Z"));

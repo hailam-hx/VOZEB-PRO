@@ -268,4 +268,39 @@ describe("PointsWalletRepository", () => {
         expect(calls[1]?.values).toEqual([now.toISOString(), 20, 20]);
         expect(calls[3]?.values).toEqual(["hold-last", 10, 10]);
     });
+
+    it("atomically rotates expired recovery candidates by their last evidence check", async () => {
+        const calls: Array<{ text: string; values?: unknown[] }> = [];
+        const now = new Date("2026-08-23T01:00:00.000Z");
+        const db = {
+            async query(text: string, values?: unknown[]) {
+                calls.push({ text, values });
+                return {
+                    rows: [
+                        {
+                            id: "hold-one",
+                            user_id: "user-one",
+                            business_id: "generation:one",
+                            request_fingerprint: "f".repeat(64),
+                            amount: "1",
+                            status: "active",
+                            description: "恢复",
+                            expires_at: new Date("2026-08-23T00:00:00.000Z"),
+                            recovery_checked_at: now,
+                            created_at: new Date("2026-08-22T00:00:00.000Z"),
+                            updated_at: new Date("2026-08-22T00:00:00.000Z"),
+                        },
+                    ],
+                };
+            },
+        } as unknown as QueryExecutor;
+
+        const holds = await new PointsWalletRepository(db).listExpiredActiveHolds(now.toISOString(), 5);
+
+        expect(calls[0]?.text).toContain("FOR UPDATE SKIP LOCKED");
+        expect(calls[0]?.text).toContain("ORDER BY COALESCE(recovery_checked_at, expires_at) ASC");
+        expect(calls[0]?.text).toContain("SET recovery_checked_at = $1::timestamptz");
+        expect(calls[0]?.values).toEqual([now.toISOString(), 5]);
+        expect(holds[0]).toMatchObject({ id: "hold-one", recoveryCheckedAt: now.toISOString() });
+    });
 });
