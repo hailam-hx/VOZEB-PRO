@@ -129,6 +129,53 @@ describe("drama analysis persisted usage attempt state", () => {
         expect(response.headers.get("x-vozeb-pro-balance-available")).toBe("9");
     });
 
+    it("stops after the current attempt has unknown acceptance even when only an earlier failed attempt is visible", async () => {
+        mocks.requestStructuredText.mockImplementation(async (input: StructuredRequest) => {
+            if (input.candidate.channelId === "primary") {
+                const attempt = await persistProxyAttempt(input);
+                await input.onInvalidResponse?.(attempt.headers);
+                throw new TextPlanningRequestError("primary terminal failure", 502, false, "response");
+            }
+            if (input.candidate.channelId === "backup") throw new TextPlanningRequestError("backup acceptance unknown", 504, true, "unknown");
+            const attempt = await persistProxyAttempt(input);
+            return { arguments: "{}", protocol: "chat" as const, elapsedMs: 1, headers: attempt.headers };
+        });
+
+        const response = await POST(request());
+        const db = await readAuthDb();
+
+        expect(response.status).toBe(502);
+        expect(mocks.requestStructuredText).toHaveBeenCalledTimes(2);
+        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "failed", costUsd: "0.1" })]);
+        expect(db.walletHolds).toEqual([expect.objectContaining({ status: "active", reviewReason: "backup acceptance unknown" })]);
+        expect(db.usageCharges).toEqual([]);
+        expect(response.headers.get("x-vozeb-pro-balance-settled")).toBe("10");
+        expect(response.headers.get("x-vozeb-pro-balance-held")).toBe("1");
+        expect(response.headers.get("x-vozeb-pro-balance-available")).toBe("9");
+    });
+
+    it("does not borrow an earlier terminal row when the current response attempt has no persisted row", async () => {
+        mocks.requestStructuredText.mockImplementation(async (input: StructuredRequest) => {
+            if (input.candidate.channelId === "primary") {
+                const attempt = await persistProxyAttempt(input);
+                await input.onInvalidResponse?.(attempt.headers);
+                throw new TextPlanningRequestError("primary terminal failure", 502, false, "response");
+            }
+            if (input.candidate.channelId === "backup") throw new TextPlanningRequestError("backup row unavailable", 502, false, "response");
+            const attempt = await persistProxyAttempt(input);
+            return { arguments: "{}", protocol: "chat" as const, elapsedMs: 1, headers: attempt.headers };
+        });
+
+        const response = await POST(request());
+        const db = await readAuthDb();
+
+        expect(response.status).toBe(502);
+        expect(mocks.requestStructuredText).toHaveBeenCalledTimes(2);
+        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "failed", costUsd: "0.1" })]);
+        expect(db.walletHolds).toEqual([expect.objectContaining({ status: "active", reviewReason: "backup row unavailable" })]);
+        expect(db.usageCharges).toEqual([]);
+    });
+
     it("does not treat a proxy error response without persisted evidence as proven provider non-receipt", async () => {
         mocks.requestStructuredText.mockRejectedValue(new TextPlanningRequestError("proxy rejected request", 400, false, "response"));
 
@@ -201,7 +248,7 @@ function settingsFixture() {
     return {
         defaultModels: { textModel: "logical-text" },
         generationDefaults: { videoSeconds: 5 },
-        systemChannels: [channel("primary", "text-primary"), channel("backup", "text-backup")],
+        systemChannels: [channel("primary", "text-primary"), channel("backup", "text-backup"), channel("tertiary", "text-tertiary")],
         logicalModels: [
             {
                 id: "logical-text",
@@ -226,6 +273,16 @@ function settingsFixture() {
                         upstreamModel: "text-backup",
                         enabled: true,
                         priority: 2,
+                        capabilityProfile: { supportsIdempotency: false, maxInputTokens: 10000, maxOutputTokens: 2000 },
+                        costRateCard,
+                        providerCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                    },
+                    {
+                        id: "binding-tertiary",
+                        channelId: "tertiary",
+                        upstreamModel: "text-tertiary",
+                        enabled: true,
+                        priority: 3,
                         capabilityProfile: { supportsIdempotency: false, maxInputTokens: 10000, maxOutputTokens: 2000 },
                         costRateCard,
                         providerCostUnit: { kind: "fiat" as const, currency: "USD" as const },

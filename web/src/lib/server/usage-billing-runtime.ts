@@ -225,8 +225,12 @@ export async function releaseUsageBillingForBusiness(userId: string, businessId:
     return releaseUsageBilling({ billing, reason });
 }
 
-export async function resolveSystemAiTextFailure(input: { userId: string; businessId: string; reason: string; final: boolean; requestNotReceived?: boolean }) {
+export async function resolveSystemAiTextFailure(input: { userId: string; businessId: string; reason: string; final: boolean; requestNotReceived?: boolean; currentAttempt?: { attemptNumber: number; acceptance: "response" | "unknown" } }) {
     const hold = await getWalletHoldByBusinessId(input.businessId);
+    if (input.currentAttempt?.acceptance === "unknown") {
+        if (hold?.userId === input.userId && hold.status === "active") await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
+        return { state: "needs_review" } as const;
+    }
     if (!hold) return { state: input.requestNotReceived ? "safe_to_failover" : "needs_review" } as const;
     if (hold.userId !== input.userId) return { state: "needs_review" } as const;
     if (hold.status !== "active") return { state: "closed" } as const;
@@ -235,6 +239,12 @@ export async function resolveSystemAiTextFailure(input: { userId: string; busine
         return { state: "needs_review" } as const;
     }
     const attempts = await listProviderUsageAttemptsForHold(hold.id);
+    const currentAttemptNumber = input.currentAttempt?.attemptNumber;
+    const currentAttempt = currentAttemptNumber === undefined ? undefined : attempts.find((attempt) => attempt.attemptNumber === currentAttemptNumber);
+    if (input.currentAttempt && currentAttempt?.status !== "failed") {
+        await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
+        return { state: "needs_review" } as const;
+    }
     if (attempts.some((attempt) => attempt.status === "pending")) {
         await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
         return { state: "needs_review" } as const;

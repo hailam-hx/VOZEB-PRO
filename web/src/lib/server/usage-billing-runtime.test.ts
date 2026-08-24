@@ -362,6 +362,16 @@ describe("usage billing runtime", () => {
     it("distinguishes a proven non-receipt from an ambiguous transport with no persisted hold", async () => {
         await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: "runtime:not-received", reason: "proxy rejected before provider", final: false, requestNotReceived: true })).resolves.toEqual({ state: "safe_to_failover" });
         await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: "runtime:unknown-transport", reason: "transport unknown", final: false })).resolves.toEqual({ state: "needs_review" });
+        await expect(
+            resolveSystemAiTextFailure({
+                userId: "user-one",
+                businessId: "runtime:current-attempt-unknown",
+                reason: "current attempt acceptance unknown",
+                final: false,
+                requestNotReceived: true,
+                currentAttempt: { attemptNumber: 2, acceptance: "unknown" },
+            }),
+        ).resolves.toEqual({ state: "needs_review" });
     });
 });
 

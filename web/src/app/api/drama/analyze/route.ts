@@ -12,7 +12,7 @@ import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy"
 import { getWalletSnapshot, type WalletSnapshot } from "@/lib/server/points-wallet-service";
 import { checkRateLimit } from "@/lib/server/security";
 import { systemAiBillingHeaders, systemAiIdempotencyKey, systemAiUsageRequestFingerprint, type SystemAiUsageContextDraft } from "@/lib/server/system-ai-billing";
-import { rankTextPlanningCandidates, requestStructuredText } from "@/lib/server/text-planning-runtime";
+import { rankTextPlanningCandidates, requestStructuredText, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody } from "@/lib/server/drama-analysis-input";
 import { pointsResponseHeaders } from "@/lib/server/points-response";
 import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
@@ -102,6 +102,7 @@ export async function POST(request: Request) {
                     businessId: businessRequestId,
                     reason: error instanceof Error ? error.message : "剧本分析请求状态未知",
                     final: false,
+                    currentAttempt: { attemptNumber, acceptance: error instanceof TextPlanningRequestError ? error.requestAcceptance : "response" },
                 });
                 if (resolution.state !== "safe_to_failover") {
                     failureBalance = await getWalletSnapshot(user.id);
