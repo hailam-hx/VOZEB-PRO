@@ -263,7 +263,8 @@ describe("usage billing runtime", () => {
         });
 
         expect(second.holdId).toBe(first.holdId);
-        expect(second.snapshot.saleRateSnapshot).toEqual(imageSale);
+        expect(second.snapshot.saleRateSnapshot).toMatchObject(imageSale);
+        expect(second.snapshot.saleRateSnapshot.revision).toBe(first.snapshot.saleRateSnapshot.revision);
         expect(second.snapshot.reservedCredits).toBe("1.5");
     });
 

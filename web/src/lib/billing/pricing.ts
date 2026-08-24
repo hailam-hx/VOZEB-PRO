@@ -2,7 +2,7 @@ import { decimal, decimalText, hasTerminatingDecimal, type DecimalInput } from "
 
 export type UsageSource = "request" | "actual" | "derived" | "reserve";
 export type BillableCapability = "text" | "image" | "video" | "audio";
-export type PricingDimension = "inputTokens" | "outputTokens" | "count" | "quality" | "resolution" | "durationSeconds" | "format";
+export type PricingDimension = "request" | "inputTokens" | "cachedInputTokens" | "outputTokens" | "count" | "megapixels" | "characters" | "quality" | "resolution" | "durationSeconds" | "format";
 
 export type PricingComponent = {
     id: string;
@@ -14,16 +14,24 @@ export type PricingComponent = {
 
 export type PricingRateCardV1 = {
     version: 1;
+    revision?: string;
     components: PricingComponent[];
 };
+
+export type ValidatedPricingRateCardV1 = PricingRateCardV1 & { revision: string };
+export type PricingRateCardInputV1 = PricingRateCardV1;
 
 export type NormalizedUsage = {
     capability: BillableCapability;
     source: UsageSource;
+    request?: string;
     inputTokens?: string;
+    cachedInputTokens?: string;
     outputTokens?: string;
     maxOutputTokens?: string;
     count?: string;
+    megapixels?: string;
+    characters?: string;
     quality?: string;
     resolution?: string;
     durationSeconds?: string;
@@ -33,10 +41,14 @@ export type NormalizedUsage = {
 export type BillableUsageInput = {
     capability: BillableCapability;
     source: UsageSource;
+    request?: DecimalInput;
     inputTokens?: DecimalInput;
+    cachedInputTokens?: DecimalInput;
     outputTokens?: DecimalInput;
     maxOutputTokens?: DecimalInput;
     count?: DecimalInput;
+    megapixels?: DecimalInput;
+    characters?: DecimalInput;
     quality?: string;
     resolution?: string;
     durationSeconds?: DecimalInput;
@@ -58,16 +70,16 @@ export type FinalSaleCharge = {
     platformLossCredits: string;
 };
 
-const numericDimensions = new Set<PricingDimension>(["inputTokens", "outputTokens", "count", "durationSeconds"]);
+const numericDimensions = new Set<PricingDimension>(["request", "inputTokens", "cachedInputTokens", "outputTokens", "count", "megapixels", "characters", "durationSeconds"]);
 const categoricalDimensions = new Set<PricingDimension>(["quality", "resolution", "format"]);
 
-export function validatePricingRateCard(input: unknown): PricingRateCardV1 {
+export function validatePricingRateCard(input: unknown): ValidatedPricingRateCardV1 {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("价格卡必须是对象");
-    const value = input as Partial<PricingRateCardV1>;
+    const value = input as Partial<PricingRateCardInputV1>;
     if (value.version !== 1 || !Array.isArray(value.components) || !value.components.length) throw new Error("价格卡版本或组件无效");
     const ids = new Set<string>();
     const components = value.components.map((component) => normalizeComponent(component, ids));
-    return { version: 1, components };
+    return { version: 1, revision: pricingRateCardRevision(components), components };
 }
 
 export function normalizePricingRateCard(input: unknown) {
@@ -84,10 +96,14 @@ export function normalizeBillableUsage(input: BillableUsageInput): NormalizedUsa
     return {
         capability: input.capability,
         source: input.source,
+        ...numericUsage("request", input.request),
         ...numericUsage("inputTokens", input.inputTokens),
+        ...numericUsage("cachedInputTokens", input.cachedInputTokens),
         ...numericUsage("outputTokens", input.outputTokens),
         ...numericUsage("maxOutputTokens", input.maxOutputTokens),
         ...numericUsage("count", input.count),
+        ...numericUsage("megapixels", input.megapixels),
+        ...numericUsage("characters", input.characters),
         ...textUsage("quality", input.quality),
         ...textUsage("resolution", input.resolution),
         ...numericUsage("durationSeconds", input.durationSeconds),
@@ -95,7 +111,7 @@ export function normalizeBillableUsage(input: BillableUsageInput): NormalizedUsa
     };
 }
 
-export function calculatePricingReserve(input: { rateCard: PricingRateCardV1; usage: NormalizedUsage }): PricingReserve {
+export function calculatePricingReserve(input: { rateCard: PricingRateCardV1 | PricingRateCardInputV1; usage: NormalizedUsage }): PricingReserve {
     const rateCard = validatePricingRateCard(input.rateCard);
     const request = input.usage;
     const usage = request.capability === "text" ? textReserveUsage(request) : { ...request, source: "reserve" as const };
@@ -103,11 +119,11 @@ export function calculatePricingReserve(input: { rateCard: PricingRateCardV1; us
     return { rawCredits: decimalText(rawCredits), credits: rawCredits.ceilToDecimalPlaces(8).toString(), usage };
 }
 
-export function calculateNormalizedUsagePrice(input: { rateCard: PricingRateCardV1; usage: NormalizedUsage }) {
+export function calculateNormalizedUsagePrice(input: { rateCard: PricingRateCardV1 | PricingRateCardInputV1; usage: NormalizedUsage }) {
     return decimalText(priceUsage(validatePricingRateCard(input.rateCard), input.usage));
 }
 
-export function calculateFinalSaleCharge(input: { rateCard: PricingRateCardV1; reserve: PricingReserve; actualUsage?: NormalizedUsage; derivedUsage?: NormalizedUsage; providerCostUsd?: DecimalInput }): FinalSaleCharge {
+export function calculateFinalSaleCharge(input: { rateCard: PricingRateCardV1 | PricingRateCardInputV1; reserve: PricingReserve; actualUsage?: NormalizedUsage; derivedUsage?: NormalizedUsage; providerCostUsd?: DecimalInput }): FinalSaleCharge {
     const rateCard = validatePricingRateCard(input.rateCard);
     const usage = input.actualUsage || input.derivedUsage || input.reserve.usage;
     const estimated = !input.actualUsage && !input.derivedUsage;
@@ -143,7 +159,7 @@ function normalizeComponent(input: unknown, ids: Set<string>): PricingComponent 
     return { id, dimension: value.dimension, unitPrice, ...(per ? { per } : {}), ...(match ? { match } : {}) };
 }
 
-function priceUsage(rateCard: PricingRateCardV1, usage: NormalizedUsage) {
+function priceUsage(rateCard: ValidatedPricingRateCardV1, usage: NormalizedUsage) {
     return rateCard.components.reduce((total, component) => total.plus(priceComponent(component, usage)), decimal(0));
 }
 
@@ -163,7 +179,12 @@ function priceComponent(component: PricingComponent, usage: NormalizedUsage) {
 function textReserveUsage(usage: NormalizedUsage): NormalizedUsage {
     if (usage.inputTokens === undefined) throw new Error("文本预留需要已测量输入 token");
     if (usage.maxOutputTokens === undefined) throw new Error("文本预留需要最大输出 token");
-    return { capability: "text", source: "reserve", inputTokens: usage.inputTokens, outputTokens: usage.maxOutputTokens };
+    const { maxOutputTokens: _maxOutputTokens, ...snapshot } = usage;
+    return { ...snapshot, capability: "text", source: "reserve", cachedInputTokens: usage.cachedInputTokens || "0", inputTokens: usage.inputTokens, outputTokens: usage.maxOutputTokens };
+}
+
+export function pricingRateCardRevision(components: PricingComponent[]) {
+    return `rate-card-v1:${JSON.stringify(components)}`;
 }
 
 function positiveDecimal(value: unknown, label: string) {
@@ -178,7 +199,7 @@ function nonNegativeDecimal(value: unknown, label: string) {
     return normalized.toString();
 }
 
-function numericUsage(key: "inputTokens" | "outputTokens" | "maxOutputTokens" | "count" | "durationSeconds", value: DecimalInput | undefined) {
+function numericUsage(key: "request" | "inputTokens" | "cachedInputTokens" | "outputTokens" | "maxOutputTokens" | "count" | "megapixels" | "characters" | "durationSeconds", value: DecimalInput | undefined) {
     if (value === undefined) return {};
     const normalized = decimal(value, key);
     if (normalized.isNegative()) throw new Error(`${key}不能为负数`);
@@ -199,5 +220,5 @@ function isUsageSource(value: unknown): value is UsageSource {
 }
 
 function isDimension(value: unknown): value is PricingDimension {
-    return value === "inputTokens" || value === "outputTokens" || value === "count" || value === "quality" || value === "resolution" || value === "durationSeconds" || value === "format";
+    return value === "request" || value === "inputTokens" || value === "cachedInputTokens" || value === "outputTokens" || value === "count" || value === "megapixels" || value === "characters" || value === "quality" || value === "resolution" || value === "durationSeconds" || value === "format";
 }

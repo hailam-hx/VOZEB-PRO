@@ -18,7 +18,7 @@ describe("usage billing protocol adapters", () => {
     it("uses a model output limit and a conservative measured input upper bound", () => {
         const normalized = normalizeProxyBillableRequest({ capability: "text", payload: { model: "writer", messages: [{ role: "user", content: "hello" }] }, rateCard: textRate, inputLimits: { maxOutputTokens: "128" } });
 
-        expect(normalized).toEqual({ capability: "text", source: "request", inputTokens: "5", maxOutputTokens: "128" });
+        expect(normalized).toMatchObject({ capability: "text", source: "request", request: "1", inputTokens: "5", cachedInputTokens: "0", maxOutputTokens: "128", characters: "5" });
     });
 
     it("prefers provider actual usage and otherwise derives text usage from output bytes", () => {
@@ -28,6 +28,24 @@ describe("usage billing protocol adapters", () => {
         expect(deriveProxyBillableUsage({ capability: "text", requestUsage, payload: { choices: [{ message: { content: "ok" } }] } })).toMatchObject({ source: "derived", inputTokens: "5", outputTokens: "2" });
     });
 
+    it("separates cached input tokens and normalizes request characters and total megapixels", () => {
+        const textRequest = normalizeProxyBillableRequest({
+            capability: "text",
+            payload: { messages: [{ role: "user", content: "hello" }], max_tokens: 128 },
+            rateCard: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+        });
+        const actual = deriveProxyBillableUsage({ capability: "text", requestUsage: textRequest, payload: { usage: { prompt_tokens: 10, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 4 } } } });
+        const image = normalizeProxyBillableRequest({
+            capability: "image",
+            payload: { prompt: "海报", n: 2, size: "1920x1080" },
+            rateCard: { version: 1, components: [{ id: "megapixels", dimension: "megapixels", unitPrice: "1" }] },
+        });
+
+        expect(textRequest).toMatchObject({ request: "1", characters: "5", cachedInputTokens: "0" });
+        expect(actual).toMatchObject({ inputTokens: "6", cachedInputTokens: "4", outputTokens: "3", request: "1" });
+        expect(image).toMatchObject({ request: "1", count: "2", characters: "2", megapixels: "4.1472" });
+    });
+
     it("accumulates streaming usage incrementally without retaining response chunks", () => {
         const requestUsage = normalizeProxyBillableRequest({ capability: "text", payload: { messages: [{ role: "user", content: "hello" }], max_tokens: 128 }, rateCard: textRate });
         const accumulator = createStreamingUsageAccumulator("text", requestUsage);
@@ -35,7 +53,7 @@ describe("usage billing protocol adapters", () => {
         accumulator.push(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'));
         accumulator.push(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"lo"}}],"usage":{"prompt_tokens":7,"completion_tokens":3}}\n\ndata: [DONE]\n\n'));
 
-        expect(accumulator.finish()).toEqual({ capability: "text", source: "actual", inputTokens: "7", outputTokens: "3" });
+        expect(accumulator.finish()).toMatchObject({ capability: "text", source: "actual", request: "1", inputTokens: "7", cachedInputTokens: "0", outputTokens: "3", characters: "5" });
         expect(accumulator.bufferedBytes()).toBe(0);
     });
 

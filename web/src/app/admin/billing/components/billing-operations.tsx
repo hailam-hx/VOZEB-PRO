@@ -598,9 +598,13 @@ function pricingColumns(onEdit: (model: LogicalModel) => void): TableColumnsType
 
 function RateComponentsEditor({ name, title, required = false }: { name: string | Array<string | number>; title: string; required?: boolean }) {
     const dimensions: Array<{ value: PricingDimension; label: string }> = [
+        { value: "request", label: "请求次数" },
         { value: "inputTokens", label: "输入 Token" },
+        { value: "cachedInputTokens", label: "缓存输入 Token" },
         { value: "outputTokens", label: "输出 Token" },
         { value: "count", label: "生成数量" },
+        { value: "megapixels", label: "总百万像素" },
+        { value: "characters", label: "字符数" },
         { value: "durationSeconds", label: "时长（秒）" },
         { value: "quality", label: "质量" },
         { value: "resolution", label: "分辨率" },
@@ -892,7 +896,7 @@ function RateCard({ value }: { value?: LogicalModel["saleRateCard"] }) {
     return <span className="text-xs text-stone-500">{rateCardText(value)}</span>;
 }
 function rateCardText(value: LogicalModel["saleRateCard"] | undefined) {
-    return value?.components?.length ? value.components.map((item) => `${item.dimension}=${item.unitPrice}${item.per ? `/${item.per}` : ""}`).join("；") : "未配置";
+    return value?.components?.length ? `${value.components.map((item) => `${item.dimension}=${item.unitPrice}${item.per ? `/${item.per}` : ""}`).join("；")} · ${value.revision || "待保存版本"}` : "未配置";
 }
 function providerUnitText(value: LogicalModel["bindings"][number]["providerCostUnit"]) {
     return !value ? "未配置" : value.kind === "fiat" ? value.currency : `${value.provider}:${value.unit} × ${value.usdConversion.usdPerUnit} USD (${value.usdConversion.version})`;

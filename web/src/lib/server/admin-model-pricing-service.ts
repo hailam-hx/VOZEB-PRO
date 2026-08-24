@@ -1,10 +1,10 @@
 import { getFreshAuthSettings, mutateAuthLogicalModels, type LogicalModel, type LogicalModelBinding } from "@/lib/auth/store";
 import { validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/money";
-import { validatePricingRateCard, type PricingRateCardV1 } from "@/lib/billing/pricing";
+import { validatePricingRateCard, type PricingRateCardInputV1 } from "@/lib/billing/pricing";
 import { BillingInputError } from "@/lib/server/billing-errors";
 
-type BindingPricingInput = { bindingId: string; costRateCard?: PricingRateCardV1 | null; providerCostUnit?: ProviderCostUnit | null };
-export type AdminModelPricingInput = { modelId: string; saleRateCard?: PricingRateCardV1 | null; bindings?: BindingPricingInput[] };
+type BindingPricingInput = { bindingId: string; costRateCard?: PricingRateCardInputV1 | null; providerCostUnit?: ProviderCostUnit | null };
+export type AdminModelPricingInput = { modelId: string; saleRateCard?: PricingRateCardInputV1 | null; bindings?: BindingPricingInput[] };
 
 export async function getAdminModelPricing() {
     const settings = await getFreshAuthSettings();

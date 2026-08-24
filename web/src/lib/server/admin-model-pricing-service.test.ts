@@ -37,7 +37,7 @@ describe("admin model pricing service", () => {
     it("round-trips exact sale, cost, and versioned provider-unit conversion decimal strings", async () => {
         const saved = await saveAdminModelPricing({
             modelId: "image-pro",
-            saleRateCard: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "2.50000000", per: "1.00" }] },
+            saleRateCard: { version: 1, revision: "client-forged", components: [{ id: "count", dimension: "count", unitPrice: "2.50000000", per: "1.00" }] },
             bindings: [
                 {
                     bindingId: "binding-one",
@@ -58,6 +58,8 @@ describe("admin model pricing service", () => {
                 },
             ],
         });
+        expect(saved.model.saleRateCard?.revision).toBe('rate-card-v1:[{"id":"count","dimension":"count","unitPrice":"2.5","per":"1"}]');
+        expect(saved.model.bindings[0]?.costRateCard?.revision).toBe('rate-card-v1:[{"id":"count","dimension":"count","unitPrice":"0.125","per":"1"}]');
         expect(mocks.mutateAuthLogicalModels).toHaveBeenCalledOnce();
         await expect(getAdminModelPricing()).resolves.toEqual({ models: logicalModels });
     });

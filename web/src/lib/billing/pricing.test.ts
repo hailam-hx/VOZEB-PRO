@@ -97,6 +97,22 @@ describe("pricing", () => {
         expect(calculatePricingReserve({ rateCard, usage: normalizeBillableUsage({ capability: "text", source: "request", inputTokens: "20", maxOutputTokens: "10" }) }).credits).toBe("0");
     });
 
+    it("prices request, cached tokens, megapixels, and characters without intermediate rounding", () => {
+        const rateCard = validatePricingRateCard({
+            version: 1,
+            components: [
+                { id: "request", dimension: "request", unitPrice: "0.1" },
+                { id: "cached", dimension: "cachedInputTokens", unitPrice: "0.000000001", per: "1" },
+                { id: "megapixels", dimension: "megapixels", unitPrice: "0.000000003", per: "1" },
+                { id: "characters", dimension: "characters", unitPrice: "0.000000005", per: "1" },
+            ],
+        });
+        const usage = normalizeBillableUsage({ capability: "image", source: "actual", request: "1", cachedInputTokens: "7", megapixels: "2.0736", characters: "11" });
+
+        expect(rateCard.revision).toMatch(/^rate-card-v1:/);
+        expect(calculatePricingReserve({ rateCard, usage }).rawCredits).toBe("0.1000000682208");
+    });
+
     it("rejects a component unit that would require non-terminating intermediate precision", () => {
         expect(() => validatePricingRateCard({ version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "1", per: "3" }] })).toThrow("精确表示");
     });

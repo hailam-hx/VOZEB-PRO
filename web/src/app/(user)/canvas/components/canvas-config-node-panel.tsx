@@ -41,14 +41,16 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const credits = requestCreditCost({
         apiSource: config.apiSource,
-        modelPointCosts: config.modelPointCosts,
-        generationPointMultipliers: config.generationPointMultipliers,
+        logicalModels: config.logicalModels,
         kind: mode,
         model: config.model,
         count: mode === "image" ? count : 1,
         quality: config.quality,
         videoQuality: config.vquality,
         videoSeconds: config.videoSeconds,
+        resolution: config.size,
+        format: mode === "audio" ? config.audioFormat : undefined,
+        characters: node.metadata?.composerContent ?? node.metadata?.prompt,
     });
     const inputTotal = inputSummary.textCount + inputSummary.imageCount + inputSummary.videoCount + inputSummary.audioCount;
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);

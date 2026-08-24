@@ -61,6 +61,7 @@ describe("serializePublicSettings", () => {
                 name: "图片模型",
                 capability: "image",
                 enabled: true,
+                saleRateCard: { version: 1, revision: "sale-public", components: [{ id: "count", dimension: "count", unitPrice: "1" }] },
                 bindings: [
                     {
                         id: "binding-one",
@@ -69,7 +70,8 @@ describe("serializePublicSettings", () => {
                         enabled: true,
                         priority: 1,
                         weight: 8,
-                        capabilityProfile: { unitCost: 3, unitCostCurrency: "USD", timeoutMs: 60_000 },
+                        capabilityProfile: { maxInputTokens: 100_000, maxOutputTokens: 4096, unitCost: 3, unitCostCurrency: "USD", timeoutMs: 60_000 },
+                        costRateCard: { version: 1, revision: "cost-secret", components: [{ id: "count", dimension: "count", unitPrice: "0.4" }] },
                     },
                 ],
             },
@@ -96,7 +98,18 @@ describe("serializePublicSettings", () => {
                 hasApiKey: true,
             },
         ]);
-        expect(result.logicalModels[0]?.bindings[0]).toEqual({ id: "binding-one", channelId: "channel-one", upstreamModel: "vendor-image", enabled: true, priority: 1 });
+        expect(result.logicalModels[0]?.bindings[0]).toEqual({
+            id: "binding-one",
+            channelId: "channel-one",
+            upstreamModel: "vendor-image",
+            enabled: true,
+            priority: 1,
+            capabilityProfile: { maxInputTokens: 100_000, maxOutputTokens: 4096 },
+        });
+        expect(result.logicalModels[0]?.saleRateCard).toEqual(settings.logicalModels[0]?.saleRateCard);
+        expect(serialized).not.toContain("cost-secret");
+        expect(result).not.toHaveProperty("modelPointCosts");
+        expect(result).not.toHaveProperty("generationPointMultipliers");
         expect(serialized).not.toContain("provider-secret");
         expect(serialized).not.toContain("internal-provider.example");
         expect(serialized).not.toContain("smtp.internal");

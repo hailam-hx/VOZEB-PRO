@@ -1,5 +1,10 @@
 import type { ComponentProps } from "react";
 import { Sparkles } from "lucide-react";
+import type { LogicalModel } from "@/lib/auth/store";
+import { decimal } from "@/lib/billing/decimal";
+import { calculatePricingReserve, normalizeBillableUsage } from "@/lib/billing/pricing";
+
+export const DEFAULT_MODEL_POINT_COST_KEY = "__default__";
 
 export function CreditSymbol({ className, ...props }: ComponentProps<"span">) {
     return (
@@ -9,93 +14,74 @@ export function CreditSymbol({ className, ...props }: ComponentProps<"span">) {
     );
 }
 
-type ModelCreditCost = {
-    model: string;
-    credits: number;
-};
-
-type GenerationPointMultipliers = {
-    imageQuality: Record<string, number>;
-    videoQuality: Record<string, number>;
-    videoSeconds: Record<string, number>;
-};
-
-export const DEFAULT_MODEL_POINT_COST_KEY = "__default__";
-
 function modelName(value: string) {
     const separator = value.indexOf("::");
     return separator >= 0 ? value.slice(separator + 2) : value;
 }
 
-function modelCreditCost(modelCosts: Record<string, number> | ModelCreditCost[] | undefined, model: string) {
-    const name = modelName(model).trim();
-    if (Array.isArray(modelCosts)) return modelCosts.find((item) => item.model === name)?.credits ?? 1;
-    if (!modelCosts) return 1;
-    const direct = modelCosts[name];
-    if (direct !== undefined) return direct;
-    const insensitiveKey = Object.keys(modelCosts).find((key) => key.toLowerCase() === name.toLowerCase());
-    if (insensitiveKey) return modelCosts[insensitiveKey] ?? 1;
-    return modelCosts[DEFAULT_MODEL_POINT_COST_KEY] ?? 1;
-}
-
 export function formatCreditAmount(value: number | string) {
-    const numberValue = Number(value);
-    if (!Number.isFinite(numberValue)) return "0";
-    return numberValue.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+    try {
+        const [whole, fraction] = decimal(value).roundHalfUp(8).toString().split(".");
+        const sign = whole.startsWith("-") ? "-" : "";
+        const grouped = whole.replace("-", "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        return `${sign}${grouped}${fraction ? `.${fraction}` : ""}`;
+    } catch {
+        return "0";
+    }
 }
 
-export function requestCreditCost(options: { apiSource?: "system" | "custom"; modelPointCosts?: Record<string, number>; modelCosts?: ModelCreditCost[]; model: string; count?: string | number } & CreditCostOptions) {
-    if (options.apiSource !== "system") return 0;
-    const count = Math.max(1, Math.floor(Math.abs(Number(options.count)) || 1));
-    const parameterMultiplier = generationParameterMultiplier(options);
-    const cost = modelCreditCost(options.modelPointCosts || options.modelCosts, options.model) * count * parameterMultiplier;
-    return Number.isFinite(cost) ? Number(Math.max(0, cost).toFixed(2)) : 0;
+export function requestCreditCost(options: { apiSource?: "system" | "custom"; logicalModels?: LogicalModel[]; model: string; count?: string | number } & CreditCostOptions) {
+    if (options.apiSource !== "system") return "0";
+    const model = resolveLogicalModel(options.logicalModels, options.model);
+    if (!model?.saleRateCard) return "0";
+    try {
+        const count = positiveInteger(options.count) || "1";
+        const resolution = options.resolution || (options.kind === "video" ? options.videoQuality : undefined);
+        const text = options.characters || "";
+        const textLimits = model.bindings.flatMap((binding) => (binding.capabilityProfile?.maxOutputTokens ? [String(binding.capabilityProfile.maxOutputTokens)] : []));
+        const maxOutputTokens = textLimits.reduce((maximum, value) => (BigInt(value) > BigInt(maximum) ? value : maximum), "0");
+        const usage = normalizeBillableUsage({
+            capability: options.kind === "api" ? "text" : options.kind || model.capability,
+            source: "request",
+            request: "1",
+            inputTokens: model.capability === "text" ? String(new TextEncoder().encode(text).length) : undefined,
+            cachedInputTokens: model.capability === "text" ? "0" : undefined,
+            maxOutputTokens: model.capability === "text" && maxOutputTokens !== "0" ? maxOutputTokens : undefined,
+            count,
+            characters: options.characters === undefined ? undefined : String(Array.from(text).length),
+            megapixels: megapixels(resolution, count),
+            quality: options.quality,
+            resolution,
+            durationSeconds: options.videoSeconds,
+            format: options.format,
+        });
+        return calculatePricingReserve({ rateCard: model.saleRateCard, usage }).credits;
+    } catch {
+        return "0";
+    }
 }
 
 type CreditCostOptions = {
-    generationPointMultipliers?: GenerationPointMultipliers;
     kind?: "image" | "video" | "text" | "audio" | "api";
     quality?: string;
     videoQuality?: string;
     videoSeconds?: string | number;
+    resolution?: string;
+    format?: string;
+    characters?: string;
 };
 
-function generationParameterMultiplier(options: CreditCostOptions) {
-    const multipliers = options.generationPointMultipliers;
-    const kind = options.kind || (options.videoQuality !== undefined || options.videoSeconds !== undefined ? "video" : options.quality !== undefined ? "image" : undefined);
-    if (!multipliers) return 1;
-    if (kind === "image") return multiplierValue(multipliers.imageQuality, normalizeImageQualityKey(options.quality));
-    if (kind === "video") {
-        return multiplierValue(multipliers.videoQuality, normalizeVideoQualityKey(options.videoQuality)) * multiplierValue(multipliers.videoSeconds, normalizeVideoSecondsKey(options.videoSeconds));
-    }
-    return 1;
+function resolveLogicalModel(models: LogicalModel[] | undefined, requested: string) {
+    const normalized = modelName(requested).trim().toLowerCase();
+    return models?.find((model) => model.id.toLowerCase() === normalized || model.bindings.some((binding) => modelName(binding.upstreamModel).trim().toLowerCase() === normalized));
 }
 
-function multiplierValue(values: Record<string, number> | undefined, key: string) {
-    const value = values?.[key];
-    return Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 1;
+function positiveInteger(value: string | number | undefined) {
+    const normalized = String(value ?? "1").trim();
+    return /^[1-9]\d*$/.test(normalized) ? normalized : undefined;
 }
 
-function normalizeImageQualityKey(value: unknown) {
-    const key = String(value || "auto")
-        .trim()
-        .toLowerCase();
-    if (key === "hd") return "high";
-    if (key === "standard") return "medium";
-    return key || "auto";
-}
-
-function normalizeVideoQualityKey(value: unknown) {
-    const key = String(value || "720")
-        .trim()
-        .toLowerCase();
-    if (key === "low") return "480";
-    if (key === "auto" || key === "medium" || key === "high") return "720";
-    return key.replace(/p$/, "") || "720";
-}
-
-function normalizeVideoSecondsKey(value: unknown) {
-    const seconds = Number(value);
-    if (!Number.isFinite(seconds)) return "5";
-    return String(Math.max(-1, Math.floor(seconds)));
+function megapixels(resolution: string | undefined, count: string) {
+    const match = /^(\d+)x(\d+)$/i.exec(resolution || "");
+    return match ? decimal(match[1]).times(decimal(match[2])).times(decimal(count)).dividedBy(decimal("1000000")).toString() : undefined;
 }

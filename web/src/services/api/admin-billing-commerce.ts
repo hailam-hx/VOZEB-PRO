@@ -1,7 +1,7 @@
 import type { AdminBillingSummary, AdminProviderUsageAttempt, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
 import type { LogicalModel } from "@/lib/auth/store";
 import type { ProviderCostUnit } from "@/lib/billing/money";
-import type { PricingRateCardV1 } from "@/lib/billing/pricing";
+import type { PricingRateCardInputV1 } from "@/lib/billing/pricing";
 import type { TopUpOrder, TopUpOrderStatus, TopUpPreset } from "./billing";
 
 type PageResult<T, K extends string> = Record<K, T[]> & { total: number; page: number; pageSize: number };
@@ -54,7 +54,7 @@ export function getAdminModelPricing() {
     return requestCommerce<{ models: LogicalModel[] }>("/api/admin/billing/model-pricing");
 }
 
-export function saveAdminModelPricing(input: { modelId: string; saleRateCard: PricingRateCardV1 | null; bindings: Array<{ bindingId: string; costRateCard: PricingRateCardV1 | null; providerCostUnit: ProviderCostUnit | null }> }) {
+export function saveAdminModelPricing(input: { modelId: string; saleRateCard: PricingRateCardInputV1 | null; bindings: Array<{ bindingId: string; costRateCard: PricingRateCardInputV1 | null; providerCostUnit: ProviderCostUnit | null }> }) {
     return requestCommerce<{ model: LogicalModel }>("/api/admin/billing/model-pricing", jsonRequest("PATCH", input));
 }
 
