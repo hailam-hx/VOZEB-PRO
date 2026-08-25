@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { convertProviderCostToUsd, validatePaymentAmount, validateProviderCostUnit, sumProviderAttemptCostUsd, type ProviderCostUnit } from "./money";
+import { convertProviderCostToUsd, formatVndAmount, validatePaymentAmount, validateProviderCostUnit, sumProviderAttemptCostUsd, type ProviderCostUnit } from "./money";
+
+describe("VND display", () => {
+    it("formats PostgreSQL numeric integer strings without losing precision", () => {
+        expect([formatVndAmount("100000.000000000000"), formatVndAmount("9007199254740993.000000000000")]).toEqual(["100.000 ₫", "9.007.199.254.740.993 ₫"]);
+    });
+});
 
 describe("provider cost money", () => {
     it("converts provider-native cost with its versioned USD snapshot without intermediate rounding", () => {

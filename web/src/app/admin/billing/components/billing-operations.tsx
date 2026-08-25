@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { allowedAdminBillingTabs, hasAdminPermission, type AdminBillingTab } from "@/lib/admin-permissions";
 import type { AdminBillingSummary, AdminProviderUsageAttempt, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
 import type { LogicalModel } from "@/lib/auth/store";
-import type { ProviderCostUnit } from "@/lib/billing/money";
+import { formatVndAmount as formatVnd, type ProviderCostUnit } from "@/lib/billing/money";
 import type { PricingComponent, PricingConditionDimension, PricingDimension } from "@/lib/billing/pricing";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
@@ -926,9 +926,6 @@ function rateCardText(value: LogicalModel["saleRateCard"] | undefined) {
 }
 function providerUnitText(value: LogicalModel["bindings"][number]["providerCostUnit"]) {
     return !value ? "未配置" : value.kind === "fiat" ? value.currency : `${value.provider}:${value.unit} × ${value.usdConversion.usdPerUnit} USD (${value.usdConversion.version})`;
-}
-function formatVnd(value: string) {
-    return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(BigInt(value))} ₫`;
 }
 function formatUsd(value: string) {
     return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 8 }).format(Number(value));

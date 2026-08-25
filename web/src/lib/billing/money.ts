@@ -70,6 +70,12 @@ export function sumProviderAttemptCostUsd(attempts: Array<{ amount: DecimalInput
     return decimalText(attempts.reduce((total, attempt) => total.plus(decimal(convertProviderCostToUsd(attempt.amount, attempt.unit))), decimal(0)));
 }
 
+export function formatVndAmount(value: DecimalInput) {
+    const amount = decimal(value, "VND 金额");
+    if (!amount.hasAtMostDecimalPlaces(0)) throw new Error("VND 金额必须是整数");
+    return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(BigInt(amount.toString()))} ₫`;
+}
+
 function nonNegativeDecimal(value: DecimalInput, label: string) {
     const normalized = decimal(value, label);
     if (normalized.isNegative()) throw new Error(`${label}不能为负数`);
