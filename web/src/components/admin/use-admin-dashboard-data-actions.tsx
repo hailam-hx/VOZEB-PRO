@@ -205,9 +205,10 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         setBillingSummaryLoading(true);
         try {
             const response = await fetch("/api/admin/billing/summary", { cache: "no-store" });
-            const payload = (await response.json().catch(() => null)) as { summary?: AdminBillingSummary; error?: string } | null;
-            if (!response.ok || !payload?.summary) throw new Error(payload?.error || "加载财务摘要失败");
-            setBillingSummary(payload.summary);
+            const payload = (await response.json().catch(() => null)) as { code?: number; data?: { summary?: AdminBillingSummary } | null; msg?: string } | null;
+            const summary = payload?.data?.summary;
+            if (!response.ok || payload?.code !== 0 || !summary) throw new Error(payload?.msg || "加载财务摘要失败");
+            setBillingSummary(summary);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "加载财务摘要失败");
         } finally {
