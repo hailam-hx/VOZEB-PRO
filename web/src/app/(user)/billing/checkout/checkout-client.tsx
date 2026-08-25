@@ -10,6 +10,7 @@ import { useTranslations } from "next-intl";
 import { TopUpPresetGrid } from "@/components/billing/top-up-preset-grid";
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { formatVndAmount as formatVnd } from "@/lib/billing/money";
 import { createTopUpCheckout, createTopUpOrder, listTopUpPresets, quoteTopUpOrder, type PaymentCheckout, type TopUpPreset, type TopUpQuote, type TopUpSelection } from "@/services/api/billing";
 import { openPaymentCheckoutWindow } from "./payment-checkout-window";
 
@@ -291,8 +292,4 @@ function QuoteRow({ label, value, strong, icon }: { label: string; value: string
             </span>
         </div>
     );
-}
-
-function formatVnd(value: string) {
-    return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(BigInt(value))} ₫`;
 }

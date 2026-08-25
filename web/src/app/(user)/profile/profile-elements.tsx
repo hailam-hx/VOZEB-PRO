@@ -8,6 +8,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
 import { TopUpPresetGrid } from "@/components/billing/top-up-preset-grid";
 import { CompactEmptyState } from "@/components/compact-empty-state";
+import { formatVndAmount as formatVnd } from "@/lib/billing/money";
 import { cn } from "@/lib/utils";
 import { type TopUpOrder, type TopUpOrderStatus, type TopUpPreset } from "@/services/api/billing";
 import type { PointRecord } from "@/services/api/points";
@@ -311,8 +312,4 @@ export function orderStatusColor(status: TopUpOrderStatus) {
     if (status === "refunded") return "blue";
     if (status === "refunding") return "orange";
     return "default";
-}
-
-function formatVnd(value: string) {
-    return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(BigInt(value))} ₫`;
 }
