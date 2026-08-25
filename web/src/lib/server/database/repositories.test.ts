@@ -113,7 +113,7 @@ describe("split Postgres repositories", () => {
             ],
         ]);
 
-        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-one", tokenHash: "token-hash", now: timestamp, date: "2026-01-01" });
+        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-one", tokenHash: "token-hash", now: timestamp });
 
         expect(user).toMatchObject({
             user: { id: "user-one", username: "user-one", settledBalance: "120" },
@@ -124,7 +124,7 @@ describe("split Postgres repositories", () => {
         expect(queryArgs(query, 0)[0]).toContain("sessions.id = $1");
         expect(queryArgs(query, 0)[0]).toContain("sessions.token_hash = $2");
         expect(queryArgs(query, 0)[0]).toContain("sessions.expires_at > $3");
-        expect(queryArgs(query, 0)[1]).toEqual(["session-one", "token-hash", timestamp, "2026-01-01"]);
+        expect(queryArgs(query, 0)[1]).toEqual(["session-one", "token-hash", timestamp]);
     });
 
     it("looks up a login by username or email without reading the user table", async () => {
@@ -343,7 +343,7 @@ describe("split Postgres repositories", () => {
             ],
         ]);
 
-        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-negative", tokenHash: "token-hash", now: timestamp, date: "2026-01-01" });
+        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-negative", tokenHash: "token-hash", now: timestamp });
 
         expect(user).toMatchObject({ user: { settledBalance: "-80" }, heldBalance: "0", availableBalance: "-80" });
     });

@@ -10,7 +10,7 @@ import { allowedAdminBillingTabs, hasAdminPermission, type AdminBillingTab } fro
 import type { AdminBillingSummary, AdminProviderUsageAttempt, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
 import type { LogicalModel } from "@/lib/auth/store";
 import type { ProviderCostUnit } from "@/lib/billing/money";
-import type { PricingComponent, PricingDimension } from "@/lib/billing/pricing";
+import type { PricingComponent, PricingConditionDimension, PricingDimension } from "@/lib/billing/pricing";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import {
@@ -617,23 +617,36 @@ function RateComponentsEditor({ name, title, required = false }: { name: string 
                 {(fields, { add, remove }, { errors }) => (
                     <div className="space-y-2">
                         {fields.map((field) => (
-                            <div key={field.key} className="grid min-w-0 gap-2 rounded-lg border border-stone-200 bg-white p-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] dark:border-stone-800 dark:bg-stone-950">
-                                <Form.Item className="mb-0" label="组件 ID" name={[field.name, "id"]} rules={[{ required: true }]}>
-                                    <Input />
-                                </Form.Item>
-                                <Form.Item className="mb-0" label="计价维度" name={[field.name, "dimension"]} rules={[{ required: true }]}>
-                                    <Select options={dimensions} />
-                                </Form.Item>
-                                <Form.Item className="mb-0" label="单价" name={[field.name, "unitPrice"]} rules={[{ required: true, pattern: /^(?:0|[1-9]\d*)(?:\.\d+)?$/ }]}>
-                                    <Input inputMode="decimal" />
-                                </Form.Item>
-                                <Form.Item className="mb-0" label="每单位" name={[field.name, "per"]}>
-                                    <Input inputMode="decimal" placeholder="默认 1" />
-                                </Form.Item>
-                                <Form.Item className="mb-0" label="匹配值" name={[field.name, "match"]}>
-                                    <Input placeholder="分类维度必填" />
-                                </Form.Item>
-                                <Button className="self-end" danger aria-label="删除价格组件" icon={<Trash2 className="size-3.5" />} onClick={() => remove(field.name)} />
+                            <div key={field.key} className="min-w-0 rounded-lg border border-stone-200 bg-white p-2 dark:border-stone-800 dark:bg-stone-950">
+                                <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
+                                    <Form.Item className="mb-0" label="组件 ID" name={[field.name, "id"]} rules={[{ required: true }]}>
+                                        <Input />
+                                    </Form.Item>
+                                    <Form.Item className="mb-0" label="计价维度" name={[field.name, "dimension"]} rules={[{ required: true }]}>
+                                        <Select options={dimensions} />
+                                    </Form.Item>
+                                    <Form.Item className="mb-0" label="单价" name={[field.name, "unitPrice"]} rules={[{ required: true, pattern: /^(?:0|[1-9]\d*)(?:\.\d+)?$/ }]}>
+                                        <Input inputMode="decimal" />
+                                    </Form.Item>
+                                    <Form.Item className="mb-0" label="每单位" name={[field.name, "per"]}>
+                                        <Input inputMode="decimal" placeholder="默认 1" />
+                                    </Form.Item>
+                                    <Form.Item className="mb-0" label="匹配值" name={[field.name, "match"]}>
+                                        <Input placeholder="分类维度必填" />
+                                    </Form.Item>
+                                    <Button className="self-end" danger aria-label="删除价格组件" icon={<Trash2 className="size-3.5" />} onClick={() => remove(field.name)} />
+                                </div>
+                                <div className="mt-2 grid gap-2 border-t border-dashed border-stone-200 pt-2 sm:grid-cols-3 dark:border-stone-800">
+                                    <Form.Item className="mb-0" label="条件：分辨率" name={[field.name, "when", "resolution"]}>
+                                        <Input placeholder="例如 1920x1080" />
+                                    </Form.Item>
+                                    <Form.Item className="mb-0" label="条件：质量" name={[field.name, "when", "quality"]}>
+                                        <Input placeholder="例如 standard" />
+                                    </Form.Item>
+                                    <Form.Item className="mb-0" label="条件：格式" name={[field.name, "when", "format"]}>
+                                        <Input placeholder="例如 mp4" />
+                                    </Form.Item>
+                                </div>
                             </div>
                         ))}
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -656,7 +669,12 @@ function defaultPricingComponent(capability: LogicalModel["capability"]): Pricin
 function cleanPricingComponent(component: PricingComponentForm): PricingComponent {
     const per = component.per?.trim();
     const match = component.match?.trim();
-    return { id: component.id.trim(), dimension: component.dimension, unitPrice: component.unitPrice.trim(), ...(per ? { per } : {}), ...(match ? { match } : {}) };
+    const when = (["quality", "resolution", "format"] as PricingConditionDimension[]).reduce<NonNullable<PricingComponent["when"]>>((result, dimension) => {
+        const value = component.when?.[dimension]?.trim();
+        if (value) result[dimension] = value;
+        return result;
+    }, {});
+    return { id: component.id.trim(), dimension: component.dimension, unitPrice: component.unitPrice.trim(), ...(per ? { per } : {}), ...(match ? { match } : {}), ...(Object.keys(when).length ? { when } : {}) };
 }
 
 function UsagePanel({ mode }: { mode: "usage" | "recovery" }) {
@@ -897,7 +915,14 @@ function RateCard({ value }: { value?: LogicalModel["saleRateCard"] }) {
     return <span className="text-xs text-stone-500">{rateCardText(value)}</span>;
 }
 function rateCardText(value: LogicalModel["saleRateCard"] | undefined) {
-    return value?.components?.length ? `${value.components.map((item) => `${item.dimension}=${item.unitPrice}${item.per ? `/${item.per}` : ""}`).join("；")} · ${value.revision || "待保存版本"}` : "未配置";
+    return value?.components?.length
+        ? `${value.components
+              .map((item) => {
+                  const conditions = item.when ? Object.entries(item.when).map(([dimension, match]) => `${dimension}=${match}`) : [];
+                  return `${item.dimension}=${item.unitPrice}${item.per ? `/${item.per}` : ""}${conditions.length ? ` [${conditions.join(", ")}]` : ""}`;
+              })
+              .join("；")} · ${value.revision || "待保存版本"}`
+        : "未配置";
 }
 function providerUnitText(value: LogicalModel["bindings"][number]["providerCostUnit"]) {
     return !value ? "未配置" : value.kind === "fiat" ? value.currency : `${value.provider}:${value.unit} × ${value.usdConversion.usdPerUnit} USD (${value.usdConversion.version})`;

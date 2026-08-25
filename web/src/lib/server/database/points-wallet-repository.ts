@@ -2,7 +2,7 @@ import type { QueryExecutor } from "@/lib/server/database/postgres";
 
 import type { ProviderUsageAttemptRecord, UsageChargeRecord, WalletHoldRecord } from "./repository-shared";
 import { mapProviderUsageAttempt, mapUsageCharge, mapWalletHold } from "./repository-record-mappers";
-import { jsonParam, normalizePage, normalizePageSize, numberValue, pageResult, stringValue } from "./repository-shared";
+import { decimalValue, jsonParam, normalizePage, normalizePageSize, numberValue, pageResult } from "./repository-shared";
 
 export class PointsWalletRepository {
     constructor(private readonly db: QueryExecutor) {}
@@ -66,7 +66,7 @@ export class PointsWalletRepository {
 
     async getActiveHeldBalance(userId: string) {
         const result = await this.db.query("SELECT coalesce(sum(amount), 0)::text AS held_balance FROM wallet_holds WHERE user_id = $1 AND status = 'active'", [userId]);
-        return stringValue(result.rows[0]?.held_balance || "0");
+        return decimalValue(result.rows[0]?.held_balance || "0");
     }
 
     async listExpiredActiveHolds(now: string, limit: number) {
@@ -272,7 +272,7 @@ export class PointsWalletRepository {
 
     async getTotalProviderCostUsd(holdId: string) {
         const result = await this.db.query("SELECT coalesce(sum(cost_usd), 0)::text AS total FROM provider_usage_attempts WHERE hold_id = $1", [holdId]);
-        return stringValue(result.rows[0]?.total || "0");
+        return decimalValue(result.rows[0]?.total || "0");
     }
 
     async getReconciliationAggregate(userId: string) {
@@ -291,10 +291,10 @@ export class PointsWalletRepository {
         );
         const row = result.rows[0] || {};
         return {
-            ledgerBalance: stringValue(row.ledger_balance),
-            settledBalance: stringValue(row.settled_balance),
-            activeHolds: stringValue(row.active_holds),
-            availableBalance: stringValue(row.available_balance),
+            ledgerBalance: decimalValue(row.ledger_balance),
+            settledBalance: decimalValue(row.settled_balance),
+            activeHolds: decimalValue(row.active_holds),
+            availableBalance: decimalValue(row.available_balance),
             invalidChargeCount: numberValue(row.invalid_charge_count),
         };
     }

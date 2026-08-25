@@ -348,7 +348,10 @@ export async function inspectPersistedUsageHold(hold: WalletHold): Promise<Orpha
     const task =
         recovery.taskType === "text" ? await getTextTask(recovery.taskId) : recovery.taskType === "image" ? await getImageTask(recovery.taskId) : recovery.taskType === "video" ? await getVideoTask(recovery.taskId) : await getAudioTask(recovery.taskId);
     if (!task) return { state: "unknown", reason: "本地任务不存在，无法确认上游是否接收" };
-    if (task.status === "success") return { state: "succeeded", derivedUsage: persistedDerivedUsage(recovery.taskType, task, snapshot), description: hold.description };
+    if (task.status === "success") {
+        const actualUsage = await persistedActualUsage(hold.id, snapshot);
+        return actualUsage ? { state: "succeeded", actualUsage, description: hold.description } : { state: "succeeded", derivedUsage: persistedDerivedUsage(recovery.taskType, task, snapshot), description: hold.description };
+    }
     if (task.status === "error") return { state: "failed", reason: task.error || "任务确认失败" };
     if (task.status === "cancelled") return task.upstream?.id ? { state: "canceled", description: "用户取消已被上游接受的任务" } : { state: "not_received", reason: "任务在上游接收前取消" };
     if (task.upstream?.id) return { state: "pending", upstreamTaskId: task.upstream.id };
@@ -377,10 +380,7 @@ function assertUsageCapability(snapshot: UsageBillingHoldSnapshot, ...usageValue
 
 function persistedDerivedUsage(taskType: "text" | "image" | "video" | "audio", task: unknown, snapshot: UsageBillingHoldSnapshot) {
     const record = task && typeof task === "object" ? (task as Record<string, unknown>) : {};
-    if (taskType === "text") {
-        const content = record.result && typeof record.result === "object" ? String((record.result as Record<string, unknown>).content || "") : "";
-        if (content) return normalizeBillableUsage({ capability: "text", source: "derived", inputTokens: snapshot.requestUsage.inputTokens || "0", outputTokens: Buffer.byteLength(content, "utf8") });
-    }
+    if (taskType === "text") return undefined;
     if (taskType === "image") {
         const result = record.result && typeof record.result === "object" ? (record.result as Record<string, unknown>) : undefined;
         if (result) return normalizeBillableUsage({ ...snapshot.requestUsage, capability: "image", source: "derived", count: Array.isArray(result.results) && result.results.length ? String(result.results.length) : "1" });
@@ -391,6 +391,36 @@ function persistedDerivedUsage(taskType: "text" | "image" | "video" | "audio", t
         if (Number.isFinite(durationMs) && durationMs > 0) return normalizeBillableUsage({ ...snapshot.requestUsage, capability: "video", source: "derived", count: "1", durationSeconds: String(durationMs / 1000) });
     }
     return undefined;
+}
+
+async function persistedActualUsage(holdId: string, snapshot: UsageBillingHoldSnapshot) {
+    const attempts = await listProviderUsageAttemptsForHold(holdId);
+    const succeeded = attempts.filter((attempt) => attempt.status === "succeeded").flatMap((attempt) => [attempt.observedUsage, attempt.normalizedUsage]);
+    const pending = attempts.filter((attempt) => attempt.status === "pending").map((attempt) => attempt.observedUsage);
+    const candidates = (succeeded.length ? succeeded : pending).filter((usage): usage is NormalizedUsage => usage?.source === "actual" && usage.capability === snapshot.capability);
+    const unique = new Map(candidates.map((usage) => [normalizedUsageKey(usage), usage]));
+    return unique.size === 1 ? unique.values().next().value : undefined;
+}
+
+function normalizedUsageKey(usage: NormalizedUsage) {
+    return [
+        usage.capability,
+        usage.source,
+        usage.request,
+        usage.inputTokens,
+        usage.cachedInputTokens,
+        usage.outputTokens,
+        usage.maxOutputTokens,
+        usage.count,
+        usage.megapixels,
+        usage.characters,
+        usage.quality,
+        usage.resolution,
+        usage.durationSeconds,
+        usage.format,
+    ]
+        .map((value) => value ?? "")
+        .join("\0");
 }
 
 function stableFingerprint(...parts: string[]) {

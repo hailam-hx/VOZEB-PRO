@@ -22,7 +22,7 @@ import type {
     UserSummaryRecord,
 } from "./repository-shared";
 import { mapCdkCode, mapCdkRedemption, mapEmailCode, mapPointRecord, mapQuotaUsage, mapSession, mapUser } from "./repository-record-mappers";
-import { jsonValue, normalizePage, normalizePageSize, numberValue, optionalString, pageResult, stringValue } from "./repository-shared";
+import { decimalValue, jsonValue, normalizePage, normalizePageSize, numberValue, optionalString, pageResult, stringValue } from "./repository-shared";
 
 type UserUpdatePatch = Partial<Omit<UserRecord, "id" | "createdAt" | "updatedAt" | "email" | "avatarStorageKey" | "mfaSecretCiphertext" | "mfaEnabledAt">> & {
     email?: string | null;
@@ -125,7 +125,7 @@ export class UsersRepository {
             disabled: numberValue(row.disabled),
             admins: numberValue(row.admins),
             activeAdmins: numberValue(row.active_admins),
-            totalSettledBalance: stringValue(row.total_settled_balance),
+            totalSettledBalance: decimalValue(row.total_settled_balance),
         };
     }
 
@@ -349,7 +349,7 @@ export class SessionsRepository {
         return result.rows[0] ? mapSession(result.rows[0]) : null;
     }
 
-    async getAuthenticatedUser(input: { sessionId: string; tokenHash: string; now: string; date: string }): Promise<AuthenticatedUserRecord | null> {
+    async getAuthenticatedUser(input: { sessionId: string; tokenHash: string; now: string }): Promise<AuthenticatedUserRecord | null> {
         const result = await this.db.query(
             `
             SELECT
@@ -366,7 +366,7 @@ export class SessionsRepository {
               AND users.status = 'active'
             LIMIT 1
             `,
-            [input.sessionId, input.tokenHash, input.now, input.date],
+            [input.sessionId, input.tokenHash, input.now],
         );
         return result.rows[0] ? mapAuthenticatedUser(result.rows[0]) : null;
     }
@@ -465,7 +465,7 @@ export class EmailCodesRepository {
 
 function mapAuthenticatedUser(row: Record<string, unknown>): AuthenticatedUserRecord {
     const user = mapUser(row);
-    const heldBalance = stringValue(row.held_balance || "0");
+    const heldBalance = decimalValue(row.held_balance || "0");
     return { user, heldBalance, availableBalance: decimal(user.settledBalance).minus(decimal(heldBalance)).toString() };
 }
 

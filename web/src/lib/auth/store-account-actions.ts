@@ -193,7 +193,6 @@ export async function getUserBySession(cookieValue: string | undefined) {
             sessionId: sessionParts.id,
             tokenHash: hashToken(sessionParts.token),
             now: clock.now.toISOString(),
-            date: clock.date,
         });
         if (!snapshot) return null;
         return publicUserFromAuthenticatedRecord(snapshot);

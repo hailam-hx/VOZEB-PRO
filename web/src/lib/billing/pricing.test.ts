@@ -46,6 +46,55 @@ describe("pricing", () => {
         expect(calculatePricingReserve({ rateCard, usage }).credits).toBe("22.5");
     });
 
+    it("prices duration seconds with resolution, quality, and format conditions", () => {
+        const rateCard = validatePricingRateCard({
+            version: 1,
+            components: [
+                { id: "video-720p", dimension: "durationSeconds", unitPrice: "0.04", when: { resolution: "1280x720", quality: "standard", format: "mp4" } },
+                { id: "video-1080p", dimension: "durationSeconds", unitPrice: "0.08", when: { resolution: "1920x1080", quality: "standard", format: "mp4" } },
+            ],
+        });
+
+        const price = (resolution: string, quality = "standard", format = "mp4") =>
+            calculatePricingReserve({
+                rateCard,
+                usage: normalizeBillableUsage({ capability: "video", source: "request", durationSeconds: "10", resolution, quality, format }),
+            }).credits;
+
+        expect(price("1280x720")).toBe("0.4");
+        expect(price("1920x1080")).toBe("0.8");
+        expect(price("1920x1080", "premium")).toBe("0");
+        expect(price("1920x1080", "standard", "webm")).toBe("0");
+    });
+
+    it("rejects reserve pricing when a required condition dimension is unknown", () => {
+        const rateCard = validatePricingRateCard({
+            version: 1,
+            components: [{ id: "video-720p", dimension: "durationSeconds", unitPrice: "0.04", when: { resolution: "720p" } }],
+        });
+
+        expect(() =>
+            calculatePricingReserve({
+                rateCard,
+                usage: normalizeBillableUsage({ capability: "video", source: "request", durationSeconds: "10" }),
+            }),
+        ).toThrow("价格条件维度：resolution");
+    });
+
+    it("validates every required condition dimension before excluding a mismatched component", () => {
+        const rateCard = validatePricingRateCard({
+            version: 1,
+            components: [{ id: "video-1080p", dimension: "durationSeconds", unitPrice: "0.08", when: { resolution: "1080p", format: "mp4" } }],
+        });
+
+        expect(() =>
+            calculatePricingReserve({
+                rateCard,
+                usage: normalizeBillableUsage({ capability: "video", source: "request", durationSeconds: "10", resolution: "720p" }),
+            }),
+        ).toThrow("价格条件维度：format");
+    });
+
     it("settles actual usage before derived and reserve usage, marking only reserve fallback as estimated", () => {
         const reserve = calculatePricingReserve({
             rateCard: textRateCard,

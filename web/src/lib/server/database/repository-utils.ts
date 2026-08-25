@@ -1,3 +1,5 @@
+import { decimal } from "@/lib/billing/decimal";
+
 import type { BillingReconciliationRunStatus, BillingReconciliationSource, BillingReconciliationStatementStatus, JsonValue, PageResult } from "./repository-types";
 
 export function jsonParam(value: JsonValue | undefined) {
@@ -16,6 +18,10 @@ export function optionalJson(value: unknown): JsonValue | undefined {
 
 export function stringValue(value: unknown) {
     return typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
+}
+
+export function decimalValue(value: unknown) {
+    return decimal(stringValue(value) || "0").toString();
 }
 
 export function optionalString(value: unknown) {

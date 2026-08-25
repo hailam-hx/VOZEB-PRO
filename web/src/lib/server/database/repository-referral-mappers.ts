@@ -1,6 +1,6 @@
 import type { ReferralCodeRecord, ReferralProgramRecord, ReferralRelationshipRecord, ReferralRewardRecord } from "./repository-types";
 import { formatAccountId } from "@/lib/account-id";
-import { isoValue, jsonValue, numberValue, optionalIso, optionalString, stringValue } from "./repository-utils";
+import { decimalValue, isoValue, jsonValue, numberValue, optionalIso, optionalString, stringValue } from "./repository-utils";
 
 export function mapReferralProgram(row: Record<string, unknown>): ReferralProgramRecord {
     return {
@@ -10,7 +10,7 @@ export function mapReferralProgram(row: Record<string, unknown>): ReferralProgra
         inviteeRewardType: row.invitee_reward_type === "coupon" ? "coupon" : "points",
         inviteePoints: numberValue(row.invitee_points),
         inviteeTopUpCouponTemplateId: optionalString(row.invitee_top_up_coupon_template_id),
-        minimumPaidUsd: stringValue(row.minimum_paid_usd),
+        minimumPaidUsd: decimalValue(row.minimum_paid_usd),
         coolingOffDays: numberValue(row.cooling_off_days),
         inviterMonthlyLimit: numberValue(row.inviter_monthly_limit),
         campaignTotalLimit: numberValue(row.campaign_total_limit),

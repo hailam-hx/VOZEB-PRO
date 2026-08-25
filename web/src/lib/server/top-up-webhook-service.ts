@@ -10,6 +10,7 @@ export async function processTopUpWebhook(input: { provider: string; rawBody: st
     await ensurePostgresSchema();
     const provider = normalizeProvider(input.provider);
     const parsed = resolveWebhookAdapter(provider).parse(provider, input.rawBody, input.headers, await getPaymentRuntimeConfig());
+    if (!parsed.signatureValid) throw new BillingInputError("支付回调签名无效", 401);
     const repos = createPostgresRepositories();
     const order = parsed.orderId ? await repos.topUps.getOrderById(parsed.orderId) : parsed.orderNo ? await repos.topUps.getOrderByOrderNo(parsed.orderNo) : null;
     if (!order) throw new BillingInputError("充值订单不存在", 404);

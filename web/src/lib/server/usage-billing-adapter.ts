@@ -21,8 +21,20 @@ export function normalizeProxyBillableRequest(input: ProxyUsageInput): Normalize
         if (maxInputTokens && BigInt(inputTokens) > BigInt(maxInputTokens)) throw new Error("文本输入超过模型最大 token 限制");
         usage = normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens, cachedInputTokens: "0", maxOutputTokens, characters: codePointCount(prompt) });
     } else {
-        const count = positiveIntegerText(payload.n ?? payload.count) || "1";
-        const resolution = text(payload.size) || text(payload.resolution) || dimensions(payload);
+        const parameters = object(payload.parameters) || {};
+        const count = positiveIntegerText(payload.n ?? payload.count ?? parameters.n ?? parameters.count) || "1";
+        const quality = firstText(payload.quality, payload.vquality, parameters.quality, parameters.vquality);
+        const resolution =
+            firstText(
+                payload.resolution_name,
+                payload.resolution,
+                parameters.resolution_name,
+                parameters.resolution,
+                input.capability === "video" ? payload.vquality : undefined,
+                input.capability === "video" ? parameters.vquality : undefined,
+                payload.size,
+                parameters.size,
+            ) || dimensions(payload);
         usage = normalizeBillableUsage({
             capability: input.capability,
             source: "request",
@@ -30,10 +42,21 @@ export function normalizeProxyBillableRequest(input: ProxyUsageInput): Normalize
             count,
             characters: codePointCount(prompt),
             megapixels: megapixels(resolution, count),
-            quality: text(payload.quality),
+            quality,
             resolution,
-            durationSeconds: positiveDecimalText(payload.duration ?? payload.duration_seconds ?? payload.durationSeconds),
-            format: text(payload.response_format) || text(payload.format),
+            durationSeconds: positiveDecimalText(
+                payload.duration ??
+                    payload.duration_seconds ??
+                    payload.durationSeconds ??
+                    payload.seconds ??
+                    payload.videoSeconds ??
+                    parameters.durationSeconds ??
+                    parameters.duration_seconds ??
+                    parameters.duration ??
+                    parameters.seconds ??
+                    parameters.videoSeconds,
+            ),
+            format: firstText(payload.response_format, payload.format, payload.output_format, parameters.response_format, parameters.format, parameters.output_format),
         });
     }
     calculatePricingReserve({ rateCard, usage });
@@ -46,16 +69,7 @@ export function deriveProxyBillableUsage(input: { capability: BillableCapability
         const { maxOutputTokens: _maxOutputTokens, ...requestUsage } = input.requestUsage;
         const actual = actualTextUsage(payload);
         if (actual) return normalizeBillableUsage({ ...requestUsage, capability: "text", source: "actual", ...actual });
-        const output = responseText(payload);
-        if (!output) return undefined;
-        return normalizeBillableUsage({
-            ...requestUsage,
-            capability: "text",
-            source: "derived",
-            inputTokens: input.requestUsage.inputTokens || "0",
-            cachedInputTokens: input.requestUsage.cachedInputTokens || "0",
-            outputTokens: Buffer.byteLength(output, "utf8"),
-        });
+        return undefined;
     }
     const count = resultCount(payload);
     if (!count) return undefined;
@@ -65,7 +79,6 @@ export function deriveProxyBillableUsage(input: { capability: BillableCapability
 export function createStreamingUsageAccumulator(capability: BillableCapability, requestUsage: NormalizedUsage) {
     const decoder = new TextDecoder();
     let tail = "";
-    let outputBytes = 0;
     let actual: NormalizedUsage | undefined;
     const consumeLine = (line: string) => {
         const data = line.trim().replace(/^data:\s*/, "");
@@ -74,7 +87,6 @@ export function createStreamingUsageAccumulator(capability: BillableCapability, 
             const payload = JSON.parse(data) as unknown;
             const parsed = deriveProxyBillableUsage({ capability, requestUsage, payload });
             if (parsed?.source === "actual") actual = parsed;
-            else if (capability === "text") outputBytes += Buffer.byteLength(streamDeltaText(payload), "utf8");
         } catch {
             // Non-JSON stream events have no billable usage metadata.
         }
@@ -91,7 +103,6 @@ export function createStreamingUsageAccumulator(capability: BillableCapability, 
             if (tail) consumeLine(tail);
             tail = "";
             if (actual) return actual;
-            if (capability === "text" && outputBytes) return normalizeBillableUsage({ capability: "text", source: "derived", inputTokens: requestUsage.inputTokens || "0", outputTokens: outputBytes });
             return undefined;
         },
         bufferedBytes() {
@@ -120,17 +131,6 @@ function promptText(payload: Record<string, unknown>) {
 
 function responseText(payload: Record<string, unknown>) {
     return [payload.output_text, payload.output, payload.choices, payload.candidates, payload.content, payload.result].flatMap(contentStrings).join("");
-}
-
-function streamDeltaText(payload: unknown) {
-    const record = object(payload);
-    const choices = array(record?.choices);
-    return (
-        choices
-            .map((choice) => contentStrings(object(choice)?.delta))
-            .flat()
-            .join("") || contentStrings(record?.delta).join("")
-    );
 }
 
 function contentStrings(value: unknown): string[] {
@@ -193,6 +193,14 @@ function codePointCount(value: string) {
 
 function text(value: unknown) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function firstText(...values: unknown[]) {
+    for (const value of values) {
+        const normalized = text(value);
+        if (normalized) return normalized;
+    }
+    return undefined;
 }
 
 function object(value: unknown): Record<string, unknown> | undefined {

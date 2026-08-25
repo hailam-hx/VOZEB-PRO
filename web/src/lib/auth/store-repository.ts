@@ -505,7 +505,7 @@ export async function upsertPostgresSettings(db: QueryExecutor, settings: AuthSe
             model_point_costs, generation_point_multipliers, generation_cost_control, data_lifecycle, generation_concurrency, generation_defaults,
             logical_models, default_models, agent_skills
         )
-        VALUES ('default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ('default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (id) DO UPDATE SET
             site = EXCLUDED.site,
             registration_enabled = EXCLUDED.registration_enabled,

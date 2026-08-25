@@ -291,6 +291,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
     const pricingDialog = page.getByRole("dialog", { name: "编辑 商业图片模型 计价" });
     await pricingDialog.getByLabel("单价").nth(0).fill("13.75");
     await pricingDialog.getByLabel("单价").nth(1).fill("0.031");
+    await pricingDialog.getByLabel("条件：分辨率").nth(0).fill("1920x1080");
     await pricingDialog.getByLabel("供应商").fill("fal-next");
     await pricingDialog.getByLabel("原生单位").fill("render-unit");
     await pricingDialog.getByLabel("换算版本").fill("provider-fx-v3");
@@ -300,7 +301,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
         .poll(() => modelPricingPatches.at(-1))
         .toMatchObject({
             modelId: "logical-image",
-            saleRateCard: { version: 1, components: [{ id: "image-count", dimension: "count", unitPrice: "13.75", per: "1" }] },
+            saleRateCard: { version: 1, components: [{ id: "image-count", dimension: "count", unitPrice: "13.75", per: "1", when: { resolution: "1920x1080" } }] },
             bindings: [
                 {
                     bindingId: "binding-fal",

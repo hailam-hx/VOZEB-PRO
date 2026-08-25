@@ -694,7 +694,7 @@ function validatedFinalCharge(rateCard: PricingRateCardV1, reservedCredits: stri
         calculated.platformLossCredits !== supplied.platformLossCredits ||
         calculated.estimated !== supplied.estimated ||
         calculated.capped !== supplied.capped ||
-        JSON.stringify(calculated.usage) !== JSON.stringify(supplied.usage)
+        !sameJsonValue(calculated.usage, supplied.usage)
     )
         throw new AuthInputError("结算快照与售卖价格不一致");
     return calculated;
@@ -704,8 +704,8 @@ function assertMatchingSettlement(charge: UsageCharge, holdId: string, requestFi
     if (
         charge.holdId !== holdId ||
         charge.requestFingerprint !== requestFingerprint ||
-        JSON.stringify(charge.saleRateSnapshot) !== JSON.stringify(saleRateSnapshot) ||
-        JSON.stringify(charge.finalSaleCharge) !== JSON.stringify(validatedFinalCharge(charge.saleRateSnapshot, charge.reservedCredits, finalCharge))
+        !sameJsonValue(charge.saleRateSnapshot, saleRateSnapshot) ||
+        !sameJsonValue(charge.finalSaleCharge, validatedFinalCharge(charge.saleRateSnapshot, charge.reservedCredits, finalCharge))
     )
         throw new WalletConflictError("用量账单业务 ID 对应的结算参数不一致");
 }
@@ -740,9 +740,9 @@ function sameProviderAttemptSnapshot(
         existing.providerIdempotencySupported === (input.providerIdempotencySupported === true) &&
         existing.providerIdempotencyKey === normalizedOptionalText(input.providerIdempotencyKey) &&
         existing.upstreamTaskId === normalizedOptionalText(input.upstreamTaskId) &&
-        JSON.stringify(existing.costRateSnapshot) === JSON.stringify(input.costRateSnapshot) &&
-        JSON.stringify(existing.normalizedUsage) === JSON.stringify(input.normalizedUsage) &&
-        JSON.stringify(existing.observedUsage) === JSON.stringify(input.observedUsage) &&
+        sameJsonValue(existing.costRateSnapshot, input.costRateSnapshot) &&
+        sameJsonValue(existing.normalizedUsage, input.normalizedUsage) &&
+        sameJsonValue(existing.observedUsage, input.observedUsage) &&
         sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) &&
         sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) &&
         sameDecimalValue(existing.usdConversionRate, usdConversionRate) &&
@@ -760,7 +760,7 @@ function assertProviderAttemptImmutableSnapshot(
         existing.providerIdempotencySupported !== (input.providerIdempotencySupported === true) ||
         existing.providerIdempotencyKey !== normalizedOptionalText(input.providerIdempotencyKey) ||
         (existing.upstreamTaskId && existing.upstreamTaskId !== upstreamTaskId) ||
-        JSON.stringify(existing.costRateSnapshot) !== JSON.stringify(input.costRateSnapshot) ||
+        !sameJsonValue(existing.costRateSnapshot, input.costRateSnapshot) ||
         !sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit)
     )
         throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
@@ -777,9 +777,9 @@ function assertPendingProviderAttemptAttachment(
     if (
         existing.providerIdempotencySupported !== (input.providerIdempotencySupported === true) ||
         existing.providerIdempotencyKey !== normalizedOptionalText(input.providerIdempotencyKey) ||
-        JSON.stringify(existing.costRateSnapshot) !== JSON.stringify(input.costRateSnapshot) ||
-        JSON.stringify(existing.normalizedUsage) !== JSON.stringify(input.normalizedUsage) ||
-        (existing.observedUsage && JSON.stringify(existing.observedUsage) !== JSON.stringify(input.observedUsage)) ||
+        !sameJsonValue(existing.costRateSnapshot, input.costRateSnapshot) ||
+        !sameJsonValue(existing.normalizedUsage, input.normalizedUsage) ||
+        (existing.observedUsage && !sameJsonValue(existing.observedUsage, input.observedUsage)) ||
         !sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) ||
         !sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) ||
         !sameDecimalValue(existing.usdConversionRate, usdConversionRate) ||
@@ -809,7 +809,22 @@ function sameProviderCostUnit(left: ProviderCostUnit, right: ProviderCostUnit) {
 function sameRuntimeSnapshot(left: UsageBillingHoldSnapshot | undefined, right: UsageBillingHoldSnapshot | undefined) {
     if (!left || !right) return left === right;
     const withoutAttempt = ({ providerIdempotency: _providerIdempotency, ...snapshot }: UsageBillingHoldSnapshot) => snapshot;
-    return JSON.stringify(withoutAttempt(left)) === JSON.stringify(withoutAttempt(right));
+    return sameJsonValue(withoutAttempt(left), withoutAttempt(right));
+}
+
+function sameJsonValue(left: unknown, right: unknown) {
+    return stableJson(left) === stableJson(right);
+}
+
+function stableJson(value: unknown): string {
+    if (value === undefined) return "undefined";
+    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    return `{${Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+        .join(",")}}`;
 }
 
 function providerAttemptValues(
