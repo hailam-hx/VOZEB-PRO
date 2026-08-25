@@ -147,6 +147,28 @@ test("preset or custom top-up uses a server quote, checks out, receives paid SSE
     await expectVisibleControlsWithinViewport(page, `top-up paid controls ${testInfo.project.name}`);
 });
 
+test("invalid admin top-up preset stays in form validation without an unhandled rejection", async ({ page }) => {
+    const pageErrors: string[] = [];
+    const formWarnings: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("console", (entry) => {
+        if (entry.type() === "error" && entry.text().includes("useForm")) formWarnings.push(entry.text());
+    });
+    await page.route(/\/api\/admin\/billing\/top-up-presets$/, (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { presets: [{ ...preset, nominalNativeAmount: "100000.000000000000" }] }, msg: "OK" }) }),
+    );
+
+    await page.goto("/admin/billing?tab=presets", { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("100.000 ₫", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "新建预设" }).click();
+    const dialog = page.getByRole("dialog", { name: "新建充值预设" });
+    await dialog.getByRole("button", { name: /保\s*存/ }).click();
+    await expect(dialog.getByText("请输入名称", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("请输入正整数 VND", { exact: true })).toBeVisible();
+    expect(pageErrors).toEqual([]);
+    expect(formWarnings).toEqual([]);
+});
+
 test("admin pricing, provider-unit conversion, usage anomaly, and orphan recovery remain responsive", async ({ page }, testInfo) => {
     await setProjectTheme(page, testInfo.project.name === "mobile-390" ? "light" : "dark");
     let recoveryRuns = 0;

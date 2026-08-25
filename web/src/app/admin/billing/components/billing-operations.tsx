@@ -271,6 +271,7 @@ function PresetsPanel() {
     const [presets, setPresets] = useState<TopUpPreset[]>([]);
     const [loading, setLoading] = useState(true);
     const [open, setOpen] = useState(false);
+    const [editing, setEditing] = useState(false);
     const [saving, setSaving] = useState(false);
     const load = useCallback(async () => {
         setLoading(true);
@@ -286,17 +287,21 @@ function PresetsPanel() {
         void load();
     }, [load]);
     const edit = (preset?: TopUpPreset) => {
+        setEditing(Boolean(preset));
         form.setFieldsValue(preset || { name: "", description: "", nominalNativeAmount: "", enabled: true, sortOrder: presets.length + 1 });
         setOpen(true);
     };
     const save = async () => {
-        const value = await form.validateFields();
-        setSaving(true);
         try {
+            const value = await resolveFormValidation(form.validateFields());
+            if (!value) return;
+            setSaving(true);
             await saveAdminTopUpPreset(value);
             message.success("充值预设已保存");
             setOpen(false);
             await load();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存充值预设失败");
         } finally {
             setSaving(false);
         }
@@ -346,7 +351,7 @@ function PresetsPanel() {
                 ))}
                 {!loading && !presets.length ? <div className="col-span-full rounded-xl border border-dashed p-8 text-center text-sm text-stone-500">暂无充值预设</div> : null}
             </div>
-            <Modal title={form.getFieldValue("id") ? "编辑充值预设" : "新建充值预设"} open={open} confirmLoading={saving} onOk={() => void save()} onCancel={() => setOpen(false)} okText="保存" cancelText="取消" width="min(560px, calc(100vw - 24px))">
+            <Modal forceRender title={editing ? "编辑充值预设" : "新建充值预设"} open={open} confirmLoading={saving} onOk={() => void save()} onCancel={() => setOpen(false)} okText="保存" cancelText="取消" width="min(560px, calc(100vw - 24px))">
                 <Form form={form} layout="vertical" className="mt-4">
                     <Form.Item name="id" hidden>
                         <Input />
@@ -926,6 +931,14 @@ function rateCardText(value: LogicalModel["saleRateCard"] | undefined) {
 }
 function providerUnitText(value: LogicalModel["bindings"][number]["providerCostUnit"]) {
     return !value ? "未配置" : value.kind === "fiat" ? value.currency : `${value.provider}:${value.unit} × ${value.usdConversion.usdPerUnit} USD (${value.usdConversion.version})`;
+}
+export async function resolveFormValidation<T>(validation: Promise<T>) {
+    try {
+        return await validation;
+    } catch (error) {
+        if (error && typeof error === "object" && !Array.isArray(error) && Array.isArray((error as { errorFields?: unknown }).errorFields)) return null;
+        throw error;
+    }
 }
 function formatUsd(value: string) {
     return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 8 }).format(Number(value));
