@@ -169,6 +169,58 @@ test("invalid admin top-up preset stays in form validation without an unhandled 
     expect(formWarnings).toEqual([]);
 });
 
+test("finance admin receives or closes pending manual orders while paid orders retain refund", async ({ page }, testInfo) => {
+    const user = { accountId: "0001", username: "e2e_admin", displayName: "E2E 管理员" };
+    let receiveCalls = 0;
+    let closeCalls = 0;
+    let orders = [
+        { ...paidOrder(), id: "manual-receive", orderNo: "VZ-MANUAL-RECEIVE", status: "pending", paymentState: "pending", creditGrantState: "pending", paidAt: undefined, user },
+        { ...paidOrder(), id: "manual-close", orderNo: "VZ-MANUAL-CLOSE", status: "pending", paymentState: "pending", creditGrantState: "pending", paidAt: undefined, user },
+        { ...paidOrder(), id: "manual-paid", orderNo: "VZ-MANUAL-PAID", user },
+        { ...paidOrder(), id: "stripe-pending", orderNo: "VZ-STRIPE-PENDING", status: "pending", paymentState: "pending", creditGrantState: "pending", provider: "stripe", paidAt: undefined, user },
+        { ...paidOrder(), id: "stripe-paid", orderNo: "VZ-STRIPE-PAID", provider: "stripe", user },
+    ];
+    await page.route(/\/api\/admin\/billing\/orders(?:\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { orders, total: orders.length, page: 1, pageSize: 20 }, msg: "" }) }));
+    await page.route(/\/api\/admin\/billing\/summary(?:\?.*)?$/, (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { summary: { currencies: [], paidUsdValue: "0", refundedUsdValue: "0", nominalUsdValue: "0" } }, msg: "" }) }),
+    );
+    await page.route(/\/api\/admin\/billing\/orders\/manual-receive\/receive$/, async (route) => {
+        receiveCalls += 1;
+        orders = orders.map((order) => (order.id === "manual-receive" ? { ...order, status: "paid", paymentState: "paid", creditGrantState: "granted", paidAt: TIMESTAMP } : order));
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { orderId: "manual-receive", orderNo: "VZ-MANUAL-RECEIVE", applied: true, duplicate: false, creditAmount: "2500" }, msg: "收款已确认" }) });
+    });
+    await page.route(/\/api\/admin\/billing\/orders\/manual-close\/close$/, async (route) => {
+        closeCalls += 1;
+        orders = orders.map((order) => (order.id === "manual-close" ? { ...order, status: "canceled", closedAt: TIMESTAMP } : order));
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { orderId: "manual-close", orderNo: "VZ-MANUAL-CLOSE", applied: true, duplicate: false }, msg: "订单已关闭" }) });
+    });
+
+    await page.goto("/admin/billing?tab=orders", { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("人工确认", { exact: true })).toHaveCount(3);
+    const receiveRow = page.getByRole("row").filter({ hasText: "VZ-MANUAL-RECEIVE" });
+    const closeRow = page.getByRole("row").filter({ hasText: "VZ-MANUAL-CLOSE" });
+    const paidRow = page.getByRole("row").filter({ hasText: "VZ-MANUAL-PAID" });
+    const stripeRow = page.getByRole("row").filter({ hasText: "VZ-STRIPE-PENDING" });
+    const stripePaidRow = page.getByRole("row").filter({ hasText: "VZ-STRIPE-PAID" });
+    await expect(receiveRow.getByRole("button", { name: /收\s*款/ })).toBeVisible();
+    await expect(receiveRow.getByRole("button", { name: /关\s*单/ })).toBeVisible();
+    await expect(paidRow.getByRole("button", { name: /退\s*款/ })).toBeVisible();
+    await expect(stripeRow.getByRole("button")).toHaveCount(0);
+    await expect(stripePaidRow.getByRole("button", { name: /退\s*款/ })).toBeVisible();
+
+    await receiveRow.getByRole("button", { name: /收\s*款/ }).click();
+    await page.getByRole("button", { name: /确\s*认\s*收\s*款/ }).click();
+    await expect.poll(() => receiveCalls).toBe(1);
+    await expect(receiveRow.getByRole("button", { name: /退\s*款/ })).toBeVisible();
+
+    await closeRow.getByRole("button", { name: /关\s*单/ }).click();
+    await page.getByRole("button", { name: /确\s*认\s*关\s*单/ }).click();
+    await expect.poll(() => closeCalls).toBe(1);
+    await expect(closeRow.getByText("已取消", { exact: true })).toBeVisible();
+    await expect(closeRow.getByRole("button")).toHaveCount(0);
+    await expectNoHorizontalOverflow(page, `admin manual order actions ${testInfo.project.name}`);
+});
+
 test("admin pricing, provider-unit conversion, usage anomaly, and orphan recovery remain responsive", async ({ page }, testInfo) => {
     await setProjectTheme(page, testInfo.project.name === "mobile-390" ? "light" : "dark");
     let recoveryRuns = 0;

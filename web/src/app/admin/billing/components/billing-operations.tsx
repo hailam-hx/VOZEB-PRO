@@ -14,6 +14,7 @@ import type { PricingComponent, PricingConditionDimension, PricingDimension } fr
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import {
+    closeAdminTopUpOrder,
     deleteAdminTopUpPreset,
     getAdminModelPricing,
     getAdminTopUpConfig,
@@ -23,6 +24,7 @@ import {
     listAdminTopUpOrders,
     listAdminTopUpPresets,
     recoverAdminUsageHolds,
+    receiveAdminTopUpOrder,
     refundAdminTopUpOrder,
     saveAdminTopUpConfig,
     saveAdminModelPricing,
@@ -108,7 +110,7 @@ function OrdersPanel() {
     const [keyword, setKeyword] = useState("");
     const [submittedKeyword, setSubmittedKeyword] = useState("");
     const [range, setRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
-    const [refunding, setRefunding] = useState("");
+    const [actioning, setActioning] = useState("");
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -147,17 +149,52 @@ function OrdersPanel() {
             okText: "确认退款",
             okButtonProps: { danger: true },
             onOk: async () => {
-                setRefunding(order.id);
+                setActioning(`refund:${order.id}`);
                 try {
                     await refundAdminTopUpOrder(order.id, reason);
                     message.success("退款请求已处理");
                     await load();
                 } finally {
-                    setRefunding("");
+                    setActioning("");
                 }
             },
         });
     };
+
+    const receive = (order: TopUpOrder) =>
+        modal.confirm({
+            title: "确认已收到款项？",
+            content: `订单 ${order.orderNo} 将按快照发放 ${order.creditAmount} 积分；重复确认不会重复发放。`,
+            okText: "确认收款",
+            onOk: async () => {
+                setActioning(`receive:${order.id}`);
+                try {
+                    const result = await receiveAdminTopUpOrder(order.id);
+                    message.success(result.duplicate ? "该订单已确认收款" : "收款已确认，积分已发放");
+                    await load();
+                } finally {
+                    setActioning("");
+                }
+            },
+        });
+
+    const close = (order: TopUpOrder) =>
+        modal.confirm({
+            title: "确认关闭未支付订单？",
+            content: `订单 ${order.orderNo} 关闭后不会发放积分。`,
+            okText: "确认关单",
+            okButtonProps: { danger: true },
+            onOk: async () => {
+                setActioning(`close:${order.id}`);
+                try {
+                    const result = await closeAdminTopUpOrder(order.id);
+                    message.success(result.duplicate ? "该订单已关闭" : "订单已关闭");
+                    await load();
+                } finally {
+                    setActioning("");
+                }
+            },
+        });
 
     const columns: TableColumnsType<AdminTopUpOrder> = [
         {
@@ -195,18 +232,37 @@ function OrdersPanel() {
                 </div>
             ),
         },
-        { title: "渠道", dataIndex: "provider", width: 100 },
+        { title: "渠道", dataIndex: "provider", width: 100, render: (value: string) => adminTopUpProviderLabel(value) },
         ...(canManageBilling
             ? [
                   {
                       title: "操作",
                       fixed: "right",
-                      width: 100,
-                      render: (_, order) => (
-                          <Button danger size="small" loading={refunding === order.id} disabled={order.status !== "paid"} onClick={() => refund(order)}>
-                              退款
-                          </Button>
-                      ),
+                      width: 150,
+                      render: (_, order) => {
+                          const actions = adminTopUpOrderActions(order);
+                          return actions.length ? (
+                              <div className="flex items-center gap-2">
+                                  {actions.includes("receive") ? (
+                                      <Button type="primary" size="small" loading={actioning === `receive:${order.id}`} onClick={() => receive(order)}>
+                                          收款
+                                      </Button>
+                                  ) : null}
+                                  {actions.includes("close") ? (
+                                      <Button danger size="small" loading={actioning === `close:${order.id}`} onClick={() => close(order)}>
+                                          关单
+                                      </Button>
+                                  ) : null}
+                                  {actions.includes("refund") ? (
+                                      <Button danger size="small" loading={actioning === `refund:${order.id}`} onClick={() => refund(order)}>
+                                          退款
+                                      </Button>
+                                  ) : null}
+                              </div>
+                          ) : (
+                              <span className="text-stone-400">—</span>
+                          );
+                      },
                   } satisfies TableColumnsType<AdminTopUpOrder>[number],
               ]
             : []),
@@ -939,6 +995,13 @@ export async function resolveFormValidation<T>(validation: Promise<T>) {
         if (error && typeof error === "object" && !Array.isArray(error) && Array.isArray((error as { errorFields?: unknown }).errorFields)) return null;
         throw error;
     }
+}
+export function adminTopUpProviderLabel(provider: string) {
+    return provider === "manual" ? "人工确认" : provider;
+}
+export function adminTopUpOrderActions(order: Pick<TopUpOrder, "provider" | "status">): Array<"receive" | "close" | "refund"> {
+    if (order.status === "paid") return ["refund"];
+    return order.provider === "manual" && order.status === "pending" ? ["receive", "close"] : [];
 }
 function formatUsd(value: string) {
     return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 8 }).format(Number(value));

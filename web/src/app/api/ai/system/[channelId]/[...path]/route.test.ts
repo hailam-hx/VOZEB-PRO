@@ -51,7 +51,8 @@ vi.mock("@/lib/server/security", () => ({
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
 
-import { GET, maxDuration, meteredTextResponseBody, POST, PUT } from "./route";
+import { meteredTextResponseBody } from "@/lib/server/system-ai-metered-text-stream";
+import { GET, maxDuration, POST, PUT } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
 import { readSystemAiUsageBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 

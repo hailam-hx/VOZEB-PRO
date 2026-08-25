@@ -17,6 +17,7 @@ export type AdminTopUpRefundResult = {
     reason?: string;
     providerRefund?: { status: "succeeded" | "failed" | "manual"; providerRefundId?: string };
 };
+export type AdminTopUpOrderActionResult = { orderId: string; orderNo: string; applied: boolean; duplicate: boolean; creditAmount?: string };
 
 export function listAdminTopUpOrders(input: { page?: number; pageSize?: number; status?: TopUpOrderStatus | ""; keyword?: string } = {}) {
     return requestCommerce<PageResult<AdminTopUpOrder, "orders">>(`/api/admin/billing/orders?${query(input)}`);
@@ -24,6 +25,14 @@ export function listAdminTopUpOrders(input: { page?: number; pageSize?: number; 
 
 export function refundAdminTopUpOrder(id: string, reason: string) {
     return requestCommerce<AdminTopUpRefundResult>(`/api/admin/billing/orders/${encodeURIComponent(id)}/refund`, jsonRequest("POST", { reason }));
+}
+
+export function receiveAdminTopUpOrder(id: string) {
+    return requestCommerce<AdminTopUpOrderActionResult>(`/api/admin/billing/orders/${encodeURIComponent(id)}/receive`, { method: "POST" });
+}
+
+export function closeAdminTopUpOrder(id: string) {
+    return requestCommerce<AdminTopUpOrderActionResult>(`/api/admin/billing/orders/${encodeURIComponent(id)}/close`, { method: "POST" });
 }
 
 export function getAdminTopUpSummary(input: { startDate?: string; endDate?: string } = {}) {
