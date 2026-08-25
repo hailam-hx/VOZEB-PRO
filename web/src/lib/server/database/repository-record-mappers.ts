@@ -6,7 +6,6 @@ import type {
     AnnouncementRecord,
     CdkCodeRecord,
     CdkRedemptionRecord,
-    DailyPlanPointWalletRecord,
     EmailCodeRecord,
     GenerationLogAssetRecord,
     GenerationLogRecord,
@@ -17,7 +16,11 @@ import type {
     SessionRecord,
     UsageKind,
     UserRecord,
+    WalletHoldRecord,
+    UsageChargeRecord,
+    ProviderUsageAttemptRecord,
 } from "./repository-shared";
+import { decimalValue } from "./repository-utils";
 
 export function dateValue(value: unknown) {
     if (value instanceof Date) {
@@ -86,8 +89,7 @@ export function mapUser(row: Record<string, unknown>): UserRecord {
         role: row.role === "admin" ? "admin" : "user",
         adminPermissions: row.role === "admin" ? normalizeAdminPermissions(jsonValue(row.admin_permissions)) : [],
         status: row.status === "disabled" ? "disabled" : "active",
-        planId: stringValue(row.plan_id),
-        pointsBalance: numberValue(row.points_balance),
+        settledBalance: decimalValue(row.settled_balance),
         passwordHash: stringValue(row.password_hash),
         mfaSecretCiphertext: optionalString(row.mfa_secret_ciphertext),
         mfaEnabledAt: optionalIso(row.mfa_enabled_at),
@@ -129,38 +131,88 @@ export function mapEmailCode(row: Record<string, unknown>): EmailCodeRecord {
 }
 
 export function mapPointRecord(row: Record<string, unknown>): PointRecord {
-    const amount = numberValue(row.amount);
-    const balanceAfter = numberValue(row.balance_after);
     return {
         id: stringValue(row.id),
         userId: stringValue(row.user_id),
         type: row.type === "consume" || row.type === "refund" || row.type === "credit" ? row.type : "admin-adjust",
-        amount,
-        balanceAfter,
-        permanentAmount: row.permanent_amount === undefined ? amount : numberValue(row.permanent_amount),
-        dailyAmount: numberValue(row.daily_amount),
-        permanentBalanceAfter: row.permanent_balance_after === undefined ? balanceAfter : numberValue(row.permanent_balance_after),
-        dailyBalanceAfter: numberValue(row.daily_balance_after),
+        amount: decimalValue(row.amount),
+        balanceAfter: decimalValue(row.balance_after),
         description: stringValue(row.description),
         model: optionalString(row.model),
         idempotencyKey: optionalString(row.idempotency_key),
         requestFingerprint: optionalString(row.request_fingerprint),
         sourceRecordId: optionalString(row.source_record_id),
-        sourceDate: row.source_date === null || row.source_date === undefined ? undefined : dateValue(row.source_date),
         createdAt: isoValue(row.created_at),
     };
 }
 
-export function mapDailyPlanPointWallet(row: Record<string, unknown>): DailyPlanPointWalletRecord {
+export function mapWalletHold(row: Record<string, unknown>): WalletHoldRecord {
     return {
+        id: stringValue(row.id),
         userId: stringValue(row.user_id),
-        date: dateValue(row.date),
-        planId: stringValue(row.plan_id),
-        assignmentId: optionalString(row.assignment_id),
-        grantedPoints: numberValue(row.granted_points),
-        remainingPoints: numberValue(row.remaining_points),
+        businessId: stringValue(row.business_id),
+        requestFingerprint: stringValue(row.request_fingerprint),
+        amount: decimalValue(row.amount),
+        status: row.status === "settled" || row.status === "released" ? row.status : "active",
+        description: stringValue(row.description),
+        runtimeSnapshot: optionalJson(row.runtime_snapshot) as WalletHoldRecord["runtimeSnapshot"],
+        reviewReason: optionalString(row.review_reason),
+        recoveryCheckedAt: optionalIso(row.recovery_checked_at),
+        usageChargeId: optionalString(row.usage_charge_id),
+        releaseBusinessId: optionalString(row.release_business_id),
+        releaseRequestFingerprint: optionalString(row.release_request_fingerprint),
+        releaseReason: optionalString(row.release_reason),
+        expiresAt: optionalIso(row.expires_at),
+        closedAt: optionalIso(row.closed_at),
         createdAt: isoValue(row.created_at),
         updatedAt: isoValue(row.updated_at),
+    };
+}
+
+export function mapUsageCharge(row: Record<string, unknown>): UsageChargeRecord {
+    return {
+        id: stringValue(row.id),
+        userId: stringValue(row.user_id),
+        holdId: stringValue(row.hold_id),
+        requestFingerprint: stringValue(row.request_fingerprint),
+        reservedCredits: decimalValue(row.reserved_credits),
+        settledCredits: decimalValue(row.settled_credits),
+        normalizedUsage: jsonValue(row.normalized_usage) as UsageChargeRecord["normalizedUsage"],
+        saleRateSnapshot: jsonValue(row.sale_rate_snapshot) as UsageChargeRecord["saleRateSnapshot"],
+        runtimeSnapshot: optionalJson(row.runtime_snapshot) as UsageChargeRecord["runtimeSnapshot"],
+        finalSaleCharge: jsonValue(row.final_sale_charge) as UsageChargeRecord["finalSaleCharge"],
+        estimated: row.estimated === true,
+        totalProviderCostUsd: decimalValue(row.total_provider_cost_usd),
+        description: stringValue(row.description),
+        pointRecordId: optionalString(row.point_record_id),
+        createdAt: isoValue(row.created_at),
+        settledAt: isoValue(row.settled_at),
+    };
+}
+
+export function mapProviderUsageAttempt(row: Record<string, unknown>): ProviderUsageAttemptRecord {
+    return {
+        id: stringValue(row.id),
+        holdId: stringValue(row.hold_id),
+        userId: stringValue(row.user_id),
+        attemptNumber: numberValue(row.attempt_number),
+        status: row.status === "succeeded" || row.status === "failed" || row.status === "canceled" ? row.status : "pending",
+        provider: stringValue(row.provider),
+        bindingId: stringValue(row.binding_id),
+        requestFingerprint: stringValue(row.request_fingerprint),
+        providerIdempotencySupported: row.provider_idempotency_supported === true,
+        providerIdempotencyKey: optionalString(row.provider_idempotency_key),
+        upstreamTaskId: optionalString(row.upstream_task_id),
+        nativeCostAmount: decimalValue(row.native_cost_amount),
+        nativeCostUnit: jsonValue(row.native_cost_unit) as ProviderUsageAttemptRecord["nativeCostUnit"],
+        usdConversionRate: decimalValue(row.usd_conversion_rate),
+        costUsd: decimalValue(row.cost_usd),
+        costRateSnapshot: optionalJson(row.cost_rate_snapshot) as ProviderUsageAttemptRecord["costRateSnapshot"],
+        normalizedUsage: optionalJson(row.normalized_usage) as ProviderUsageAttemptRecord["normalizedUsage"],
+        observedUsage: optionalJson(row.observed_usage) as ProviderUsageAttemptRecord["observedUsage"],
+        createdAt: isoValue(row.created_at),
+        updatedAt: isoValue(row.updated_at),
+        completedAt: optionalIso(row.completed_at),
     };
 }
 

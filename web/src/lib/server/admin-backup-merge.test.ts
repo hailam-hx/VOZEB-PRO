@@ -20,12 +20,8 @@ describe("admin account-config backup merge", () => {
             id: "points-b",
             userId: "user-b",
             type: "credit",
-            amount: 20,
-            balanceAfter: 20,
-            permanentAmount: 20,
-            dailyAmount: 0,
-            permanentBalanceAfter: 20,
-            dailyBalanceAfter: 0,
+            amount: "20",
+            balanceAfter: "20",
             description: "保留流水",
             createdAt: now,
         });
@@ -38,7 +34,7 @@ describe("admin account-config backup merge", () => {
 
         const merged = mergeAccountConfigBackup(current, imported);
 
-        expect(merged.auth.users).toEqual([expect.objectContaining({ id: "user-a", pointsBalance: 99 }), expect.objectContaining({ id: "user-b", pointsBalance: 20 })]);
+        expect(merged.auth.users).toEqual([expect.objectContaining({ id: "user-a", settledBalance: "99" }), expect.objectContaining({ id: "user-b", settledBalance: "20" })]);
         expect(merged.auth.sessions).toEqual(current.auth.sessions);
         expect(merged.auth.pointRecords).toEqual(current.auth.pointRecords);
         expect(merged.prompts.prompts.map((prompt) => prompt.id)).toEqual(["prompt-b", "prompt-a"]);
@@ -99,7 +95,7 @@ function backup(input: {
     };
 }
 
-function user(id: string, username: string, pointsBalance: number): StoredUser {
+function user(id: string, username: string, settledBalance: number): StoredUser {
     return {
         id,
         accountId: id === "user-a" ? "1" : "2",
@@ -110,8 +106,7 @@ function user(id: string, username: string, pointsBalance: number): StoredUser {
         role: username === "admin" ? "admin" : "user",
         adminPermissions: username === "admin" ? ["system.manage"] : [],
         status: "active",
-        planId: "free",
-        pointsBalance,
+        settledBalance: String(settledBalance),
         passwordHash: `${id}-hash`,
         createdAt: now,
         updatedAt: now,

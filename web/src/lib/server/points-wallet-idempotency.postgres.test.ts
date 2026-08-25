@@ -2,261 +2,240 @@ import { randomUUID } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { createPostgresRepositories, ensurePostgresSchema, postgresQuery } from "@/lib/server/database";
+import { createPostgresRepositories, ensurePostgresSchema } from "@/lib/server/database";
 
-import { cleanupExpiredStoredGenerationTasks } from "./generation-task-store";
-import { consumePoints } from "./points-wallet-service";
+import { creditWalletBalance, getWalletSnapshot, reconcileWallet, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold, type SettleWalletHoldInput } from "./points-wallet-service";
 
 const postgresIt = process.env.VOZEB_PRO_RUN_POSTGRES_INTEGRATION === "1" ? it : it.skip;
 
-describe("PostgreSQL points wallet idempotency", () => {
-    postgresIt("updates a decimal daily balance without integer parameter inference", async () => {
+describe("PostgreSQL prepaid wallet persistence", () => {
+    postgresIt("serializes concurrent non-integer reservations and never over-reserves", async () => {
         await ensurePostgresSchema();
         const repositories = createPostgresRepositories();
-        const settings = await repositories.settings.getSettings();
-        const planId = settings.settings?.defaultPlanId || settings.plans[0]?.id;
-        if (!planId) throw new Error("No entitlement plan is available for the PostgreSQL integration test");
-
         const suffix = randomUUID();
-        const userId = `test-points-decimal-${suffix}`;
+        const userId = `wallet-concurrent-${suffix}`;
         const now = new Date();
         try {
             await repositories.users.createWithNextAccountId({
                 id: userId,
-                username: `decimal_${suffix.replaceAll("-", "").slice(0, 16)}`,
-                displayName: "小数积分测试用户",
+                username: `wallet_${suffix.replaceAll("-", "").slice(0, 16)}`,
+                displayName: "钱包并发测试用户",
                 bio: "",
                 role: "user",
                 adminPermissions: [],
                 status: "active",
-                planId,
-                pointsBalance: 0,
+                settledBalance: "0",
                 passwordHash: "integration-test-only",
                 createdAt: now.toISOString(),
                 updatedAt: now.toISOString(),
             });
-            await repositories.pointsWallet.createDailyWallet({
-                userId,
-                date: "2026-08-03",
-                planId,
-                grantedPoints: 2,
-                remainingPoints: 2,
-                createdAt: now.toISOString(),
-                updatedAt: now.toISOString(),
-            });
+            await creditWalletBalance({ userId, amount: "10.5", businessId: `topup:${suffix}`, description: "测试充值", now });
 
-            const wallet = await repositories.pointsWallet.updateRemaining(userId, "2026-08-03", 1.7);
-
-            expect(wallet?.remainingPoints).toBe(1.7);
-        } finally {
-            await repositories.users.delete(userId);
-        }
-    });
-
-    postgresIt("persists the server request fingerprint and rejects conflicting replays", async () => {
-        await ensurePostgresSchema();
-        const repositories = createPostgresRepositories();
-        const settings = await repositories.settings.getSettings();
-        const planId = settings.settings?.defaultPlanId || settings.plans[0]?.id;
-        if (!planId) throw new Error("No entitlement plan is available for the PostgreSQL integration test");
-
-        const suffix = randomUUID();
-        const userId = `test-points-idempotency-${suffix}`;
-        const idempotencyKey = `system-ai:test-${suffix}`;
-        const requestFingerprint = "a".repeat(64);
-        const now = new Date();
-        try {
-            await repositories.users.createWithNextAccountId({
-                id: userId,
-                username: `points_${suffix.replaceAll("-", "").slice(0, 16)}`,
-                displayName: "积分幂等测试用户",
-                bio: "",
-                role: "user",
-                adminPermissions: [],
-                status: "active",
-                planId,
-                pointsBalance: 100,
-                passwordHash: "integration-test-only",
-                createdAt: now.toISOString(),
-                updatedAt: now.toISOString(),
-            });
-
-            const input = {
-                userId,
-                amount: 5,
-                units: 1,
-                usageKind: "text" as const,
-                model: "writer",
-                description: "文本模型调用扣除",
-                idempotencyKey,
-                requestFingerprint,
-                now,
-            };
-            const first = await consumePoints(input);
-            const replay = await consumePoints(input);
-
-            await expect(consumePoints({ ...input, requestFingerprint: "b".repeat(64) })).rejects.toThrow("消费参数不一致");
-            expect(first.applied).toBe(true);
-            expect(replay.applied).toBe(false);
-            expect(replay.record.id).toBe(first.record.id);
-            expect(await repositories.points.getRecordByIdempotencyKey(idempotencyKey)).toMatchObject({ userId, requestFingerprint, amount: -5 });
-        } finally {
-            await repositories.users.delete(userId);
-        }
-    });
-
-    postgresIt("persists decimal cost controls and serializes the site-wide daily budget", async () => {
-        await ensurePostgresSchema();
-        const repositories = createPostgresRepositories();
-        const settings = await repositories.settings.getSettings();
-        const storedSettings = settings.settings;
-        const planId = storedSettings?.defaultPlanId || settings.plans[0]?.id;
-        if (!storedSettings || !planId) throw new Error("PostgreSQL settings are unavailable for the integration test");
-
-        const suffix = randomUUID();
-        const userIds = [`test-cost-a-${suffix}`, `test-cost-b-${suffix}`];
-        const now = new Date("2098-12-31T00:00:00.000Z");
-        try {
-            await repositories.settings.updateSettings({
-                generationCostControl: {
-                    maxPointsPerTask: 0,
-                    dailyUserPointSpend: 0,
-                    dailyTotalPointSpend: 1.7,
-                },
-                dataLifecycle: {
-                    cleanupExpiredSessions: true,
-                    cleanupExpiredEmailCodes: true,
-                    cleanupExpiredGenerationTasks: true,
-                    cleanupExpiredTemporaryMedia: true,
-                    maintenanceBatchSize: 80,
-                },
-            });
-            expect((await repositories.settings.getSettings()).settings).toMatchObject({
-                dataLifecycle: {
-                    cleanupExpiredSessions: true,
-                    cleanupExpiredEmailCodes: true,
-                    cleanupExpiredGenerationTasks: true,
-                    cleanupExpiredTemporaryMedia: true,
-                    maintenanceBatchSize: 80,
-                },
-                generationCostControl: {
-                    maxPointsPerTask: 0,
-                    dailyUserPointSpend: 0,
-                    dailyTotalPointSpend: 1.7,
-                },
-            });
-
-            await Promise.all(
-                userIds.map((userId, index) =>
-                    repositories.users.createWithNextAccountId({
-                        id: userId,
-                        username: `cost_${index}_${suffix.replaceAll("-", "").slice(0, 14)}`,
-                        displayName: `成本并发测试用户 ${index + 1}`,
-                        bio: "",
-                        role: "user",
-                        adminPermissions: [],
-                        status: "active",
-                        planId,
-                        pointsBalance: 10,
-                        passwordHash: "integration-test-only",
-                        createdAt: now.toISOString(),
-                        updatedAt: now.toISOString(),
-                    }),
-                ),
-            );
-
-            const results = await Promise.allSettled(
-                userIds.map((userId, index) =>
-                    consumePoints({
-                        userId,
-                        amount: 1.7,
-                        units: 1,
-                        usageKind: "text",
-                        model: "writer",
-                        description: "并发成本保护测试",
-                        idempotencyKey: `cost-control:${index}:${suffix}`,
-                        now,
-                    }),
-                ),
-            );
+            const results = await Promise.allSettled([
+                reserveWalletCredits({ userId, businessId: `generation:a:${suffix}`, requestFingerprint: "a".repeat(64), amount: "7.125", description: "并发预留 A", now }),
+                reserveWalletCredits({ userId, businessId: `generation:b:${suffix}`, requestFingerprint: "b".repeat(64), amount: "7.125", description: "并发预留 B", now }),
+            ]);
 
             expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
             expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
-            expect(results.find((result) => result.status === "rejected")).toMatchObject({
-                reason: expect.objectContaining({ message: expect.stringContaining("平台今日生成成本保护已触发") }),
-            });
+            expect(await getWalletSnapshot(userId)).toEqual({ settledBalance: "10.5", heldBalance: "7.125", availableBalance: "3.375" });
         } finally {
-            await Promise.all(userIds.map((userId) => repositories.users.delete(userId)));
-            await repositories.settings.updateSettings({ generationCostControl: storedSettings.generationCostControl, dataLifecycle: storedSettings.dataLifecycle });
+            await repositories.users.delete(userId);
         }
     });
 
-    postgresIt("deletes only one stable batch of isolated expired technical records", async () => {
+    postgresIt("settles once and reconciles the signed ledger from a zero opening balance", async () => {
         await ensurePostgresSchema();
         const repositories = createPostgresRepositories();
-        const settings = await repositories.settings.getSettings();
-        const planId = settings.settings?.defaultPlanId || settings.plans[0]?.id;
-        if (!planId) throw new Error("No entitlement plan is available for the PostgreSQL integration test");
-
         const suffix = randomUUID();
-        const userId = `test-lifecycle-${suffix}`;
-        const createdAt = new Date("1950-01-01T00:00:00.000Z");
-        const expiredAt = new Date("1960-01-01T00:00:00.000Z");
-        const cutoff = new Date("1970-01-01T00:00:00.000Z");
-        const activeUntil = new Date("2099-01-01T00:00:00.000Z");
+        const userId = `wallet-settle-${suffix}`;
+        const now = new Date();
         try {
             await repositories.users.createWithNextAccountId({
                 id: userId,
-                username: `lifecycle_${suffix.replaceAll("-", "").slice(0, 14)}`,
-                displayName: "生命周期测试用户",
+                username: `settle_${suffix.replaceAll("-", "").slice(0, 16)}`,
+                displayName: "钱包结算测试用户",
                 bio: "",
                 role: "user",
                 adminPermissions: [],
                 status: "active",
-                planId,
-                pointsBalance: 0,
+                settledBalance: "0",
                 passwordHash: "integration-test-only",
-                createdAt: createdAt.toISOString(),
-                updatedAt: createdAt.toISOString(),
+                createdAt: now.toISOString(),
+                updatedAt: now.toISOString(),
             });
-            await Promise.all([
-                ...["one", "two"].map((name) => repositories.sessions.create({ id: `lifecycle-session-${name}-${suffix}`, userId, tokenHash: `lifecycle-${name}-${suffix}`, createdAt: createdAt.toISOString(), expiresAt: expiredAt.toISOString() })),
-                repositories.sessions.create({ id: `lifecycle-session-active-${suffix}`, userId, tokenHash: `lifecycle-active-${suffix}`, createdAt: createdAt.toISOString(), expiresAt: activeUntil.toISOString() }),
-                ...["one", "two"].map((name) =>
-                    repositories.emailCodes.create({
-                        id: `lifecycle-code-${name}-${suffix}`,
-                        purpose: "register",
-                        email: `${name}-${suffix}@example.com`,
-                        userId,
-                        codeHash: name,
-                        createdAt: createdAt.toISOString(),
-                        expiresAt: expiredAt.toISOString(),
-                        attempts: 0,
-                    }),
-                ),
-            ]);
-            await Promise.all(
-                ["one", "two"].map((name) =>
-                    postgresQuery(
-                        `INSERT INTO generation_tasks (id, user_id, task_type, status, payload, created_at, updated_at, expires_at)
-                         VALUES ($1, $2, 'text', 'success', '{}'::jsonb, $3, $3, $4)`,
-                        [`lifecycle-task-${name}-${suffix}`, userId, createdAt.toISOString(), expiredAt.toISOString()],
-                    ),
-                ),
-            );
+            await creditWalletBalance({ userId, amount: "2.75", businessId: `topup:${suffix}`, description: "测试充值", now });
+            const reservation = await reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "c".repeat(64), amount: "1.23456789", description: "小数预留", now });
+            const input: SettleWalletHoldInput = {
+                holdId: reservation.hold.id,
+                usageChargeId: `charge:${suffix}`,
+                requestFingerprint: "d".repeat(64),
+                finalCharge: { credits: "1.125", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1.125", platformLossCredits: "0" },
+                saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1.125" }] },
+                description: "小数结算",
+                now,
+            };
 
-            await expect(repositories.sessions.pruneExpired(cutoff, 1)).resolves.toBe(1);
-            await expect(repositories.emailCodes.pruneExpired(cutoff, 1)).resolves.toBe(1);
-            await expect(cleanupExpiredStoredGenerationTasks({ limit: 1, now: cutoff })).resolves.toBe(1);
+            const first = await settleWalletHold(input);
+            const replay = await settleWalletHold(input);
 
-            const [sessions, emailCodes, tasks] = await Promise.all([
-                postgresQuery<{ count: string }>("SELECT count(*) FROM sessions WHERE user_id = $1", [userId]),
-                postgresQuery<{ count: string }>("SELECT count(*) FROM email_codes WHERE user_id = $1", [userId]),
-                postgresQuery<{ count: string }>("SELECT count(*) FROM generation_tasks WHERE user_id = $1", [userId]),
-            ]);
-            expect(Number(sessions.rows[0]?.count)).toBe(2);
-            expect(Number(emailCodes.rows[0]?.count)).toBe(1);
-            expect(Number(tasks.rows[0]?.count)).toBe(1);
+            expect(first.applied).toBe(true);
+            expect(replay.applied).toBe(false);
+            expect(await reconcileWallet(userId)).toEqual({ userId, ledgerBalance: "1.625", settledBalance: "1.625", activeHolds: "0", availableBalance: "1.625", issues: [] });
+        } finally {
+            await repositories.users.delete(userId);
+        }
+    });
+
+    postgresIt("upserts non-empty wallet backup rows and enforces same-user charge linkage", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const userId = `wallet-restore-${suffix}`;
+        const otherUserId = `wallet-restore-other-${suffix}`;
+        const now = new Date().toISOString();
+        try {
+            for (const [id, name] of [
+                [userId, "restore"],
+                [otherUserId, "restore_other"],
+            ] as const)
+                await repositories.users.createWithNextAccountId({
+                    id,
+                    username: `${name}_${suffix.replaceAll("-", "").slice(0, 12)}`,
+                    displayName: "钱包恢复测试用户",
+                    bio: "",
+                    role: "user",
+                    adminPermissions: [],
+                    status: "active",
+                    settledBalance: "0",
+                    passwordHash: "integration-test-only",
+                    createdAt: now,
+                    updatedAt: now,
+                });
+            const hold = { id: `hold:${suffix}`, userId, businessId: `restore:${suffix}`, requestFingerprint: "e".repeat(64), amount: "1.125", status: "active" as const, description: "恢复预留", createdAt: now, updatedAt: now };
+            await repositories.pointsWallet.upsertHoldForRestore(hold);
+            await repositories.pointsWallet.upsertHoldForRestore({ ...hold, description: "重复恢复预留" });
+            expect(await repositories.pointsWallet.getHoldById(hold.id)).toMatchObject({ description: "重复恢复预留", amount: "1.125" });
+
+            const foreignRecord = await repositories.points.addRecord({ id: `record:${suffix}`, userId: otherUserId, type: "credit", amount: "0.5", balanceAfter: "0.5", description: "其他用户流水", createdAt: now });
+            await expect(
+                repositories.pointsWallet.createUsageCharge({
+                    id: `charge:${suffix}`,
+                    userId,
+                    holdId: hold.id,
+                    requestFingerprint: "f".repeat(64),
+                    reservedCredits: "1.125",
+                    settledCredits: "0.5",
+                    normalizedUsage: { capability: "image", source: "actual", count: "1" },
+                    saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "0.5" }] },
+                    finalSaleCharge: { credits: "0.5", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "0.5", platformLossCredits: "0" },
+                    estimated: false,
+                    totalProviderCostUsd: "0",
+                    description: "错误跨用户关联",
+                    pointRecordId: foreignRecord.id,
+                    createdAt: now,
+                    settledAt: now,
+                }),
+            ).rejects.toThrow();
+        } finally {
+            await repositories.users.delete(userId);
+            await repositories.users.delete(otherUserId);
+        }
+    });
+
+    postgresIt("serializes provider completion with settlement without dropping terminal cost", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const userId = `wallet-attempt-race-${suffix}`;
+        const now = new Date();
+        try {
+            await repositories.users.createWithNextAccountId({
+                id: userId,
+                username: `attempt_${suffix.replaceAll("-", "").slice(0, 12)}`,
+                displayName: "尝试并发测试用户",
+                bio: "",
+                role: "user",
+                adminPermissions: [],
+                status: "active",
+                settledBalance: "0",
+                passwordHash: "integration-test-only",
+                createdAt: now.toISOString(),
+                updatedAt: now.toISOString(),
+            });
+            await creditWalletBalance({ userId, amount: "2", businessId: `topup:${suffix}`, description: "并发测试充值", now });
+            const reservation = await reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "1".repeat(64), amount: "1", description: "并发尝试预留", now });
+            const pending = {
+                id: `attempt:${suffix}`,
+                holdId: reservation.hold.id,
+                attemptNumber: 1,
+                status: "pending" as const,
+                provider: "vendor",
+                bindingId: "binding",
+                requestFingerprint: "2".repeat(64),
+                nativeCostAmount: "0",
+                nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                now,
+            };
+            await recordProviderUsageAttempt(pending);
+            const settlement: SettleWalletHoldInput = {
+                holdId: reservation.hold.id,
+                usageChargeId: `charge:${suffix}`,
+                requestFingerprint: "3".repeat(64),
+                finalCharge: { credits: "1", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" },
+                saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1" }] },
+                description: "并发尝试结算",
+                now,
+            };
+
+            const [settlementResult, completionResult] = await Promise.allSettled([settleWalletHold(settlement), recordProviderUsageAttempt({ ...pending, status: "failed", nativeCostAmount: "0.4" })]);
+            expect(completionResult.status).toBe("fulfilled");
+            const finalSettlement = settlementResult.status === "fulfilled" ? settlementResult.value : await settleWalletHold(settlement);
+            expect(finalSettlement.charge).toMatchObject({ settledCredits: "1", totalProviderCostUsd: "0.4" });
+        } finally {
+            await repositories.users.delete(userId);
+        }
+    });
+
+    postgresIt("does not release a hold while a provider attempt is pending", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const userId = `wallet-release-pending-${suffix}`;
+        const now = new Date();
+        try {
+            await repositories.users.createWithNextAccountId({
+                id: userId,
+                username: `release_${suffix.replaceAll("-", "").slice(0, 12)}`,
+                displayName: "释放并发测试用户",
+                bio: "",
+                role: "user",
+                adminPermissions: [],
+                status: "active",
+                settledBalance: "0",
+                passwordHash: "integration-test-only",
+                createdAt: now.toISOString(),
+                updatedAt: now.toISOString(),
+            });
+            await creditWalletBalance({ userId, amount: "2", businessId: `topup:${suffix}`, description: "释放测试充值", now });
+            const reservation = await reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "4".repeat(64), amount: "1", description: "释放测试预留", now });
+            const pending = {
+                id: `attempt:${suffix}`,
+                holdId: reservation.hold.id,
+                attemptNumber: 1,
+                status: "pending" as const,
+                provider: "vendor",
+                bindingId: "binding",
+                requestFingerprint: "5".repeat(64),
+                nativeCostAmount: "0",
+                nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                now,
+            };
+            await recordProviderUsageAttempt(pending);
+
+            await expect(releaseWalletHold({ holdId: reservation.hold.id, businessId: `release:${suffix}`, requestFingerprint: "6".repeat(64), reason: "任务取消", now })).rejects.toThrow("供应商尝试仍在处理中");
+            await expect(recordProviderUsageAttempt({ ...pending, status: "canceled", nativeCostAmount: "0.125" })).resolves.toMatchObject({ applied: true, attempt: { status: "canceled" } });
+            await expect(releaseWalletHold({ holdId: reservation.hold.id, businessId: `release:${suffix}`, requestFingerprint: "6".repeat(64), reason: "任务取消", now })).resolves.toMatchObject({ applied: true, hold: { status: "released" } });
         } finally {
             await repositories.users.delete(userId);
         }

@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { App, Button, Form, Input, InputNumber, Modal, Pagination, Segmented, Select, Switch, Tag } from "antd";
 import { RefreshCw, Save, Settings2, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
 
 import { AdminAccountId } from "@/components/admin/admin-user-identity";
 import {
     getAdminReferralOverview,
-    listAdminReferralCouponTemplates,
     listAdminReferralRelationships,
     listAdminReferralRewards,
     saveAdminReferralProgram,
@@ -23,13 +22,11 @@ import {
 const PAGE_SIZE = 20;
 
 type Overview = Awaited<ReturnType<typeof getAdminReferralOverview>>;
-type CouponTemplates = Awaited<ReturnType<typeof listAdminReferralCouponTemplates>>["templates"];
-type ProgramForm = Omit<ReferralProgram, "minimumPaidCents"> & { minimumPaidYuan: number };
+type ProgramForm = ReferralProgram;
 
 export function ReferralRewardsPanel() {
     const { message, modal } = App.useApp();
     const [form] = Form.useForm<ProgramForm>();
-    const inviteeRewardType = Form.useWatch("inviteeRewardType", form);
     const [overview, setOverview] = useState<Overview | null>(null);
     const [relationships, setRelationships] = useState<ReferralRelationship[]>([]);
     const [rewards, setRewards] = useState<ReferralReward[]>([]);
@@ -47,11 +44,6 @@ export function ReferralRewardsPanel() {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [saving, setSaving] = useState(false);
     const [settling, setSettling] = useState(false);
-    const [couponTemplates, setCouponTemplates] = useState<CouponTemplates>([]);
-    const [couponTemplateKeyword, setCouponTemplateKeyword] = useState("");
-    const [couponTemplatesLoading, setCouponTemplatesLoading] = useState(false);
-    const [couponTemplatesError, setCouponTemplatesError] = useState("");
-    const couponTemplateRequestRef = useRef(0);
 
     const loadOverview = useCallback(async () => {
         const data = await getAdminReferralOverview();
@@ -81,28 +73,6 @@ export function ReferralRewardsPanel() {
         }
     }, [rewardPage, rewardStatus]);
 
-    const loadCouponTemplates = useCallback(
-        async (keyword: string) => {
-            const requestId = ++couponTemplateRequestRef.current;
-            const selectedValue = form.getFieldValue("inviteeCouponTemplateId");
-            setCouponTemplatesLoading(true);
-            setCouponTemplatesError("");
-            try {
-                const data = await listAdminReferralCouponTemplates({
-                    keyword: keyword.trim() || undefined,
-                    selectedId: typeof selectedValue === "string" ? selectedValue : undefined,
-                    pageSize: 20,
-                });
-                if (requestId === couponTemplateRequestRef.current) setCouponTemplates(data.templates);
-            } catch (error) {
-                if (requestId === couponTemplateRequestRef.current) setCouponTemplatesError(error instanceof Error ? error.message : "加载优惠券模板失败");
-            } finally {
-                if (requestId === couponTemplateRequestRef.current) setCouponTemplatesLoading(false);
-            }
-        },
-        [form],
-    );
-
     const refresh = useCallback(async () => {
         setLoading(true);
         try {
@@ -131,35 +101,22 @@ export function ReferralRewardsPanel() {
         void loadRewards().catch((error) => message.error(error instanceof Error ? error.message : "加载奖励记录失败"));
     }, [loadRewards, message, view]);
 
-    useEffect(() => {
-        if (!settingsOpen || inviteeRewardType !== "coupon") return;
-        const timer = window.setTimeout(() => void loadCouponTemplates(couponTemplateKeyword), 250);
-        return () => {
-            window.clearTimeout(timer);
-            couponTemplateRequestRef.current += 1;
-        };
-    }, [couponTemplateKeyword, inviteeRewardType, loadCouponTemplates, settingsOpen]);
-
     const openSettings = () => {
         if (!overview) return;
         const program = overview.program;
-        form.setFieldsValue({ ...program, minimumPaidYuan: program.minimumPaidCents / 100 });
-        setCouponTemplateKeyword("");
-        setCouponTemplatesError("");
+        form.setFieldsValue(program);
         setSettingsOpen(true);
     };
 
     const closeSettings = () => {
         if (saving) return;
         setSettingsOpen(false);
-        setCouponTemplateKeyword("");
-        setCouponTemplatesError("");
     };
 
     const save = async (values: ProgramForm) => {
         setSaving(true);
         try {
-            const data = await saveAdminReferralProgram({ ...values, minimumPaidCents: Math.round(Number(values.minimumPaidYuan || 0) * 100) });
+            const data = await saveAdminReferralProgram(values);
             setOverview((current) => (current ? { ...current, program: data.program } : current));
             setSettingsOpen(false);
             message.success("邀请奖励规则已保存");
@@ -250,8 +207,8 @@ export function ReferralRewardsPanel() {
                     </div>
                     <div className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
                         <RuleFact label="邀请人" value={`${program?.inviterPoints || 0} 积分`} />
-                        <RuleFact label="新用户" value={program?.inviteeRewardType === "coupon" ? "优惠券" : `${program?.inviteePoints || 0} 积分`} />
-                        <RuleFact label="最低实付" value={formatMoney(program?.minimumPaidCents || 0)} />
+                        <RuleFact label="新用户" value={`${program?.inviteePoints || 0} 积分`} />
+                        <RuleFact label="最低实付" value={`$${program?.minimumPaidUsd || "0"}`} />
                         <RuleFact label="冷静期" value={`${program?.coolingOffDays || 0} 天`} />
                     </div>
                 </div>
@@ -357,44 +314,11 @@ export function ReferralRewardsPanel() {
                         <Form.Item name="inviterPoints" label="邀请人奖励积分" rules={[{ required: true, message: "请填写邀请人奖励" }]}>
                             <InputNumber className="w-full" min={0} max={1_000_000} precision={2} />
                         </Form.Item>
-                        <Form.Item name="inviteeRewardType" label="新用户奖励类型" rules={[{ required: true }]}>
-                            <Select
-                                options={[
-                                    { value: "points", label: "永久积分" },
-                                    { value: "coupon", label: "优惠券" },
-                                ]}
-                            />
+                        <Form.Item name="inviteePoints" label="新用户奖励积分" rules={[{ required: true, message: "请填写新用户奖励" }]}>
+                            <InputNumber className="w-full" min={0} max={1_000_000} precision={2} />
                         </Form.Item>
-                        {inviteeRewardType === "coupon" ? (
-                            <Form.Item name="inviteeCouponTemplateId" label="新用户优惠券" rules={[{ required: true, message: "请选择优惠券模板" }]}>
-                                <Select
-                                    showSearch
-                                    allowClear
-                                    filterOption={false}
-                                    loading={couponTemplatesLoading}
-                                    placeholder="搜索优惠券名称或券码"
-                                    onSearch={setCouponTemplateKeyword}
-                                    notFoundContent={
-                                        couponTemplatesLoading ? (
-                                            "正在加载优惠券模板..."
-                                        ) : couponTemplatesError ? (
-                                            <Button type="link" size="small" onMouseDown={(event) => event.preventDefault()} onClick={() => void loadCouponTemplates(couponTemplateKeyword)}>
-                                                加载失败，点击重试
-                                            </Button>
-                                        ) : (
-                                            "没有匹配的可用优惠券"
-                                        )
-                                    }
-                                    options={couponTemplates.map((item) => ({ value: item.id, label: `${item.name} · ${item.code}${item.enabled ? "" : "（已停用）"}`, disabled: !item.enabled }))}
-                                />
-                            </Form.Item>
-                        ) : (
-                            <Form.Item name="inviteePoints" label="新用户奖励积分" rules={[{ required: true, message: "请填写新用户奖励" }]}>
-                                <InputNumber className="w-full" min={0} max={1_000_000} precision={2} />
-                            </Form.Item>
-                        )}
-                        <Form.Item name="minimumPaidYuan" label="首单最低实付">
-                            <InputNumber className="w-full" min={0} max={1_000_000} precision={2} prefix="¥" />
+                        <Form.Item name="minimumPaidUsd" label="首充最低名义价值（USD）">
+                            <Input className="w-full" inputMode="decimal" prefix="$" />
                         </Form.Item>
                         <Form.Item name="coolingOffDays" label="冷静期（天）">
                             <InputNumber className="w-full" min={0} max={365} precision={0} />
@@ -488,7 +412,7 @@ function RewardRow({ item }: { item: ReferralReward }) {
                     {item.reason ? ` · ${item.reason}` : ""}
                 </div>
             </div>
-            <div className="text-sm font-semibold">{item.rewardType === "coupon" ? "优惠券" : `${item.pointsAmount} 积分`}</div>
+            <div className="text-sm font-semibold">{item.pointsAmount} 积分</div>
         </article>
     );
 }

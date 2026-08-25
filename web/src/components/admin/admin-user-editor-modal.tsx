@@ -96,8 +96,8 @@ export function AdminUserEditorModal({ controller }: { controller: AdminDashboar
                             ]}
                         />
                     </Form.Item>
-                    <Form.Item label="永久积分" name="pointsBalance" extra={editingUser ? "每日积分由系统自动结算" : undefined} rules={[{ required: true, message: "请输入永久积分" }]}>
-                        <InputNumber className="!w-full" disabled={!canManageBilling} min={0} precision={2} />
+                    <Form.Item label="结算余额" name="settledBalance" extra={editingUser ? "修改会生成可审计的钱包调整流水" : "新账号余额默认为 0"} rules={[{ required: true, message: "请输入结算余额" }]}>
+                        <InputNumber className="!w-full" stringMode disabled={!canManageBilling || creatingUser} min="0" precision={8} />
                     </Form.Item>
                 </div>
                 {selectedRole === "admin" ? (

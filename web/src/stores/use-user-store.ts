@@ -14,13 +14,9 @@ export type LocalUser = {
     role: "admin" | "user";
     adminPermissions: AdminPermission[];
     status: "active" | "disabled";
-    planId: string;
-    planName: string;
-    hasActivePlan: boolean;
-    pointsBalance: number;
-    permanentPointsBalance?: number;
-    dailyPointsBalance?: number;
-    dailyPointsExpiresAt?: string;
+    settledBalance: string;
+    heldBalance: string;
+    availableBalance: string;
     mfaEnabled: boolean;
 };
 

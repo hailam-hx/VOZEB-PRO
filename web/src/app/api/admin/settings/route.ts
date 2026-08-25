@@ -37,14 +37,11 @@ export async function PATCH(request: Request) {
         if (body.site) patch.site = body.site;
         if (typeof body.registrationEnabled === "boolean") patch.registrationEnabled = body.registrationEnabled;
         if (typeof body.emailRegistrationEnabled === "boolean") patch.emailRegistrationEnabled = body.emailRegistrationEnabled;
-        if (typeof body.freeDailyPointsEnabled === "boolean") patch.freeDailyPointsEnabled = body.freeDailyPointsEnabled;
-        if (typeof body.freeDailyPoints === "number") patch.freeDailyPoints = body.freeDailyPoints;
         if (body.mail) patch.mail = body.mail;
         if (body.modelPointCosts && typeof body.modelPointCosts === "object") patch.modelPointCosts = body.modelPointCosts;
         if (body.generationPointMultipliers && typeof body.generationPointMultipliers === "object") patch.generationPointMultipliers = body.generationPointMultipliers;
         if (body.generationCostControl && typeof body.generationCostControl === "object") patch.generationCostControl = body.generationCostControl;
         if (body.dataLifecycle && typeof body.dataLifecycle === "object") patch.dataLifecycle = body.dataLifecycle;
-        if (body.entitlements && typeof body.entitlements === "object") patch.entitlements = body.entitlements;
         if (body.generationConcurrency && typeof body.generationConcurrency === "object") patch.generationConcurrency = body.generationConcurrency;
         if (body.generationDefaults && typeof body.generationDefaults === "object") patch.generationDefaults = body.generationDefaults;
         if (Array.isArray(body.systemChannels)) {
@@ -97,11 +94,8 @@ const SETTINGS_PERMISSION_BY_FIELD = {
     emailRegistrationEnabled: "system.manage",
     mail: "system.manage",
     dataLifecycle: "system.manage",
-    freeDailyPointsEnabled: "billing.manage",
-    freeDailyPoints: "billing.manage",
     modelPointCosts: "billing.manage",
     generationPointMultipliers: "billing.manage",
-    entitlements: "billing.manage",
     generationCostControl: "upstream.manage",
     generationConcurrency: "upstream.manage",
     generationDefaults: "upstream.manage",

@@ -1,5 +1,4 @@
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
-import { walletClock } from "@/lib/server/points-wallet-service";
 
 import { AuthInputError } from "./store-foundation";
 import { readAuthDb, mutateAuthDb } from "./store-repository";
@@ -10,15 +9,15 @@ export async function updateOwnAvatarStorageKey(userId: string, avatarStorageKey
     if (!/^permanent\/\d{4}\/\d{2}\/\d{2}\/images\/.+\.webp$/i.test(storageKey)) throw new AuthInputError("头像存储格式无效");
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
-        const clock = walletClock();
+        const now = new Date();
         const result = await withPostgresTransaction(async (client) => {
             const users = createPostgresRepositories(client).users;
             const user = await users.getById(userId, true);
             if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
             await users.update(userId, { avatarStorageKey: storageKey });
-            const publicRecord = (await users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }))[0];
+            const publicRecord = (await users.getPublicDetails([userId], { now: now.toISOString(), date: now.toISOString().slice(0, 10) }))[0];
             if (!publicRecord) throw new AuthInputError("用户不可用");
-            return { user: publicUserFromAuthenticatedRecord(publicRecord, clock.expiresAt), previousStorageKey: user.avatarStorageKey };
+            return { user: publicUserFromAuthenticatedRecord(publicRecord), previousStorageKey: user.avatarStorageKey };
         });
         return result;
     }

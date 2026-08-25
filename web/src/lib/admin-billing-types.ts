@@ -1,45 +1,41 @@
+import type { PaymentAmount, ProviderCostUnit } from "@/lib/billing/money";
+
+export type AdminBillingUser = { accountId?: string; username?: string; displayName?: string; avatarUrl?: string };
+
 export type AdminBillingSummary = {
-    orders: {
-        total: number;
-        pending: number;
-        paid: number;
-        closed: number;
-        canceled: number;
-        refunded: number;
-        grossAmountCents: number;
-        paidAmountCents: number;
-        pendingAmountCents: number;
-        refundedAmountCents: number;
-    };
-    payments: {
-        succeeded: number;
-        refunded: number;
-        succeededAmountCents: number;
-        refundedAmountCents: number;
-    };
-    commerce: {
-        convertedOrders: number;
-        promotionOrders: number;
-        promotionConvertedOrders: number;
-        promotionDiscountCents: number;
-        couponOrders: number;
-        couponConvertedOrders: number;
-        couponDiscountCents: number;
-    };
-    providers: Array<{
-        provider: string;
-        totalOrders: number;
-        pendingOrders: number;
-        paidOrders: number;
-        refundedOrders: number;
-        paidAmountCents: number;
-        refundedAmountCents: number;
-    }>;
-    reconciliation: {
-        paidOrdersWithoutSucceededPayment: number;
-        succeededPaymentsWithoutPaidOrder: number;
-        amountMismatchPayments: number;
-    };
+    currencies: Array<{ currency: string; paidNativeAmount: string; refundedNativeAmount: string; paidOrders: number; refundedOrders: number }>;
+    paidUsdValue: string;
+    refundedUsdValue: string;
+    nominalUsdValue: string;
+};
+
+export type AdminTopUpConfig = { pricingVersion: string; customerFxVersion: string; usdPerVnd: string };
+export type AdminUsageAuditItem = {
+    id: string;
+    user?: AdminBillingUser;
+    holdId: string;
+    capability: string;
+    usageSource: string;
+    settledCredits: string;
+    providerCostUsd: string;
+    marginUsd: string;
+    estimated: boolean;
+    anomaly: "none" | "zero_usage_cost" | "negative_margin";
+    createdAt: string;
+};
+export type AdminRecoveryItem = { id: string; user?: AdminBillingUser; businessId: string; amount: string; reviewReason?: string; expiresAt?: string; recoveryCheckedAt?: string; createdAt: string };
+export type AdminProviderUsageAttempt = {
+    id: string;
+    attemptNumber: number;
+    status: "pending" | "succeeded" | "failed" | "canceled";
+    provider: string;
+    bindingId: string;
+    nativeCostAmount: string;
+    nativeCostUnit: ProviderCostUnit;
+    usdConversionRate: string;
+    costUsd: string;
+    createdAt: string;
+    completedAt?: string;
 };
 
 export type BillingStatementStatus = "paid" | "refunded" | "pending" | "failed" | "unknown";
@@ -64,13 +60,15 @@ export type BillingReconciliationRow = {
     providerOrderId?: string;
     providerPaymentId?: string;
     statementStatus: BillingStatementStatus;
-    amountCents?: number;
-    currency?: string;
+    statementPaymentAmount?: PaymentAmount;
     localOrderId?: string;
     localOrderNo?: string;
     localOrderStatus?: string;
-    localAmountCents?: number;
-    localCurrency?: string;
+    localPaymentAmount?: PaymentAmount;
+    localNominalNativeAmount?: string;
+    localPayableNativeAmount?: string;
+    localNominalUsdValue?: string;
+    localPaidUsdValue?: string;
     issueCodes: BillingReconciliationIssueCode[];
     issues: BillingReconciliationIssue[];
 };
@@ -86,10 +84,14 @@ export type BillingReconciliationResult = {
     okRows: number;
     issueRows: number;
     totals: {
-        statementPaidAmountCents: number;
-        statementRefundedAmountCents: number;
-        localMatchedAmountCents: number;
-        differenceAmountCents: number;
+        statementPaidAmount: PaymentAmount;
+        statementRefundedAmount: PaymentAmount;
+        localPaidAmount: PaymentAmount;
+        localRefundedAmount: PaymentAmount;
+        differenceAmount: PaymentAmount;
+        differenceDirection: "statement_over" | "local_over" | "balanced";
+        localNominalUsdValue: string;
+        localPaidUsdValue: string;
     };
     rows: BillingReconciliationRow[];
     generatedAt: string;
@@ -104,10 +106,14 @@ export type BillingReconciliationRun = {
     matchedRows: number;
     okRows: number;
     issueRows: number;
-    statementPaidAmountCents: number;
-    statementRefundedAmountCents: number;
-    localMatchedAmountCents: number;
-    differenceAmountCents: number;
+    statementPaidAmount: PaymentAmount;
+    statementRefundedAmount: PaymentAmount;
+    localPaidAmount: PaymentAmount;
+    localRefundedAmount: PaymentAmount;
+    differenceAmount: PaymentAmount;
+    differenceDirection: "statement_over" | "local_over" | "balanced";
+    localNominalUsdValue: string;
+    localPaidUsdValue: string;
     importedByUserId?: string;
     importedByUsername?: string;
     fileName?: string;

@@ -102,7 +102,7 @@ describe("GlobalAiOpc media protocol matrix over TCP fixtures", () => {
 
         const createRequests = fixture.requests.filter((request) => (request.method === "POST" && request.path.includes("/images")) || (request.method === "POST" && request.path.includes("/videos")));
         expect(createRequests).toHaveLength(imagePresets.length + videoPresets.length);
-        expect(createRequests.every((request) => request.headers.authorization === "Bearer matrix-key" || request.headers["idempotency-key"]?.startsWith("matrix-video-request-"))).toBe(true);
+        expect(createRequests.every((request) => request.headers.authorization === "Bearer matrix-key" || request.headers["idempotency-key"]?.startsWith("video-request:matrix-video-request-"))).toBe(true);
         expect(new Set(createRequests.map((request) => request.headers["idempotency-key"])).size).toBe(createRequests.length);
     });
 });

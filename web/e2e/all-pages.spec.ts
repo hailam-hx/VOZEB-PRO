@@ -6,7 +6,7 @@ import { ADMIN_SECTION_KEYS } from "../src/components/admin/admin-sections";
 import { expectNoHorizontalOverflow, expectVisibleControlsWithinViewport } from "./responsive-helpers";
 import { E2E_ADMIN } from "./support";
 
-const PROFILE_SECTIONS = ["overview", "profile", "billing", "coupons", "orders", "points", "consume", "referrals", "security"] as const;
+const PROFILE_SECTIONS = ["overview", "profile", "billing", "orders", "points", "consume", "referrals", "security"] as const;
 const BASE_URL = `http://127.0.0.1:${Number(process.env.VOZEB_PRO_E2E_PORT || 3100)}`;
 const USES_POSTGRES = Boolean(process.env.VOZEB_PRO_E2E_DATABASE_URL?.trim());
 const FILE_PROVIDER_LIMITATIONS = new Map([
@@ -14,7 +14,7 @@ const FILE_PROVIDER_LIMITATIONS = new Map([
     ["/api/notifications/interactions", 409],
     ["/api/admin/referrals", 501],
     ["/api/admin/billing/summary", 501],
-    ["/api/admin/billing/products", 501],
+    ["/api/admin/billing/top-up-presets", 501],
 ]);
 
 type RouteCase = { path: string; expectedPath?: RegExp; expectedStatus?: number; readyHeading?: string; readyText?: string };
@@ -43,7 +43,7 @@ test("all authenticated pages reach their real routes and stay usable", async ({
         { path: "/me", readyHeading: "E2E 管理员" },
         USES_POSTGRES ? { path: `/u/${E2E_ADMIN.username}`, expectedStatus: 404, readyText: "404" } : { path: `/u/${E2E_ADMIN.username}`, readyHeading: "创作者主页暂不可用" },
         { path: "/billing", expectedPath: /\/profile\?section=billing$/ },
-        { path: "/billing/checkout", readyText: "套餐不存在或已下架" },
+        { path: "/billing/checkout", readyText: "暂无充值预设，可输入自定义金额" },
         { path: "/billing/success", readyText: "缺少订单信息" },
         { path: "/billing/cancel", readyText: "缺少订单信息" },
         { path: "/admin/setup", readyHeading: "把站点配置到可以上线运营" },

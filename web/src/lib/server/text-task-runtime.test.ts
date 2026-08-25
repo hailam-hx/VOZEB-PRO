@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
     transitionTask: vi.fn(),
     schedule: vi.fn(),
     refund: vi.fn(),
+    finishUsage: vi.fn(),
+    releaseUsage: vi.fn(),
+    attachUpstream: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
@@ -17,6 +20,11 @@ vi.mock("@/lib/server/text-task-store", () => ({
     getTextTask: mocks.getTask,
     updateTextTask: mocks.updateTask,
     transitionTextTask: mocks.transitionTask,
+}));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({
+    attachSystemAiUsageUpstreamTask: mocks.attachUpstream,
+    finishSystemAiTextAttempt: mocks.finishUsage,
+    releaseUsageBillingForBusiness: mocks.releaseUsage,
 }));
 
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
@@ -156,6 +164,48 @@ describe("text task runtime recovery", () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(state.config.channelId).toBe("channel-two");
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "succeeded"]);
+    });
+
+    it("fails a 200 business error without charging and permits failover", async () => {
+        state = textTask(openAiConfig("channel-one", "https://one.example"), [openAiConfig("channel-two", "https://two.example")]);
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(Response.json({ error: { message: "业务失败" } }))
+                .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "备用成功" } }] })),
+        );
+
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
+
+        expect(mocks.finishUsage).toHaveBeenNthCalledWith(1, expect.any(Headers), expect.objectContaining({ status: "failed" }));
+        expect(mocks.finishUsage).toHaveBeenLastCalledWith(expect.any(Headers), expect.objectContaining({ status: "succeeded" }));
+        expect(mocks.releaseUsage).not.toHaveBeenCalled();
+    });
+
+    it("fails an empty 200 response without charging and permits failover", async () => {
+        state = textTask(openAiConfig("channel-one", "https://one.example"), [openAiConfig("channel-two", "https://two.example")]);
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "" } }] }))
+                .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "备用成功" } }] })),
+        );
+
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
+
+        expect(mocks.finishUsage.mock.calls.map(([, input]) => input.status)).toEqual(["failed", "succeeded"]);
+    });
+
+    it("settles validated success only after the terminal task state is persisted", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ choices: [{ message: { content: "成功" } }] })));
+
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
+
+        expect(mocks.transitionTask.mock.invocationCallOrder.at(-1)).toBeLessThan(mocks.finishUsage.mock.invocationCallOrder.at(-1)!);
+        expect(mocks.finishUsage).toHaveBeenCalledOnce();
+        expect(mocks.finishUsage).toHaveBeenCalledWith(expect.any(Headers), expect.objectContaining({ status: "succeeded" }));
     });
 
     it("switches models instead of trying another protocol on the same model", async () => {

@@ -39,7 +39,9 @@ function mergeAuthDatabase(current: AuthDatabase, imported: AuthDatabase): AuthD
         sessions: mergeRecords(current.sessions, imported.sessions, (session) => session.id),
         quotaUsage: mergeRecords(current.quotaUsage, imported.quotaUsage, (usage) => `${usage.userId}\u0000${usage.date}\u0000${usage.usageKind}`),
         pointRecords: mergePointRecords(current.pointRecords, imported.pointRecords),
-        dailyPlanPointWallets: mergeRecords(current.dailyPlanPointWallets, imported.dailyPlanPointWallets, (wallet) => `${wallet.userId}\u0000${wallet.date}`),
+        walletHolds: mergeRecords(current.walletHolds, imported.walletHolds, (hold) => hold.id),
+        usageCharges: mergeRecords(current.usageCharges, imported.usageCharges, (charge) => charge.id),
+        providerUsageAttempts: mergeRecords(current.providerUsageAttempts, imported.providerUsageAttempts, (attempt) => attempt.id),
         emailCodes: mergeRecords(current.emailCodes, imported.emailCodes, (code) => code.id),
         cdkCodes: mergeRecords(current.cdkCodes, imported.cdkCodes, (code) => code.id),
         announcements: mergeRecords(current.announcements, imported.announcements, (announcement) => announcement.id),
@@ -63,11 +65,6 @@ function mergeSettings(current: AuthSettings, imported: AuthSettings): AuthSetti
             imageQuality: { ...current.generationPointMultipliers.imageQuality, ...imported.generationPointMultipliers.imageQuality },
             videoQuality: { ...current.generationPointMultipliers.videoQuality, ...imported.generationPointMultipliers.videoQuality },
             videoSeconds: { ...current.generationPointMultipliers.videoSeconds, ...imported.generationPointMultipliers.videoSeconds },
-        },
-        entitlements: {
-            ...current.entitlements,
-            ...imported.entitlements,
-            plans: mergeRecords(current.entitlements.plans, imported.entitlements.plans, (plan) => plan.id),
         },
         generationConcurrency: { ...current.generationConcurrency, ...imported.generationConcurrency },
         generationDefaults: {

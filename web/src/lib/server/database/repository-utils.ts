@@ -1,15 +1,6 @@
-import type {
-    BillingOrderStatus,
-    BillingProductKind,
-    BillingReconciliationRunStatus,
-    BillingReconciliationSource,
-    BillingReconciliationStatementStatus,
-    JsonValue,
-    PageResult,
-    PaymentTransactionStatus,
-    PlanAssignmentSource,
-    PlanAssignmentStatus,
-} from "./repository-types";
+import { decimal } from "@/lib/billing/decimal";
+
+import type { BillingReconciliationRunStatus, BillingReconciliationSource, BillingReconciliationStatementStatus, JsonValue, PageResult } from "./repository-types";
 
 export function jsonParam(value: JsonValue | undefined) {
     return value === undefined ? null : JSON.stringify(value);
@@ -27,6 +18,10 @@ export function optionalJson(value: unknown): JsonValue | undefined {
 
 export function stringValue(value: unknown) {
     return typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
+}
+
+export function decimalValue(value: unknown) {
+    return decimal(stringValue(value) || "0").toString();
 }
 
 export function optionalString(value: unknown) {
@@ -69,18 +64,6 @@ export function pageResult<T>(items: T[], total: number, page: number, pageSize:
     return { items, total, page, pageSize };
 }
 
-export function billingOrderStatusValue(value: unknown): BillingOrderStatus {
-    return value === "paid" || value === "closed" || value === "canceled" || value === "refunding" || value === "refunded" ? value : "pending";
-}
-
-export function billingProductKindValue(value: unknown): BillingProductKind {
-    return value === "points" ? "points" : "plan";
-}
-
-export function paymentTransactionStatusValue(value: unknown): PaymentTransactionStatus {
-    return value === "succeeded" || value === "failed" || value === "refunded" ? value : "pending";
-}
-
 export function billingReconciliationRunStatusValue(value: unknown): BillingReconciliationRunStatus {
     return value === "failed" ? "failed" : "completed";
 }
@@ -91,12 +74,4 @@ export function billingReconciliationSourceValue(value: unknown): BillingReconci
 
 export function billingReconciliationStatementStatusValue(value: unknown): BillingReconciliationStatementStatus {
     return value === "paid" || value === "refunded" || value === "pending" || value === "failed" ? value : "unknown";
-}
-
-export function planAssignmentStatusValue(value: unknown): PlanAssignmentStatus {
-    return value === "expired" || value === "canceled" ? value : "active";
-}
-
-export function planAssignmentSourceValue(value: unknown): PlanAssignmentSource {
-    return value === "order" || value === "cdk" || value === "system" ? value : "admin";
 }

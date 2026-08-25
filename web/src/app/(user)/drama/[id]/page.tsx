@@ -9,6 +9,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
 import { createServerVideoGenerationTask } from "@/services/api/video";
 import { syncUserPointsFromHeaders } from "@/services/api/points";
+import { requestDramaAnalysis } from "@/services/api/drama-analysis";
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -109,14 +110,11 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         if (!episode.script.trim()) return message.warning(t("errors.scriptRequired"));
         setAnalyzing(true);
         try {
-            const response = await fetch("/api/drama/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phase: "content", script: episode.script, summary: project.summary, style: project.style }) });
-            syncUserPointsFromHeaders(response.headers, "system");
-            const payload = (await response.json().catch(() => ({}))) as { data?: DramaContentAnalysis; msg?: string };
-            if (!response.ok || !payload.data) throw new Error("content analysis failed");
+            const data = await requestDramaAnalysis<DramaContentAnalysis>({ phase: "content", script: episode.script, summary: project.summary, style: project.style });
             await createVersion(project, t("versions.beforeContentAnalysis"));
-            applyContentAnalysis(project.id, episode.id, payload.data);
+            applyContentAnalysis(project.id, episode.id, data);
             setStage("review");
-            message.success(t("contentAnalysisSuccess", { characters: payload.data.characters.length, scenes: payload.data.scenes.length, shots: payload.data.shots.length }));
+            message.success(t("contentAnalysisSuccess", { characters: data.characters.length, scenes: data.scenes.length, shots: data.shots.length }));
         } catch {
             message.error(t("errors.contentAnalysisFailed"));
         } finally {
@@ -128,16 +126,19 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         updateEpisode(project.id, episode.id, { reviewStatus: "approved" });
         setDesigning(true);
         try {
-            const response = await fetch("/api/drama/analyze", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ phase: "visual", summary: project.summary, style: project.style, episode, characters: project.characters, scenes: project.scenes, props: project.props, clues: project.clues, shots: episode.shots }),
+            const data = await requestDramaAnalysis<DramaVisualAnalysis>({
+                phase: "visual",
+                summary: project.summary,
+                style: project.style,
+                episode,
+                characters: project.characters,
+                scenes: project.scenes,
+                props: project.props,
+                clues: project.clues,
+                shots: episode.shots,
             });
-            syncUserPointsFromHeaders(response.headers, "system");
-            const payload = (await response.json().catch(() => ({}))) as { data?: DramaVisualAnalysis; msg?: string };
-            if (!response.ok || !payload.data) throw new Error("visual analysis failed");
             await createVersion(project, t("versions.beforeVisualDesign"));
-            applyVisualAnalysis(project.id, episode.id, payload.data);
+            applyVisualAnalysis(project.id, episode.id, data);
             setStage("storyboard");
             message.success(t("visualDesignSuccess"));
         } catch {

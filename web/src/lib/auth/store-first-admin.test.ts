@@ -38,20 +38,28 @@ describe("first administrator creation", () => {
         await expect(createFirstAdmin({ username: "admin", password: "password123", installToken: "wrong-token".padEnd(48, "x") })).rejects.toMatchObject({ status: 403 });
 
         const admin = await createFirstAdmin({ username: "admin", password: "password123", installToken: TOKEN });
-        expect(admin.role).toBe("admin");
+        expect(admin).toMatchObject({ role: "admin", settledBalance: "0", heldBalance: "0", availableBalance: "0" });
         await expect(createFirstAdmin({ username: "admin-two", password: "password123", installToken: TOKEN })).rejects.toMatchObject({ status: 409 });
 
         await expect(createUser({ username: "normal-user", password: "password123", policyAccepted: false })).rejects.toThrow("请先阅读并同意服务条款和隐私政策");
 
         const user = await createUser({ username: "normal-user", password: "password123", policyAccepted: true });
-        expect(user.role).toBe("user");
-        expect((memory.value as { users: Array<{ registrationConsent?: unknown }> }).users[1].registrationConsent).toMatchObject({
-            termsVersion: "1.0",
-            termsUrl: "/terms",
-            privacyVersion: "1.0",
-            privacyUrl: "/privacy",
-            acceptedAt: expect.any(String),
+        expect(user).toMatchObject({ role: "user", settledBalance: "0", heldBalance: "0", availableBalance: "0" });
+        const stored = (memory.value as { users: Array<Record<string, unknown>> }).users;
+        expect(stored[0]).toMatchObject({ settledBalance: "0" });
+        expect(stored[1]).toMatchObject({
+            settledBalance: "0",
+            registrationConsent: {
+                termsVersion: "1.0",
+                termsUrl: "/terms",
+                privacyVersion: "1.0",
+                privacyUrl: "/privacy",
+                acceptedAt: expect.any(String),
+            },
         });
+        for (const record of stored) {
+            expect(record).not.toHaveProperty("pointsBalance");
+        }
     });
 
     it("serializes concurrent first-admin attempts", async () => {

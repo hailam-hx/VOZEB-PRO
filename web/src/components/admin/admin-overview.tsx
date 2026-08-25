@@ -6,7 +6,6 @@ import { CircleDollarSign, Database, PlugZap, RefreshCw, UsersRound } from "luci
 import { generationKindLabel, generationSourceLabel } from "@/components/admin/admin-generation-log";
 import { AdminCommerceConversionPanel } from "@/components/admin/admin-commerce-conversion-panel";
 import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { formatAdminMoney } from "@/components/admin/admin-values";
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
 import type { AdminGenerationOverviewSummary } from "@/lib/admin-generation-overview";
 import type { SystemModelChannel } from "@/lib/auth/store";
@@ -14,7 +13,7 @@ import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/gen
 
 type OverviewStats = { total: number; active: number; admins: number };
 type SettingsSummary = { totalChannels: number; enabledChannels: number };
-type WalletSummary = { enabledPlans: number; usersWithPlan: number };
+type WalletSummary = { totalBalance: string; enabledTopUpPresets: number };
 type DistributionItem = { label: string; value: number; percent: number };
 type OperationsSummary = AdminGenerationOverviewSummary;
 type AdminOverviewProps = {
@@ -25,20 +24,21 @@ type AdminOverviewProps = {
     operationsSummary: OperationsSummary;
     promptCount: number;
     assetStats: GenerationAssetStats | null;
-    enabledProducts: number;
+    enabledTopUpPresets: number;
     billingLoading: boolean;
     loading: boolean;
     onRefreshBilling: () => Promise<void>;
     onRefresh: () => void;
 };
 
-export function AdminOverview({ stats, settingsSummary, walletSummary, billingSummary, operationsSummary, promptCount, assetStats, enabledProducts, billingLoading, loading, onRefreshBilling, onRefresh }: AdminOverviewProps) {
+export function AdminOverview({ stats, settingsSummary, walletSummary, billingSummary, operationsSummary, promptCount, assetStats, enabledTopUpPresets, billingLoading, loading, onRefreshBilling, onRefresh }: AdminOverviewProps) {
+    const vnd = billingSummary?.currencies.find((item) => item.currency === "VND");
     return (
         <div className="space-y-3 sm:space-y-5">
             <section className="admin-metric-grid grid grid-cols-2 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 xl:grid-cols-4">
                 <Metric label="用户总数" value={stats.total} detail={stats.active + " 个可用账号"} icon={<UsersRound className="size-5" />} tone="slate" />
                 <Metric label="接口配置" value={settingsSummary.enabledChannels} detail={"共 " + settingsSummary.totalChannels + " 个渠道"} icon={<PlugZap className="size-5" />} tone="emerald" />
-                <Metric label="实收金额" value={formatAdminMoney(billingSummary?.orders.paidAmountCents || 0)} detail={(billingSummary?.orders.paid || 0) + " 笔已支付订单"} icon={<CircleDollarSign className="size-5" />} tone="slate" />
+                <Metric label="实收金额" value={formatVnd(vnd?.paidNativeAmount)} detail={(vnd?.paidOrders || 0) + " 笔已支付充值"} icon={<CircleDollarSign className="size-5" />} tone="slate" />
                 <Metric label="今日调用" value={operationsSummary.dailyCalls.at(-1)?.value || 0} detail={`近 ${operationsSummary.windowDays} 日 ${operationsSummary.totalCalls} 次调用`} icon={<Database className="size-5" />} tone="slate" />
             </section>
             <AdminCommerceConversionPanel billingSummary={billingSummary} billingLoading={billingLoading} onRefreshBilling={onRefreshBilling} />
@@ -57,7 +57,7 @@ export function AdminOverview({ stats, settingsSummary, walletSummary, billingSu
                 <div className="admin-resource-grid grid grid-cols-2 lg:grid-cols-4">
                     <ResourceStat label="成功调用" value={operationsSummary.successCalls + " 次"} detail={"成功率 " + operationsSummary.successRate + "%"} />
                     <ResourceStat label="活跃用户" value={operationsSummary.activeUsers + " 人"} detail={`近 ${operationsSummary.windowDays} 日去重用户`} />
-                    <ResourceStat label="上架商品" value={enabledProducts + " 个"} detail={walletSummary.enabledPlans + " 个在售套餐"} />
+                    <ResourceStat label="充值预设" value={enabledTopUpPresets + " 个"} detail="支持预设与自定义 VND 金额" />
                     <ResourceStat label="本地预览资源" value={assetStats ? assetStats.totalFiles + " 个" : "-"} detail={assetStats ? formatBytes(assetStats.totalBytes) : "等待统计"} />
                 </div>
             </Panel>
@@ -72,7 +72,7 @@ export function AdminOverview({ stats, settingsSummary, walletSummary, billingSu
             <Panel>
                 <PanelHeader title="业务健康" description="商业化后台首页只放运营判断相关信息；媒体文件维护已归入本地媒体页面。" />
                 <div className="admin-resource-grid grid grid-cols-2 lg:grid-cols-4">
-                    <ResourceStat label="在售套餐" value={walletSummary.enabledPlans + " 个"} detail={walletSummary.usersWithPlan + " 个套餐用户"} />
+                    <ResourceStat label="启用充值预设" value={walletSummary.enabledTopUpPresets + " 个"} detail="统一积分余额，无到期拆分" />
                     <ResourceStat label="启用模型渠道" value={settingsSummary.enabledChannels + " 个"} detail={"共 " + settingsSummary.totalChannels + " 个渠道"} />
                     <ResourceStat label="失败调用" value={operationsSummary.failedCalls + " 次"} detail="用于排查模型、额度或上游异常" />
                     <ResourceStat label="资源异常" value={assetStats ? assetStats.missingReferences + " 个" : "-"} detail="日志记录存在但文件不存在" />
@@ -85,7 +85,7 @@ function ModelDistributionPanel({ items, emptyText }: { items: DistributionItem[
     const displayItems = items.length ? items : [{ label: emptyText, value: 0, percent: 100 }];
     return (
         <Panel>
-            <PanelHeader title="模型分布" description="统计近 7 日不同模型的请求占比，便于调整默认模型和套餐成本。" />
+            <PanelHeader title="模型分布" description="统计近 7 日不同模型的请求占比，便于调整逻辑售价和绑定成本。" />
             <div className="grid gap-3 p-3 sm:gap-6 sm:p-5 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div className="flex items-center justify-center">
                     <DonutChart items={items} emptyText={emptyText} totalLabel="请求总量" variant="large" />
@@ -319,6 +319,10 @@ function formatCompactNumber(value: number) {
     if (numberValue >= 100000000) return `${trimFixed(numberValue / 100000000, 2)}亿`;
     if (numberValue >= 10000) return `${trimFixed(numberValue / 10000, 1)}万`;
     return `${numberValue}`;
+}
+
+function formatVnd(value?: string) {
+    return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(Number(value || 0));
 }
 
 function trimFixed(value: number, digits: number) {

@@ -37,7 +37,7 @@ VOZEB PRO 把统一创作 Agent、画布、短剧生产、素材库和商业运�
 - **作品广场**：作品草稿、版本审核、发布分享、广场检索、作者主页、点赞关注、下架重发和内容治理。
 - **模型与协议**：管理员维护渠道、协议、真实模型、逻辑模型、能力、优先级和默认值，覆盖 OpenAI、Gemini、Seedance 2.0、Stable Diffusion、A1111/Forge 和声明式自定义协议。
 - **持久生成**：独立 Worker 负责图片、视频、音频和 Agent 任务续取，页面关闭或实例切换后继续查询原上游任务，并在生成运维中处理异常任务。
-- **商业后台**：用户、套餐、促销、优惠券、邀请奖励、积分、CDK、订单、支付、退款、对账、财务流水、作品治理、公告、提示词和审计日志。
+- **商业后台**：用户、充值预设、客户汇率、逻辑售价、绑定成本、邀请奖励、积分、CDK、订单、支付、退款、对账、用量毛利、异常恢复、作品治理、公告、提示词和审计日志。
 - **存储与备份**：本地媒体、S3 兼容对象存储、引用保护、对象迁移和脱敏业务数据导入导出。
 
 ## 项目功能流程
@@ -221,21 +221,22 @@ flowchart TB
     HELP["帮助中心 /help"] --> GUIDE["查看 Agent、图片、视频、Canvas、短剧和账户说明"]
 
     PROFILE["个人中心 /profile"] --> INFO["修改资料和密码"]
-    PROFILE --> RIGHTS["查看积分、套餐、订单和消费记录"]
+    PROFILE --> RIGHTS["查看统一积分、充值订单和消费记录"]
     PROFILE --> EXPORT["导出个人数据"]
     PROFILE --> CANCEL_ACCOUNT["提交账号注销申请"]
     CANCEL_ACCOUNT --> ADMIN_REVIEW["管理员受理或拒绝"]
 
-    BILLING["充值中心 /billing"] --> PRODUCT["选择套餐或积分商品"]
-    PRODUCT --> ORDER["创建待支付订单"]
+    BILLING["充值中心 /billing"] --> PRODUCT["选择预设或输入整数 VND 金额"]
+    PRODUCT --> QUOTE["获取服务器权威积分报价"]
+    QUOTE --> ORDER["创建待支付订单"]
     ORDER --> CHECKOUT["订单支付 /billing/checkout"]
     CHECKOUT --> CHANNEL["选择可用支付渠道"]
     CHANNEL --> PAY{"支付结果"}
 
     PAY -->|成功| SUCCESS["支付成功 /billing/success"]
     SUCCESS --> CONFIRM["确认支付回调和订单状态"]
-    CONFIRM --> GRANT["套餐或积分入账"]
-    GRANT --> REFRESH["刷新用户余额和订单记录"]
+    CONFIRM --> GRANT["积分幂等入账"]
+    GRANT --> REFRESH["刷新统一余额、流水和订单记录"]
 
     PAY -->|取消或失败| CANCEL["支付取消 /billing/cancel"]
     CANCEL --> CHOICE{"订单处理"}
@@ -255,14 +256,14 @@ flowchart TB
     ADMIN --> FINANCE["财务管理"]
 
     ANALYSIS --> OVERVIEW["经营看板<br/>用户、收入、积分负债、订单和生成指标"]
-    ANALYSIS --> USERS["用户运营<br/>创建用户、角色、状态、套餐和积分"]
+    ANALYSIS --> USERS["用户运营<br/>创建用户、角色、状态和统一积分"]
     ANALYSIS --> LOGS["调用记录<br/>用户、入口、模型、状态和失败原因"]
     ANALYSIS --> GENERATION["生成运营<br/>任务查询、取消、失败记录和重试"]
 
-    PRODUCT --> PRODUCTS["套餐管理<br/>商品价格、权益、支付类型和上下架"]
+    PRODUCT --> PRODUCTS["充值与定价<br/>预设、客户汇率、逻辑售价和绑定成本"]
     PRODUCT --> ORDERS["订单管理<br/>查询、人工完成、关闭和退款"]
 
-    FINANCE --> POINTS["积分规则<br/>免费额度、模型单价和参数倍率"]
+    FINANCE --> POINTS["积分规则<br/>模型售价和参数倍率"]
     FINANCE --> PAYMENTS["支付渠道<br/>商户配置、回调地址、检测和启停"]
     FINANCE --> CDK["CDK 兑换<br/>批量生成、筛选、停用和兑换追踪"]
     FINANCE --> WALLET["财务流水<br/>充值、扣费、退款和余额变化"]
@@ -271,7 +272,7 @@ flowchart TB
     BILLING_ADMIN --> PRODUCTS
     BILLING_ADMIN --> PAYMENTS
 
-    PRODUCTS --> USER_BUY["用户选择商品"]
+    PRODUCTS --> USER_BUY["用户选择充值预设或自定义金额"]
     USER_BUY --> ORDERS
     ORDERS --> PAYMENTS
     PAYMENTS --> PAY_RESULT{"支付结果"}
@@ -316,7 +317,7 @@ flowchart TB
     SETUP["初始化配置 /admin/setup"] --> SITE
     SETUP --> CHANNELS
     SETUP --> SETTINGS
-    SETUP --> PRODUCTS["套餐商品"]
+    SETUP --> PRODUCTS["充值与定价"]
     SETUP --> PAYMENTS["支付渠道"]
     SETUP --> S3
     SETUP --> BACKUP
@@ -346,7 +347,7 @@ flowchart LR
     ROUTER --> PROVIDER["外部 AI 模型"]
     PROVIDER --> TASK["幂等任务和状态轮询"]
 
-    TASK --> BILLING["积分扣费和套餐用量"]
+    TASK --> BILLING["积分冻结、结算与用量审计"]
     BILLING --> PG
 
     TASK -->|失败或取消| REFUND["幂等退款"]
@@ -471,7 +472,7 @@ pnpm run dev
 1. 在 `/install` 完成数据库初始化和首个管理员创建。
 2. 在后台“模型渠道”按五步向导选择协议、配置连接、获取模型、同步逻辑模型并确认启用；无鉴权协议无需 API Key，未知上游可生成自定义协议草稿。
 3. 设置默认逻辑模型，并在 `/create` 统一 Agent 中分别发起文本、图片、视频和音频真实业务请求验证。
-4. 配置套餐、积分规则和可选支付渠道。
+4. 配置充值预设、客户汇率、逻辑售价、绑定成本和可选支付渠道。
 5. 配置 SMTP、注册策略、本地媒体或 S3 兼容对象存储。
 6. 在“初始化配置”检查上线项，再验证真实生成、退款和备份恢复。
 

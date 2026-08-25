@@ -6,6 +6,7 @@ import { UserRound } from "lucide-react";
 
 import type { PublicUser } from "@/lib/auth/store";
 import { formatAccountId, parseAccountId } from "@/lib/account-id";
+import { listAdminUsers } from "@/services/api/admin-users";
 
 function normalizedAccountId(value?: string) {
     return parseAccountId(value) ? formatAccountId(value) : undefined;
@@ -72,13 +73,8 @@ export function AdminUserSearchSelect({
             setLoading(true);
             setFailed(false);
             try {
-                const params = new URLSearchParams({ page: "1", pageSize: "20" });
-                if (keyword.trim()) params.set("keyword", keyword.trim());
-                if (activeOnly) params.set("status", "active");
-                const response = await fetch(`/api/admin/users?${params.toString()}`, { cache: "no-store" });
-                const payload = (await response.json().catch(() => null)) as { users?: PublicUser[] } | null;
-                if (!response.ok || !payload?.users) throw new Error("用户加载失败");
-                if (requestId === requestIdRef.current) setUsers(payload.users);
+                const result = await listAdminUsers({ page: 1, pageSize: 20, keyword: keyword.trim() || undefined, status: activeOnly ? "active" : undefined });
+                if (requestId === requestIdRef.current) setUsers(result.users);
             } catch {
                 if (requestId === requestIdRef.current) {
                     setUsers([]);

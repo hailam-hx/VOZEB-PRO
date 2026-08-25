@@ -1,6 +1,5 @@
 import { getAuthSettings, getPublicUserSummary, type AuthSettings, type PublicUserSummary } from "@/lib/auth/store";
-import { listBillingProducts } from "@/lib/server/billing-service";
-import { getDatabaseProvider, getPostgresConnectionString, type BillingProductRecord } from "@/lib/server/database";
+import { createPostgresRepositories, getDatabaseProvider, getPostgresConnectionString } from "@/lib/server/database";
 import { getPaymentConfigSummary, hasPaymentProductionSecret } from "@/lib/server/payment-config-status";
 import { channelConnectionReady } from "@/lib/channel-protocol-registry";
 
@@ -30,29 +29,27 @@ export type AdminSetupSummary = {
     totalChannels: number;
     enabledChannels: number;
     modelCount: number;
-    enabledProducts: number;
-    enabledPlanProducts: number;
+    enabledTopUpPresets: number;
     databaseProvider: "file" | "postgres";
     steps: AdminSetupStep[];
 };
 
 export async function getAdminSetupSummary(input?: { settings?: AuthSettings; userSummary?: PublicUserSummary }) {
-    const [settings, userSummary, products, paymentConfig] = await Promise.all([
+    const [settings, userSummary, presets, paymentConfig] = await Promise.all([
         input?.settings ? Promise.resolve(input.settings) : getAuthSettings(),
         input?.userSummary ? Promise.resolve(input.userSummary) : getPublicUserSummary(),
-        getBillingProductsSafe(),
+        getTopUpPresetsSafe(),
         getPaymentConfigSummary(),
     ]);
-    return buildAdminSetupSummary({ settings, userSummary, products, paymentConfig });
+    return buildAdminSetupSummary({ settings, userSummary, presets, paymentConfig });
 }
 
-function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: PublicUserSummary; products?: BillingProductRecord[]; paymentConfig: Awaited<ReturnType<typeof getPaymentConfigSummary>> }): AdminSetupSummary {
+function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: PublicUserSummary; presets?: Array<{ enabled: boolean }>; paymentConfig: Awaited<ReturnType<typeof getPaymentConfigSummary>> }): AdminSetupSummary {
     const { settings, userSummary } = input;
-    const products = input.products || [];
+    const presets = input.presets || [];
     const admins = userSummary.activeAdmins;
     const enabledChannels = settings.systemChannels.filter((channel) => channel.enabled && channelConnectionReady(channel)).length;
-    const enabledProducts = products.filter((product) => product.enabled).length;
-    const enabledPlanProducts = countEnabledPlanProducts(products);
+    const enabledPresets = presets.filter((preset) => preset.enabled).length;
     const paymentConfig = input.paymentConfig;
     const paymentProviders = paymentConfig.providers.filter((provider) => provider.ready && provider.id !== "manual").map((provider) => provider.name);
     const databaseProvider = getDatabaseProvider();
@@ -61,8 +58,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
     const channelModels = new Set(settings.systemChannels.flatMap((channel) => channel.models).filter(Boolean));
     const channelReady = enabledChannels > 0 && channelModels.size > 0;
     const defaultModelsReady = Boolean(settings.defaultModels.textModel || settings.defaultModels.imageModel || settings.defaultModels.videoModel);
-    const enabledPlans = settings.entitlements.plans.filter((plan) => plan.enabled);
-    const plansReady = settings.entitlements.enabled && enabledPlans.length >= 2 && enabledProducts > 0;
+    const topUpsReady = enabledPresets > 0;
     const mailReady = Boolean(settings.mail.host.trim() && settings.mail.username.trim() && settings.mail.password.trim());
     const encryptionReady = hasProductionSecret(process.env.VOZEB_PRO_ENCRYPTION_KEY);
 
@@ -92,16 +88,16 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
             facts: [`已启用 ${enabledChannels} 个渠道`, `模型 ${channelModels.size} 个`, defaultModelsReady ? "默认模型已选择" : "默认模型未选择"],
         },
         {
-            id: "plans",
-            title: "套餐与积分规则",
-            eyebrow: "商业权益",
-            status: plansReady ? "done" : enabledPlans.length >= 2 || enabledProducts > 0 ? "attention" : "pending",
-            statusLabel: plansReady ? "已启用" : "待启用",
-            description: plansReady ? "套餐权益、默认套餐和可售商品已经串起来。" : "启用套餐权益，并确认免费版、创作者版、专业版和可售商品配置。",
-            href: "/admin?section=products",
-            actionLabel: "配置套餐",
+            id: "top-ups",
+            title: "充值预设与定价",
+            eyebrow: "充值经营",
+            status: topUpsReady ? "done" : "pending",
+            statusLabel: topUpsReady ? "已启用" : "待配置",
+            description: topUpsReady ? "充值预设、VND 定价与积分兑换已经就绪。" : "配置至少一个启用的 VND 充值预设。",
+            href: "/admin?section=top-ups",
+            actionLabel: "配置充值",
             accent: "violet",
-            facts: [`权益开关${settings.entitlements.enabled ? "已开启" : "未开启"}`, `权益套餐 ${enabledPlans.length} 个`, `在售套餐 ${enabledPlanProducts} 个`],
+            facts: [`启用充值预设 ${enabledPresets} 个`],
         },
         {
             id: "payments",
@@ -155,20 +151,15 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
         totalChannels: settings.systemChannels.length,
         enabledChannels,
         modelCount: channelModels.size,
-        enabledProducts,
-        enabledPlanProducts,
+        enabledTopUpPresets: enabledPresets,
         databaseProvider,
         steps,
     };
 }
 
-export function countEnabledPlanProducts(products: BillingProductRecord[]) {
-    return products.filter((product) => product.enabled && product.productKind === "plan").length;
-}
-
-async function getBillingProductsSafe() {
+async function getTopUpPresetsSafe() {
     try {
-        return await listBillingProducts(true);
+        return await createPostgresRepositories().topUps.listPresets(true);
     } catch {
         return [];
     }

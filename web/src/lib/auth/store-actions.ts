@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 
+import { decimal } from "@/lib/billing/decimal";
 import { inferModelCapability } from "@/lib/model-capability";
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
-import { adjustPermanentPointsInPostgresTransaction, consumePoints, creditPermanentPointsInAuthDb, refundPoints, walletClock } from "@/lib/server/points-wallet-service";
+import { adjustWalletBalanceInPostgresTransaction, creditWalletBalance } from "@/lib/server/points-wallet-service";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import {
     type UserRole,
@@ -11,7 +12,6 @@ import {
     type ApiCallFormat,
     type SystemChannelProtocol,
     type SystemChannelAdvancedConfig,
-    type LegacyUserQuota,
     type ModelPointCosts,
     type PointUsageKind,
     type SystemModelChannel,
@@ -24,9 +24,6 @@ import {
     type GenerationConcurrencySettings,
     type GenerationDefaultSettings,
     type GenerationPointMultipliers,
-    type EntitlementPlanLimits,
-    type EntitlementPlan,
-    type EntitlementSettings,
     type CdkStatus,
     type PublicCdkRedemption,
     type PublicCdkCode,
@@ -63,8 +60,6 @@ import {
     DEFAULT_SITE_SETTINGS,
     DEFAULT_MAIL_SETTINGS,
     DEFAULT_GENERATION_POINT_MULTIPLIERS,
-    DEFAULT_ENTITLEMENT_LIMITS,
-    DEFAULT_ENTITLEMENT_PLAN_ID,
     DEFAULT_SETTINGS,
     AUTH_DATA_FILE,
     USERNAME_PATTERN,
@@ -77,25 +72,12 @@ import {
     encryptAuthDbSecretsForStorage,
     decryptAuthSettingsSecrets,
     encryptAuthSettingsSecrets,
-    resolveDefaultPlan,
-    resolveUserPlan,
-    assertEntitlementUsageAllowed,
-    recordQuotaUsage,
-    findQuotaUsage,
-    assertDailyLimit,
-    resolveDailyUsageLimit,
-    dailyUsageLimitLabel,
     normalizeLogicalModels,
     deriveLogicalModels,
     normalizeAgentSkill,
     normalizeAgentSkills,
     normalizeGenerationDefaults,
     allowedText,
-    normalizeEntitlementSettings,
-    normalizeEntitlementPlan,
-    normalizeEntitlementLimits,
-    normalizePlanId,
-    normalizeFeatureList,
     normalizeGenerationConcurrency,
     normalizeSiteSettings,
     normalizeSiteFriendLinks,
@@ -122,7 +104,6 @@ import {
     normalizeMultiplierMap,
     resolveModelPointCost,
     buildPointRecordDescription,
-    legacyQuotaToPoints,
     normalizeQuotaUsage,
     toPublicCdkCode,
     isCdkCodeExpired,
@@ -151,7 +132,7 @@ export function sessionMaxAgeSeconds() {
     return SESSION_MAX_AGE_SECONDS;
 }
 
-export { getAuthSettings, getFreshAuthSettings, setAuthSettings } from "./store-settings-actions";
+export { getAuthSettings, getFreshAuthSettings, mutateAuthLogicalModels, setAuthSettings } from "./store-settings-actions";
 
 export type PublicUserListResult = {
     users: PublicUser[];
@@ -168,13 +149,13 @@ export async function listPublicUsersPage(input?: { page?: number; pageSize?: nu
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         const repos = createPostgresRepositories();
-        const clock = walletClock();
+        const clock = authClock();
         const [result, summary] = await Promise.all([repos.users.list({ page, pageSize, keyword, role: input?.role, status: input?.status }), repos.users.summarize({ now: clock.now.toISOString(), date: clock.date })]);
         const details = await repos.users.getPublicDetails(
             result.items.map((user) => user.id),
             { now: clock.now.toISOString(), date: clock.date },
         );
-        const usersById = new Map(details.map((record) => [record.user.id, publicUserFromAuthenticatedRecord(record, clock.expiresAt)]));
+        const usersById = new Map(details.map((record) => [record.user.id, publicUserFromAuthenticatedRecord(record)]));
         return {
             users: result.items.map((user) => usersById.get(user.id)).filter((user): user is PublicUser => Boolean(user)),
             total: result.total,
@@ -193,21 +174,18 @@ export async function listPublicUsersPage(input?: { page?: number; pageSize?: nu
         total,
         page: safePage,
         pageSize,
-        summary: summarizePublicUsers(publicUsers, db.settings.entitlements.defaultPlanId),
+        summary: summarizePublicUsers(publicUsers),
     };
 }
 
 export async function getPublicUserSummary(): Promise<PublicUserSummary> {
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
-        const clock = walletClock();
+        const clock = authClock();
         return createPostgresRepositories().users.summarize({ now: clock.now.toISOString(), date: clock.date });
     }
     const db = await readAuthDb();
-    return summarizePublicUsers(
-        db.users.map((user) => toPublicUser(user, db)),
-        db.settings.entitlements.defaultPlanId,
-    );
+    return summarizePublicUsers(db.users.map((user) => toPublicUser(user, db)));
 }
 
 export async function getPublicUsersByIds(userIds: string[]): Promise<PublicUser[]> {
@@ -215,9 +193,9 @@ export async function getPublicUsersByIds(userIds: string[]): Promise<PublicUser
     if (!ids.length) return [];
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
-        const clock = walletClock();
+        const clock = authClock();
         const records = await createPostgresRepositories().users.getPublicDetails(ids, { now: clock.now.toISOString(), date: clock.date });
-        return records.map((record) => publicUserFromAuthenticatedRecord(record, clock.expiresAt));
+        return records.map((record) => publicUserFromAuthenticatedRecord(record));
     }
     const db = await readAuthDb();
     const idSet = new Set(ids);
@@ -265,7 +243,7 @@ export async function listPointRecordsPage(userId: string, input?: { page?: numb
     }
     const db = await readAuthDb();
     const records = (db.pointRecords || [])
-        .filter((record) => record.userId === userId && (!direction || (direction === "credit" ? record.amount > 0 : record.amount < 0)))
+        .filter((record) => record.userId === userId && (!direction || (direction === "credit" ? Number(record.amount) > 0 : Number(record.amount) < 0)))
         .map(toPublicPointRecord)
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     const total = records.length;
@@ -515,7 +493,7 @@ export async function redeemCdkCode(userId: string, rawCode: string) {
     if (!code) throw new AuthInputError("请输入 CDK 密钥");
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
-        const clock = walletClock();
+        const clock = authClock();
         return withPostgresTransaction(async (client) => {
             const repos = createPostgresRepositories(client);
             const item = await repos.cdk.getByCodeHash(hashToken(code), true);
@@ -529,20 +507,19 @@ export async function redeemCdkCode(userId: string, rawCode: string) {
             if (!redemption) throw new AuthInputError("该 CDK 已被当前账号兑换");
             const points = Math.max(0, normalizePoints(item.points, 0));
             if (!points) throw new AuthInputError("积分数量必须大于零");
-            const wallet = await adjustPermanentPointsInPostgresTransaction(client, {
+            await adjustWalletBalanceInPostgresTransaction(client, {
                 userId,
-                amount: points,
+                amount: String(points),
                 description: `CDK 兑换：${item.codePreview}`,
                 idempotencyKey: `cdk:${item.id}:user:${userId}`,
                 type: "credit",
                 now: clock.now,
             });
-            if (!wallet) throw new AuthInputError("CDK 兑换失败");
             await repos.cdk.incrementRedemptionCount(item.id, clock.now.toISOString());
             const [userRecord, cdkRecord] = await Promise.all([repos.users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }), repos.cdk.getDetailsById(item.id)]);
             if (!userRecord[0] || !cdkRecord) throw new AuthInputError("CDK 兑换结果读取失败");
             return {
-                user: { ...publicUserFromAuthenticatedRecord(userRecord[0], clock.expiresAt), pointsBalance: wallet.snapshot.totalPoints },
+                user: publicUserFromAuthenticatedRecord(userRecord[0]),
                 points,
                 cdk: publicPostgresCdkCode(cdkRecord),
             };
@@ -559,18 +536,13 @@ export async function redeemCdkCode(userId: string, rawCode: string) {
 
         const points = normalizePoints(item.points, 0);
         const now = new Date().toISOString();
-        const wallet = creditPermanentPointsInAuthDb(db, {
-            userId,
-            amount: points,
-            description: `CDK 兑换：${item.codePreview}`,
-            idempotencyKey: `cdk:${item.id}:user:${userId}`,
-            type: "credit",
-            now: new Date(now),
-        });
+        const nextBalance = decimal(user.settledBalance).plus(decimal(points)).toString();
+        user.settledBalance = nextBalance;
+        addPointRecord(db, { userId, amount: String(points), balanceAfter: nextBalance, description: `CDK 兑换：${item.codePreview}`, idempotencyKey: `cdk:${item.id}:user:${userId}`, type: "credit", createdAt: now });
         item.redemptions.push({ userId, redeemedAt: now });
         item.redeemedCount = item.redemptions.length;
         item.updatedAt = now;
-        return { user: { ...toPublicUser(user, db), pointsBalance: wallet.snapshot.totalPoints }, points, cdk: toPublicCdkCode(item, db) };
+        return { user: toPublicUser(user, db), points, cdk: toPublicCdkCode(item, db) };
     });
 }
 
@@ -673,7 +645,7 @@ export function displayPointRecordDescription(record: StoredPointRecord) {
     if (record.type === "consume") {
         return buildPointRecordDescription(model, legacyPointUsageKindFromModel(model), "consume");
     }
-    if (record.type === "admin-adjust" && record.amount > 0) {
+    if (record.type === "admin-adjust" && decimal(record.amount).greaterThan(decimal(0))) {
         return buildPointRecordDescription(model, legacyPointUsageKindFromModel(model), "refund");
     }
     return description;
@@ -685,84 +657,25 @@ export function legacyPointUsageKindFromModel(model: string): PointUsageKind {
     return "api";
 }
 
-export async function consumeUserPoints(userId: string, model: string, amount = 1, usageKind: PointUsageKind = "api", idempotencyKey?: string, requestFingerprint?: string) {
-    const normalizedModel = model.trim();
-    const db = isPostgresDatabaseEnabled() ? null : await readAuthDb();
-    const user = db?.users.find((item) => item.id === userId);
-    if (db && (!user || user.status !== "active")) throw new AuthInputError("用户不可用");
-    const settings = db ? db.settings : await getAuthSettings();
-    const multiplier = resolveModelPointCost(settings.modelPointCosts, normalizedModel, settings.logicalModels);
-    const units = Math.min(1000, normalizePointAmount(amount, 1));
-    const cost = normalizePointAmount(units * multiplier, 0);
-    const operationKey = idempotencyKey?.trim() || `points-consume:${randomUUID()}`;
-    const result = await consumePoints({
-        userId,
-        amount: cost,
-        units,
-        usageKind,
-        model: normalizedModel,
-        description: buildPointRecordDescription(normalizedModel, usageKind, "consume"),
-        idempotencyKey: operationKey,
-        requestFingerprint,
-    });
-    return {
-        model: normalizedModel,
-        units,
-        multiplier,
-        cost,
-        remaining: result.snapshot.totalPoints,
-        permanentRemaining: result.snapshot.permanentPoints,
-        dailyRemaining: result.snapshot.dailyPoints,
-        dailyExpiresAt: result.snapshot.dailyExpiresAt,
-        usageKind,
-        planId: result.snapshot.activePlanId || (db && user ? resolveUserPlan(db, user).id : DEFAULT_ENTITLEMENT_PLAN_ID),
-        recordId: result.record.id,
-        idempotencyKey: result.record.idempotencyKey,
-    };
-}
-
 export async function refundUserPoints(userId: string, model: string, amount: number, usageKind: PointUsageKind = "api", units = 0, idempotencyKey?: string, sourceRecordId?: string) {
-    const refund = normalizePointAmount(amount, 0);
+    const refund = decimal(amount);
     const sourceId = sourceRecordId?.trim();
-    if (isPostgresDatabaseEnabled()) {
-        const clock = walletClock();
-        if (!refund && !sourceId) {
-            const details = await createPostgresRepositories().users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date });
-            const user = details[0];
-            return user ? publicUserFromAuthenticatedRecord(user, clock.expiresAt) : null;
-        }
-        if (!sourceId) throw new AuthInputError("退款缺少原消费流水");
-        const result = await refundPoints({
-            userId,
-            sourceRecordId: sourceId,
-            idempotencyKey: idempotencyKey?.trim() || `points-refund:${sourceId}`,
-            usageKind,
-            units: normalizePointAmount(units, 0),
-            model: model.trim(),
-            description: buildPointRecordDescription(model, usageKind, "refund"),
-        });
-        const details = await createPostgresRepositories().users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date });
-        const user = details[0];
-        return user ? { ...publicUserFromAuthenticatedRecord(user, result.snapshot.dailyExpiresAt), pointsBalance: result.snapshot.totalPoints } : null;
-    }
-    const db = await readAuthDb();
-    const user = db.users.find((item) => item.id === userId);
-    if (!user) return null;
-    if (!refund && !sourceId) return toPublicUser(user, db);
-
+    if (refund.isZero() && !sourceId) return getPublicUsersByIds([userId]).then((users) => users[0] || null);
     if (!sourceId) throw new AuthInputError("退款缺少原消费流水");
-    const result = await refundPoints({
+    await creditWalletBalance({
         userId,
+        businessId: idempotencyKey?.trim() || `points-refund:${sourceId}`,
+        amount: (refund.isNegative() ? refund.times(decimal(-1)) : refund).toString(),
+        type: "refund",
         sourceRecordId: sourceId,
-        idempotencyKey: idempotencyKey?.trim() || `points-refund:${sourceId}`,
-        usageKind,
-        units: normalizePointAmount(units, 0),
-        model: model.trim(),
         description: buildPointRecordDescription(model, usageKind, "refund"),
     });
-    const nextDb = await readAuthDb();
-    const nextUser = nextDb.users.find((item) => item.id === userId);
-    return nextUser ? { ...toPublicUser(nextUser, nextDb), pointsBalance: result.snapshot.totalPoints } : null;
+    return getPublicUsersByIds([userId]).then((users) => users[0] || null);
+}
+
+function authClock() {
+    const now = new Date();
+    return { now, date: now.toISOString().slice(0, 10) };
 }
 
 export { createSession, deleteSession, deleteUserByAdmin, getUserBySession, resetPasswordByEmail, updateOwnPassword, updateOwnProfile, updateUserByAdmin, verifyUserPasswordForSensitiveAction } from "./store-account-actions";

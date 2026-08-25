@@ -22,6 +22,7 @@ export type ImageTaskConfig = {
     size?: string;
     systemPrompt?: string;
     advancedConfig?: SystemChannelAdvancedConfig;
+    usagePricing?: import("@/lib/server/generation-channel").SystemGenerationChannelConfig["usagePricing"];
 };
 
 export type ImageTaskReference = {

@@ -70,7 +70,7 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
             adminPermissions: user.adminPermissions,
             permissionPreset: ADMIN_PERMISSION_PRESETS.find((preset) => normalizeAdminPermissions(preset.permissions).join() === normalizeAdminPermissions(user.adminPermissions).join())?.key,
             status: user.status,
-            pointsBalance: user.permanentPointsBalance,
+            settledBalance: user.settledBalance,
         });
     };
 
@@ -88,7 +88,7 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
             adminPermissions,
             permissionPreset: ADMIN_PERMISSION_PRESETS.find((preset) => normalizeAdminPermissions(preset.permissions).join() === adminPermissions.join())?.key,
             status: "active",
-            pointsBalance: 0,
+            settledBalance: "0",
         });
     };
 
@@ -119,7 +119,7 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
                       status: value.status,
                   }
                 : {}),
-            ...(canManageBilling ? { pointsBalance: toNumberOrZero(value.pointsBalance) } : {}),
+            ...(canManageBilling ? { settledBalance: value.settledBalance } : {}),
         });
         if (user) closeUserEditor();
     };
@@ -143,8 +143,7 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
                     </div>
                     <div className="mt-2 space-y-1 text-xs text-stone-500 sm:hidden dark:text-stone-400">
                         <div>
-                            总计 <span className="font-semibold text-stone-950 dark:text-stone-100">{formatCreditAmount(record.pointsBalance)}</span> · 今日 {formatCreditAmount(record.dailyPointsBalance)} · 永久{" "}
-                            {formatCreditAmount(record.permanentPointsBalance)}
+                            可用 <span className="font-semibold text-stone-950 dark:text-stone-100">{formatCreditAmount(record.availableBalance)}</span> · 已结算 {formatCreditAmount(record.settledBalance)} · 预留 {formatCreditAmount(record.heldBalance)}
                         </div>
                         <div>注册 {formatAdminLogTime(record.createdAt)}</div>
                         <div>活跃 {record.lastLoginAt ? formatAdminLogTime(record.lastLoginAt) : "从未登录"}</div>
@@ -187,14 +186,14 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
         },
         {
             title: "积分",
-            dataIndex: "pointsBalance",
+            dataIndex: "settledBalance",
             width: 170,
             responsive: ["sm"],
-            render: (pointsBalance: number, record) => (
+            render: (settledBalance: string, record) => (
                 <div className="text-xs text-stone-500 dark:text-stone-400">
-                    <div className="font-semibold text-stone-950 dark:text-stone-100">总计 {formatCreditAmount(pointsBalance)}</div>
+                    <div className="font-semibold text-stone-950 dark:text-stone-100">可用 {formatCreditAmount(record.availableBalance)}</div>
                     <div className="mt-1">
-                        今日 {formatCreditAmount(record.dailyPointsBalance)} · 永久 {formatCreditAmount(record.permanentPointsBalance)}
+                        已结算 {formatCreditAmount(settledBalance)} · 预留 {formatCreditAmount(record.heldBalance)}
                     </div>
                 </div>
             ),

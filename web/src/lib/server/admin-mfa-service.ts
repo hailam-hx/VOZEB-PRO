@@ -7,7 +7,6 @@ import { getAuthSettings } from "@/lib/auth/store-settings-actions";
 import type { PublicUser, StoredUser } from "@/lib/auth/store-types";
 import { publicUserFromAuthenticatedRecord, toPublicUser } from "@/lib/auth/store-user-projection";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
-import { walletClock } from "@/lib/server/points-wallet-service";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 
 type AdminMfaUser = {
@@ -74,7 +73,7 @@ export async function enableAdminMfa(userId: string, token: unknown, currentSess
     if (!currentSessionId) throw new AuthInputError("登录会话无效，请重新登录", 401);
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
-        const clock = walletClock();
+        const clock = authClock();
         return withPostgresTransaction(async (client) => {
             const repos = createPostgresRepositories(client);
             const user = await repos.users.getById(userId, true);
@@ -86,7 +85,7 @@ export async function enableAdminMfa(userId: string, token: unknown, currentSess
             await repos.sessions.deleteByUserIdExcept(userId, currentSessionId);
             const record = (await repos.users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }))[0];
             if (!record) throw new AuthInputError("用户不可用");
-            return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
+            return publicUserFromAuthenticatedRecord(record);
         });
     }
     return mutateAuthDb((db) => {
@@ -107,7 +106,7 @@ export async function disableAdminMfa(userId: string, input: { currentPassword: 
     if (!input.currentSessionId) throw new AuthInputError("登录会话无效，请重新登录", 401);
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
-        const clock = walletClock();
+        const clock = authClock();
         return withPostgresTransaction(async (client) => {
             const repos = createPostgresRepositories(client);
             const user = await repos.users.getById(userId, true);
@@ -118,7 +117,7 @@ export async function disableAdminMfa(userId: string, input: { currentPassword: 
             await repos.sessions.deleteByUserIdExcept(userId, input.currentSessionId);
             const record = (await repos.users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }))[0];
             if (!record) throw new AuthInputError("用户不可用");
-            return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
+            return publicUserFromAuthenticatedRecord(record);
         });
     }
     return mutateAuthDb(async (db) => {
@@ -139,6 +138,11 @@ async function requireSetupAllowed(user: AdminMfaUser | undefined | null, curren
     await assertPassword(user, currentPassword);
     if (user.mfaEnabledAt) throw new AuthInputError("请先关闭当前 MFA，再重新设置");
     return user;
+}
+
+function authClock() {
+    const now = new Date();
+    return { now, date: now.toISOString().slice(0, 10) };
 }
 
 function assertActiveAdmin(user: AdminMfaUser | undefined | null): asserts user is AdminMfaUser {

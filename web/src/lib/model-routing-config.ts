@@ -2,6 +2,8 @@ import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, Logical
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { inferModelCapability, isCreativeGenerationModel, normalizeModelId } from "@/lib/model-capability";
 import { channelConnectionReady, protocolCatalogCapability, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
+import { validatePricingRateCard } from "@/lib/billing/pricing";
+import { validateProviderCostUnit } from "@/lib/billing/money";
 
 const CAPABILITY_DEFAULT_KEYS = {
     text: "textModel",
@@ -56,6 +58,9 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                 const stored = findStoredBinding(existingModels, channel.id, upstreamModel);
                 const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile);
                 const weight = clampWeight(stored?.weight);
+                const costRateCard = stored?.costRateCard === undefined ? undefined : validatePricingRateCard(stored.costRateCard);
+                const providerCostUnit = stored?.providerCostUnit === undefined ? undefined : validateProviderCostUnit(stored.providerCostUnit);
+                if (costRateCard && !providerCostUnit) throw new Error("供应商成本价格卡必须指定有效的供应商成本单位");
                 return {
                     id: text(stored?.id, 120) || `${channel.id}:${rawModelName(upstreamModel)}`,
                     channelId: channel.id,
@@ -64,14 +69,18 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                     priority: clampPriority(stored?.priority, channelIndex + 1),
                     ...(weight !== undefined ? { weight } : {}),
                     ...(capabilityProfile ? { capabilityProfile } : {}),
+                    ...(costRateCard ? { costRateCard } : {}),
+                    ...(providerCostUnit ? { providerCostUnit } : {}),
                 };
             })
             .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+        const saleRateCard = existing?.saleRateCard === undefined ? undefined : validatePricingRateCard(existing.saleRateCard);
         return {
             id,
             name: text(existing?.name, 120) || catalogModel.upstreamModel,
             capability: catalogModel.authoritative || !existing ? catalogModel.capability : normalizeCapability(existing.capability),
             enabled: existing?.enabled !== false,
+            ...(saleRateCard ? { saleRateCard } : {}),
             bindings,
         };
     });
@@ -178,6 +187,9 @@ export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelB
         supportsWebhook: booleanValue(stored.supportsWebhook),
         timeoutMs: timeoutMilliseconds(stored.timeoutMs),
         concurrencyLimit: positiveInteger(stored.concurrencyLimit),
+        maxInputTokens: positiveInteger(stored.maxInputTokens),
+        maxOutputTokens: positiveInteger(stored.maxOutputTokens),
+        supportsIdempotency: booleanValue(stored.supportsIdempotency),
         unitCost: positiveNumber(stored.unitCost),
         unitCostCurrency: text(stored.unitCostCurrency, 12) || undefined,
     };
@@ -222,6 +234,9 @@ function normalizeStoredCapabilityProfile(value: unknown): LogicalModelCapabilit
         supportsWebhook: optionalBoolean(input.supportsWebhook),
         timeoutMs: timeoutMilliseconds(input.timeoutMs),
         concurrencyLimit: positiveInteger(input.concurrencyLimit),
+        maxInputTokens: positiveInteger(input.maxInputTokens),
+        maxOutputTokens: positiveInteger(input.maxOutputTokens),
+        supportsIdempotency: optionalBoolean(input.supportsIdempotency),
         unitCost: positiveNumber(input.unitCost),
         unitCostCurrency: text(input.unitCostCurrency, 12) || undefined,
     };

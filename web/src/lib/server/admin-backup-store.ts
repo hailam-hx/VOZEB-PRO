@@ -93,8 +93,8 @@ async function rollbackFileBackup(data: AdminBackupData) {
 async function lockPostgresBackupTables(client: QueryExecutor) {
     await client.query(`
         LOCK TABLE
-            app_settings, entitlement_plans, system_model_channels, users, sessions, email_codes,
-            quota_usage, point_records, daily_plan_point_wallets, cdk_codes, cdk_redemptions,
+            app_settings, system_model_channels, users, sessions, email_codes,
+            quota_usage, point_records, wallet_holds, usage_charges, provider_usage_attempts, cdk_codes, cdk_redemptions,
             announcements, prompts, prompt_seed_sources, generation_logs, generation_log_assets,
             account_deletion_requests
         IN SHARE ROW EXCLUSIVE MODE

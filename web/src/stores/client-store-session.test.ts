@@ -486,10 +486,9 @@ function user(id: string) {
         role: "user" as const,
         adminPermissions: [],
         status: "active" as const,
-        planId: "free",
-        planName: "免费",
-        hasActivePlan: false,
-        pointsBalance: 0,
+        settledBalance: "0",
+        heldBalance: "0",
+        availableBalance: "0",
         mfaEnabled: false,
     };
 }

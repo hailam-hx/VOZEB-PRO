@@ -44,10 +44,9 @@ export default async function AdminSetupPage() {
                 role: currentUser.role,
                 adminPermissions: currentUser.adminPermissions,
                 status: currentUser.status,
-                planId: currentUser.planId,
-                planName: currentUser.planName,
-                hasActivePlan: currentUser.hasActivePlan,
-                pointsBalance: currentUser.pointsBalance,
+                settledBalance: currentUser.settledBalance,
+                heldBalance: currentUser.heldBalance,
+                availableBalance: currentUser.availableBalance,
                 mfaEnabled: currentUser.mfaEnabled,
             }}
         >
@@ -75,7 +74,7 @@ export default async function AdminSetupPage() {
                                 <span className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">安装后初始化中心</span>
                             </div>
                             <h1 className="mt-5 max-w-2xl text-2xl font-semibold tracking-normal text-zinc-950 sm:text-3xl dark:text-zinc-100">把站点配置到可以上线运营</h1>
-                            <p className="mt-3 max-w-3xl text-sm leading-7 text-zinc-500 dark:text-zinc-400">集中检查品牌、模型、套餐、支付、邮件安全和存储。每一项都连接到现有后台配置，适合开源用户在服务器安装完成后继续往商业版部署。</p>
+                            <p className="mt-3 max-w-3xl text-sm leading-7 text-zinc-500 dark:text-zinc-400">集中检查品牌、模型、充值定价、支付、邮件安全和存储。每一项都连接到现有后台配置，适合开源用户在服务器安装完成后继续往商业版部署。</p>
                             <div className="mt-6 max-w-xl">
                                 <div className="flex items-center justify-between text-sm">
                                     <span className="font-medium text-zinc-600 dark:text-zinc-400">完成度</span>
@@ -115,7 +114,7 @@ export default async function AdminSetupPage() {
                     <section className="mt-4 grid gap-3 md:grid-cols-3">
                         <SetupMetric icon={<Server className="size-4" />} label="数据库" value={setup.databaseProvider === "postgres" ? "PostgreSQL" : "文件模式"} />
                         <SetupMetric icon={<KeyRound className="size-4" />} label="模型渠道" value={`${setup.enabledChannels} 个可用`} />
-                        <SetupMetric icon={<ReceiptText className="size-4" />} label="上架商品" value={`${setup.enabledProducts} 个`} />
+                        <SetupMetric icon={<ReceiptText className="size-4" />} label="充值预设" value={`${setup.enabledTopUpPresets} 个启用`} />
                     </section>
 
                     <section className="mt-5 grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">

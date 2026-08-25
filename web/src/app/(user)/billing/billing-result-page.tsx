@@ -6,12 +6,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { cancelBillingOrder, getBillingOrder, subscribeBillingOrder, type BillingOrder } from "@/services/api/billing";
+import { cancelTopUpOrder, getTopUpOrder, subscribeTopUpOrder, type TopUpOrder } from "@/services/api/billing";
+import { listPointRecords } from "@/services/api/points";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
 export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel"; orderId: string }) {
     const t = useTranslations("billing.result");
-    const [order, setOrder] = useState<BillingOrder | null>(null);
+    const [order, setOrder] = useState<TopUpOrder | null>(null);
     const [loading, setLoading] = useState(true);
     const [checking, setChecking] = useState(false);
     const [error, setError] = useState("");
@@ -22,10 +23,11 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
         const response = await fetch("/api/auth/session", { cache: "no-store" });
         const payload = (await response.json().catch(() => ({}))) as { user?: LocalUser | null };
         if (payload.user) setUser(payload.user);
+        await listPointRecords({ page: 1, pageSize: 1 }).catch(() => undefined);
     }, [setUser]);
 
     const applyOrder = useCallback(
-        (nextOrder: BillingOrder) => {
+        (nextOrder: TopUpOrder) => {
             setOrder(nextOrder);
             setLoading(false);
             setError("");
@@ -45,7 +47,7 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
             return;
         }
         if (mode === "success") {
-            const unsubscribe = subscribeBillingOrder(
+            const unsubscribe = subscribeTopUpOrder(
                 orderId,
                 (nextOrder) => {
                     if (active) applyOrder(nextOrder);
@@ -63,7 +65,7 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
         }
         void (async () => {
             try {
-                const payload = await cancelBillingOrder(orderId);
+                const payload = await cancelTopUpOrder(orderId);
                 if (active) applyOrder(payload.order);
             } catch {
                 if (!active) return;
@@ -80,7 +82,7 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
         if (!orderId || checking) return;
         setChecking(true);
         try {
-            applyOrder((await getBillingOrder(orderId)).order);
+            applyOrder((await getTopUpOrder(orderId)).order);
         } catch {
             setError(t("loadFailed"));
         } finally {
@@ -89,23 +91,13 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
     };
 
     const paid = order?.status === "paid";
-    const canceled = mode === "cancel" || order?.status === "canceled" || order?.status === "closed";
+    const canceled = mode === "cancel" || order?.status === "canceled";
     const refunded = order?.status === "refunding" || order?.status === "refunded";
     const pending = !order || order.status === "pending";
     const Icon = paid ? CheckCircle2 : canceled ? XCircle : refunded ? RotateCcw : Clock3;
-    const title = t(`titles.${paid ? "paid" : order?.status === "closed" ? "closed" : canceled ? "canceled" : order?.status === "refunded" ? "refunded" : order?.status === "refunding" ? "refunding" : "pending"}`);
-    const description = paid
-        ? t("descriptions.paid")
-        : order?.status === "closed"
-          ? t("descriptions.closed")
-          : canceled
-            ? t("descriptions.canceled")
-            : order?.status === "refunded"
-              ? t("descriptions.refunded")
-              : order?.status === "refunding"
-                ? t("descriptions.refunding")
-                : t("descriptions.pending");
-    const statusLabel = t(`statuses.${paid ? "paid" : order?.status === "closed" ? "closed" : canceled ? "canceled" : order?.status === "refunded" ? "refunded" : order?.status === "refunding" ? "refunding" : "pending"}`);
+    const title = t(`titles.${paid ? "paid" : canceled ? "canceled" : order?.status === "refunded" ? "refunded" : order?.status === "refunding" ? "refunding" : "pending"}`);
+    const description = paid ? t("descriptions.paid") : canceled ? t("descriptions.canceled") : order?.status === "refunded" ? t("descriptions.refunded") : order?.status === "refunding" ? t("descriptions.refunding") : t("descriptions.pending");
+    const statusLabel = t(`statuses.${paid ? "paid" : canceled ? "canceled" : order?.status === "refunded" ? "refunded" : order?.status === "refunding" ? "refunding" : "pending"}`);
     const statusColor = paid ? "green" : refunded ? "blue" : canceled ? "default" : "gold";
 
     return (

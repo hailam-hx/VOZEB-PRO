@@ -2,17 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
-    refundUserPoints: vi.fn(),
     resolveLogicalModelCandidates: vi.fn(),
     requestStructuredText: vi.fn(),
+    finishSystemAiTextAttempt: vi.fn(),
+    resolveSystemAiTextFailure: vi.fn(),
 }));
 
-vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings, refundUserPoints: mocks.refundUserPoints }));
+vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/logical-model-router", () => ({ resolveLogicalModelCandidates: mocks.resolveLogicalModelCandidates }));
 vi.mock("@/lib/server/text-planning-runtime", () => ({
     rankTextPlanningCandidates: (items: unknown[]) => items,
     requestStructuredText: mocks.requestStructuredText,
+    TextPlanningRequestError: class TextPlanningRequestError extends Error {
+        requestAcceptance = "response" as const;
+    },
 }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({ finishSystemAiTextAttempt: mocks.finishSystemAiTextAttempt, resolveSystemAiTextFailure: mocks.resolveSystemAiTextFailure }));
 
 import { AgentSkillRefinementError, normalizeRefinedSkill, refineImportedAgentSkill } from "./agent-skill-import-refiner";
 
@@ -52,8 +57,9 @@ describe("agent skill import refiner", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getAuthSettings.mockResolvedValue({ defaultModels: { textModel: "planner" } });
-        mocks.resolveLogicalModelCandidates.mockReturnValue([{ channel: { id: "channel-a" }, upstreamModel: "text-model" }]);
+        mocks.resolveLogicalModelCandidates.mockReturnValue([{ channelId: "channel-a", channel: { id: "channel-a" }, upstreamModel: "text-model", binding: { id: "binding-a" }, capabilityProfile: { supportsIdempotency: true } }]);
         mocks.requestStructuredText.mockResolvedValue({ arguments: JSON.stringify(refined), headers: new Headers(), protocol: "chat", elapsedMs: 10 });
+        mocks.resolveSystemAiTextFailure.mockResolvedValue({ state: "safe_to_failover" });
     });
 
     it("uses the default text model and preserves pinned GitHub provenance", async () => {
@@ -62,6 +68,10 @@ describe("agent skill import refiner", () => {
         expect(result).toMatchObject({ ...refined, sourceCommit: skill.sourceCommit, sourceContentHash: skill.sourceContentHash, enabled: false });
         expect(mocks.requestStructuredText).toHaveBeenCalledOnce();
         expect(mocks.requestStructuredText.mock.calls[0][0].messages[1].content).toContain("<untrusted_skill_document>");
+        const headers = new Headers(mocks.requestStructuredText.mock.calls[0][0].headers);
+        expect(headers.get("x-vozeb-pro-billing-user-id")).toBe("admin");
+        expect(headers.get("x-vozeb-pro-billing-binding-id")).toBe("binding-a");
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "succeeded" });
     });
 
     it("sends enough source context for professional rules that appear after long introductions", async () => {
@@ -74,7 +84,7 @@ describe("agent skill import refiner", () => {
         expect(content.length).toBeLessThan(26_000);
     });
 
-    it("rejects model output that still contains provider setup instructions and refunds free usage", async () => {
+    it("rejects model output that still contains provider setup instructions and voids usage", async () => {
         mocks.requestStructuredText.mockResolvedValue({
             arguments: JSON.stringify({ ...refined, instructions: "运行 scripts/generate.py 并配置 API_KEY=https://provider.example，然后生成商品图。" }),
             headers: new Headers({ "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "record-1" }),
@@ -83,7 +93,8 @@ describe("agent skill import refiner", () => {
         });
 
         await expect(refineImportedAgentSkill({ skill, requestUrl: "http://localhost/api/admin/agent-skills/import", cookie: "session=1", userId: "admin" })).rejects.toBeInstanceOf(AgentSkillRefinementError);
-        expect(mocks.refundUserPoints).toHaveBeenCalledWith("admin", "planner", 0, "text", 1, undefined, "record-1");
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ userId: "admin", final: true }));
     });
 
     it("requires a configured default text model", async () => {

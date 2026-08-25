@@ -97,11 +97,11 @@ export function ProfileReferralCenter() {
 
                 <div className="mt-3 grid gap-2 text-xs sm:mt-5 sm:grid-cols-3">
                     <Rule icon={<UserPlus className="size-4" />} label={t("rules.inviter")} value={t("points", { count: format.number(data.program.inviterPoints) })} />
-                    <Rule icon={<Gift className="size-4" />} label={t("rules.invitee")} value={data.program.inviteeRewardType === "coupon" ? t("newUserCoupon") : t("points", { count: format.number(data.program.inviteePoints) })} />
+                    <Rule icon={<Gift className="size-4" />} label={t("rules.invitee")} value={t("points", { count: format.number(data.program.inviteePoints) })} />
                     <Rule
                         icon={<ShieldCheck className="size-4" />}
                         label={t("rules.settlement")}
-                        value={t("settlementCondition", { amount: format.number(data.program.minimumPaidCents / 100, { style: "currency", currency: "CNY" }), days: data.program.coolingOffDays })}
+                        value={t("settlementCondition", { amount: format.number(Number(data.program.minimumPaidUsd), { style: "currency", currency: "USD" }), days: data.program.coolingOffDays })}
                     />
                 </div>
             </AccountPanel>
@@ -157,7 +157,7 @@ export function ProfileReferralCenter() {
                                         <Tag className="m-0" color={rewardColor(reward.status)}>
                                             {t(`rewardStatuses.${reward.status}`)}
                                         </Tag>
-                                        <div className="mt-1 text-xs font-semibold text-foreground">{reward.rewardType === "coupon" ? t("coupon") : t("points", { count: format.number(reward.pointsAmount) })}</div>
+                                        <div className="mt-1 text-xs font-semibold text-foreground">{t("points", { count: format.number(reward.pointsAmount) })}</div>
                                     </div>
                                 </div>
                             ))}

@@ -1,74 +1,30 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "antd";
-import { Save } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
-
 import type { AdminDashboardController } from "./use-admin-dashboard-controller";
 
 export function AdminPointsSection({ controller }: { controller: AdminDashboardController }) {
-    const {
-        activeSection,
-        settings,
-        setSettings,
-        settingsLoading,
-        customPointModel,
-        setCustomPointModel,
-        saveSettings,
-        updateFreeDailyPoints,
-        updateModelPointCost,
-        updateGenerationPointMultiplier,
-        deleteGenerationPointMultiplier,
-        addCustomPointModel,
-        deleteModelPointCost,
-    } = controller;
+    const { activeSection } = controller;
     if (activeSection !== "points") return null;
 
     return (
         <Panel>
             <PanelHeader
-                title="积分规则"
-                description="统一配置免费用户每日额度、模型基础扣费与图片、视频参数倍率。"
+                title="积分账务"
+                description="套餐与参数倍率计费已移除。模型售价、供应商成本和汇率统一使用版本化价格卡。"
                 actions={
-                    <Button
-                        type="primary"
-                        loading={settingsLoading}
-                        icon={<Save className="size-4" />}
-                        aria-label="保存积分规则"
-                        title="保存积分规则"
-                        onClick={() =>
-                            saveSettings(
-                                {
-                                    freeDailyPointsEnabled: settings.freeDailyPointsEnabled,
-                                    freeDailyPoints: settings.freeDailyPoints,
-                                    modelPointCosts: settings.modelPointCosts,
-                                    generationPointMultipliers: settings.generationPointMultipliers,
-                                },
-                                "积分规则已保存",
-                            )
-                        }
-                    >
-                        <span className="sm:hidden">保存</span>
-                        <span className="hidden sm:inline">保存积分规则</span>
-                    </Button>
+                    <Link href="/admin/billing?tab=pricing">
+                        <Button type="primary" icon={<ArrowRight className="size-4" />}>
+                            前往定价与汇率
+                        </Button>
+                    </Link>
                 }
             />
-            <div className="min-w-0 p-3 sm:p-5">
-                <QuotaRuleTable
-                    settings={settings}
-                    customModel={customPointModel}
-                    onCustomModelChange={setCustomPointModel}
-                    onAddCustomModel={addCustomPointModel}
-                    onFreeDailyPointsEnabledChange={(freeDailyPointsEnabled) => setSettings((current) => ({ ...current, freeDailyPointsEnabled }))}
-                    onFreeDailyPointsChange={updateFreeDailyPoints}
-                    onModelPointCostChange={updateModelPointCost}
-                    onModelPointCostDelete={deleteModelPointCost}
-                    onGenerationPointMultiplierChange={updateGenerationPointMultiplier}
-                    onGenerationPointMultiplierDelete={deleteGenerationPointMultiplier}
-                />
-            </div>
+            <div className="min-w-0 p-3 text-sm text-stone-500 sm:p-5">用户预估与服务端结算共用逻辑模型销售价格卡；供应商成本仅用于管理员毛利审计。</div>
         </Panel>
     );
 }

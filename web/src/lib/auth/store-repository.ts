@@ -10,7 +10,6 @@ import {
     type ApiCallFormat,
     type SystemChannelProtocol,
     type SystemChannelAdvancedConfig,
-    type LegacyUserQuota,
     type ModelPointCosts,
     type PointUsageKind,
     type SystemModelChannel,
@@ -23,9 +22,6 @@ import {
     type GenerationConcurrencySettings,
     type GenerationDefaultSettings,
     type GenerationPointMultipliers,
-    type EntitlementPlanLimits,
-    type EntitlementPlan,
-    type EntitlementSettings,
     type CdkStatus,
     type PublicCdkRedemption,
     type PublicCdkCode,
@@ -46,7 +42,9 @@ import {
     type StoredSession,
     type PublicPointRecord,
     type StoredPointRecord,
-    type StoredDailyPlanPointWallet,
+    type WalletHold,
+    type UsageCharge,
+    type ProviderUsageAttempt,
     type StoredQuotaUsage,
     type EmailCodePurpose,
     type StoredEmailCode,
@@ -62,14 +60,10 @@ import {
     SESSION_MAX_AGE_SECONDS,
     EMAIL_CODE_MAX_AGE_MS,
     EMAIL_CODE_RESEND_COOLDOWN_MS,
-    DEFAULT_USER_POINTS,
     DEFAULT_MODEL_POINT_COST_KEY,
     DEFAULT_SITE_SETTINGS,
     DEFAULT_MAIL_SETTINGS,
     DEFAULT_GENERATION_POINT_MULTIPLIERS,
-    DEFAULT_ENTITLEMENT_LIMITS,
-    DEFAULT_ENTITLEMENT_PLAN_ID,
-    DEFAULT_ENTITLEMENT_SETTINGS,
     DEFAULT_SETTINGS,
     AUTH_DATA_FILE,
     USERNAME_PATTERN,
@@ -80,15 +74,6 @@ import {
     encryptAuthDbSecretsForStorage,
     decryptAuthSettingsSecrets,
     encryptAuthSettingsSecrets,
-    resolveDefaultPlan,
-    resolveUserPlan,
-    resolvePlanById,
-    assertEntitlementUsageAllowed,
-    recordQuotaUsage,
-    findQuotaUsage,
-    assertDailyLimit,
-    resolveDailyUsageLimit,
-    dailyUsageLimitLabel,
     countActiveAdmins,
     normalizeUsername,
     normalizeEmail,
@@ -100,11 +85,6 @@ import {
     normalizeAgentSkills,
     normalizeGenerationDefaults,
     allowedText,
-    normalizeEntitlementSettings,
-    normalizeEntitlementPlan,
-    normalizeEntitlementLimits,
-    normalizePlanId,
-    normalizeFeatureList,
     normalizeGenerationConcurrency,
     normalizeSiteSettings,
     normalizeSiteFriendLinks,
@@ -131,7 +111,6 @@ import {
     normalizeMultiplierMap,
     resolveModelPointCost,
     buildPointRecordDescription,
-    legacyQuotaToPoints,
     normalizeQuotaUsage,
     toPublicCdkCode,
     isCdkCodeExpired,
@@ -191,15 +170,16 @@ export async function writeAuthDb(db: AuthDatabase) {
 /** Full authentication snapshot for the explicit administrator backup transaction only. */
 export async function readPostgresAuthDb(executor: QueryExecutor): Promise<AuthDatabase> {
     const query: QueryExecutor["query"] = executor.query.bind(executor);
-    const [settingsResult, planResult, channelResult, userResult, sessionResult, quotaResult, pointRecordResult, dailyWalletResult, emailCodeResult, cdkResult, cdkRedemptionResult, announcementResult] = await Promise.all([
+    const [settingsResult, channelResult, userResult, sessionResult, quotaResult, pointRecordResult, holdResult, chargeResult, attemptResult, emailCodeResult, cdkResult, cdkRedemptionResult, announcementResult] = await Promise.all([
         query("SELECT * FROM app_settings WHERE id = 'default'"),
-        query("SELECT * FROM entitlement_plans ORDER BY sort_order ASC, created_at ASC"),
         query("SELECT * FROM system_model_channels ORDER BY sort_order ASC, created_at ASC"),
         query("SELECT * FROM users ORDER BY created_at ASC"),
         query("SELECT * FROM sessions ORDER BY created_at ASC"),
         query("SELECT * FROM quota_usage ORDER BY date ASC"),
         query("SELECT * FROM point_records ORDER BY created_at ASC"),
-        query("SELECT * FROM daily_plan_point_wallets ORDER BY date ASC"),
+        query("SELECT * FROM wallet_holds ORDER BY created_at ASC"),
+        query("SELECT * FROM usage_charges ORDER BY created_at ASC"),
+        query("SELECT * FROM provider_usage_attempts ORDER BY created_at ASC"),
         query("SELECT * FROM email_codes ORDER BY created_at ASC"),
         query("SELECT * FROM cdk_codes ORDER BY created_at ASC"),
         query("SELECT * FROM cdk_redemptions ORDER BY redeemed_at ASC"),
@@ -219,11 +199,13 @@ export async function readPostgresAuthDb(executor: QueryExecutor): Promise<AuthD
         sessions: sessionResult.rows.map(mapPostgresSession),
         quotaUsage: quotaResult.rows.map(mapPostgresQuotaUsage),
         pointRecords: pointRecordResult.rows.map(mapPostgresPointRecord),
-        dailyPlanPointWallets: dailyWalletResult.rows.map(mapPostgresDailyPlanPointWallet),
+        walletHolds: holdResult.rows.map(mapPostgresWalletHold),
+        usageCharges: chargeResult.rows.map(mapPostgresUsageCharge),
+        providerUsageAttempts: attemptResult.rows.map(mapPostgresProviderUsageAttempt),
         emailCodes: emailCodeResult.rows.map(mapPostgresEmailCode),
         cdkCodes: cdkResult.rows.map((row) => mapPostgresCdkCode(row, redemptionsByCodeId.get(dbText(row.id)) || [])),
         announcements: announcementResult.rows.map(mapPostgresAnnouncement),
-        settings: mapPostgresSettings(settingsResult.rows[0], planResult.rows, channelResult.rows),
+        settings: mapPostgresSettings(settingsResult.rows[0], channelResult.rows),
     });
 }
 
@@ -298,42 +280,22 @@ export async function readPostgresAnnouncements(executor?: QueryExecutor) {
 export async function readPostgresAuthSettings(executor?: QueryExecutor): Promise<AuthSettings> {
     if (!executor) await ensurePostgresSchema();
     const query: QueryExecutor["query"] = executor ? executor.query.bind(executor) : postgresQuery;
-    const [settingsResult, planResult, channelResult] = await Promise.all([
-        query("SELECT * FROM app_settings WHERE id = 'default'"),
-        query("SELECT * FROM entitlement_plans ORDER BY sort_order ASC, created_at ASC"),
-        query("SELECT * FROM system_model_channels ORDER BY sort_order ASC, created_at ASC"),
-    ]);
-    return decryptAuthSettingsSecrets(mapPostgresSettings(settingsResult.rows[0], planResult.rows, channelResult.rows));
+    const [settingsResult, channelResult] = await Promise.all([query("SELECT * FROM app_settings WHERE id = 'default'"), query("SELECT * FROM system_model_channels ORDER BY sort_order ASC, created_at ASC")]);
+    return decryptAuthSettingsSecrets(mapPostgresSettings(settingsResult.rows[0], channelResult.rows));
 }
 
-export function mapPostgresSettings(settingsRow: Record<string, unknown> | undefined, planRows: Record<string, unknown>[], channelRows: Record<string, unknown>[]): AuthSettings {
+export function mapPostgresSettings(settingsRow: Record<string, unknown> | undefined, channelRows: Record<string, unknown>[]): AuthSettings {
     const fallback = DEFAULT_SETTINGS;
     return normalizeSettings({
         site: normalizeSiteSettings(dbJson(settingsRow?.site, fallback.site)),
         registrationEnabled: dbBool(settingsRow?.registration_enabled, fallback.registrationEnabled),
         emailRegistrationEnabled: dbBool(settingsRow?.email_registration_enabled, fallback.emailRegistrationEnabled),
-        freeDailyPointsEnabled: dbBool(settingsRow?.free_daily_points_enabled, fallback.freeDailyPointsEnabled),
-        freeDailyPoints: dbNumber(settingsRow?.free_daily_points, fallback.freeDailyPoints),
         mail: dbJson(settingsRow?.mail, fallback.mail),
         allowUserApiConfig: dbBool(settingsRow?.allow_user_api_config, fallback.allowUserApiConfig),
         modelPointCosts: dbJson(settingsRow?.model_point_costs, fallback.modelPointCosts),
         generationPointMultipliers: dbJson(settingsRow?.generation_point_multipliers, fallback.generationPointMultipliers),
         generationCostControl: dbJson(settingsRow?.generation_cost_control, fallback.generationCostControl),
         dataLifecycle: dbJson(settingsRow?.data_lifecycle, fallback.dataLifecycle),
-        entitlements: {
-            enabled: dbBool(settingsRow?.entitlements_enabled, fallback.entitlements.enabled),
-            defaultPlanId: dbText(settingsRow?.default_plan_id) || fallback.entitlements.defaultPlanId,
-            plans: planRows.length
-                ? planRows.map((row) => ({
-                      id: dbText(row.id),
-                      name: dbText(row.name),
-                      enabled: dbBool(row.enabled, true),
-                      dailyPoints: dbNumber(row.daily_points, 0),
-                      limits: dbJson(row.limits, DEFAULT_ENTITLEMENT_LIMITS),
-                      features: dbJson(row.features, []),
-                  }))
-                : fallback.entitlements.plans,
-        },
         generationConcurrency: dbJson(settingsRow?.generation_concurrency, fallback.generationConcurrency),
         generationDefaults: normalizeGenerationDefaults(dbJson(settingsRow?.generation_defaults, fallback.generationDefaults)),
         systemChannels: channelRows.map((row) => ({
@@ -365,8 +327,7 @@ export function mapPostgresUser(row: Record<string, unknown>): StoredUser {
         role: row.role === "admin" ? "admin" : "user",
         adminPermissions: row.role === "admin" ? normalizeAdminPermissions(dbJson(row.admin_permissions, [])) : [],
         status: row.status === "disabled" ? "disabled" : "active",
-        planId: dbText(row.plan_id),
-        pointsBalance: dbNumber(row.points_balance, DEFAULT_USER_POINTS),
+        settledBalance: dbText(row.settled_balance || "0"),
         passwordHash: dbText(row.password_hash),
         mfaSecretCiphertext: dbOptionalText(row.mfa_secret_ciphertext),
         mfaEnabledAt: dbOptionalIso(row.mfa_enabled_at),
@@ -405,38 +366,87 @@ export function mapPostgresQuotaUsage(row: Record<string, unknown>): StoredQuota
 }
 
 export function mapPostgresPointRecord(row: Record<string, unknown>): StoredPointRecord {
-    const amount = dbNumber(row.amount, 0);
-    const balanceAfter = dbNumber(row.balance_after, 0);
     return {
         id: dbText(row.id),
         userId: dbText(row.user_id),
         type: row.type === "consume" || row.type === "refund" || row.type === "credit" ? row.type : "admin-adjust",
-        amount,
-        balanceAfter,
-        permanentAmount: row.permanent_amount === undefined ? amount : dbNumber(row.permanent_amount, 0),
-        dailyAmount: dbNumber(row.daily_amount, 0),
-        permanentBalanceAfter: row.permanent_balance_after === undefined ? balanceAfter : dbNumber(row.permanent_balance_after, 0),
-        dailyBalanceAfter: dbNumber(row.daily_balance_after, 0),
+        amount: dbText(row.amount),
+        balanceAfter: dbText(row.balance_after),
         description: dbText(row.description),
         model: dbOptionalText(row.model),
         idempotencyKey: dbOptionalText(row.idempotency_key),
         requestFingerprint: dbOptionalText(row.request_fingerprint),
         sourceRecordId: dbOptionalText(row.source_record_id),
-        sourceDate: row.source_date ? dbDate(row.source_date) : undefined,
         createdAt: dbIso(row.created_at),
     };
 }
 
-export function mapPostgresDailyPlanPointWallet(row: Record<string, unknown>): StoredDailyPlanPointWallet {
+export function mapPostgresWalletHold(row: Record<string, unknown>): WalletHold {
     return {
+        id: dbText(row.id),
         userId: dbText(row.user_id),
-        date: dbDate(row.date),
-        planId: dbText(row.plan_id),
-        assignmentId: dbOptionalText(row.assignment_id),
-        grantedPoints: dbNumber(row.granted_points, 0),
-        remainingPoints: dbNumber(row.remaining_points, 0),
+        businessId: dbText(row.business_id),
+        requestFingerprint: dbText(row.request_fingerprint),
+        amount: dbText(row.amount),
+        status: row.status === "settled" || row.status === "released" ? row.status : "active",
+        description: dbText(row.description),
+        runtimeSnapshot: dbJson(row.runtime_snapshot, undefined) as WalletHold["runtimeSnapshot"],
+        reviewReason: dbOptionalText(row.review_reason),
+        recoveryCheckedAt: dbOptionalIso(row.recovery_checked_at),
+        usageChargeId: dbOptionalText(row.usage_charge_id),
+        releaseBusinessId: dbOptionalText(row.release_business_id),
+        releaseRequestFingerprint: dbOptionalText(row.release_request_fingerprint),
+        releaseReason: dbOptionalText(row.release_reason),
+        expiresAt: dbOptionalIso(row.expires_at),
+        closedAt: dbOptionalIso(row.closed_at),
         createdAt: dbIso(row.created_at),
         updatedAt: dbIso(row.updated_at),
+    };
+}
+
+export function mapPostgresUsageCharge(row: Record<string, unknown>): UsageCharge {
+    return {
+        id: dbText(row.id),
+        userId: dbText(row.user_id),
+        holdId: dbText(row.hold_id),
+        requestFingerprint: dbText(row.request_fingerprint),
+        reservedCredits: dbText(row.reserved_credits),
+        settledCredits: dbText(row.settled_credits),
+        normalizedUsage: dbJson(row.normalized_usage, {}) as UsageCharge["normalizedUsage"],
+        saleRateSnapshot: dbJson(row.sale_rate_snapshot, {}) as UsageCharge["saleRateSnapshot"],
+        runtimeSnapshot: dbJson(row.runtime_snapshot, undefined) as UsageCharge["runtimeSnapshot"],
+        finalSaleCharge: dbJson(row.final_sale_charge, {}) as UsageCharge["finalSaleCharge"],
+        estimated: row.estimated === true,
+        totalProviderCostUsd: dbText(row.total_provider_cost_usd),
+        description: dbText(row.description),
+        pointRecordId: dbOptionalText(row.point_record_id),
+        createdAt: dbIso(row.created_at),
+        settledAt: dbIso(row.settled_at),
+    };
+}
+
+export function mapPostgresProviderUsageAttempt(row: Record<string, unknown>): ProviderUsageAttempt {
+    return {
+        id: dbText(row.id),
+        holdId: dbText(row.hold_id),
+        userId: dbText(row.user_id),
+        attemptNumber: dbNumber(row.attempt_number, 0),
+        status: row.status === "succeeded" || row.status === "failed" || row.status === "canceled" ? row.status : "pending",
+        provider: dbText(row.provider),
+        bindingId: dbText(row.binding_id),
+        requestFingerprint: dbText(row.request_fingerprint),
+        providerIdempotencySupported: row.provider_idempotency_supported === true,
+        providerIdempotencyKey: dbOptionalText(row.provider_idempotency_key),
+        upstreamTaskId: dbOptionalText(row.upstream_task_id),
+        nativeCostAmount: dbText(row.native_cost_amount),
+        nativeCostUnit: dbJson(row.native_cost_unit, {}) as ProviderUsageAttempt["nativeCostUnit"],
+        usdConversionRate: dbText(row.usd_conversion_rate),
+        costUsd: dbText(row.cost_usd),
+        costRateSnapshot: dbJson(row.cost_rate_snapshot, undefined) as ProviderUsageAttempt["costRateSnapshot"],
+        normalizedUsage: dbJson(row.normalized_usage, undefined) as ProviderUsageAttempt["normalizedUsage"],
+        createdAt: dbIso(row.created_at),
+        updatedAt: dbIso(row.updated_at),
+        completedAt: dbOptionalIso(row.completed_at),
     };
 }
 
@@ -487,73 +497,46 @@ export function mapPostgresAnnouncement(row: Record<string, unknown>): PublicAnn
     };
 }
 
-export async function upsertPostgresEntitlementPlans(db: QueryExecutor, plans: EntitlementPlan[]) {
-    for (const [index, plan] of plans.entries()) {
-        await db.query(
-            `
-            INSERT INTO entitlement_plans (id, name, enabled, daily_points, limits, features, sort_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                enabled = EXCLUDED.enabled,
-                daily_points = EXCLUDED.daily_points,
-                limits = EXCLUDED.limits,
-                features = EXCLUDED.features,
-                sort_order = EXCLUDED.sort_order
-            `,
-            [plan.id, plan.name, plan.enabled, plan.dailyPoints, dbJsonParam(plan.limits), dbJsonParam(plan.features), index],
-        );
-    }
-}
-
 export async function upsertPostgresSettings(db: QueryExecutor, settings: AuthSettings) {
     await db.query(
         `
         INSERT INTO app_settings (
-            id, site, registration_enabled, email_registration_enabled, free_daily_points_enabled, mail, allow_user_api_config,
-            model_point_costs, generation_point_multipliers, generation_cost_control, data_lifecycle, entitlements_enabled, default_plan_id, generation_concurrency, generation_defaults,
-            logical_models, default_models, agent_skills, free_daily_points
+            id, site, registration_enabled, email_registration_enabled, mail, allow_user_api_config,
+            model_point_costs, generation_point_multipliers, generation_cost_control, data_lifecycle, generation_concurrency, generation_defaults,
+            logical_models, default_models, agent_skills
         )
-        VALUES ('default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        VALUES ('default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (id) DO UPDATE SET
             site = EXCLUDED.site,
             registration_enabled = EXCLUDED.registration_enabled,
             email_registration_enabled = EXCLUDED.email_registration_enabled,
-            free_daily_points_enabled = EXCLUDED.free_daily_points_enabled,
             mail = EXCLUDED.mail,
             allow_user_api_config = EXCLUDED.allow_user_api_config,
             model_point_costs = EXCLUDED.model_point_costs,
             generation_point_multipliers = EXCLUDED.generation_point_multipliers,
             generation_cost_control = EXCLUDED.generation_cost_control,
             data_lifecycle = EXCLUDED.data_lifecycle,
-            entitlements_enabled = EXCLUDED.entitlements_enabled,
-            default_plan_id = EXCLUDED.default_plan_id,
             generation_concurrency = EXCLUDED.generation_concurrency,
             generation_defaults = EXCLUDED.generation_defaults,
             logical_models = EXCLUDED.logical_models,
             default_models = EXCLUDED.default_models,
-            agent_skills = EXCLUDED.agent_skills,
-            free_daily_points = EXCLUDED.free_daily_points
+            agent_skills = EXCLUDED.agent_skills
         `,
         [
             dbJsonParam(settings.site),
             settings.registrationEnabled,
             settings.emailRegistrationEnabled,
-            settings.freeDailyPointsEnabled,
             dbJsonParam(settings.mail),
             settings.allowUserApiConfig,
             dbJsonParam(settings.modelPointCosts),
             dbJsonParam(settings.generationPointMultipliers),
             dbJsonParam(settings.generationCostControl),
             dbJsonParam(settings.dataLifecycle),
-            settings.entitlements.enabled,
-            settings.entitlements.defaultPlanId,
             dbJsonParam(settings.generationConcurrency),
             dbJsonParam(settings.generationDefaults),
             dbJsonParam(settings.logicalModels),
             dbJsonParam(settings.defaultModels),
             dbJsonParam(settings.agentSkills),
-            settings.freeDailyPoints,
         ],
     );
 }
@@ -585,8 +568,8 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
     for (const user of users) {
         await db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, plan_id, points_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12::numeric, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, settled_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::numeric, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             ON CONFLICT (id) DO UPDATE SET
                 account_id = EXCLUDED.account_id,
                 username = EXCLUDED.username,
@@ -597,8 +580,7 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
                 role = EXCLUDED.role,
                 admin_permissions = EXCLUDED.admin_permissions,
                 status = EXCLUDED.status,
-                plan_id = EXCLUDED.plan_id,
-                points_balance = EXCLUDED.points_balance,
+                settled_balance = EXCLUDED.settled_balance,
                 password_hash = EXCLUDED.password_hash,
                 mfa_secret_ciphertext = EXCLUDED.mfa_secret_ciphertext,
                 mfa_enabled_at = EXCLUDED.mfa_enabled_at,
@@ -622,8 +604,7 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
                 user.role,
                 JSON.stringify(user.adminPermissions),
                 user.status,
-                user.planId,
-                user.pointsBalance,
+                user.settledBalance,
                 user.passwordHash,
                 user.mfaSecretCiphertext || null,
                 user.mfaEnabledAt || null,
@@ -691,61 +672,37 @@ export async function insertPostgresQuotaUsage(db: QueryExecutor, quotaUsage: St
 export async function insertPostgresPointRecords(db: QueryExecutor, records: StoredPointRecord[]) {
     for (const record of records) {
         await db.query(
-            `INSERT INTO point_records (id, user_id, type, amount, balance_after, permanent_amount, daily_amount, permanent_balance_after, daily_balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, source_date, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            `INSERT INTO point_records (id, user_id, type, amount, balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, created_at)
+             VALUES ($1, $2, $3, $4::numeric, $5::numeric, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (id) DO UPDATE SET
                 user_id = EXCLUDED.user_id,
                 type = EXCLUDED.type,
                 amount = EXCLUDED.amount,
                 balance_after = EXCLUDED.balance_after,
-                permanent_amount = EXCLUDED.permanent_amount,
-                daily_amount = EXCLUDED.daily_amount,
-                permanent_balance_after = EXCLUDED.permanent_balance_after,
-                daily_balance_after = EXCLUDED.daily_balance_after,
                 description = EXCLUDED.description,
                 model = EXCLUDED.model,
                 idempotency_key = EXCLUDED.idempotency_key,
                 request_fingerprint = EXCLUDED.request_fingerprint,
                 source_record_id = EXCLUDED.source_record_id,
-                source_date = EXCLUDED.source_date,
                 created_at = EXCLUDED.created_at`,
-            [
-                record.id,
-                record.userId,
-                record.type,
-                record.amount,
-                record.balanceAfter,
-                record.permanentAmount,
-                record.dailyAmount,
-                record.permanentBalanceAfter,
-                record.dailyBalanceAfter,
-                record.description,
-                record.model || null,
-                record.idempotencyKey || null,
-                record.requestFingerprint || null,
-                record.sourceRecordId || null,
-                record.sourceDate || null,
-                record.createdAt,
-            ],
+            [record.id, record.userId, record.type, record.amount, record.balanceAfter, record.description, record.model || null, record.idempotencyKey || null, record.requestFingerprint || null, record.sourceRecordId || null, record.createdAt],
         );
     }
 }
 
-export async function insertPostgresDailyPlanPointWallets(db: QueryExecutor, wallets: StoredDailyPlanPointWallet[]) {
-    for (const wallet of wallets) {
-        await db.query(
-            `INSERT INTO daily_plan_point_wallets (user_id, date, plan_id, assignment_id, granted_points, remaining_points, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (user_id, date) DO UPDATE SET
-                plan_id = EXCLUDED.plan_id,
-                assignment_id = EXCLUDED.assignment_id,
-                granted_points = EXCLUDED.granted_points,
-                remaining_points = EXCLUDED.remaining_points,
-                created_at = EXCLUDED.created_at,
-                updated_at = EXCLUDED.updated_at`,
-            [wallet.userId, wallet.date, wallet.planId, wallet.assignmentId || null, wallet.grantedPoints, wallet.remainingPoints, wallet.createdAt, wallet.updatedAt],
-        );
-    }
+export async function insertPostgresWalletHolds(db: QueryExecutor, holds: WalletHold[]) {
+    const repository = createPostgresRepositories(db).pointsWallet;
+    for (const hold of holds) await repository.upsertHoldForRestore(hold);
+}
+
+export async function insertPostgresUsageCharges(db: QueryExecutor, charges: UsageCharge[]) {
+    const repository = createPostgresRepositories(db).pointsWallet;
+    for (const charge of charges) await repository.upsertUsageChargeForRestore(charge);
+}
+
+export async function insertPostgresProviderUsageAttempts(db: QueryExecutor, attempts: ProviderUsageAttempt[]) {
+    const repository = createPostgresRepositories(db).pointsWallet;
+    for (const attempt of attempts) await repository.upsertProviderAttemptForRestore(attempt);
 }
 
 export async function insertPostgresCdkCodes(db: QueryExecutor, codes: StoredCdkCode[]) {

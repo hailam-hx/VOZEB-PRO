@@ -54,7 +54,7 @@ export function AdminCdkSection({ controller }: { controller: AdminDashboardCont
         <Panel>
             <PanelHeader
                 title="CDK 兑换"
-                description="生成积分或套餐兑换码，用于活动发放、客服补偿和私域转化；后台可复制、导出、查看兑换明细并删除密钥。"
+                description="生成积分兑换码，用于活动发放、客服补偿和私域转化；后台可复制、导出、查看兑换明细并删除密钥。"
                 actions={
                     <Button icon={<RefreshCw className="size-4" />} loading={cdkLoading} onClick={() => void loadCdkCodes()}>
                         刷新

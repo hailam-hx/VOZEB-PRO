@@ -5,8 +5,6 @@ import { DEFAULT_SETTINGS } from "./store-foundation";
 const mocks = vi.hoisted(() => ({
     lock: vi.fn(),
     updateSettings: vi.fn(),
-    upsertEntitlementPlan: vi.fn(),
-    removeEntitlementPlansNotIn: vi.fn(),
     upsertSystemModelChannel: vi.fn(),
     deleteSystemModelChannelsNotIn: vi.fn(),
     readSettings: vi.fn(),
@@ -26,7 +24,6 @@ describe("updatePostgresAuthSettings", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.readSettings.mockResolvedValue(structuredClone(DEFAULT_SETTINGS));
-        mocks.removeEntitlementPlansNotIn.mockResolvedValue([]);
     });
 
     it("updates site settings without rewriting plans or channels", async () => {
@@ -45,20 +42,6 @@ describe("updatePostgresAuthSettings", () => {
 
         expect(mocks.updateSettings).toHaveBeenCalledWith({ site: expect.objectContaining({ title: "新站点", socials: site.socials }) });
         expect(settings.site.socials).toEqual(site.socials);
-        expect(mocks.upsertEntitlementPlan).not.toHaveBeenCalled();
-        expect(mocks.removeEntitlementPlansNotIn).not.toHaveBeenCalled();
-        expect(mocks.upsertSystemModelChannel).not.toHaveBeenCalled();
-        expect(mocks.deleteSystemModelChannelsNotIn).not.toHaveBeenCalled();
-    });
-
-    it("rewrites only entitlement rows when entitlements change", async () => {
-        const entitlements = structuredClone(DEFAULT_SETTINGS.entitlements);
-
-        await updatePostgresAuthSettings({ entitlements });
-
-        expect(mocks.updateSettings).toHaveBeenCalledWith({ entitlementsEnabled: entitlements.enabled, defaultPlanId: entitlements.defaultPlanId });
-        expect(mocks.upsertEntitlementPlan).toHaveBeenCalledTimes(entitlements.plans.length);
-        expect(mocks.removeEntitlementPlansNotIn).toHaveBeenCalledWith(entitlements.plans.map((plan) => plan.id));
         expect(mocks.upsertSystemModelChannel).not.toHaveBeenCalled();
         expect(mocks.deleteSystemModelChannelsNotIn).not.toHaveBeenCalled();
     });
@@ -81,7 +64,5 @@ describe("updatePostgresAuthSettings", () => {
         expect(mocks.updateSettings).not.toHaveBeenCalled();
         expect(mocks.upsertSystemModelChannel).toHaveBeenCalledTimes(1);
         expect(mocks.deleteSystemModelChannelsNotIn).toHaveBeenCalledWith(["channel-one"]);
-        expect(mocks.upsertEntitlementPlan).not.toHaveBeenCalled();
-        expect(mocks.removeEntitlementPlansNotIn).not.toHaveBeenCalled();
     });
 });

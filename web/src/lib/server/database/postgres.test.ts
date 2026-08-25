@@ -119,7 +119,9 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("conname = 'vozeb_pro_local_media_assets_storage_provider_check'");
         expect(ddl).toContain("ADD CONSTRAINT vozeb_pro_local_media_assets_storage_provider_check CHECK");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_users_account_id_idx ON vozeb_pro_users (account_id)");
-        expect(ddl).toContain("CREATE INDEX IF NOT EXISTS vozeb_pro_billing_orders_provider_payment_idx ON vozeb_pro_billing_orders (provider, provider_payment_id)");
+        expect(ddl).toContain("CREATE INDEX IF NOT EXISTS vozeb_pro_top_up_orders_provider_payment_idx ON vozeb_pro_top_up_orders (provider, provider_payment_id)");
+        expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_top_up_payments_provider_event_idx ON vozeb_pro_top_up_payments (provider, provider_event_id)");
+        expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_top_up_payments_crypto_transaction_idx");
         expect(ddl).toContain("webhook_secret_ciphertext text NOT NULL DEFAULT ''");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_generation_tasks_channel_upstream_idx ON vozeb_pro_generation_tasks (channel_id, upstream_task_id)");
         expect(ddl).toContain("signature_timestamp timestamptz NOT NULL");
@@ -130,10 +132,9 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')");
 
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();
-        expect(tableNames).toHaveLength(59);
+        expect(tableNames).toHaveLength(56);
         expect(tableNames.every((name) => name.startsWith("vozeb_pro_"))).toBe(true);
-        expect(tableNames).not.toContain("vozeb_pro_check_ins");
-        expect(ddl).toContain("DROP TABLE IF EXISTS vozeb_pro_check_ins");
+        expect(tableNames).toEqual(expect.arrayContaining(["vozeb_pro_top_up_orders", "vozeb_pro_top_up_reconciliation_runs", "vozeb_pro_top_up_reconciliation_rows"]));
         expect(ddl).not.toContain("20260731_generation_task_recovery");
 
         const indexNames = [...ddl.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]);

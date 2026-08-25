@@ -4,43 +4,42 @@ import { NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
-import { isBillingInputError } from "@/lib/server/billing-errors";
 import { getBillingReconciliationRun, importBillingStatement, listBillingReconciliationRuns } from "@/lib/server/payment-reconciliation-service";
 import { hasAdminPermission } from "@/lib/admin-permissions";
+import { commerceError, commerceOk } from "@/app/api/billing/commerce-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (!hasAdminPermission(currentUser, "billing.read")) return NextResponse.json({ error: "当前管理员没有查看对账数据的职责权限" }, { status: 403 });
+    if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
+    if (!hasAdminPermission(currentUser, "billing.read")) return NextResponse.json({ code: 403, data: null, msg: "当前管理员没有查看对账数据的职责权限" }, { status: 403 });
 
     try {
         const params = request.nextUrl.searchParams;
         const runId = params.get("runId");
         if (runId) {
             const reconciliation = await getBillingReconciliationRun(runId);
-            if (!reconciliation) return NextResponse.json({ error: "对账批次不存在" }, { status: 404 });
-            return NextResponse.json({ reconciliation });
+            if (!reconciliation) return NextResponse.json({ code: 404, data: null, msg: "对账批次不存在" }, { status: 404 });
+            return commerceOk({ reconciliation });
         }
         const result = await listBillingReconciliationRuns({
             page: params.get("page") || undefined,
             pageSize: params.get("pageSize") || undefined,
             provider: params.get("provider") || undefined,
         });
-        return NextResponse.json({ runs: result.items, total: result.total, page: result.page, pageSize: result.pageSize });
+        return commerceOk({ runs: result.items, total: result.total, page: result.page, pageSize: result.pageSize });
     } catch (error) {
-        if (isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         console.error("Admin billing reconciliation list failed", error);
-        return NextResponse.json({ error: "获取支付对账记录失败" }, { status: 500 });
+        return commerceError(error, "获取支付对账记录失败", "List top-up reconciliations failed");
     }
 }
 
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (!hasAdminPermission(currentUser, "billing.manage")) return NextResponse.json({ error: "当前管理员没有导入对账数据的职责权限" }, { status: 403 });
+    if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
+    if (!hasAdminPermission(currentUser, "billing.manage")) return NextResponse.json({ code: 403, data: null, msg: "当前管理员没有导入对账数据的职责权限" }, { status: 403 });
 
     try {
         const body = await readJsonBody<{ provider?: unknown; csvText?: unknown; fileName?: unknown; note?: unknown }>(request);
@@ -55,11 +54,11 @@ export async function POST(request: Request) {
                 totalRows: result.totalRows,
                 matchedRows: result.matchedRows,
                 issueRows: result.issueRows,
-                statementPaidAmountCents: result.totals.statementPaidAmountCents,
-                statementRefundedAmountCents: result.totals.statementRefundedAmountCents,
+                statementPaidAmount: result.totals.statementPaidAmount,
+                statementRefundedAmount: result.totals.statementRefundedAmount,
             },
         });
-        return NextResponse.json({ reconciliation: result });
+        return commerceOk({ reconciliation: result });
     } catch (error) {
         await safeRecordAuditLog({
             action: "admin.billing.reconciliation.import",
@@ -68,8 +67,7 @@ export async function POST(request: Request) {
             target: { type: "billing_reconciliation" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         console.error("Admin billing reconciliation failed", error);
-        return NextResponse.json({ error: "支付账单对账失败" }, { status: 500 });
+        return commerceError(error, "支付账单对账失败", "Import top-up reconciliation failed");
     }
 }

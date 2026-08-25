@@ -85,6 +85,11 @@ export type SavedPaymentProviderConfig = {
 
 export type SavedPaymentConfig = {
     providers: Partial<Record<PaymentProviderId, SavedPaymentProviderConfig>>;
+    topUp?: {
+        pricingVersion: string;
+        customerFxVersion: string;
+        usdPerVnd: string;
+    };
 };
 
 export const PAYMENT_PROVIDER_DEFINITIONS: PaymentProviderDefinition[] = [
@@ -233,7 +238,7 @@ export const PAYMENT_PROVIDER_DEFINITIONS: PaymentProviderDefinition[] = [
                 kind: "textarea",
                 envNames: ["VOZEB_PRO_PAYPLY_REQUEST_TEMPLATE", "PAYPLY_REQUEST_TEMPLATE"],
                 placeholder: '{"order_no":"{{orderNo}}","amount":"{{amount}}","notify_url":"{{notifyUrl}}"}',
-                note: "留空使用平台默认字段；支持 {{orderId}}、{{orderNo}}、{{amount}}、{{amountCents}}、{{currency}}、{{notifyUrl}}、{{returnUrl}}、{{cancelUrl}} 等变量。",
+                note: "留空使用平台默认字段；支持 {{orderId}}、{{orderNo}}、{{amount}}、{{amountMinor}}、{{minorUnitExponent}}、{{currency}}、{{notifyUrl}}、{{returnUrl}}、{{cancelUrl}} 等变量。",
                 advanced: true,
             },
             { key: "notifyUrl", label: "回调地址", kind: "url", envNames: ["VOZEB_PRO_PAYPLY_NOTIFY_URL"], placeholder: "默认 /api/billing/webhooks/payply" },
@@ -308,7 +313,7 @@ export const PAYMENT_PROVIDER_DEFINITIONS: PaymentProviderDefinition[] = [
                 kind: "textarea",
                 envNames: ["VOZEB_PRO_PAYPLY_REFUND_REQUEST_TEMPLATE", "PAYPLY_REFUND_REQUEST_TEMPLATE"],
                 placeholder: '{"order_no":"{{orderNo}}","payment_id":"{{providerPaymentId}}","amount":"{{amount}}","reason":"{{reason}}"}',
-                note: "留空使用平台默认字段；支持 {{orderId}}、{{orderNo}}、{{providerOrderId}}、{{providerPaymentId}}、{{amount}}、{{amountCents}}、{{currency}}、{{reason}} 等变量。",
+                note: "留空使用平台默认字段；支持 {{orderId}}、{{orderNo}}、{{providerOrderId}}、{{providerPaymentId}}、{{amount}}、{{amountMinor}}、{{minorUnitExponent}}、{{currency}}、{{reason}} 等变量。",
                 advanced: true,
             },
             { key: "refundIdField", label: "退款单号字段", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_REFUND_ID_FIELD"], placeholder: "data.refundId", advanced: true },
@@ -323,8 +328,7 @@ export const PAYMENT_PROVIDER_DEFINITIONS: PaymentProviderDefinition[] = [
             { key: "webhookSuccessStatuses", label: "成功状态值", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_WEBHOOK_SUCCESS_STATUSES"], placeholder: "paid,success,succeeded", advanced: true },
             { key: "webhookTradeIdField", label: "交易号字段", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_WEBHOOK_TRADE_ID_FIELD"], placeholder: "data.tradeId", advanced: true },
             { key: "webhookPaymentIdField", label: "支付流水字段", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_WEBHOOK_PAYMENT_ID_FIELD"], placeholder: "data.paymentId", advanced: true },
-            { key: "webhookAmountCentsField", label: "金额分字段", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_WEBHOOK_AMOUNT_CENTS_FIELD"], placeholder: "data.amountCents", advanced: true },
-            { key: "webhookAmountYuanField", label: "金额元字段", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_WEBHOOK_AMOUNT_YUAN_FIELD"], placeholder: "data.amount", advanced: true },
+            { key: "webhookAmountMinorField", label: "支付最小单位字段", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_WEBHOOK_AMOUNT_MINOR_FIELD"], placeholder: "data.amountMinor", advanced: true },
             { key: "webhookCurrencyField", label: "币种字段", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_WEBHOOK_CURRENCY_FIELD"], placeholder: "data.currency", advanced: true },
             { key: "webhookPaidAtField", label: "支付时间字段", kind: "text", envNames: ["VOZEB_PRO_PAYPLY_WEBHOOK_PAID_AT_FIELD"], placeholder: "data.paidAt", advanced: true },
         ],

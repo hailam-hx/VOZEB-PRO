@@ -1,6 +1,6 @@
 import type { ReferralCodeRecord, ReferralProgramRecord, ReferralRelationshipRecord, ReferralRewardRecord } from "./repository-types";
 import { formatAccountId } from "@/lib/account-id";
-import { isoValue, jsonValue, numberValue, optionalIso, optionalString, stringValue } from "./repository-utils";
+import { decimalValue, isoValue, jsonValue, numberValue, optionalIso, optionalString, stringValue } from "./repository-utils";
 
 export function mapReferralProgram(row: Record<string, unknown>): ReferralProgramRecord {
     return {
@@ -9,8 +9,8 @@ export function mapReferralProgram(row: Record<string, unknown>): ReferralProgra
         inviterPoints: numberValue(row.inviter_points),
         inviteeRewardType: row.invitee_reward_type === "coupon" ? "coupon" : "points",
         inviteePoints: numberValue(row.invitee_points),
-        inviteeCouponTemplateId: optionalString(row.invitee_coupon_template_id),
-        minimumPaidCents: numberValue(row.minimum_paid_cents),
+        inviteeTopUpCouponTemplateId: optionalString(row.invitee_top_up_coupon_template_id),
+        minimumPaidUsd: decimalValue(row.minimum_paid_usd),
         coolingOffDays: numberValue(row.cooling_off_days),
         inviterMonthlyLimit: numberValue(row.inviter_monthly_limit),
         campaignTotalLimit: numberValue(row.campaign_total_limit),
@@ -70,13 +70,13 @@ export function mapReferralReward(row: Record<string, unknown>): ReferralRewardR
         beneficiaryRole: row.beneficiary_role === "invitee" ? "invitee" : "inviter",
         rewardType: row.reward_type === "coupon" ? "coupon" : "points",
         pointsAmount: numberValue(row.points_amount),
-        couponTemplateId: optionalString(row.coupon_template_id),
+        topUpCouponTemplateId: optionalString(row.top_up_coupon_template_id),
         triggerOrderId: stringValue(row.trigger_order_id),
-        status: status === "settled" || status === "revoked" || status === "rejected" || status === "reversal_pending" ? status : "pending",
+        status: status === "settled" || status === "revoked" || status === "rejected" || status === "reversal_pending" || status === "manual_review" ? status : "pending",
         settleAfter: isoValue(row.settle_after),
         walletRecordId: optionalString(row.wallet_record_id),
         reversalWalletRecordId: optionalString(row.reversal_wallet_record_id),
-        userCouponId: optionalString(row.user_coupon_id),
+        topUpUserCouponId: optionalString(row.top_up_user_coupon_id),
         reason: optionalString(row.reason),
         settledAt: optionalIso(row.settled_at),
         revokedAt: optionalIso(row.revoked_at),

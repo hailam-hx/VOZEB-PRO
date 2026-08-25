@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getAuthSettings, refundUserPoints, fetchInternalApi, resolveLogicalModel } = vi.hoisted(() => ({ getAuthSettings: vi.fn(), refundUserPoints: vi.fn(), fetchInternalApi: vi.fn(), resolveLogicalModel: vi.fn() }));
+const { getAuthSettings, fetchInternalApi, resolveLogicalModel, finishSystemAiTextAttempt, resolveSystemAiTextFailure } = vi.hoisted(() => ({
+    getAuthSettings: vi.fn(),
+    fetchInternalApi: vi.fn(),
+    resolveLogicalModel: vi.fn(),
+    finishSystemAiTextAttempt: vi.fn(),
+    resolveSystemAiTextFailure: vi.fn(),
+}));
 
-vi.mock("@/lib/auth/store", () => ({ getAuthSettings, refundUserPoints }));
+vi.mock("@/lib/auth/store", () => ({ getAuthSettings }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi }));
 vi.mock("@/lib/server/logical-model-router", () => ({ resolveLogicalModel }));
 vi.mock("@/lib/server/structured-model-output", () => ({ strictJsonObjectText: (value: unknown) => (typeof value === "string" ? value : "") }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({ finishSystemAiTextAttempt, resolveSystemAiTextFailure }));
 
 import { reviewCreativeOutputs } from "./creative-review-service";
 
@@ -15,7 +22,8 @@ describe("creative review service", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         getAuthSettings.mockResolvedValue({ defaultModels: { textModel: "planner" } });
-        resolveLogicalModel.mockReturnValue({ upstreamModel: "vendor-planner", channel: { id: "text-channel" } });
+        resolveLogicalModel.mockReturnValue({ upstreamModel: "vendor-planner", channelId: "text-channel", channel: { id: "text-channel" }, binding: { id: "binding-text" }, capabilityProfile: { supportsIdempotency: true } });
+        resolveSystemAiTextFailure.mockResolvedValue({ state: "safe_to_failover" });
     });
 
     it("returns an explicit unavailable result when no visual or text input exists", async () => {
@@ -56,9 +64,12 @@ describe("creative review service", () => {
         const headers = new Headers(fetchInternalApi.mock.calls[0][1].headers);
         expect(headers.get("x-vozeb-pro-logical-model")).toBe("planner");
         expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^creative-review:[a-f0-9]{32}$/);
+        expect(headers.get("x-vozeb-pro-billing-user-id")).toBe("user");
+        expect(headers.get("x-vozeb-pro-billing-binding-id")).toBe("binding-text");
+        expect(finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "succeeded" });
     });
 
-    it("refunds an invalid structured review and preserves the result as unavailable", async () => {
+    it("voids an invalid structured review and preserves the result as unavailable", async () => {
         fetchInternalApi.mockResolvedValueOnce(
             new Response(JSON.stringify({ output: [{ type: "function_call", name: "review_creative_outputs", arguments: JSON.stringify({ status: "passed" }) }] }), {
                 status: 200,
@@ -75,10 +86,11 @@ describe("creative review service", () => {
         });
 
         expect(review).toMatchObject({ status: "unavailable" });
-        expect(refundUserPoints).toHaveBeenCalledWith("user", "planner", 3, "text", 1, undefined, "points-review-3");
+        expect(finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
+        expect(resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ userId: "user", final: true }));
     });
 
-    it("refunds malformed review JSON", async () => {
+    it("voids malformed review JSON", async () => {
         fetchInternalApi.mockResolvedValueOnce(
             new Response(JSON.stringify({ output: [{ type: "function_call", name: "review_creative_outputs", arguments: "{" }] }), {
                 status: 200,
@@ -95,6 +107,6 @@ describe("creative review service", () => {
         });
 
         expect(review.status).toBe("unavailable");
-        expect(refundUserPoints).toHaveBeenCalledWith("user", "planner", 0, "text", 1, undefined, "points-review-free");
+        expect(finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
     });
 });

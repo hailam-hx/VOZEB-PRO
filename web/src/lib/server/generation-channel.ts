@@ -13,6 +13,13 @@ export type SystemGenerationChannelConfig = {
     logicalModel?: string;
     advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig;
     capabilityProfile?: ReturnType<typeof import("@/lib/model-routing-config").resolveLogicalModelCapabilityProfile>;
+    usagePricing?: {
+        logicalModelId: string;
+        bindingId: string;
+        saleRateCard?: import("@/lib/billing/pricing").PricingRateCardV1;
+        costRateCard?: import("@/lib/billing/pricing").PricingRateCardV1;
+        providerCostUnit?: import("@/lib/billing/money").ProviderCostUnit;
+    };
 };
 
 function sanitizeSystemGenerationChannel(config?: { apiSource?: string; baseUrl?: string; apiFormat?: string; model?: string }): SystemGenerationChannelConfig | null {
@@ -55,6 +62,13 @@ export function toSystemGenerationChannel(resolved: ResolvedLogicalModel): Syste
         logicalModel: resolved.logicalModelId,
         advancedConfig: resolveModelAdvancedConfig(resolved.channel.advancedConfig, resolved.upstreamModel),
         capabilityProfile: resolved.capabilityProfile,
+        usagePricing: {
+            logicalModelId: resolved.logicalModelId,
+            bindingId: resolved.binding.id,
+            saleRateCard: resolved.logicalModel.saleRateCard,
+            costRateCard: resolved.binding.costRateCard,
+            providerCostUnit: resolved.binding.providerCostUnit,
+        },
     };
 }
 

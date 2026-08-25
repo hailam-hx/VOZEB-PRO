@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { listPointRecords, refreshUserPointsIfSystem } from "./points";
+import { listPointRecords, refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "./points";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
-const user = (pointsBalance: number): LocalUser => ({
+const user = (availableBalance: string): LocalUser => ({
     id: "user-1",
     accountId: "0001",
     username: "tester",
@@ -12,10 +12,9 @@ const user = (pointsBalance: number): LocalUser => ({
     role: "user",
     adminPermissions: [],
     status: "active",
-    planId: "free",
-    planName: "免费版",
-    hasActivePlan: false,
-    pointsBalance,
+    settledBalance: availableBalance,
+    heldBalance: "0",
+    availableBalance,
     mfaEnabled: false,
 });
 
@@ -33,11 +32,11 @@ describe("用户积分同步", () => {
             .fn()
             .mockImplementationOnce(async () => {
                 await firstGate;
-                return Response.json({ user: user(9) });
+                return Response.json({ user: user("9") });
             })
-            .mockImplementationOnce(async () => Response.json({ user: user(8) }));
+            .mockImplementationOnce(async () => Response.json({ user: user("8") }));
         vi.stubGlobal("fetch", fetchMock);
-        useUserStore.getState().setUser(user(10));
+        useUserStore.getState().setUser(user("10"));
 
         const first = refreshUserPointsIfSystem("system");
         await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -46,7 +45,22 @@ describe("用户积分同步", () => {
         await Promise.all([first, second]);
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(useUserStore.getState().user?.pointsBalance).toBe(8);
+        expect(useUserStore.getState().user?.availableBalance).toBe("8");
+    });
+
+    it("synchronizes the complete wallet projection from response headers", () => {
+        useUserStore.getState().setUser(user("10"));
+
+        syncUserPointsFromHeaders(
+            new Headers({
+                "x-vozeb-pro-balance-settled": "12.50000000",
+                "x-vozeb-pro-balance-held": "2.25",
+                "x-vozeb-pro-balance-available": "10.25",
+            }),
+            "system",
+        );
+
+        expect(useUserStore.getState().user).toMatchObject({ settledBalance: "12.50000000", heldBalance: "2.25", availableBalance: "10.25" });
     });
 
     it("requests a server-filtered debit page", async () => {

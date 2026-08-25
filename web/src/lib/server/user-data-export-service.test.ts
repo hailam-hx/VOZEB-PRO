@@ -136,28 +136,26 @@ describe("buildUserDataExport", () => {
     });
 
     it("reads billing pages by user in PostgreSQL and removes provider payload details", async () => {
-        const billing = {
+        const topUps = {
             listOrders: vi.fn().mockResolvedValue({ items: [{ id: "order-1", userId: "user-one", metadata: { checkout: { url: "secret" } }, providerPaymentId: "provider-payment" }], total: 1 }),
-            listPayments: vi.fn().mockResolvedValue({ items: [{ id: "payment-1", userId: "user-one", rawPayload: { secret: true }, providerTradeId: "trade" }], total: 1 }),
-            listPlanAssignments: vi.fn().mockResolvedValue({ items: [{ id: "assignment-1", userId: "user-one", sourceId: "order-1", metadata: { internal: true } }], total: 1 }),
+            listPayments: vi.fn().mockResolvedValue({ items: [{ id: "payment-1", userId: "user-one", providerTradeId: "trade" }], total: 1 }),
+            listUserCoupons: vi.fn().mockResolvedValue({ items: [], total: 0 }),
         };
         const commercial = emptyCommercialRepositories();
         mocks.isPostgresDatabaseEnabled.mockReturnValue(true);
-        mocks.createPostgresRepositories.mockReturnValue({ billing, ...commercial });
+        mocks.createPostgresRepositories.mockReturnValue({ ...commercial, topUps });
 
         const result = await buildUserDataExport("user-one");
 
-        expect(billing.listOrders).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one" }));
-        expect(billing.listPayments).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one" }));
-        expect(billing.listPlanAssignments).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one" }));
-        expect(result.billing.orders).toEqual([{ id: "order-1" }]);
-        expect(result.billing.payments).toEqual([{ id: "payment-1" }]);
-        expect(result.billing.planAssignments).toEqual([{ id: "assignment-1" }]);
+        expect(topUps.listOrders).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one" }));
+        expect(topUps.listPayments).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one" }));
+        expect(result.billing.topUpOrders).toHaveLength(1);
+        expect(result.billing.topUpPayments).toHaveLength(1);
     });
 
     it("includes coupons, referral relationships, works and notifications without internal risk fields", async () => {
         const repositories = emptyCommercialRepositories();
-        repositories.coupons.listUserCoupons.mockResolvedValue({ items: [{ id: "coupon-one", userId: "user-one", status: "available" }], total: 1 });
+        repositories.topUps.listUserCoupons.mockResolvedValue({ items: [{ id: "coupon-one", status: "available" }], total: 1 });
         repositories.referrals.listRelationships.mockResolvedValue({ items: [{ id: "relationship-one", inviterUserId: "user-one", paymentIdentityHash: "hidden", riskSignals: ["hidden"] }], total: 1 });
         repositories.referrals.listRewards.mockResolvedValue({ items: [{ id: "reward-one", beneficiaryUserId: "user-one", pointsAmount: 20 }], total: 1 });
         repositories.workPublications.listWorks.mockResolvedValue({ items: [{ id: "work-one" }], total: 1 });
@@ -166,7 +164,7 @@ describe("buildUserDataExport", () => {
         repositories.workPublications.listVersionAssets.mockResolvedValue([{ id: "asset-one", versionId: "version-one", metadata: { prompt: "internal" } }]);
         repositories.workCommunity.listNotifications.mockResolvedValue({ items: [{ id: "notification-one", createdAt: "2026-08-01T00:00:00.000Z", summary: "收到点赞" }], hasMore: false });
         mocks.isPostgresDatabaseEnabled.mockReturnValue(true);
-        mocks.createPostgresRepositories.mockReturnValue({ billing: emptyBillingRepository(), ...repositories });
+        mocks.createPostgresRepositories.mockReturnValue(repositories);
 
         const result = await buildUserDataExport("user-one");
         const commercial = result.commercial as Record<string, Array<Record<string, unknown>>>;
@@ -220,17 +218,17 @@ describe("buildUserDataExport", () => {
     });
 });
 
-function emptyBillingRepository() {
+function emptyTopUpRepository() {
     return {
         listOrders: vi.fn().mockResolvedValue({ items: [], total: 0 }),
         listPayments: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-        listPlanAssignments: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        listUserCoupons: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     };
 }
 
 function emptyCommercialRepositories() {
     return {
-        coupons: { listUserCoupons: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
+        topUps: emptyTopUpRepository(),
         referrals: {
             listRelationships: vi.fn().mockResolvedValue({ items: [], total: 0 }),
             listRewards: vi.fn().mockResolvedValue({ items: [], total: 0 }),

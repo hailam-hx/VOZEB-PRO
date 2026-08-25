@@ -5,13 +5,16 @@ import { DEFAULT_ALIPAY_PAYMENT_MODE, isAlipayPaymentMode } from "@/lib/payment-
 import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
-import type { BillingOrderRecord, JsonValue } from "@/lib/server/database";
+import type { JsonValue } from "@/lib/server/database";
 import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import type { CreatePaymentCheckoutOptions, PaymentCheckoutKind, PaymentCheckoutResult } from "./payment-checkout-types";
 import { normalizePaymentForm, type PaymentForm } from "./payment-form";
+import { assertFiatTopUpCheckout, type TopUpOrder } from "./top-up-payment";
 
-export async function createProviderCheckout(provider: string, order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
+type CheckoutOrder = TopUpOrder;
+
+export async function createProviderCheckout(provider: string, order: CheckoutOrder, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
     if (provider === "stripe") return createStripeCheckout(order, options, paymentConfig);
     if (provider === "alipay") return createAlipayCheckout(order, options, paymentConfig);
     if (provider === "wechat") return createWechatNativeCheckout(order, options, paymentConfig);
@@ -20,7 +23,7 @@ export async function createProviderCheckout(provider: string, order: BillingOrd
     throw new BillingInputError("暂不支持该支付渠道", 400);
 }
 
-function createManualCheckout(provider: string, order: BillingOrderRecord): PaymentCheckoutResult {
+function createManualCheckout(provider: string, order: CheckoutOrder): PaymentCheckoutResult {
     return {
         provider,
         orderId: order.id,
@@ -31,7 +34,7 @@ function createManualCheckout(provider: string, order: BillingOrderRecord): Paym
     };
 }
 
-async function createStripeCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
+async function createStripeCheckout(order: CheckoutOrder, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
     const secretKey = requiredConfig(paymentConfig, "VOZEB_PRO_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
     const origin = resolveOrigin(options.origin);
     const successUrl = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_STRIPE_SUCCESS_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}&session_id={CHECKOUT_SESSION_ID}`;
@@ -42,8 +45,8 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
     params.set("success_url", successUrl);
     params.set("cancel_url", cancelUrl);
     params.set("line_items[0][quantity]", "1");
-    params.set("line_items[0][price_data][currency]", order.currency.toLowerCase());
-    params.set("line_items[0][price_data][unit_amount]", String(order.amountCents));
+    params.set("line_items[0][price_data][currency]", paymentCurrency(order).toLowerCase());
+    params.set("line_items[0][price_data][unit_amount]", paymentAmountMinor(order));
     params.set("line_items[0][price_data][product_data][name]", order.subject);
     params.set("metadata[orderId]", order.id);
     params.set("metadata[orderNo]", order.orderNo);
@@ -83,8 +86,8 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
     };
 }
 
-async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
-    if (order.currency.toUpperCase() !== "CNY") throw new BillingInputError("支付宝仅支持人民币 CNY 订单", 400);
+async function createAlipayCheckout(order: CheckoutOrder, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
+    if (paymentCurrency(order) !== "CNY") throw new BillingInputError("支付宝仅支持人民币 CNY 订单", 400);
     const appId = requiredConfig(paymentConfig, "VOZEB_PRO_ALIPAY_APP_ID");
     const privateKey = loadPrivateKey(paymentConfig, "VOZEB_PRO_ALIPAY_PRIVATE_KEY", "VOZEB_PRO_ALIPAY_PRIVATE_KEY_PATH");
     const origin = resolveOrigin(options.origin);
@@ -101,7 +104,7 @@ async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePa
         notify_url: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_NOTIFY_URL") || `${origin}/api/billing/webhooks/alipay`,
         biz_content: JSON.stringify({
             out_trade_no: order.orderNo,
-            total_amount: centsToDecimal(order.amountCents),
+            total_amount: paymentDecimalAmount(order),
             subject: order.subject,
             product_code: modeValue === "face_to_face" ? "FACE_TO_FACE_PAYMENT" : "FAST_INSTANT_TRADE_PAY",
             passback_params: order.id,
@@ -122,7 +125,7 @@ async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePa
     };
 }
 
-async function createAlipayFaceToFaceCheckout(gateway: string, params: Record<string, string>, order: BillingOrderRecord, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
+async function createAlipayFaceToFaceCheckout(gateway: string, params: Record<string, string>, order: CheckoutOrder, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
     const response = await fetchSafeOutbound(gateway, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
@@ -196,7 +199,7 @@ function extractJsonObjectValue(rawBody: string, key: string) {
     return "";
 }
 
-async function createWechatNativeCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
+async function createWechatNativeCheckout(order: CheckoutOrder, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
     const appid = requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_APP_ID");
     const mchid = requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_MCH_ID");
     const serialNo = requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_CERT_SERIAL_NO");
@@ -210,8 +213,8 @@ async function createWechatNativeCheckout(order: BillingOrderRecord, options: Cr
         time_expire: order.expiresAt,
         notify_url: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_WECHAT_PAY_NOTIFY_URL") || `${origin}/api/billing/webhooks/wechat`,
         amount: {
-            total: order.amountCents,
-            currency: order.currency,
+            total: paymentAmountMinor(order),
+            currency: paymentCurrency(order),
         },
     });
     const apiBase = (getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_WECHAT_PAY_API_BASE") || "https://api.mch.weixin.qq.com").replace(/\/+$/, "");
@@ -244,7 +247,7 @@ async function createWechatNativeCheckout(order: BillingOrderRecord, options: Cr
     };
 }
 
-async function createPayplyCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
+async function createPayplyCheckout(order: CheckoutOrder, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
     const checkoutUrl = requiredConfig(paymentConfig, "VOZEB_PRO_PAYPLY_CHECKOUT_URL", "PAYPLY_CHECKOUT_URL");
     const apiKey = requiredConfig(paymentConfig, "VOZEB_PRO_PAYPLY_API_KEY", "PAYPLY_API_KEY");
     const origin = resolveOrigin(options.origin);
@@ -256,16 +259,17 @@ async function createPayplyCheckout(order: BillingOrderRecord, options: CreatePa
         orderId: order.id,
         orderNo: order.orderNo,
         subject: order.subject,
-        amountCents: order.amountCents,
-        amount: centsToDecimal(order.amountCents),
-        currency: order.currency,
+        amountMinor: paymentAmountMinor(order),
+        minorUnitExponent: paymentExponent(order),
+        amount: paymentDecimalAmount(order),
+        currency: paymentCurrency(order),
         notifyUrl,
         returnUrl,
         cancelUrl,
         metadata: {
             vozebProOrderId: order.id,
             vozebProOrderNo: order.orderNo,
-            productId: order.productId || "",
+            presetId: "presetId" in order ? order.presetId || "" : "",
             userId: order.userId || "",
         },
     });
@@ -336,7 +340,7 @@ export function checkoutMetadata(checkout: PaymentCheckoutResult): JsonValue {
     };
 }
 
-export function checkoutFromMetadata(order: BillingOrderRecord, provider: string): PaymentCheckoutResult | null {
+export function checkoutFromMetadata(order: CheckoutOrder, provider: string): PaymentCheckoutResult | null {
     const metadata = order.metadata && typeof order.metadata === "object" && !Array.isArray(order.metadata) ? order.metadata : {};
     const value = metadata.checkout;
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -423,21 +427,22 @@ function readPayplyError(payload: Record<string, unknown>) {
     return normalizeText(readPath(payload, "message") || readPath(payload, "error.message") || readPath(payload, "error") || readPath(payload, "data.message"), "PayPly 下单失败", 300);
 }
 
-function buildPayplyCheckoutPayload(config: PaymentRuntimeConfig, order: BillingOrderRecord, defaultPayload: Record<string, unknown>) {
+function buildPayplyCheckoutPayload(config: PaymentRuntimeConfig, order: CheckoutOrder, defaultPayload: Record<string, unknown>) {
     const template = getPaymentRuntimeEnv(config, "VOZEB_PRO_PAYPLY_REQUEST_TEMPLATE") || getPaymentRuntimeEnv(config, "PAYPLY_REQUEST_TEMPLATE");
     if (!template) return defaultPayload;
     const rendered = renderPayplyTemplate(template, {
         orderId: order.id,
         orderNo: order.orderNo,
         subject: order.subject,
-        amountCents: String(order.amountCents),
-        amount: centsToDecimal(order.amountCents),
-        currency: order.currency,
+        amountMinor: paymentAmountMinor(order),
+        minorUnitExponent: String(paymentExponent(order)),
+        amount: paymentDecimalAmount(order),
+        currency: paymentCurrency(order),
         notifyUrl: String(defaultPayload.notifyUrl || ""),
         returnUrl: String(defaultPayload.returnUrl || ""),
         cancelUrl: String(defaultPayload.cancelUrl || ""),
         merchantId: String(defaultPayload.merchantId || ""),
-        productId: order.productId || "",
+        presetId: "presetId" in order ? order.presetId || "" : "",
         userId: order.userId || "",
     });
     try {
@@ -543,8 +548,24 @@ function normalizeCheckoutKind(value: unknown): Exclude<PaymentCheckoutKind, "ma
     return kind === "redirect" || kind === "form" || kind === "qr" ? kind : undefined;
 }
 
-function centsToDecimal(cents: number) {
-    return (cents / 100).toFixed(2);
+function paymentAmountMinor(order: CheckoutOrder) {
+    return assertFiatTopUpCheckout(order.paymentAmount).amountMinor;
+}
+
+function paymentCurrency(order: CheckoutOrder) {
+    return assertFiatTopUpCheckout(order.paymentAmount).currency;
+}
+
+function paymentExponent(order: CheckoutOrder) {
+    return "paymentAmount" in order ? assertFiatTopUpCheckout(order.paymentAmount).minorUnitExponent : 2;
+}
+
+function paymentDecimalAmount(order: CheckoutOrder) {
+    const minor = paymentAmountMinor(order);
+    const exponent = paymentExponent(order);
+    if (!exponent) return minor;
+    const digits = minor.padStart(exponent + 1, "0");
+    return `${digits.slice(0, -exponent)}.${digits.slice(-exponent)}`;
 }
 
 function alipayTimestamp(date = new Date()) {

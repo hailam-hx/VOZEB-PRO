@@ -92,14 +92,20 @@ describe("applyPublicSystemSettings", () => {
         expect(config.videoModel).toBe("video-v1");
     });
 
-    it("uses an existing upstream point price for the logical model estimate", () => {
+    it("preserves the logical model sale rate card for the shared estimate engine", () => {
         const config = applyPublicSystemSettings(defaultConfig, {
             ...audioSettings,
-            modelPointCosts: { "speech-v1": 2.5 },
-            logicalModels: [{ ...audioSettings.logicalModels![0], id: "voice-pro" }],
+            logicalModels: [
+                {
+                    ...audioSettings.logicalModels![0],
+                    id: "voice-pro",
+                    saleRateCard: { version: 1, revision: "audio-v1", components: [{ id: "request", dimension: "request", unitPrice: "2.5" }] },
+                },
+            ],
         });
 
-        expect(config.modelPointCosts["voice-pro"]).toBe(2.5);
+        expect(config.logicalModels[0]?.saleRateCard?.revision).toBe("audio-v1");
+        expect(config.modelPointCosts).toEqual({});
     });
 
     it("keeps public concurrency and canvas counts above the former client ceilings", () => {

@@ -20,7 +20,7 @@ export function HomeHeader() {
     const [navIndicator, setNavIndicator] = useState({ left: 0, width: 0, visible: false });
     const navItemRefs = useRef<(HTMLAnchorElement | HTMLButtonElement | null)[]>([]);
     const hoveredNavIndex = useRef<number | null>(null);
-    const { authenticated, site, openLogin, openBillingPlans, openProtectedPath } = useHomeActions();
+    const { authenticated, site, openLogin, openTopUp, openProtectedPath } = useHomeActions();
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
 
@@ -45,7 +45,7 @@ export function HomeHeader() {
 
     const activate = (item: HomeNavigationItem) => {
         setMobileOpen(false);
-        if (item.action === "billing") openBillingPlans();
+        if (item.action === "billing") openTopUp();
         if (item.action === "protected") openProtectedPath(item.href);
     };
 

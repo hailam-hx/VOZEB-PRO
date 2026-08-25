@@ -42,10 +42,9 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                 role: currentUser.role,
                 adminPermissions: currentUser.adminPermissions,
                 status: currentUser.status,
-                planId: currentUser.planId,
-                planName: currentUser.planName,
-                hasActivePlan: currentUser.hasActivePlan,
-                pointsBalance: currentUser.pointsBalance,
+                settledBalance: currentUser.settledBalance,
+                heldBalance: currentUser.heldBalance,
+                availableBalance: currentUser.availableBalance,
                 mfaEnabled: currentUser.mfaEnabled,
             }}
         >

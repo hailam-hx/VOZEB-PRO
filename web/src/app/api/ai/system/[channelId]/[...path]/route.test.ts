@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 const mocks = vi.hoisted(() => ({
     checkMediaProxyRateLimit: vi.fn(),
@@ -11,6 +12,14 @@ const mocks = vi.hoisted(() => ({
     release: vi.fn(),
     mediaAccess: vi.fn(),
     taskAccess: vi.fn(),
+    reserveUsageBilling: vi.fn(),
+    reuseExistingUsageBilling: vi.fn(),
+    attachUsageProviderEvidence: vi.fn(),
+    releaseUsageBilling: vi.fn(),
+    recordUsageProviderAttempt: vi.fn(),
+    finishUsageProviderAttempt: vi.fn(),
+    settleUsageBilling: vi.fn(),
+    settleCancelledUsageBilling: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one", role: "user", pointsBalance: 5 })) }));
@@ -26,15 +35,25 @@ vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mock
 vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 vi.mock("@/lib/server/generation-media-access", () => ({ authorizeGenerationMediaProxyRequest: mocks.mediaAccess }));
 vi.mock("@/lib/server/generation-task-authorization", () => ({ userOwnsGenerationUpstreamTask: mocks.taskAccess }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({
+    reserveUsageBilling: mocks.reserveUsageBilling,
+    reuseExistingUsageBilling: mocks.reuseExistingUsageBilling,
+    attachUsageProviderEvidence: mocks.attachUsageProviderEvidence,
+    releaseUsageBilling: mocks.releaseUsageBilling,
+    recordUsageProviderAttempt: mocks.recordUsageProviderAttempt,
+    finishUsageProviderAttempt: mocks.finishUsageProviderAttempt,
+    settleUsageBilling: mocks.settleUsageBilling,
+    settleCancelledUsageBilling: mocks.settleCancelledUsageBilling,
+}));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
     isSafeOutboundUrl: mocks.safeUrl,
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
 
-import { GET, maxDuration, POST, PUT } from "./route";
+import { GET, maxDuration, meteredTextResponseBody, POST, PUT } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
-import { systemAiBillingHeaders, systemAiPointsIdempotencyKey } from "@/lib/server/system-ai-billing";
+import { readSystemAiUsageBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 
 const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_media"] }) };
 
@@ -56,9 +75,317 @@ describe("system media proxy", () => {
         mocks.wrap.mockImplementation((response: Response) => response);
         mocks.mediaAccess.mockReset().mockResolvedValue(true);
         mocks.taskAccess.mockReset().mockResolvedValue(true);
+        mocks.reserveUsageBilling.mockReset().mockResolvedValue({
+            holdId: "hold-one",
+            userId: "user-one",
+            businessId: "text-task:one",
+            requestFingerprint: "a".repeat(64),
+            snapshot: { version: 1, requestUsage: { capability: "text", source: "request", inputTokens: "5", maxOutputTokens: "128" }, reserve: { usage: { capability: "text", source: "reserve_fallback", inputTokens: "5", outputTokens: "128" } } },
+        });
+        mocks.reuseExistingUsageBilling.mockReset().mockResolvedValue(undefined);
+        mocks.recordUsageProviderAttempt.mockReset().mockResolvedValue({});
+        mocks.attachUsageProviderEvidence.mockReset().mockResolvedValue({});
+        mocks.releaseUsageBilling.mockReset().mockResolvedValue({});
+        mocks.finishUsageProviderAttempt.mockReset().mockResolvedValue({});
+        mocks.settleUsageBilling.mockReset().mockResolvedValue({});
+        mocks.settleCancelledUsageBilling.mockReset().mockResolvedValue({});
         mocks.getAuthSettings.mockResolvedValue({
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: [] }],
         });
+    });
+
+    it("reserves and records the routed attempt before a signed upstream create", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    id: "writer",
+                    name: "写作",
+                    capability: "text",
+                    enabled: true,
+                    saleRateCard: {
+                        version: 1,
+                        components: [
+                            { id: "output", dimension: "outputTokens", unitPrice: "0.001" },
+                            { id: "input", dimension: "inputTokens", unitPrice: "0.001" },
+                        ],
+                    },
+                    bindings: [
+                        {
+                            id: "writer-binding",
+                            channelId: "channel-one",
+                            upstreamModel: "vendor-text",
+                            enabled: true,
+                            priority: 1,
+                            costRateCard: {
+                                version: 1,
+                                components: [
+                                    { id: "output", dimension: "outputTokens", unitPrice: "0.0005" },
+                                    { id: "input", dimension: "inputTokens", unitPrice: "0.0005" },
+                                ],
+                            },
+                            providerCostUnit: { kind: "fiat", currency: "USD" },
+                            capabilityProfile: { maxOutputTokens: 128, supportsIdempotency: true },
+                        },
+                    ],
+                },
+            ],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }], usage: { prompt_tokens: 2, completion_tokens: 1 } }));
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 });
+        const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                ...signedUsageHeaders(body),
+            },
+            body,
+        });
+
+        const response = await POST(request, textContext());
+
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", businessId: "text-task:one", requestFingerprint: "a".repeat(64), logicalModelId: "writer" }));
+        expect(mocks.recordUsageProviderAttempt).toHaveBeenCalledWith(expect.objectContaining({ attemptNumber: 1, status: "pending", bindingId: "writer-binding", providerIdempotencyKey: "text-task:one:attempt:1" }));
+        expect(mocks.recordUsageProviderAttempt.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0]);
+        expect(readSystemAiUsageBilling(response.headers)).toEqual({ holdId: "hold-one", attemptNumber: 1, requestFingerprint: "a".repeat(64) });
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unsigned create before reserving or contacting upstream", async () => {
+        mocks.getAuthSettings.mockResolvedValue(pricedTextSettings());
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "must not run" } }] }));
+
+        const response = await POST(unsignedChatRequest({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 }), textContext());
+
+        expect(response.status).toBe(401);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(mocks.reserveUsageBilling).not.toHaveBeenCalled();
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid usage signature before reserving or contacting upstream", async () => {
+        mocks.getAuthSettings.mockResolvedValue(pricedTextSettings());
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "must not run" } }] }));
+        const body = JSON.stringify({ model: "vendor-text", messages: [], max_tokens: 128 });
+        const headers = new Headers({
+            "content-type": "application/json",
+            ...signedUsageHeaders(body),
+        });
+        headers.set("x-vozeb-pro-points-signature", "invalid");
+
+        const response = await POST(new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers, body }), textContext());
+
+        expect(response.status).toBe(401);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(mocks.reserveUsageBilling).not.toHaveBeenCalled();
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("does not recreate a replayed provider attempt without explicit idempotency support", async () => {
+        mocks.getAuthSettings.mockResolvedValue(pricedTextSettings());
+        mocks.recordUsageProviderAttempt.mockResolvedValueOnce({ applied: false, attempt: { providerIdempotencySupported: false } });
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 });
+
+        const response = await POST(new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body, false) }, body }), textContext());
+
+        expect(response.status, JSON.stringify(await response.clone().json())).toBe(409);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("replays the exact create only with the original supported provider idempotency key", async () => {
+        mocks.getAuthSettings.mockResolvedValue(pricedTextSettings());
+        mocks.recordUsageProviderAttempt.mockResolvedValueOnce({ applied: false, attempt: { providerIdempotencySupported: true, providerIdempotencyKey: "text-task:one:attempt:1" } });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 });
+
+        const response = await POST(new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body) }, body }), textContext());
+
+        expect(response.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
+    it("rejects a signed create when its canonical query changes", async () => {
+        const settings = pricedTextSettings();
+        Object.assign(settings.systemChannels[0], { advancedConfig: { createPath: "/chat/completions?region=us&mode=fast", editPath: "/chat/completions?region=eu&mode=fast" } });
+        mocks.getAuthSettings.mockResolvedValue(settings);
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 });
+        const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions?region=eu&mode=fast", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...signedUsageHeaders(body, true, { canonicalQuery: "region=us&mode=fast" }) },
+            body,
+        });
+
+        const response = await POST(request, textContext());
+
+        expect(response.status).toBe(401);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("accepts an exact replay after deterministic query canonicalization", async () => {
+        const settings = pricedTextSettings();
+        Object.assign(settings.systemChannels[0], { advancedConfig: { createPath: "/chat/completions?region=us&label=a%20b" } });
+        mocks.getAuthSettings.mockResolvedValue(settings);
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 });
+        const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions?region=us&label=a%20b", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...signedUsageHeaders(body, true, { canonicalQuery: "region=us&label=a+b" }) },
+            body,
+        });
+
+        const response = await POST(request, textContext());
+
+        expect(response.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
+    it("uses the frozen hold sale snapshot on failover even when current sale pricing is removed", async () => {
+        const settings = pricedTextSettings();
+        delete (settings.logicalModels[0] as { saleRateCard?: unknown }).saleRateCard;
+        mocks.getAuthSettings.mockResolvedValue(settings);
+        const frozen = await mocks.reserveUsageBilling();
+        mocks.reserveUsageBilling.mockClear();
+        mocks.reuseExistingUsageBilling.mockResolvedValueOnce(frozen);
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 });
+
+        const response = await POST(new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body) }, body }), textContext());
+
+        expect(response.status).toBe(200);
+        expect(mocks.reserveUsageBilling).not.toHaveBeenCalled();
+    });
+
+    it("rejects signed create replay across a changed user, path, or exact body", async () => {
+        mocks.getAuthSettings.mockResolvedValue(pricedTextSettings());
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "original" }], max_tokens: 128 });
+        const changedBody = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "changed" }], max_tokens: 128 });
+        const requests = [
+            new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body, true, { userId: "user-two" }) }, body }),
+            new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...signedUsageHeaders(body, true, { canonicalPath: "/api/ai/system/channel-one/responses" }) },
+                body,
+            }),
+            new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body) }, body: changedBody }),
+        ];
+
+        for (const request of requests) expect((await POST(request, textContext())).status).toBe(401);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("persists text stream usage evidence without settling before runtime validation", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    id: "writer",
+                    name: "写作",
+                    capability: "text",
+                    enabled: true,
+                    saleRateCard: {
+                        version: 1,
+                        components: [
+                            { id: "output", dimension: "outputTokens", unitPrice: "0.001" },
+                            { id: "input", dimension: "inputTokens", unitPrice: "0.001" },
+                        ],
+                    },
+                    bindings: [
+                        {
+                            id: "writer-binding",
+                            channelId: "channel-one",
+                            upstreamModel: "vendor-text",
+                            enabled: true,
+                            priority: 1,
+                            costRateCard: {
+                                version: 1,
+                                components: [
+                                    { id: "output", dimension: "outputTokens", unitPrice: "0.0005" },
+                                    { id: "input", dimension: "inputTokens", unitPrice: "0.0005" },
+                                ],
+                            },
+                            providerCostUnit: { kind: "fiat", currency: "USD" },
+                            capabilityProfile: { maxOutputTokens: 128, supportsIdempotency: true },
+                        },
+                    ],
+                },
+            ],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
+        });
+        const encoder = new TextEncoder();
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"你"}}]}\n\n'));
+                        controller.enqueue(encoder.encode('data: {"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\n'));
+                        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                        controller.close();
+                    },
+                }),
+                { headers: { "content-type": "text/event-stream" } },
+            ),
+        );
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 });
+        const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                ...signedUsageHeaders(body),
+            },
+            body,
+        });
+
+        const response = await POST(request, textContext());
+        expect(mocks.settleUsageBilling).not.toHaveBeenCalled();
+        const streamed = await response.text();
+
+        expect(response.status, streamed).toBe(200);
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledOnce();
+        expect(mocks.attachUsageProviderEvidence).toHaveBeenCalledWith(expect.objectContaining({ attemptNumber: 1, usage: expect.objectContaining({ source: "actual", inputTokens: "5", outputTokens: "2" }) }));
+        expect(mocks.finishUsageProviderAttempt).not.toHaveBeenCalledWith(expect.objectContaining({ status: "succeeded" }));
+        expect(mocks.settleUsageBilling).not.toHaveBeenCalled();
+    });
+
+    it("settles accepted user cancellation even when the upstream cancel hook throws", async () => {
+        const upstream = new ReadableStream<Uint8Array>({
+            cancel() {
+                throw new Error("cancel failed");
+            },
+        });
+        const stream = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1);
+
+        await expect(stream.cancel()).rejects.toThrow("cancel failed");
+        expect(mocks.finishUsageProviderAttempt).toHaveBeenCalledWith(expect.objectContaining({ status: "canceled" }));
+        expect(mocks.settleCancelledUsageBilling).toHaveBeenCalledOnce();
+    });
+
+    it("classifies a provider stream read failure as failed and releases the hold", async () => {
+        const upstream = new ReadableStream<Uint8Array>({
+            pull() {
+                throw new Error("read failed");
+            },
+        });
+        const stream = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1);
+
+        await expect(stream.getReader().read()).rejects.toThrow("read failed");
+        expect(mocks.finishUsageProviderAttempt).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
+        expect(mocks.releaseUsageBilling).toHaveBeenCalledOnce();
+        expect(mocks.settleCancelledUsageBilling).not.toHaveBeenCalled();
+    });
+
+    it("retains available usage evidence when an HTTP attempt fails", async () => {
+        mocks.getAuthSettings.mockResolvedValue(pricedTextSettings());
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ error: { message: "failed" }, usage: { prompt_tokens: 5, completion_tokens: 2 } }, { status: 500 }));
+        const body = JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }], max_tokens: 128 });
+
+        const response = await POST(new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...signedUsageHeaders(body) }, body }), textContext());
+
+        expect(response.status).toBe(500);
+        expect(mocks.finishUsageProviderAttempt).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", normalizedUsage: expect.objectContaining({ source: "actual", inputTokens: "5", outputTokens: "2" }) }));
     });
 
     it("blocks authenticated media requests when the rate limit is exhausted", async () => {
@@ -205,15 +532,7 @@ describe("GlobalAiOpc native text proxy", () => {
     it("charges text calls with the logical model id instead of the upstream alias", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [
-                {
-                    id: "writer",
-                    name: "写作模型",
-                    capability: "text",
-                    enabled: true,
-                    bindings: [{ id: "writer-binding", channelId: "channel-one", upstreamModel: "vendor-text", enabled: true, priority: 1 }],
-                },
-            ],
+            logicalModels: [logicalModel("writer", "text", "vendor-text")],
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
         });
         vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
@@ -221,54 +540,47 @@ describe("GlobalAiOpc native text proxy", () => {
         const response = await POST(chatRequest({ model: "vendor-text", messages: [{ role: "user", content: "hello" }] }), textContext());
 
         expect(response.status).toBe(200);
-        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer", 1, "text", expect.stringMatching(/^system-ai:[a-f0-9]{64}$/), expect.stringMatching(/^[a-f0-9]{64}$/));
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", logicalModelId: "writer" }));
     });
 
     it("uses the validated preferred logical model and stable idempotency key when aliases are shared", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
             logicalModels: [
-                { id: "writer-basic", name: "基础写作", capability: "text", enabled: true, bindings: [{ id: "basic", channelId: "channel-one", upstreamModel: "vendor-shared", enabled: true, priority: 1 }] },
-                { id: "writer-pro", name: "专业写作", capability: "text", enabled: true, bindings: [{ id: "pro", channelId: "channel-one", upstreamModel: "vendor-shared", enabled: true, priority: 2 }] },
+                { ...logicalModel("writer-basic", "text", "vendor-shared"), bindings: [{ ...logicalModel("writer-basic", "text", "vendor-shared").bindings[0], id: "basic" }] },
+                { ...logicalModel("writer-pro", "text", "vendor-shared"), bindings: [{ ...logicalModel("writer-pro", "text", "vendor-shared").bindings[0], id: "pro" }] },
             ],
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-shared"] }],
         });
+        mocks.recordUsageProviderAttempt.mockResolvedValueOnce({ applied: false, attempt: { providerIdempotencySupported: true, providerIdempotencyKey: "text-task:test:attempt:1" } });
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const body = JSON.stringify({ model: "vendor-shared", messages: [{ role: "user", content: "hello" }] });
         const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
             method: "POST",
             headers: {
                 "content-type": "application/json",
                 "idempotency-key": "upstream-request-one",
                 "x-client-request-id": "client-request-one",
-                ...systemAiBillingHeaders("writer-pro", "text-task:one:attempt:1", "vendor-shared"),
+                ...signedModelHeaders("http://localhost/api/ai/system/channel-one/chat/completions", body, "writer-pro", "vendor-shared", "text", "pro"),
             },
-            body: JSON.stringify({ model: "vendor-shared", messages: [{ role: "user", content: "hello" }] }),
+            body,
         });
 
         const response = await POST(request, textContext());
-        const expectedKey = systemAiPointsIdempotencyKey({
-            userId: "user-one",
-            businessRequestId: "text-task:one:attempt:1",
-            logicalModel: "writer-pro",
-            channelId: "channel-one",
-            upstreamModel: "vendor-shared",
-            callType: "text:create:/chat/completions",
-        });
-
         expect(response.status).toBe(200);
-        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer-pro", 1, "text", expectedKey, expect.stringMatching(/^[a-f0-9]{64}$/));
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ logicalModelId: "writer-pro" }));
         const upstreamHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
-        expect(upstreamHeaders.get("idempotency-key")).toBe("upstream-request-one");
-        expect(upstreamHeaders.get("x-client-request-id")).toBe("client-request-one");
+        expect(upstreamHeaders.get("idempotency-key")).toBe("text-task:test:attempt:1");
+        expect(upstreamHeaders.get("x-client-request-id")).toBe("text-task:test:attempt:1");
     });
 
-    it("ignores an unsigned client billing key and creates a new local identity for each request", async () => {
+    it("rejects a legacy business-only signature without contacting upstream", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
             logicalModels: [logicalModel("writer", "text", "vendor-text")],
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
         });
-        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
         const createRequest = () =>
             new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
                 method: "POST",
@@ -276,14 +588,11 @@ describe("GlobalAiOpc native text proxy", () => {
                 body: JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }] }),
             });
 
-        await POST(createRequest(), textContext());
-        await POST(createRequest(), textContext());
-
-        expect(mocks.consumeUserPoints.mock.calls[0][4]).not.toBe(mocks.consumeUserPoints.mock.calls[1][4]);
-        expect(mocks.consumeUserPoints.mock.calls[0][5]).toBe(mocks.consumeUserPoints.mock.calls[1][5]);
+        expect((await POST(createRequest(), textContext())).status).toBe(401);
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("returns 409 when one signed business request is replayed with a different payload", async () => {
+    it("rejects a legacy business signature before payload replay can reach billing", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
             logicalModels: [logicalModel("writer", "text", "vendor-text")],
@@ -307,10 +616,9 @@ describe("GlobalAiOpc native text proxy", () => {
         const first = await POST(createRequest("first"), textContext());
         const second = await POST(createRequest("changed"), textContext());
 
-        expect(first.status).toBe(200);
-        expect(second.status).toBe(409);
-        expect(await second.json()).toEqual({ error: "积分幂等键对应的消费参数不一致" });
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(first.status).toBe(401);
+        expect(second.status).toBe(401);
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("routes GlobalAiOpc media models from one catalog channel to the matching service endpoint", async () => {
@@ -441,15 +749,7 @@ describe("Stable Diffusion proxy", () => {
         mocks.safeUrl.mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [
-                {
-                    id: "image-local",
-                    name: "本地图片",
-                    capability: "image",
-                    enabled: true,
-                    bindings: [{ id: "sd-binding", channelId: "channel-one", upstreamModel: "sdxl", enabled: true, priority: 1 }],
-                },
-            ],
+            logicalModels: [logicalModel("image-local", "image", "sdxl")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -466,15 +766,13 @@ describe("Stable Diffusion proxy", () => {
 
     it("keeps the sdapi path literal and omits authentication", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ images: ["image-base64"] }));
+        const url = "http://localhost/api/ai/system/channel-one/sdapi/v1/txt2img";
+        const body = JSON.stringify({ prompt: "test", width: 1024, height: 1024 });
         const response = await POST(
-            new Request("http://localhost/api/ai/system/channel-one/sdapi/v1/txt2img", {
+            new Request(url, {
                 method: "POST",
-                headers: {
-                    "content-type": "application/json",
-                    "x-vozeb-pro-logical-model": "image-local",
-                    "x-vozeb-pro-upstream-model": "sdxl",
-                },
-                body: JSON.stringify({ prompt: "test", width: 1024, height: 1024 }),
+                headers: { "content-type": "application/json", ...signedModelHeaders(url, body, "image-local", "sdxl", "image", "image-local-binding") },
+                body,
             }),
             { params: Promise.resolve({ channelId: "channel-one", path: ["sdapi", "v1", "txt2img"] }) },
         );
@@ -527,12 +825,14 @@ describe("VOZEB recommended video proxy", () => {
             .spyOn(globalThis, "fetch")
             .mockResolvedValueOnce(Response.json({ id: "video-one", task_id: "video-one", status: "queued" }))
             .mockResolvedValueOnce(Response.json({ id: "video-one", status: "completed", metadata: { url: "https://new.aiym.ink/v1/video-media/video-one.mp4" } }));
-        const headers = { "content-type": "application/json", ...systemModelHeaders("vozeb-video", "Seedance 2.0-fast-720p") };
+        const createUrl = "http://localhost/api/ai/system/channel-one/v1/videos/generations";
+        const body = JSON.stringify({ model: "Seedance 2.0-fast-720p", prompt: "test", duration: 5, generate_audio: false });
+        const headers = { "content-type": "application/json", ...signedModelHeaders(createUrl, body, "vozeb-video", "Seedance 2.0-fast-720p", "video", "vozeb-video-binding") };
         const createResponse = await POST(
-            new Request("http://localhost/api/ai/system/channel-one/v1/videos/generations", {
+            new Request(createUrl, {
                 method: "POST",
                 headers,
-                body: JSON.stringify({ model: "Seedance 2.0-fast-720p", prompt: "test", duration: 5, generate_audio: false }),
+                body,
             }),
             { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations"] }) },
         );
@@ -552,7 +852,7 @@ describe("Gemini Veo native video proxy", () => {
 
     beforeEach(() => {
         vi.restoreAllMocks();
-        mocks.consumeUserPoints.mockReset().mockResolvedValue({ model: "gemini-video", cost: 6, units: 6, recordId: "points-gemini", remaining: 94, permanentRemaining: 94, dailyRemaining: 0, dailyExpiresAt: "" });
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
         mocks.refundUserPoints.mockReset();
         mocks.safeUrl.mockResolvedValue(true);
         mocks.taskAccess.mockReset().mockResolvedValue(true);
@@ -568,12 +868,14 @@ describe("Gemini Veo native video proxy", () => {
             .spyOn(globalThis, "fetch")
             .mockResolvedValueOnce(Response.json({ name: `models/${model}/operations/operation-one`, done: false }))
             .mockResolvedValueOnce(Response.json({ done: false }));
-        const headers = { "content-type": "application/json", ...systemModelHeaders("gemini-video", model) };
+        const createUrl = `http://localhost/api/ai/system/channel-one/models/${model}:predictLongRunning`;
+        const body = JSON.stringify({ instances: [{ prompt: "A test video" }], parameters: { durationSeconds: 6, resolution: "720p" } });
+        const headers = { "content-type": "application/json", ...signedModelHeaders(createUrl, body, "gemini-video", model, "video", "gemini-video-binding") };
         const createResponse = await POST(
-            new Request(`http://localhost/api/ai/system/channel-one/models/${model}:predictLongRunning`, {
+            new Request(createUrl, {
                 method: "POST",
                 headers,
-                body: JSON.stringify({ instances: [{ prompt: "A test video" }], parameters: { durationSeconds: 6, resolution: "720p" } }),
+                body,
             }),
             { params: Promise.resolve({ channelId: "channel-one", path: ["models", `${model}:predictLongRunning`] }) },
         );
@@ -586,8 +888,8 @@ describe("Gemini Veo native video proxy", () => {
         expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`, `https://generativelanguage.googleapis.com/v1beta/models/${model}/operations/operation-one`]);
         expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("x-goog-api-key")).toBe("gemini-secret");
         expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
-        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "gemini-video", 6, "video", expect.any(String), expect.any(String));
-        expect(mocks.consumeUserPoints).toHaveBeenCalledOnce();
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", logicalModelId: "gemini-video" }));
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
     });
 });
 
@@ -619,11 +921,13 @@ describe("Yumeng v2 model-center proxy", () => {
 
     it("keeps the v2 path literal instead of inserting v1", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
+        const url = "http://localhost/api/ai/system/channel-one/kyyReactApiServer/v2/model-center/tasks";
+        const body = JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" });
         const response = await POST(
-            new Request("http://localhost/api/ai/system/channel-one/kyyReactApiServer/v2/model-center/tasks", {
+            new Request(url, {
                 method: "POST",
-                headers: { "content-type": "application/json", ...systemModelHeaders("yumeng-image", "seedream_5.0Pro") },
-                body: JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" }),
+                headers: { "content-type": "application/json", ...signedModelHeaders(url, body, "yumeng-image", "seedream_5.0Pro", "image", "yumeng-image-binding") },
+                body,
             }),
             { params: Promise.resolve({ channelId: "channel-one", path: ["kyyReactApiServer", "v2", "model-center", "tasks"] }) },
         );
@@ -640,12 +944,14 @@ describe("Yumeng v2 model-center proxy", () => {
             systemChannels: settings.systemChannels.map((channel: { baseUrl: string }) => ({ ...channel, baseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer" })),
         });
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
+        const url = "http://localhost/api/ai/system/channel-one/kyyReactApiServer/v2/model-center/tasks";
+        const body = JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" });
 
         const response = await POST(
-            new Request("http://localhost/api/ai/system/channel-one/kyyReactApiServer/v2/model-center/tasks", {
+            new Request(url, {
                 method: "POST",
-                headers: { "content-type": "application/json", ...systemModelHeaders("yumeng-image", "seedream_5.0Pro") },
-                body: JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" }),
+                headers: { "content-type": "application/json", ...signedModelHeaders(url, body, "yumeng-image", "seedream_5.0Pro", "image", "yumeng-image-binding") },
+                body,
             }),
             { params: Promise.resolve({ channelId: "channel-one", path: ["kyyReactApiServer", "v2", "model-center", "tasks"] }) },
         );
@@ -690,18 +996,21 @@ describe("configured versioned protocol billing", () => {
 
     it("classifies a configured v1 create path from the trusted model header", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ task_id: "seedance-task", status: "queued" }));
+        const url = "http://localhost/api/ai/system/channel-one/v1/seedance-special/videos";
+        const body = JSON.stringify({ content: [{ type: "text", text: "test" }], duration: 5, ratio: "16:9" });
         const response = await POST(
-            new Request("http://localhost/api/ai/system/channel-one/v1/seedance-special/videos", {
+            new Request(url, {
                 method: "POST",
-                headers: { "content-type": "application/json", ...systemModelHeaders("seedance-special-video", "sd_2.0_fast_special_720p") },
-                body: JSON.stringify({ content: [{ type: "text", text: "test" }], duration: 5, ratio: "16:9" }),
+                headers: { "content-type": "application/json", ...signedModelHeaders(url, body, "seedance-special-video", "sd_2.0_fast_special_720p", "video", "seedance-special-video-binding") },
+                body,
             }),
             { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "seedance-special", "videos"] }) },
         );
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0]?.[0]).toBe("https://provider.example/kyyReactApiServer/v1/seedance-special/videos");
-        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "seedance-special-video", 1, "video", expect.any(String), expect.any(String));
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", logicalModelId: "seedance-special-video" }));
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
     });
 });
 
@@ -713,15 +1022,7 @@ describe("custom protocol model routing", () => {
         mocks.safeUrl.mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [
-                {
-                    id: "image-tool",
-                    name: "图片工具",
-                    capability: "image",
-                    enabled: true,
-                    bindings: [{ id: "image-binding", channelId: "channel-one", upstreamModel: "engine-one", enabled: true, priority: 1 }],
-                },
-            ],
+            logicalModels: [logicalModel("image-tool", "image", "engine-one")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -741,22 +1042,21 @@ describe("custom protocol model routing", () => {
 
     it("uses the trusted upstream model header when a custom body has no model field", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ url: "https://cdn.example.com/result.png" }));
+        const url = "http://localhost/api/ai/system/channel-one/jobs/image";
+        const body = JSON.stringify({ engine: "engine-one", prompt: "test" });
         const response = await POST(
-            new Request("http://localhost/api/ai/system/channel-one/jobs/image", {
+            new Request(url, {
                 method: "POST",
-                headers: {
-                    "content-type": "application/json",
-                    "x-vozeb-pro-logical-model": "image-tool",
-                    "x-vozeb-pro-upstream-model": "engine-one",
-                },
-                body: JSON.stringify({ engine: "engine-one", prompt: "test" }),
+                headers: { "content-type": "application/json", ...signedModelHeaders(url, body, "image-tool", "engine-one", "image", "image-tool-binding") },
+                body,
             }),
             { params: Promise.resolve({ channelId: "channel-one", path: ["jobs", "image"] }) },
         );
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/v1/jobs/image");
-        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "image-tool", 1, "image", expect.stringMatching(/^system-ai:[a-f0-9]{64}$/), expect.stringMatching(/^[a-f0-9]{64}$/));
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", logicalModelId: "image-tool" }));
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
     });
 });
 
@@ -817,11 +1117,138 @@ function textContext() {
 }
 
 function chatRequest(body: unknown) {
+    const payload = body as { model?: string };
+    const mapping: Record<string, { logicalModelId: string; capability: "text" | "video"; bindingId: string; path: string }> = {
+        "gemini-3.1-pro-preview": { logicalModelId: "gemini-text", capability: "text", bindingId: "gemini-text-binding", path: "/chat/completions" },
+        "vendor-text": { logicalModelId: "writer", capability: "text", bindingId: "writer-binding", path: "/chat/completions" },
+        videos_stable: { logicalModelId: "videos-model", capability: "video", bindingId: "videos-model-binding", path: "/videos/videos" },
+        "claude-opus-4-6": { logicalModelId: "claude-text", capability: "text", bindingId: "claude-text-binding", path: "/chat/completions" },
+    };
+    const selected = mapping[payload.model || ""];
+    const serialized = JSON.stringify(body);
+    const url = `http://localhost/api/ai/system/channel-one${selected?.path || "/chat/completions"}`;
+    const headers = selected ? signedModelHeaders(url, serialized, selected.logicalModelId, payload.model!, selected.capability, selected.bindingId) : {};
+    return new Request(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: serialized });
+}
+
+function unsignedChatRequest(body: unknown) {
     return new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
+function signedUsageHeaders(body: string, providerIdempotencySupported = true, overrides: Partial<{ userId: string; canonicalPath: string; canonicalQuery: string }> = {}) {
+    return systemAiBillingHeaders(
+        "writer",
+        {
+            userId: overrides.userId || "user-one",
+            channelId: "channel-one",
+            capability: "text",
+            method: "POST",
+            canonicalPath: overrides.canonicalPath || "/api/ai/system/channel-one/chat/completions",
+            canonicalQuery: overrides.canonicalQuery || "",
+            bodyDigest: createHash("sha256").update(body).digest("hex"),
+            expiresAtMs: Date.now() + 60_000,
+            businessRequestId: "text-task:one",
+            requestFingerprint: "a".repeat(64),
+            attemptNumber: 1,
+            bindingId: "writer-binding",
+            providerIdempotencySupported,
+            ...(providerIdempotencySupported ? { providerIdempotencyKey: "text-task:one:attempt:1" } : {}),
+        },
+        "vendor-text",
+    );
+}
+
 function logicalModel(id: string, capability: "text" | "image" | "video" | "audio", upstreamModel: string) {
-    return { id, name: id, capability, enabled: true, bindings: [{ id: `${id}-binding`, channelId: "channel-one", upstreamModel, enabled: true, priority: 1 }] };
+    const components =
+        capability === "text"
+            ? [
+                  { id: "input", dimension: "inputTokens" as const, unitPrice: "0.001" },
+                  { id: "output", dimension: "outputTokens" as const, unitPrice: "0.001" },
+              ]
+            : [{ id: "count", dimension: "count" as const, unitPrice: "1" }];
+    return {
+        id,
+        name: id,
+        capability,
+        enabled: true,
+        saleRateCard: { version: 1 as const, components },
+        bindings: [
+            {
+                id: `${id}-binding`,
+                channelId: "channel-one",
+                upstreamModel,
+                enabled: true,
+                priority: 1,
+                costRateCard: { version: 1 as const, components },
+                providerCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                capabilityProfile: capability === "text" ? { maxOutputTokens: 128, supportsIdempotency: true } : { supportsIdempotency: true },
+            },
+        ],
+    };
+}
+
+function signedModelHeaders(url: string, body: string, logicalModelId: string, upstreamModel: string, capability: "text" | "image" | "video" | "audio", bindingId: string) {
+    const target = new URL(url);
+    return systemAiBillingHeaders(
+        logicalModelId,
+        {
+            userId: "user-one",
+            channelId: "channel-one",
+            capability,
+            method: "POST",
+            canonicalPath: target.pathname,
+            canonicalQuery: target.searchParams.toString(),
+            bodyDigest: createHash("sha256").update(body).digest("hex"),
+            expiresAtMs: Date.now() + 60_000,
+            businessRequestId: `${capability}-task:test`,
+            requestFingerprint: createHash("sha256").update(`${logicalModelId}:test`).digest("hex"),
+            attemptNumber: 1,
+            bindingId,
+            providerIdempotencySupported: true,
+            providerIdempotencyKey: `${capability}-task:test:attempt:1`,
+        },
+        upstreamModel,
+    );
+}
+
+function pricedTextSettings() {
+    return {
+        generationPointMultipliers: {},
+        logicalModels: [
+            {
+                id: "writer",
+                name: "写作",
+                capability: "text" as const,
+                enabled: true,
+                saleRateCard: {
+                    version: 1 as const,
+                    components: [
+                        { id: "input", dimension: "inputTokens" as const, unitPrice: "0.001" },
+                        { id: "output", dimension: "outputTokens" as const, unitPrice: "0.001" },
+                    ],
+                },
+                bindings: [
+                    {
+                        id: "writer-binding",
+                        channelId: "channel-one",
+                        upstreamModel: "vendor-text",
+                        enabled: true,
+                        priority: 1,
+                        costRateCard: {
+                            version: 1 as const,
+                            components: [
+                                { id: "input", dimension: "inputTokens" as const, unitPrice: "0.0005" },
+                                { id: "output", dimension: "outputTokens" as const, unitPrice: "0.0005" },
+                            ],
+                        },
+                        providerCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                        capabilityProfile: { maxOutputTokens: 128, supportsIdempotency: true },
+                    },
+                ],
+            },
+        ],
+        systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai" as const, models: ["vendor-text"] }],
+    };
 }
 
 function systemModelHeaders(logicalModelId: string, upstreamModel: string) {

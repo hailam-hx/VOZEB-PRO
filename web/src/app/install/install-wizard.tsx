@@ -274,7 +274,7 @@ function AdminStep({ install, installToken, onInstallTokenChange, runtimeReady, 
     if (install.ready) {
         return (
             <section className="p-5 sm:p-8">
-                <StepHeader step="步骤 3 / 3" title="管理员账号已创建" description="站点已经完成初始化，可以进入后台继续配置模型渠道、套餐权益和支付渠道。" />
+                <StepHeader step="步骤 3 / 3" title="管理员账号已创建" description="站点已经完成初始化，可以进入后台继续配置模型渠道、充值定价和支付渠道。" />
                 <Link href="/login?next=/admin" className={`mt-6 ${primaryButtonClass}`}>
                     登录后台
                     <ArrowRight className="size-4" />

@@ -4,12 +4,13 @@ const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     updateUserByAdmin: vi.fn(),
     deleteAdminUserWithMediaCleanup: vi.fn(),
+    isAuthInputError: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", () => ({
     updateUserByAdmin: mocks.updateUserByAdmin,
-    isAuthInputError: vi.fn(() => false),
+    isAuthInputError: mocks.isAuthInputError,
 }));
 vi.mock("@/lib/server/admin-user-deletion-service", () => ({ deleteAdminUserWithMediaCleanup: mocks.deleteAdminUserWithMediaCleanup }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({})), safeRecordAuditLog: vi.fn() }));
@@ -19,6 +20,7 @@ import { DELETE, PATCH } from "./route";
 describe("admin user detail route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.isAuthInputError.mockReturnValue(false);
         mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["users.manage", "administrators.manage", "billing.manage"] });
         mocks.updateUserByAdmin.mockResolvedValue({ id: "user-one", username: "creator", role: "user", status: "active" });
         mocks.deleteAdminUserWithMediaCleanup.mockResolvedValue({ ok: true });
@@ -29,6 +31,7 @@ describe("admin user detail route", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.updateUserByAdmin).toHaveBeenCalledWith("admin-one", "user-one", { role: "admin" });
+        expect(await response.json()).toMatchObject({ code: 0, data: { user: { id: "user-one" } }, msg: "" });
     });
 
     it("deletes the user aggregate with the current administrator permission", async () => {
@@ -36,6 +39,18 @@ describe("admin user detail route", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.deleteAdminUserWithMediaCleanup).toHaveBeenCalledWith("admin-one", "user-one");
+        expect(await response.json()).toEqual({ code: 0, data: { ok: true }, msg: "" });
+    });
+
+    it("returns a domain conflict in the shared response envelope", async () => {
+        const conflict = Object.assign(new Error("结算余额不能低于当前预留积分"), { status: 409 });
+        mocks.updateUserByAdmin.mockRejectedValueOnce(conflict);
+        mocks.isAuthInputError.mockImplementation((error) => error === conflict);
+
+        const response = await PATCH(request("PATCH", { settledBalance: "1" }), context());
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ code: 409, data: null, msg: "结算余额不能低于当前预留积分" });
     });
 });
 

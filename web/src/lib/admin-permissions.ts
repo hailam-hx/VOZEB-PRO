@@ -15,7 +15,7 @@ export const ADMIN_PERMISSION_DEFINITIONS = [
     { key: "generation.read", group: "generation", label: "生成记录", description: "查看生成任务、日志和媒体资产。" },
     { key: "generation.manage", group: "generation", label: "生成运维", description: "处理生成失败、人工确认和记录清理。" },
     { key: "upstream.manage", group: "generation", label: "上游配置", description: "管理模型渠道、路由、Skills 和生成参数。" },
-    { key: "commerce.manage", group: "billing", label: "商品营销", description: "管理套餐商品、促销、优惠券和邀请奖励。" },
+    { key: "commerce.manage", group: "billing", label: "充值运营", description: "管理充值预设、促销和邀请奖励。" },
     { key: "billing.read", group: "billing", label: "财务查看", description: "查看订单、流水、支付和对账摘要。" },
     { key: "billing.manage", group: "billing", label: "财务管理", description: "处理收款、退款、积分、支付配置和对账。" },
     { key: "system.manage", group: "system", label: "系统管理", description: "管理站点、邮件、存储、备份和数据维护。" },
@@ -25,7 +25,7 @@ export const ADMIN_PERMISSION_DEFINITIONS = [
 
 export type AdminPermission = (typeof ADMIN_PERMISSION_DEFINITIONS)[number]["key"];
 
-export const ADMIN_BILLING_TABS = ["orders", "products", "promotions", "coupons", "payments"] as const;
+export const ADMIN_BILLING_TABS = ["orders", "presets", "pricing", "usage", "recovery", "reconciliation", "payments"] as const;
 export type AdminBillingTab = (typeof ADMIN_BILLING_TABS)[number];
 
 export const ALL_ADMIN_PERMISSIONS: AdminPermission[] = ADMIN_PERMISSION_DEFINITIONS.map((item) => item.key);
@@ -35,7 +35,7 @@ export const ADMIN_PERMISSION_PRESETS = [
     { key: "finance", label: "财务", description: "订单、支付、退款、积分与对账。", permissions: ["users.read", "billing.read", "billing.manage"] },
     { key: "support", label: "客服与用户运营", description: "用户账号与生成任务排障。", permissions: ["users.read", "users.manage", "generation.read", "generation.manage"] },
     { key: "content", label: "内容审核", description: "作品、举报申诉、公告与提示词。", permissions: ["users.read", "content.manage"] },
-    { key: "commerce", label: "商品与营销运营", description: "经营数据、商品、促销、优惠券和邀请。", permissions: ["analytics.read", "users.read", "commerce.manage"] },
+    { key: "commerce", label: "充值与营销运营", description: "经营数据、充值预设、促销和邀请。", permissions: ["analytics.read", "users.read", "commerce.manage"] },
     { key: "upstream", label: "上游运维", description: "模型渠道、Skills 与生成运行状态。", permissions: ["generation.read", "generation.manage", "upstream.manage"] },
     { key: "system", label: "系统运维", description: "系统设置、存储、备份和审计。", permissions: ["system.manage", "audit.read"] },
     { key: "audit", label: "只读审计", description: "只查看经营、用户、生成、财务和审计记录。", permissions: ["analytics.read", "users.read", "generation.read", "billing.read", "audit.read"] },
@@ -74,9 +74,11 @@ export function adminPermissionSummary(value: unknown) {
 
 const ADMIN_BILLING_TAB_PERMISSIONS: Record<AdminBillingTab, readonly AdminPermission[]> = {
     orders: ["billing.read", "billing.manage"],
-    products: ["commerce.manage"],
-    promotions: ["commerce.manage"],
-    coupons: ["commerce.manage"],
+    presets: ["commerce.manage", "billing.manage"],
+    pricing: ["billing.manage"],
+    usage: ["billing.read"],
+    recovery: ["billing.manage"],
+    reconciliation: ["billing.read", "billing.manage"],
     payments: ["billing.manage"],
 };
 

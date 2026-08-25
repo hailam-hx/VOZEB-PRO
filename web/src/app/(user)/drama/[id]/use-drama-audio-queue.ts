@@ -3,6 +3,7 @@ import { useTranslations } from "next-intl";
 
 import type { AiConfig } from "@/stores/use-config-store";
 import { syncUserPointsFromHeaders } from "@/services/api/points";
+import { requestCreditCost } from "@/constant/credits";
 import type { DramaEpisode, DramaProject, DramaShot } from "../types";
 
 type UpdateShot = (projectId: string, episodeId: string, shotId: string, patch: Partial<DramaShot>) => void;
@@ -54,7 +55,16 @@ export function useDramaAudioQueue(project: DramaProject, episode: DramaEpisode,
                     projectId: project.id,
                     episodeId: episode.id,
                     shotId: next.id,
-                    estimatedPoints: Number(config.modelPointCosts[config.audioModel] || 0),
+                    estimatedPoints: Number(
+                        requestCreditCost({
+                            apiSource: config.apiSource,
+                            logicalModels: config.logicalModels,
+                            kind: "audio",
+                            model: config.audioModel,
+                            format: config.audioFormat,
+                            characters: prompt,
+                        }),
+                    ),
                     attemptNo: next.audioAttempt || 1,
                     clientRequestId: `drama-audio:${project.id}:${episode.id}:${next.id}:attempt-${next.audioAttempt || 1}`,
                 },

@@ -1,5 +1,3 @@
-import type { CouponTemplate } from "./billing";
-
 export type ReferralRiskStatus = "clear" | "review" | "frozen" | "rejected";
 export type ReferralRewardStatus = "pending" | "settled" | "revoked" | "rejected" | "reversal_pending";
 
@@ -16,10 +14,8 @@ export type ReferralProgram = {
     id?: "default";
     enabled: boolean;
     inviterPoints: number;
-    inviteeRewardType: "points" | "coupon";
     inviteePoints: number;
-    inviteeCouponTemplateId?: string;
-    minimumPaidCents: number;
+    minimumPaidUsd: string;
     coolingOffDays: number;
     inviterMonthlyLimit?: number;
     campaignTotalLimit?: number;
@@ -50,9 +46,8 @@ export type ReferralReward = {
     relationshipId: string;
     beneficiaryUserId: string;
     beneficiaryRole: "inviter" | "invitee";
-    rewardType: "points" | "coupon";
+    rewardType: "points";
     pointsAmount: number;
-    couponTemplateId?: string;
     triggerOrderId: string;
     status: ReferralRewardStatus;
     settleAfter: string;
@@ -66,7 +61,7 @@ export type ReferralReward = {
 };
 
 export type ReferralCenter = {
-    program: Pick<ReferralProgram, "enabled" | "inviterPoints" | "inviteeRewardType" | "inviteePoints" | "minimumPaidCents" | "coolingOffDays">;
+    program: Pick<ReferralProgram, "enabled" | "inviterPoints" | "inviteePoints" | "minimumPaidUsd" | "coolingOffDays">;
     code: string;
     link: string;
     stats: { clicks: number; registrations: number; qualified: number; pending: number; settled: number; revoked: number };
@@ -90,13 +85,6 @@ export async function getReferralCenter(input: { referralsPage?: number; rewards
 
 export async function getAdminReferralOverview() {
     return requestReferral<{ program: ReferralProgram; stats: AdminReferralStats }>("/api/admin/referrals");
-}
-
-export async function listAdminReferralCouponTemplates(input: { keyword?: string; selectedId?: string; pageSize?: number } = {}) {
-    const query = new URLSearchParams({ page: "1", pageSize: String(input.pageSize || 20), includeDisabled: "false" });
-    if (input.keyword) query.set("keyword", input.keyword);
-    if (input.selectedId) query.set("selectedId", input.selectedId);
-    return requestReferral<{ templates: CouponTemplate[]; total: number; page: number; pageSize: number }>(`/api/admin/billing/coupon-templates?${query}`);
 }
 
 export async function saveAdminReferralProgram(program: ReferralProgram) {

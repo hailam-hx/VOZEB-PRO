@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
     Activity,
-    BadgePercent,
     BookOpen,
     CircleDollarSign,
     Cloud,
@@ -28,7 +27,6 @@ import {
     ReceiptText,
     SlidersHorizontal,
     Sparkles,
-    TicketPercent,
     UserPlus,
     UsersRound,
     UserRoundX,
@@ -175,17 +173,15 @@ export function AdminSectionNav({
 
 export const adminSections: AdminSection[] = [
     { key: "overview", label: "经营看板", description: "查看用户增长、调用趋势、收入概览和模型请求分布。", shortDescription: "数据总览", icon: <Database className="size-4" /> },
-    { key: "users", label: "用户运营", description: "管理用户角色、账号状态、套餐归属和积分余额。", shortDescription: "账户与权益", icon: <UsersRound className="size-4" /> },
+    { key: "users", label: "用户运营", description: "管理用户角色、账号状态和统一积分余额。", shortDescription: "账户与余额", icon: <UsersRound className="size-4" /> },
     { key: "logs", label: "调用记录", description: "追踪用户生成任务、模型调用、入口来源和失败原因。", shortDescription: "生成与模型", icon: <Film className="size-4" /> },
     { key: "generationOperations", label: "生成运维", description: "统一排查生成任务、会话、项目、渠道健康、失败原因和积分成本。", shortDescription: "任务排障", icon: <Activity className="size-4" /> },
-    { key: "products", label: "套餐管理", description: "配置充值中心展示的套餐、价格、积分权益和有效期。", shortDescription: "商品与权益", icon: <CreditCard className="size-4" /> },
-    { key: "promotions", label: "促销活动", description: "配置限时活动价、促销标签、生效时间和适用商品。", shortDescription: "活动价", icon: <BadgePercent className="size-4" /> },
-    { key: "coupons", label: "优惠券", description: "管理优惠券规则、领取库存、适用商品和定向发放。", shortDescription: "领券与核销", icon: <TicketPercent className="size-4" /> },
-    { key: "referrals", label: "邀请奖励", description: "配置邀请码、首单奖励、冷静期、风控与结算。", shortDescription: "拉新与奖励", icon: <UserPlus className="size-4" /> },
+    { key: "top-ups", label: "充值与定价", description: "管理充值预设、客户汇率、逻辑模型售价、绑定成本和供应商单位换算。", shortDescription: "预设与价格", icon: <CreditCard className="size-4" /> },
+    { key: "referrals", label: "邀请奖励", description: "配置邀请码、首充积分奖励、冷静期、风控与结算。", shortDescription: "拉新与积分", icon: <UserPlus className="size-4" /> },
     { key: "orders", label: "订单管理", description: "处理充值订单、收款确认、退款标记和基础对账。", shortDescription: "收款与售后", icon: <ReceiptText className="size-4" /> },
-    { key: "points", label: "积分规则", description: "配置免费每日积分、模型基础扣费和生成参数倍率。", shortDescription: "额度与扣费", icon: <CircleDollarSign className="size-4" /> },
+    { key: "points", label: "积分账务", description: "调整统一积分余额并查看积分收支记录。", shortDescription: "余额与流水", icon: <CircleDollarSign className="size-4" /> },
     { key: "payments", label: "支付渠道", description: "配置 Stripe、支付宝、微信支付、PayPly 和人工确认渠道。", shortDescription: "密钥与回调", icon: <PlugZap className="size-4" /> },
-    { key: "cdk", label: "CDK 兑换", description: "生成和管理积分或套餐兑换码，用于活动发放和售后补偿。", shortDescription: "兑换码", icon: <Gift className="size-4" /> },
+    { key: "cdk", label: "CDK 兑换", description: "生成和管理积分兑换码，用于活动发放和售后补偿。", shortDescription: "积分兑换码", icon: <Gift className="size-4" /> },
     { key: "wallet", label: "财务流水", description: "查看资金流水、积分负债和收入/退款对账口径。", shortDescription: "收入对账", icon: <WalletCards className="size-4" /> },
     { key: "site", label: "站点资料", description: "管理前台网站标题、Logo、SEO 标题、描述和关键词。", shortDescription: "品牌与 SEO", icon: <Globe2 className="size-4" /> },
     { key: "channels", label: "模型渠道", description: "添加上游接口，维护模型目录、逻辑绑定和各能力默认模型。", shortDescription: "上游接口", icon: <PlugZap className="size-4" /> },
@@ -204,8 +200,8 @@ export const adminSections: AdminSection[] = [
 
 export const adminSectionGroups: AdminSectionGroup[] = [
     { title: "经营分析", items: sectionsFor(["overview", "users", "logs", "generationOperations"]) },
-    { title: "商品运营", items: sectionsFor(["products", "orders"]) },
-    { title: "营销推广", items: sectionsFor(["promotions", "coupons", "referrals"]) },
+    { title: "商品运营", items: sectionsFor(["top-ups", "orders"]) },
+    { title: "营销推广", items: sectionsFor(["referrals"]) },
     { title: "财务管理", items: sectionsFor(["points", "payments", "cdk", "wallet"]) },
     { title: "上游配置", items: sectionsFor(["channels", "skills"]) },
     { title: "系统管理", items: sectionsFor(["site", "settings", "accountDeletion"]) },

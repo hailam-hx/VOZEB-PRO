@@ -1,11 +1,13 @@
-import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
+import { getAuthSettings } from "@/lib/auth/store";
 import { parseFragment } from "parse5";
 import { parseDeterministicProtocolDraft, protocolDraftFromUnknown, redactProtocolSecrets, type ChannelProtocolDraft } from "@/lib/channel-protocol-draft";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { systemAiTextUsageContext } from "@/lib/server/generation-usage-context";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { TEXT_MODEL_REQUEST_TIMEOUT_MS } from "@/lib/server/model-request-policy";
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey } from "@/lib/server/system-ai-billing";
+import { systemAiBillingHeaders, systemAiIdempotencyKey, systemAiUsageRequestFingerprint } from "@/lib/server/system-ai-billing";
+import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 import { fetchSafeOutbound, UnsafeOutboundUrlError } from "@/lib/server/safe-outbound-fetch";
 import { safeProtocolDocumentationUrl } from "@/lib/channel-protocol-security";
 
@@ -44,27 +46,48 @@ async function assistProtocolDraftWithTextModel(input: { requestUrl: string; coo
     if (!logicalModel || !candidates.length) return null;
     const origin = resolveInternalOrigin(new URL(input.requestUrl).origin);
     const prompt = protocolAssistantPrompt(source, fallback);
-    for (const candidate of candidates) {
+    const businessRequestId = systemAiIdempotencyKey("protocol-draft", input.userId, source);
+    const requestFingerprint = systemAiUsageRequestFingerprint({ userId: input.userId, businessRequestId, logicalModel, capability: "text", payload: { prompt } });
+    for (const [index, candidate] of candidates.entries()) {
+        const attemptNumber = index + 1;
+        const usageContext = systemAiTextUsageContext({ candidate, userId: input.userId, logicalModelId: logicalModel, businessRequestId, requestFingerprint, attemptNumber });
         const headers = {
             "Content-Type": "application/json",
             cookie: input.cookie,
-            ...systemAiBillingHeaders(logicalModel, systemAiIdempotencyKey("protocol-draft", input.userId, candidate.channel.id, candidate.upstreamModel, source.slice(0, 4_000)), candidate.upstreamModel),
+            ...systemAiBillingHeaders(logicalModel, usageContext, candidate.upstreamModel),
         };
-        const response = await fetchInternalApi(`${origin}/api/ai/system/${encodeURIComponent(candidate.channel.id)}/chat/completions`, {
-            method: "POST",
-            headers,
-            cache: "no-store",
-            signal: AbortSignal.timeout(TEXT_MODEL_REQUEST_TIMEOUT_MS),
-            body: JSON.stringify({
-                model: candidate.upstreamModel,
-                messages: [
-                    { role: "system", content: "你是 API 协议分析器。只输出一个符合要求的 JSON 对象，不输出 Markdown、解释或代码。不得生成脚本。" },
-                    { role: "user", content: prompt },
-                ],
-                response_format: { type: "json_object" },
-            }),
-        }).catch(() => null);
-        if (!response?.ok) continue;
+        let response: Response;
+        try {
+            response = await fetchInternalApi(`${origin}/api/ai/system/${encodeURIComponent(candidate.channel.id)}/chat/completions`, {
+                method: "POST",
+                headers,
+                cache: "no-store",
+                signal: AbortSignal.timeout(TEXT_MODEL_REQUEST_TIMEOUT_MS),
+                body: JSON.stringify({
+                    model: candidate.upstreamModel,
+                    messages: [
+                        { role: "system", content: "你是 API 协议分析器。只输出一个符合要求的 JSON 对象，不输出 Markdown、解释或代码。不得生成脚本。" },
+                        { role: "user", content: prompt },
+                    ],
+                    response_format: { type: "json_object" },
+                }),
+            });
+        } catch (error) {
+            await resolveSystemAiTextFailure({ userId: input.userId, businessId: businessRequestId, reason: error instanceof Error ? error.message : "协议分析请求状态未知", final: false, currentAttempt: { attemptNumber, acceptance: "unknown" } });
+            return null;
+        }
+        if (!response.ok) {
+            const resolution = await resolveSystemAiTextFailure({
+                userId: input.userId,
+                businessId: businessRequestId,
+                reason: `协议分析渠道失败（${response.status}）`,
+                final: false,
+                requestNotReceived: true,
+                currentAttempt: { attemptNumber, acceptance: "response" },
+            });
+            if (resolution.state !== "safe_to_failover") return null;
+            continue;
+        }
         const payload = (await response.json().catch(() => null)) as { choices?: Array<{ message?: { content?: string } }> } | null;
         const text = payload?.choices?.[0]?.message?.content || "";
         const json = strictJsonObjectText(text);
@@ -76,10 +99,15 @@ async function assistProtocolDraftWithTextModel(input: { requestUrl: string; coo
                 draft = null;
             }
         }
-        if (draft) return draft;
-        const billing = readSystemAiBilling(response.headers);
-        if (hasSystemAiCharge(billing)) await refundUserPoints(input.userId, logicalModel, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
+        if (draft) {
+            await finishSystemAiTextAttempt(response.headers, { status: "succeeded" });
+            return draft;
+        }
+        await finishSystemAiTextAttempt(response.headers, { status: "failed" });
+        const resolution = await resolveSystemAiTextFailure({ userId: input.userId, businessId: businessRequestId, reason: "协议分析模型返回无效结构", final: false, currentAttempt: { attemptNumber, acceptance: "response" } });
+        if (resolution.state !== "safe_to_failover") return null;
     }
+    await resolveSystemAiTextFailure({ userId: input.userId, businessId: businessRequestId, reason: "没有可用的协议分析渠道", final: true });
     return null;
 }
 

@@ -31,13 +31,9 @@ export default async function UserLayout({ children }: { children: ReactNode }) 
                 role: user.role,
                 adminPermissions: user.adminPermissions,
                 status: user.status,
-                planId: user.planId,
-                planName: user.planName,
-                hasActivePlan: user.hasActivePlan,
-                pointsBalance: user.pointsBalance,
-                permanentPointsBalance: user.permanentPointsBalance,
-                dailyPointsBalance: user.dailyPointsBalance,
-                dailyPointsExpiresAt: user.dailyPointsExpiresAt,
+                settledBalance: user.settledBalance,
+                heldBalance: user.heldBalance,
+                availableBalance: user.availableBalance,
                 mfaEnabled: user.mfaEnabled,
             }}
         >

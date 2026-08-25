@@ -25,7 +25,7 @@ describe("payment checkout window", () => {
                 vi.fn(() => popup),
             ),
         ).toEqual({ status: "opened" });
-        expect(popup.location.replace).toHaveBeenCalledWith("/api/billing/orders/order/payment-form");
+        expect(popup.location.replace).toHaveBeenCalledWith("/api/billing/top-ups/orders/order/payment-form");
     });
 
     it("reports blocked popups with copyable fallback payment information", () => {

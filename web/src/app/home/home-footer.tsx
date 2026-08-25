@@ -32,7 +32,7 @@ export function HomeCta() {
 export function HomeFooter() {
     const t = useTranslations("home");
     const publicT = useTranslations("public");
-    const { site, openBillingPlans, openProtectedPath } = useHomeActions();
+    const { site, openTopUp, openProtectedPath } = useHomeActions();
     const friendLinks = site.friendLinks.filter((item) => item.enabled && item.label.trim() && item.url.trim());
     const socials = Object.entries(site.socials).filter(([, item]) => item.enabled && item.label.trim() && item.url.trim());
     const copyright = site.footerCopyright?.trim();
@@ -77,7 +77,7 @@ export function HomeFooter() {
                                         {t(item.translationKey)}
                                     </button>
                                 ) : item.action === "billing" ? (
-                                    <button key={item.href} type="button" onClick={openBillingPlans}>
+                                    <button key={item.href} type="button" onClick={openTopUp}>
                                         {t(item.translationKey)}
                                     </button>
                                 ) : (

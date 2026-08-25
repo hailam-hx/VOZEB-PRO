@@ -34,7 +34,7 @@ describe("PostgreSQL auth read paths", () => {
     });
 
     it("normalizes newly added generation defaults for existing database rows", () => {
-        const settings = mapPostgresSettings({ generation_defaults: { imageCount: 2 } }, [], []);
+        const settings = mapPostgresSettings({ generation_defaults: { imageCount: 2 } }, []);
 
         expect(settings.generationDefaults).toMatchObject({
             imageCount: 2,
@@ -42,14 +42,14 @@ describe("PostgreSQL auth read paths", () => {
     });
 
     it("normalizes persisted generation cost controls", () => {
-        const settings = mapPostgresSettings({ generation_cost_control: { maxPointsPerTask: 1.7, dailyUserPointSpend: 20, dailyTotalPointSpend: 100 } }, [], []);
+        const settings = mapPostgresSettings({ generation_cost_control: { maxPointsPerTask: 1.7, dailyUserPointSpend: 20, dailyTotalPointSpend: 100 } }, []);
 
         expect(settings.generationCostControl).toEqual({ maxPointsPerTask: 1.7, dailyUserPointSpend: 20, dailyTotalPointSpend: 100 });
         expect(POSTGRESQL_SCHEMA_SQL).toContain("generation_cost_control jsonb");
     });
 
     it("normalizes persisted technical data lifecycle controls", () => {
-        const settings = mapPostgresSettings({ data_lifecycle: { cleanupExpiredGenerationTasks: false, maintenanceBatchSize: 80 } }, [], []);
+        const settings = mapPostgresSettings({ data_lifecycle: { cleanupExpiredGenerationTasks: false, maintenanceBatchSize: 80 } }, []);
 
         expect(settings.dataLifecycle).toEqual({
             cleanupExpiredSessions: true,
@@ -62,7 +62,7 @@ describe("PostgreSQL auth read paths", () => {
     });
 
     it("fills missing fields in partial PostgreSQL settings JSON", () => {
-        const settings = mapPostgresSettings({ mail: {}, generation_concurrency: {} }, [], []);
+        const settings = mapPostgresSettings({ mail: {}, generation_concurrency: {} }, []);
 
         expect(settings.mail).toMatchObject({
             host: "smtp.qq.com",
@@ -82,7 +82,6 @@ describe("PostgreSQL auth read paths", () => {
         const encryptedWebhookSecret = encryptSecretValue("0123456789abcdef0123456789abcdef");
         const { executor } = mockExecutor([
             [{ id: "default" }],
-            [],
             [{ id: "channel-one", name: "主渠道", base_url: "https://api.example.com/v1", api_key_ciphertext: encryptedApiKey, webhook_secret_ciphertext: encryptedWebhookSecret, api_format: "openai", models: [], enabled: true }],
         ]);
 

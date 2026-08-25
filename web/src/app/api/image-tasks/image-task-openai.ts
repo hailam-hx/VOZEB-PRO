@@ -132,7 +132,7 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
     if (globalPreset) return runGlobalAiOpcImageTask(task, origin, publicOrigin, cookie, quality, requestSize, singleStep);
     const path = await openAiImageTaskPath(config, task.kind);
     const url = taskUrl(config, path, origin);
-    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
+    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId);
     const responseFormat = await preferredImageResponseFormat(config);
     const allowProtocolFallback = allowsImageProtocolFallback(config);
     const useJsonImageEdit = task.kind === "edit" && (await shouldUseJsonImageEdit(config));
@@ -194,7 +194,7 @@ async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOr
     if (!preset) throw new GenerationSubmissionSafeFailure("GlobalAiOpc 图片预设未配置");
     const path = preset.createPath;
     const url = taskUrl(config, path, origin);
-    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
+    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId);
     headers.set("content-type", "application/json");
     const referenceContext = { ownerUserId: task.userId, taskId: task.id };
     const imageUrls = (await Promise.all(task.references.map((reference) => publicImageReferenceRequestUrl(reference, origin, publicOrigin, referenceContext)))).filter(Boolean);
@@ -233,7 +233,7 @@ export async function runOpenAiJsonImageEditTask(
     singleStep = false,
 ): Promise<ImageTaskRunResult> {
     const config = task.config;
-    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
+    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId);
     headers.set("content-type", "application/json");
     let lastMessage = "";
     const apiBase = await resolveConfiguredApiBaseUrl(task.config.baseUrl).catch(() => task.config.baseUrl);
@@ -278,7 +278,7 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
     const path = await openAiImageTaskPath(config, task.kind);
     const url = taskUrl(config, path, origin);
     const allowProtocolFallback = allowsImageProtocolFallback(config);
-    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
+    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId);
 
     if (task.kind === "edit") {
         let formData: FormData;
@@ -327,7 +327,7 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
 export async function runOpenAiResponsesImageTask(task: ImageTask, origin: string, cookie: string, singleStep = false): Promise<ImageTaskRunResult> {
     const config = task.config;
     const url = taskUrl(config, "/responses", origin);
-    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
+    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId);
     headers.set("content-type", "application/json");
     let lastError = "";
 

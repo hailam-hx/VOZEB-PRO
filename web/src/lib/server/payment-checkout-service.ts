@@ -1,6 +1,4 @@
 import { BillingInputError } from "@/lib/server/billing-errors";
-import { expirePendingBillingOrders } from "@/lib/server/billing-order-expiration-service";
-import { isAutomaticallyExpiredOrder } from "@/lib/server/billing-service-helpers";
 import { createPostgresRepositories, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
 import { getPaymentRuntimeConfig, isPaymentRuntimeProviderCheckoutReady } from "@/lib/server/payment-config-store";
 import { checkoutFromMetadata, checkoutMetadata, createProviderCheckout, mergeMetadata, normalizeId, normalizeProvider } from "./payment-checkout-providers";
@@ -8,12 +6,11 @@ import type { CreatePaymentCheckoutOptions } from "./payment-checkout-types";
 
 export async function createPaymentCheckoutForOrder(orderId: string, options: CreatePaymentCheckoutOptions = {}) {
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付下单需要启用 PostgreSQL", 501);
-    await expirePendingBillingOrders({ orderId });
 
     const paymentConfig = await getPaymentRuntimeConfig();
     return withPostgresTransaction(async (client) => {
         const repos = createPostgresRepositories(client);
-        const order = await repos.billing.getOrderById(normalizeId(orderId), true);
+        const order = await repos.topUps.getOrderById(normalizeId(orderId), true);
         assertPayableOrder(order, options.userId);
 
         const provider = resolveCheckoutProvider(order.provider, options.provider);
@@ -23,8 +20,7 @@ export async function createPaymentCheckoutForOrder(orderId: string, options: Cr
 
         const checkout = await createProviderCheckout(provider, order, options, paymentConfig);
         const metadata = mergeMetadata(order.metadata, { checkout: checkoutMetadata(checkout) });
-        await repos.billing.updateOrder(order.id, {
-            provider,
+        await repos.topUps.updateCheckout(order.id, {
             providerOrderId: checkout.providerOrderId,
             providerPaymentId: checkout.providerPaymentId,
             metadata,
@@ -36,7 +32,7 @@ export async function createPaymentCheckoutForOrder(orderId: string, options: Cr
 export async function getStoredPaymentCheckoutForOrder(orderId: string, userId: string) {
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付下单需要启用 PostgreSQL", 501);
     return withPostgresTransaction(async (client) => {
-        const order = await createPostgresRepositories(client).billing.getOrderById(normalizeId(orderId), false);
+        const order = await createPostgresRepositories(client).topUps.getOrderById(normalizeId(orderId), false);
         assertPayableOrder(order, userId);
         const provider = normalizeProvider(order.provider);
         const checkout = checkoutFromMetadata(order, provider);
@@ -52,8 +48,8 @@ export function resolveCheckoutProvider(orderProvider: unknown, requestedProvide
     return provider;
 }
 
-function assertPayableOrder(order: Awaited<ReturnType<ReturnType<typeof createPostgresRepositories>["billing"]["getOrderById"]>>, userId?: string): asserts order is NonNullable<typeof order> {
+function assertPayableOrder(order: Awaited<ReturnType<ReturnType<typeof createPostgresRepositories>["topUps"]["getOrderById"]>>, userId?: string): asserts order is NonNullable<typeof order> {
     if (!order || (userId && order.userId !== userId)) throw new BillingInputError("订单不存在", 404);
-    if (isAutomaticallyExpiredOrder(order) || (order.expiresAt && Date.parse(order.expiresAt) <= Date.now())) throw new BillingInputError("订单已过期", 409);
+    if (order.expiresAt && Date.parse(order.expiresAt) <= Date.now()) throw new BillingInputError("订单已过期", 409);
     if (order.status !== "pending") throw new BillingInputError("当前订单状态不能发起支付", 409);
 }

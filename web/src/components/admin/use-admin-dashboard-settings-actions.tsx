@@ -87,10 +87,6 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         return saveSettings({ systemChannels, logicalModels, defaultModels }, "渠道已删除");
     };
 
-    const updateFreeDailyPoints = (value: number | null) => {
-        setSettings((current) => ({ ...current, freeDailyPoints: toNumberOrZero(value) }));
-    };
-
     const updateGenerationConcurrency = (key: keyof AuthSettings["generationConcurrency"], value: number | null) => {
         setSettings((current) => ({
             ...current,
@@ -325,7 +321,6 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         updateChannel,
         addChannel,
         deleteChannel,
-        updateFreeDailyPoints,
         updateGenerationConcurrency,
         updateGenerationDefaults,
         updateGenerationCostControl,

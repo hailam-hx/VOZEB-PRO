@@ -3,6 +3,8 @@ import type { useEffectiveConfig } from "@/stores/use-config-store";
 import { resolveDramaGenerationSize } from "@/lib/drama-image-size";
 import type { ReferenceImage } from "@/types/image";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
+import { requestCreditCost } from "@/constant/credits";
+import { decimal } from "@/lib/billing/decimal";
 
 export function shotReferenceImages(project: DramaProject, shot: DramaShot) {
     const assetUrls = [...project.characters.filter((item) => shot.characterIds.includes(item.id)), ...project.scenes.filter((item) => item.id === shot.sceneId), ...project.props.filter((item) => shot.propIds.includes(item.id))].flatMap((item) => {
@@ -38,24 +40,37 @@ export function dramaGenerationSize(project: DramaProject, prompt: string, refer
     return resolveDramaGenerationSize({ projectSize: project.ratio, prompt, references });
 }
 
-export function estimateTaskPoints(config: ReturnType<typeof useEffectiveConfig>, type: "image" | "video" | "audio", duration = 5) {
+export function estimateTaskPoints(config: ReturnType<typeof useEffectiveConfig>, type: "image" | "video" | "audio", duration = 5, characters?: string) {
+    return Number(estimateTaskCredits(config, type, duration, characters));
+}
+
+function estimateTaskCredits(config: ReturnType<typeof useEffectiveConfig>, type: "image" | "video" | "audio", duration = 5, characters?: string) {
     const model = type === "image" ? config.imageModel || config.model : type === "video" ? config.videoModel || config.model : config.audioModel;
-    const base = Number(config.modelPointCosts[model] || 0);
-    if (type === "image") return Number((base * (config.generationPointMultipliers.imageQuality[config.quality] || 1)).toFixed(2));
-    if (type === "video") {
-        const quality = config.generationPointMultipliers.videoQuality[config.vquality] || 1;
-        const seconds = config.generationPointMultipliers.videoSeconds[String(duration)] || config.generationPointMultipliers.videoSeconds[config.videoSeconds] || 1;
-        return Number((base * quality * seconds).toFixed(2));
-    }
-    return Number(base.toFixed(2));
+    return requestCreditCost({
+        apiSource: config.apiSource,
+        logicalModels: config.logicalModels,
+        kind: type,
+        model,
+        count: 1,
+        quality: type === "image" ? config.quality : undefined,
+        videoQuality: type === "video" ? config.vquality : undefined,
+        videoSeconds: type === "video" ? duration : undefined,
+        resolution: type === "image" ? config.size : undefined,
+        format: type === "audio" ? config.audioFormat : undefined,
+        characters,
+    });
 }
 
 export function estimateEpisodePoints(config: ReturnType<typeof useEffectiveConfig>, project: DramaProject, shots: DramaShot[]) {
     const total = shots.reduce((sum, shot) => {
         const mode = shot.videoMode || project.defaultVideoMode;
-        const image = mode === "storyboard" ? estimateTaskPoints(config, "image") * (shot.storyboardFrameMode === "first_last" ? 2 : 1) : 0;
-        const audio = shot.audioMode === "voiceover" && (shot.subtitle || shot.dialogue || shot.narration).trim() ? estimateTaskPoints(config, "audio") : 0;
-        return sum + image + estimateTaskPoints(config, "video", shot.duration) + audio;
-    }, 0);
-    return Number(total.toFixed(2));
+        const text = (shot.subtitle || shot.dialogue || shot.narration).trim();
+        const image = mode === "storyboard" ? decimal(estimateTaskCredits(config, "image")).times(decimal(shot.storyboardFrameMode === "first_last" ? 2 : 1)) : decimal(0);
+        const audio = shot.audioMode === "voiceover" && text ? decimal(estimateTaskCredits(config, "audio", 5, text)) : decimal(0);
+        return sum
+            .plus(image)
+            .plus(decimal(estimateTaskCredits(config, "video", shot.duration)))
+            .plus(audio);
+    }, decimal(0));
+    return Number(total.toString());
 }

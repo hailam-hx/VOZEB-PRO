@@ -53,14 +53,16 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const expandedEditorRef = useRef<HTMLTextAreaElement | null>(null);
     const credits = requestCreditCost({
         apiSource: config.apiSource,
-        modelPointCosts: config.modelPointCosts,
-        generationPointMultipliers: config.generationPointMultipliers,
+        logicalModels: config.logicalModels,
         kind: mode,
         model: config.model,
         count: mode === "image" ? config.count : 1,
         quality: config.quality,
         videoQuality: config.vquality,
         videoSeconds: config.videoSeconds,
+        resolution: config.size,
+        format: mode === "audio" ? config.audioFormat : undefined,
+        characters: prompt,
     });
 
     useEffect(() => {

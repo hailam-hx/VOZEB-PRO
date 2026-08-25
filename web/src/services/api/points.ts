@@ -33,22 +33,13 @@ export async function listPointRecords(input: { page?: number; pageSize?: number
 
 export function syncUserPointsFromHeaders(headers: HeaderLike, apiSource?: "system" | "custom") {
     if (apiSource !== "system") return;
-    const value = readHeader(headers, "x-vozeb-pro-points-remaining");
-    if (value === undefined || value === null || value === "") return;
-    const pointsBalance = Number(value);
-    if (!Number.isFinite(pointsBalance)) return;
+    const settledBalance = readDecimalHeader(headers, "x-vozeb-pro-balance-settled");
+    const heldBalance = readDecimalHeader(headers, "x-vozeb-pro-balance-held");
+    const availableBalance = readDecimalHeader(headers, "x-vozeb-pro-balance-available");
+    if (settledBalance === undefined || heldBalance === undefined || availableBalance === undefined) return;
     const currentUser = useUserStore.getState().user;
     if (!currentUser) return;
-    const permanentPointsBalance = readFiniteHeader(headers, "x-vozeb-pro-points-permanent");
-    const dailyPointsBalance = readFiniteHeader(headers, "x-vozeb-pro-points-daily");
-    const dailyPointsExpiresAt = readHeader(headers, "x-vozeb-pro-points-daily-expires-at");
-    useUserStore.getState().setUser({
-        ...currentUser,
-        pointsBalance,
-        ...(permanentPointsBalance === undefined ? {} : { permanentPointsBalance }),
-        ...(dailyPointsBalance === undefined ? {} : { dailyPointsBalance }),
-        ...(typeof dailyPointsExpiresAt === "string" && dailyPointsExpiresAt ? { dailyPointsExpiresAt } : {}),
-    });
+    useUserStore.getState().setUser({ ...currentUser, settledBalance, heldBalance, availableBalance });
 }
 
 export async function refreshUserPointsIfSystem(apiSource?: "system" | "custom") {
@@ -84,7 +75,7 @@ function readHeader(headers: HeaderLike, key: string) {
     return record[key] ?? record[key.toLowerCase()] ?? record[key.toUpperCase()];
 }
 
-function readFiniteHeader(headers: HeaderLike, key: string) {
-    const value = Number(readHeader(headers, key));
-    return Number.isFinite(value) ? value : undefined;
+function readDecimalHeader(headers: HeaderLike, key: string) {
+    const value = readHeader(headers, key);
+    return typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) ? value : undefined;
 }

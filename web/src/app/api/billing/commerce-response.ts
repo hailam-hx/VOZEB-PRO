@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { isBillingInputError } from "@/lib/server/billing-service";
+import { isBillingInputError } from "@/lib/server/billing-errors";
 
 export function commerceOk<T>(data: T, status = 200) {
     return NextResponse.json({ code: 0, data, msg: "" }, { status });

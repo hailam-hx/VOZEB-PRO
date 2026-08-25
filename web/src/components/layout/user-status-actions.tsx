@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, CreditCard, Crown, Gift, Keyboard, LogOut, ShieldCheck, UserCircle } from "lucide-react";
+import { ChevronRight, CreditCard, Gift, Keyboard, LogOut, ShieldCheck, UserCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -10,7 +10,6 @@ import type { MenuProps } from "antd";
 import { App, Button, Dropdown, Input, Popover } from "antd";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
-import { BillingPlansModal } from "@/components/billing/billing-plans-modal";
 import { AnnouncementNotificationCenter } from "@/components/layout/announcement-notification-center";
 import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
@@ -34,7 +33,6 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
     const [pointsOpen, setPointsOpen] = useState(false);
     const [accountOpen, setAccountOpen] = useState(false);
     const [isCompactViewport, setIsCompactViewport] = useState(false);
-    const [plansOpen, setPlansOpen] = useState(false);
     const rootRef = useRef<HTMLDivElement>(null);
     const storeUser = useUserStore((state) => state.user);
     const user = storeUser || initialUser || null;
@@ -61,7 +59,6 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
     const avatarFallback = userAvatarFallback(user?.displayName || user?.username || common("user"));
     const accountName = user?.displayName || user?.username || common("user");
     const accountSecondary = user ? `ID：${user.accountId}` : "";
-    const planActionLabel = user?.hasActivePlan ? common("renewPlan") : common("upgradePlan");
     const accountItems: MenuProps["items"] = [
         {
             type: "group",
@@ -85,29 +82,29 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
                     <div className="mt-2.5 rounded-lg border border-stone-200 bg-stone-50 p-2.5 dark:border-stone-800 dark:bg-stone-900/70">
                         <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
-                                <div className="text-[11px] text-stone-400 dark:text-stone-500">{common("currentPlan")}</div>
-                                <div className="mt-0.5 truncate text-sm font-semibold text-stone-900 dark:text-stone-100">{user?.planName || user?.planId || common("freePlan")}</div>
+                                <div className="text-[11px] text-stone-400 dark:text-stone-500">{common("availableBalance")}</div>
+                                <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">{formatCreditAmount(user?.availableBalance || "0")}</div>
                             </div>
                             <button
                                 type="button"
-                                className="account-upgrade-button inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-stone-950 px-2.5 text-[11px] font-semibold transition hover:bg-black dark:bg-white dark:hover:bg-stone-100"
-                                aria-label={planActionLabel}
-                                title={planActionLabel}
+                                className="account-top-up-button inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-stone-950 px-2.5 text-[11px] font-semibold transition hover:bg-black dark:bg-white dark:hover:bg-stone-100"
+                                aria-label={common("topUpCredits")}
+                                title={common("topUpCredits")}
                                 onClick={(event) => {
                                     event.preventDefault();
                                     event.stopPropagation();
                                     setAccountOpen(false);
-                                    setPlansOpen(true);
+                                    router.push("/profile?section=billing");
                                 }}
                             >
-                                <Crown className="size-3.5" /> {planActionLabel}
+                                <CreditCard className="size-3.5" /> {common("topUpCredits")}
                             </button>
                         </div>
                         <div className="mt-2 flex items-center justify-between gap-3 border-t border-stone-200 pt-2 text-xs dark:border-stone-800">
-                            <span className="text-stone-500 dark:text-stone-400">{common("creditBalance")}</span>
+                            <span className="text-stone-500 dark:text-stone-400">{common("settledBalance")}</span>
                             <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-stone-900 dark:text-stone-100">
                                 <CreditSymbol className="text-sm text-[#66758e] dark:text-[#d8dee8]" />
-                                {formatCreditAmount(user?.pointsBalance || 0)}
+                                {formatCreditAmount(user?.settledBalance || "0")}
                             </span>
                         </div>
                     </div>
@@ -219,7 +216,7 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
             title={common("creditBalance")}
         >
             <CreditSymbol className="text-sm" />
-            {formatCreditAmount(user.pointsBalance)}
+            {formatCreditAmount(user.availableBalance)}
         </button>
     ) : null;
 
@@ -241,7 +238,7 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
                             onClose={() => setPointsOpen(false)}
                             onUpgrade={() => {
                                 setPointsOpen(false);
-                                setPlansOpen(true);
+                                router.push("/profile?section=billing");
                             }}
                         />
                     }
@@ -313,13 +310,6 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
                     <Keyboard className="size-4" />
                 </button>
             ) : null}
-            <BillingPlansModal
-                open={plansOpen}
-                onClose={() => setPlansOpen(false)}
-                onSelect={(product) => {
-                    router.push(`/billing/checkout?product=${encodeURIComponent(product.id)}`);
-                }}
-            />
         </div>
     );
 }
@@ -373,20 +363,20 @@ function PointsSummaryPanel({ user, onClose, onUpgrade }: { user: LocalUser; onC
                     <div className="mt-0.5 text-[11px] leading-4 text-stone-500 dark:text-stone-400">{recordTotal === undefined ? billing("pointsUsageSummary") : billing("recordCount", { count: recordTotal })}</div>
                 </div>
                 <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-stone-50 px-2.5 text-xs font-medium text-stone-600 dark:border-stone-800 dark:bg-stone-900/70 dark:text-stone-300">
-                    <CreditSymbol className="text-sm text-sky-600 dark:text-sky-300" /> {billing("balance")} <strong className="text-sm text-stone-950 dark:text-stone-100">{formatCreditAmount(user.pointsBalance)}</strong>
+                    <CreditSymbol className="text-sm text-sky-600 dark:text-sky-300" /> {billing("balance")} <strong className="text-sm text-stone-950 dark:text-stone-100">{formatCreditAmount(user.availableBalance)}</strong>
                 </span>
             </div>
             <div className="grid grid-cols-2 border-y border-stone-200 py-2 dark:border-stone-800">
                 <div className="border-r border-stone-200 pr-3 dark:border-stone-800">
                     <div className="flex items-baseline justify-between gap-2">
-                        <span className="text-[11px] text-stone-500 dark:text-stone-400">{billing("availableToday")}</span>
-                        <strong className="shrink-0 text-sm font-semibold tabular-nums">{formatCreditAmount(user.dailyPointsBalance || 0)}</strong>
+                        <span className="text-[11px] text-stone-500 dark:text-stone-400">{billing("settledBalance")}</span>
+                        <strong className="shrink-0 text-sm font-semibold tabular-nums">{formatCreditAmount(user.settledBalance)}</strong>
                     </div>
                 </div>
                 <div className="pl-3">
                     <div className="flex items-baseline justify-between gap-2">
-                        <span className="text-[11px] text-stone-500 dark:text-stone-400">{billing("permanentCredits")}</span>
-                        <strong className="shrink-0 text-sm font-semibold tabular-nums">{formatCreditAmount(user.permanentPointsBalance ?? Math.max(0, user.pointsBalance - (user.dailyPointsBalance || 0)))}</strong>
+                        <span className="text-[11px] text-stone-500 dark:text-stone-400">{billing("heldBalance")}</span>
+                        <strong className="shrink-0 text-sm font-semibold tabular-nums">{formatCreditAmount(user.heldBalance)}</strong>
                     </div>
                 </div>
             </div>
@@ -418,7 +408,7 @@ function PointsSummaryPanel({ user, onClose, onUpgrade }: { user: LocalUser; onC
                 onClick={onUpgrade}
                 className="points-summary-purchase !flex !h-9 !items-center !justify-center !gap-2 !rounded-lg !border-stone-950 !bg-stone-950 !px-3 !text-xs !font-semibold !text-white !shadow-none hover:!border-black hover:!bg-black hover:!text-white dark:!border-white dark:!bg-white dark:!text-stone-950 dark:hover:!border-stone-100 dark:hover:!bg-stone-100 dark:hover:!text-stone-950"
             >
-                {billing("buyCreditsAndPlans")}
+                {billing("topUpCredits")}
             </Button>
             <Link href="/profile?section=consume" onClick={onClose} className="mt-1 flex min-h-9 items-center justify-between rounded-lg px-2 text-sm font-medium text-stone-800 transition hover:bg-stone-100 dark:text-stone-100 dark:hover:bg-stone-800/80">
                 {billing("usageDetails")}

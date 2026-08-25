@@ -1,15 +1,21 @@
+import { randomUUID } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBody } from "@/lib/auth/request";
-import { getAuthSettings, isAuthInputError, refundUserPoints } from "@/lib/auth/store";
-import { describeDramaAnalysisCandidate, describeDramaModelOutput, dramaContentTool, dramaVisualTool, hasUsableDramaToolArguments, normalizeDramaContentAnalysis, normalizeDramaVisualAnalysis } from "@/lib/server/drama-analysis";
+import { getAuthSettings, isAuthInputError } from "@/lib/auth/store";
+import { describeDramaAnalysisCandidate, dramaContentTool, dramaVisualTool, hasUsableDramaToolArguments, normalizeDramaContentAnalysis, normalizeDramaVisualAnalysis } from "@/lib/server/drama-analysis";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
-import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
+import { resolveLogicalModelCandidates, type ResolvedLogicalModel } from "@/lib/server/logical-model-router";
+import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
+import { getWalletSnapshot, type WalletSnapshot } from "@/lib/server/points-wallet-service";
 import { checkRateLimit } from "@/lib/server/security";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
-import { rankTextPlanningCandidates, requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
+import { systemAiBillingHeaders, systemAiIdempotencyKey, systemAiUsageRequestFingerprint, type SystemAiUsageContextDraft } from "@/lib/server/system-ai-billing";
+import { rankTextPlanningCandidates, requestStructuredText, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody } from "@/lib/server/drama-analysis-input";
+import { pointsResponseHeaders } from "@/lib/server/points-response";
+import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 
 export const runtime = "nodejs";
 
@@ -36,10 +42,12 @@ export async function POST(request: Request) {
     const candidates = resolveLogicalModelCandidates(settings, "text", model);
     if (!model || !candidates.length) return NextResponse.json({ code: 400, data: null, msg: "后台尚未配置可用的默认文本模型" }, { status: 400 });
 
-    let refundedPointsRemaining: number | undefined;
+    let failureBalance: WalletSnapshot | undefined;
     try {
         const tool = phase === "visual" ? dramaVisualTool : dramaContentTool;
         const input = phase === "visual" ? visualInput!.payload : { script, summary: dramaAnalysisText(body.summary) };
+        const businessRequestId = systemAiIdempotencyKey("drama-analyze", user.id, randomUUID());
+        const requestFingerprint = systemAiUsageRequestFingerprint({ userId: user.id, businessRequestId, logicalModel: model, capability: "text", payload: { phase, input, tool: tool.name } });
         const schemaInstruction = `即使渠道没有传递工具定义，也必须只返回符合以下 JSON Schema 的对象，不能返回输入对象，不能把 script 或 summary 作为顶层字段：${JSON.stringify(tool.parameters)}`;
         const messages = [
             {
@@ -53,56 +61,79 @@ export async function POST(request: Request) {
         ];
         let latestError: unknown;
         for (const candidate of rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })))) {
+            const attemptNumber = candidates.findIndex((item) => item.binding.id === candidate.binding.id) + 1;
+            const providerIdempotencySupported = candidate.capabilityProfile?.supportsIdempotency === true;
+            const providerIdempotencyKey = `${businessRequestId}:attempt:${attemptNumber}`;
+            const usageContext: SystemAiUsageContextDraft = {
+                userId: user.id,
+                channelId: candidate.channelId,
+                capability: "text",
+                expiresAtMs: Date.now() + resolveModelRequestTimeoutMs(candidate, "text"),
+                businessRequestId,
+                requestFingerprint,
+                attemptNumber,
+                bindingId: candidate.binding.id,
+                providerIdempotencySupported,
+                ...(providerIdempotencySupported ? { providerIdempotencyKey } : {}),
+            };
             try {
-                const call = await requestFunctionCall(
-                    resolveInternalOrigin(new URL(request.url).origin),
-                    request.headers.get("cookie") || "",
-                    candidate,
-                    model,
-                    messages,
-                    user.id,
-                    tool,
-                    systemAiIdempotencyKey("drama-analyze", user.id, phase, JSON.stringify(input), candidate.channel.id, candidate.upstreamModel),
-                );
+                const call = await requestFunctionCall(resolveInternalOrigin(new URL(request.url).origin), request.headers.get("cookie") || "", candidate, model, messages, tool, usageContext);
+                let data;
                 try {
                     const parsed = JSON.parse(call.args);
-                    const data = phase === "visual" ? normalizeDramaVisualAnalysis(parsed, visualInput!.shotIds) : normalizeDramaContentAnalysis(parsed, settings.generationDefaults.videoSeconds, script);
+                    data = phase === "visual" ? normalizeDramaVisualAnalysis(parsed, visualInput!.shotIds) : normalizeDramaContentAnalysis(parsed, settings.generationDefaults.videoSeconds, script);
                     const resultCount = data.shots.length;
                     const expectedCount = phase === "visual" ? visualInput!.shotIds.length : 1;
                     if (!resultCount || (phase === "visual" && resultCount !== expectedCount)) {
                         console.error("[drama-analyze] normalized output invalid", JSON.stringify({ phase, channelId: candidate.channel.id, model: candidate.upstreamModel, resultCount, expectedCount, shape: describeDramaAnalysisCandidate(parsed) }));
                         throw new Error(phase === "visual" ? "模型没有为全部镜头生成视觉结构" : "模型没有生成有效内容结构");
                     }
-                    const response = NextResponse.json({ code: 0, data, msg: phase === "visual" ? "视觉结构已生成" : "内容结构待审核" });
-                    if (typeof call.pointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(call.pointsRemaining));
-                    return response;
                 } catch (error) {
-                    if (hasSystemAiCharge(call)) refundedPointsRemaining = (await refund(user.id, model, call))?.pointsBalance;
+                    await finishSystemAiTextAttempt(call.headers, { status: "failed" });
                     throw error;
                 }
+                await finishSystemAiTextAttempt(call.headers, { status: "succeeded" });
+                const balance = await getWalletSnapshot(user.id);
+                return NextResponse.json({ code: 0, data, msg: phase === "visual" ? "视觉结构已生成" : "内容结构待审核" }, { headers: pointsResponseHeaders(balance) });
             } catch (error) {
                 latestError = error;
+                const resolution = await resolveSystemAiTextFailure({
+                    userId: user.id,
+                    businessId: businessRequestId,
+                    reason: error instanceof Error ? error.message : "剧本分析请求状态未知",
+                    final: false,
+                    currentAttempt: { attemptNumber, acceptance: error instanceof TextPlanningRequestError ? error.requestAcceptance : "response" },
+                });
+                if (resolution.state !== "safe_to_failover") {
+                    failureBalance = await getWalletSnapshot(user.id);
+                    throw error;
+                }
             }
         }
+        const message = latestError instanceof Error ? latestError.message : "没有可用的文本模型渠道";
+        await resolveSystemAiTextFailure({
+            userId: user.id,
+            businessId: businessRequestId,
+            reason: message,
+            final: true,
+        });
+        failureBalance = await getWalletSnapshot(user.id);
         throw latestError instanceof Error ? latestError : new Error("没有可用的文本模型渠道");
     } catch (error) {
-        const response = NextResponse.json({ code: 502, data: null, msg: error instanceof Error ? error.message : "剧本分析失败" }, { status: 502 });
-        if (typeof refundedPointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(refundedPointsRemaining));
-        return response;
+        return NextResponse.json({ code: 502, data: null, msg: error instanceof Error ? error.message : "剧本分析失败" }, { status: 502, headers: pointsResponseHeaders(failureBalance) });
     }
 }
 
 async function requestFunctionCall(
     origin: string,
     cookie: string,
-    candidate: TextPlanningCandidate,
+    candidate: ResolvedLogicalModel,
     billingModel: string,
     messages: Array<{ role: string; content: string }>,
-    userId: string,
     tool: { name: string; description: string; parameters: Record<string, unknown> },
-    idempotencyKey: string,
+    usageContext: SystemAiUsageContextDraft,
 ) {
-    const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, idempotencyKey, candidate.upstreamModel) };
+    const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, usageContext, candidate.upstreamModel) };
     const call = await requestStructuredText({
         origin,
         cookie,
@@ -110,23 +141,14 @@ async function requestFunctionCall(
         messages,
         tool,
         headers,
-        onInvalidResponse: (responseHeaders) => refund(userId, billingModel, responseHeaders),
+        onInvalidResponse: (responseHeaders) => finishSystemAiTextAttempt(responseHeaders, { status: "failed" }),
     });
     if (!hasUsableDramaToolArguments(call.arguments, tool.name)) {
         console.error("[drama-analyze] structured output invalid", JSON.stringify({ endpoint: call.protocol, channelId: candidate.channel.id, model: candidate.upstreamModel, argumentShape: describeArgumentsText(call.arguments) }));
-        await refund(userId, billingModel, call.headers);
+        await finishSystemAiTextAttempt(call.headers, { status: "failed" });
         throw new Error("模型没有返回结构化剧本结果");
     }
-    return readCallResult(call.arguments, call.headers);
-}
-
-function readCallResult(args: string, headers: Headers) {
-    const remaining = Number(headers.get("x-vozeb-pro-points-remaining"));
-    return {
-        args,
-        pointsRemaining: Number.isFinite(remaining) ? remaining : undefined,
-        ...readSystemAiBilling(headers),
-    };
+    return { args: call.arguments, headers: call.headers };
 }
 
 function describeArgumentsText(value: string) {
@@ -136,9 +158,4 @@ function describeArgumentsText(value: string) {
     } catch {
         return { present: true, parseable: false };
     }
-}
-
-async function refund(userId: string, model: string, source: Headers | SystemAiBilling) {
-    const billing = source instanceof Headers ? readSystemAiBilling(source) : source;
-    return hasSystemAiCharge(billing) ? refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId) : null;
 }

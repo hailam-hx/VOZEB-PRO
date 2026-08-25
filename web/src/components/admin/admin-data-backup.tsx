@@ -87,7 +87,7 @@ export function AdminDataBackup() {
                             </span>
                             <div className="min-w-0">
                                 <h3 className="text-sm font-semibold text-zinc-950 dark:text-zinc-100">跨 Provider 业务备份</h3>
-                                <p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">包含账号权益与非敏感系统设置、公共提示词和生成记录。导出文件不包含登录凭据、渠道密钥、支付密钥或 OSS 凭据。</p>
+                                <p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">包含账号资料与非敏感系统设置、公共提示词和生成记录。导出文件不包含登录凭据、渠道密钥、支付密钥或 OSS 凭据。</p>
                             </div>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">

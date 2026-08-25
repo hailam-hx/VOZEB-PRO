@@ -23,7 +23,7 @@ describe("directAgentPlan", () => {
         expect(() => directAgentPlan([{ id: "planner", name: "规划模型", capability: "text", capabilityProfile: undefined }], "你好", [])).toThrow("当前模型不支持直接生成媒体");
     });
 
-    it("保留零积分文本流水用于失败时撤销套餐次数", () => {
+    it("保留零积分文本流水用于失败审计", () => {
         expect(readFunctionCallResult("{}", new Headers({ "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "free-agent-plan" }))).toMatchObject({ pointsCost: 0, pointsRecordId: "free-agent-plan" });
     });
 

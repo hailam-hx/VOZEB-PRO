@@ -43,7 +43,7 @@ export type UserEditorValue = {
     adminPermissions: PublicUser["adminPermissions"];
     permissionPreset?: string;
     status: UserStatus;
-    pointsBalance: number;
+    settledBalance: string;
 };
 
 export const PROMPT_PAGE_SIZE = 20;
@@ -154,11 +154,10 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     );
     const walletSummary = useMemo(
         () => ({
-            totalBalance: userSummary.totalPointsBalance,
-            enabledPlans: setupSummary?.enabledPlanProducts ?? settings.entitlements.plans.filter((plan) => plan.enabled).length,
-            usersWithPlan: userSummary.usersWithPlan,
+            totalBalance: userSummary.totalSettledBalance,
+            enabledTopUpPresets: setupSummary?.enabledTopUpPresets ?? 0,
         }),
-        [settings.entitlements.plans, setupSummary?.enabledPlanProducts, userSummary],
+        [setupSummary?.enabledTopUpPresets, userSummary.totalSettledBalance],
     );
     const filteredUsers = users;
     const selectedUsers = useMemo(() => users.filter((user) => selectedUserIds.includes(user.id)), [selectedUserIds, users]);

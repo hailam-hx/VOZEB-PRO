@@ -1,56 +1,36 @@
-export type BillingProduct = {
-    id: string;
-    productKind: "plan" | "points";
-    planId?: string;
-    name: string;
-    description: string;
-    amountCents: number;
-    currency: string;
-    pointsAmount: number;
-    dailyPoints: number;
-    periodDays: number;
-    enabled: boolean;
-    sortOrder: number;
-    metadata?: unknown;
-    pricing: {
-        listUnitAmountCents: number;
-        saleUnitAmountCents: number;
-        discountCents: number;
-        promotion?: {
-            id: string;
-            label: string;
-            unitAmountCents: number;
-            startsAt: string;
-            endsAt: string;
-        };
-    };
-    createdAt: string;
-    updatedAt: string;
+import type { PaymentAmount } from "@/lib/billing/money";
+
+export type TopUpPreset = { id: string; name: string; description: string; nominalNativeAmount: string; enabled: boolean; sortOrder: number };
+export type TopUpOrderStatus = "pending" | "paid" | "canceled" | "refunding" | "refunded";
+export type TopUpQuote = {
+    presetId?: string;
+    currency: "VND";
+    currencyExponent: 0;
+    nominalNativeAmount: string;
+    promotionDiscountNativeAmount: string;
+    couponDiscountNativeAmount: string;
+    payableNativeAmount: string;
+    nominalUsdValue: string;
+    paidUsdValue: string;
+    creditAmount: string;
+    pricingVersion: string;
+    customerFx: { version: string; usdPerVnd: string };
+    paymentAmount: PaymentAmount;
+    promotion?: { id: string; label: string };
+    coupon?: { userCouponId: string; templateId: string; type: "fixed" | "percentage"; value: string; currency?: string };
 };
-
-export type BillingOrderStatus = "pending" | "paid" | "closed" | "canceled" | "refunding" | "refunded";
-
-export type BillingOrder = {
+export type TopUpOrder = Omit<TopUpQuote, "customerFx" | "promotion" | "coupon"> & {
     id: string;
     orderNo: string;
-    productId?: string;
     userId?: string;
-    userAccountId?: string;
-    userUsername?: string;
-    userDisplayName?: string;
-    productKind: "plan" | "points";
-    planId?: string;
-    status: BillingOrderStatus;
+    status: TopUpOrderStatus;
+    paymentState: "pending" | "paid" | "failed" | "refunded";
+    creditGrantState: "pending" | "granted" | "manual_review";
+    providerRefundState: "none" | "pending" | "succeeded" | "failed" | "manual";
+    creditRecoveryState: "none" | "held" | "recovered" | "released" | "manual_review";
     subject: string;
-    listAmountCents: number;
-    promotionDiscountCents: number;
-    couponDiscountCents: number;
-    amountCents: number;
-    currency: string;
-    pointsAmount: number;
-    dailyPoints: number;
-    periodDays: number;
-    quantity: number;
+    customerFxVersion: string;
+    customerFxRate: string;
     provider: string;
     providerOrderId?: string;
     providerPaymentId?: string;
@@ -59,107 +39,64 @@ export type BillingOrder = {
     expiresAt?: string;
     paidAt?: string;
     closedAt?: string;
-    pricingSnapshot?: unknown;
+    snapshot?: unknown;
     metadata?: unknown;
     createdAt: string;
     updatedAt: string;
 };
-
-export type CouponTemplate = {
-    id: string;
-    code: string;
-    name: string;
-    description: string;
-    discountType: "fixed" | "percentage";
-    discountValue: number;
-    minimumAmountCents: number;
-    maximumDiscountCents: number;
-    stackWithPromotion: boolean;
-    claimable: boolean;
-    enabled: boolean;
-    startsAt: string;
-    endsAt: string;
-    totalLimit: number;
-    perUserLimit: number;
-    issuedCount: number;
-    redeemedCount: number;
-    productIds: string[];
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type UserCouponStatus = "available" | "locked" | "redeemed" | "expired" | "revoked";
-
-export type UserCoupon = {
-    id: string;
-    templateId: string;
-    userId: string;
-    status: UserCouponStatus;
-    grantSource: string;
-    claimedAt: string;
-    expiresAt: string;
-    lockedOrderId?: string;
-    lockedAt?: string;
-    redeemedOrderId?: string;
-    redeemedAt?: string;
-    revokedAt?: string;
-    template?: CouponTemplate;
-    applicable?: boolean;
-    unavailableReason?: string;
-    createdAt: string;
-    updatedAt: string;
-};
-
-export type BillingQuote = {
-    productId: string;
-    quantity: number;
-    listAmountCents: number;
-    promotionDiscountCents: number;
-    couponDiscountCents: number;
-    payableAmountCents: number;
-    promotion?: BillingProduct["pricing"]["promotion"];
-    pricingSnapshot: unknown;
-};
-
+export type TopUpSelection = ({ presetId: string; customAmountVnd?: never } | { presetId?: never; customAmountVnd: string }) & { promotionId?: string; userCouponId?: string };
 export type PaymentCheckout = {
     provider: string;
     orderId: string;
     orderNo: string;
     kind: "manual" | "redirect" | "form" | "qr";
     url?: string;
-    form?: {
-        action: string;
-        method: "GET" | "POST";
-        fields: Array<{ name: string; value: string }>;
-    };
+    form?: { action: string; method: "GET" | "POST"; fields: Array<{ name: string; value: string }> };
     qrContent?: string;
     providerOrderId?: string;
     providerPaymentId?: string;
     expiresAt?: string;
 };
 
-export async function listBillingProducts() {
-    return requestBilling<{ products: BillingProduct[]; paymentProviders: string[] }>("/api/billing/products");
+const TOP_UP_ROUTE = "/api/billing/top-ups";
+
+export async function listTopUpPresets() {
+    return requestCommerce<{ presets: TopUpPreset[]; paymentProviders: string[] }>(`${TOP_UP_ROUTE}/presets`);
 }
 
-export async function listBillingOrders(input: { page?: number; pageSize?: number; status?: BillingOrderStatus } = {}) {
+export async function quoteTopUpOrder(input: TopUpSelection) {
+    return requestCommerce<{ quote: TopUpQuote }>(`${TOP_UP_ROUTE}/quotes`, jsonPost(input));
+}
+
+export async function createTopUpOrder(input: TopUpSelection & { provider: string }) {
+    return requestCommerce<{ order: TopUpOrder }>(`${TOP_UP_ROUTE}/orders`, jsonPost(input));
+}
+
+export async function listTopUpOrders(input: { page?: number; pageSize?: number } = {}) {
     const params = new URLSearchParams();
     if (input.page) params.set("page", String(input.page));
     if (input.pageSize) params.set("pageSize", String(input.pageSize));
-    if (input.status) params.set("status", input.status);
     const query = params.toString();
-    return requestBilling<{ orders: BillingOrder[]; total: number; page: number; pageSize: number }>(`/api/billing/orders${query ? `?${query}` : ""}`);
+    return requestCommerce<{ orders: TopUpOrder[]; total: number; page: number; pageSize: number }>(`${TOP_UP_ROUTE}/orders${query ? `?${query}` : ""}`);
 }
 
-export async function getBillingOrder(orderId: string) {
-    return requestBilling<{ order: BillingOrder }>(`/api/billing/orders/${encodeURIComponent(orderId)}`);
+export async function getTopUpOrder(orderId: string) {
+    return requestCommerce<{ order: TopUpOrder }>(`${TOP_UP_ROUTE}/orders/${encodeURIComponent(orderId)}`);
 }
 
-export function subscribeBillingOrder(orderId: string, onOrder: (order: BillingOrder) => void, onError: () => void) {
-    const source = new EventSource(`/api/billing/orders/${encodeURIComponent(orderId)}/events`);
+export async function cancelTopUpOrder(orderId: string) {
+    return requestCommerce<{ order: TopUpOrder }>(`${TOP_UP_ROUTE}/orders/${encodeURIComponent(orderId)}/cancel`, { method: "POST" });
+}
+
+export async function createTopUpCheckout(orderId: string) {
+    return requestCommerce<{ checkout: PaymentCheckout }>(`${TOP_UP_ROUTE}/orders/${encodeURIComponent(orderId)}/checkout`, jsonPost({}));
+}
+
+export function subscribeTopUpOrder(orderId: string, onOrder: (order: TopUpOrder) => void, onError: () => void) {
+    const source = new EventSource(`${TOP_UP_ROUTE}/orders/${encodeURIComponent(orderId)}/events`);
     source.onmessage = (event) => {
         try {
-            const payload = JSON.parse(event.data) as { code?: number; data?: { order?: BillingOrder } | null };
+            const payload = JSON.parse(event.data) as { code?: number; data?: { order?: TopUpOrder } | null };
             if (payload.code !== 0 || !payload.data?.order) throw new Error("订单状态响应无效");
             onOrder(payload.data.order);
             if (payload.data.order.status !== "pending") source.close();
@@ -171,67 +108,8 @@ export function subscribeBillingOrder(orderId: string, onOrder: (order: BillingO
     return () => source.close();
 }
 
-export async function cancelBillingOrder(orderId: string) {
-    return requestBilling<{ order: BillingOrder }>(`/api/billing/orders/${encodeURIComponent(orderId)}/cancel`, { method: "POST" });
-}
-
-export async function createBillingOrder(input: { productId: string; provider: string; quantity?: number; userCouponId?: string }) {
-    return requestBilling<{ order: BillingOrder }>("/api/billing/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-    });
-}
-
-export async function listBillingCoupons(input: { page?: number; pageSize?: number; status?: UserCouponStatus; productId?: string; quantity?: number; includeTemplates?: boolean; templatePage?: number; templatePageSize?: number } = {}) {
-    const params = new URLSearchParams();
-    if (input.page) params.set("page", String(input.page));
-    if (input.pageSize) params.set("pageSize", String(input.pageSize));
-    if (input.status) params.set("status", input.status);
-    if (input.productId) params.set("productId", input.productId);
-    if (input.quantity) params.set("quantity", String(input.quantity));
-    if (input.includeTemplates !== undefined) params.set("includeTemplates", String(input.includeTemplates));
-    if (input.templatePage) params.set("templatePage", String(input.templatePage));
-    if (input.templatePageSize) params.set("templatePageSize", String(input.templatePageSize));
-    const query = params.toString();
-    return requestCommerce<{ coupons: UserCoupon[]; templates?: CouponTemplate[]; templatesTotal?: number; templatePage?: number; templatePageSize?: number; total: number; page: number; pageSize: number }>(
-        `/api/billing/coupons${query ? `?${query}` : ""}`,
-    );
-}
-
-export async function claimBillingCoupon(input: { templateId?: string; code?: string }) {
-    return requestCommerce<{ coupon: UserCoupon }>("/api/billing/coupons/claim", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-    });
-}
-
-export async function quoteBillingOrder(input: { productId: string; quantity?: number; userCouponId?: string }) {
-    return requestCommerce<{ quote: BillingQuote }>("/api/billing/quotes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-    });
-}
-
-export async function createPaymentCheckout(orderId: string, input: { provider?: string } = {}) {
-    return requestBilling<{ checkout: PaymentCheckout }>(`/api/billing/orders/${encodeURIComponent(orderId)}/checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-    });
-}
-
-async function requestBilling<T>(url: string, init?: RequestInit) {
-    const response = await fetch(url, { cache: "no-store", ...init });
-    const payload = (await response.json().catch(() => ({}))) as (T & { error?: string }) | { code: number; data: T | null; msg: string; error?: string };
-    if (!response.ok) throw new Error(("msg" in payload && payload.msg) || payload.error || "请求失败");
-    if ("code" in payload) {
-        if (payload.code !== 0 || payload.data === null) throw new Error(payload.msg || "请求失败");
-        return payload.data;
-    }
-    return payload;
+function jsonPost(value: unknown): RequestInit {
+    return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) };
 }
 
 async function requestCommerce<T>(url: string, init?: RequestInit) {

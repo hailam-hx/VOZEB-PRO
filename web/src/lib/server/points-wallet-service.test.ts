@@ -6,9 +6,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { emptyDb } from "@/lib/auth/store-normalizers";
 import { readAuthDb, writeAuthDb } from "@/lib/auth/store-repository";
-import type { AuthDatabase, EntitlementPlan, StoredUser } from "@/lib/auth/store-types";
 
-import { consumePoints, creditPermanentPoints, getPointsWalletSnapshot, refundPoints } from "./points-wallet-service";
+import { WalletConflictError, creditWalletBalance, getWalletSnapshot, reconcileWallet, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold, type SettleWalletHoldInput } from "./points-wallet-service";
 
 const previousProvider = process.env.VOZEB_PRO_DATABASE_PROVIDER;
 const previousDataDir = process.env.VOZEB_PRO_DATA_DIR;
@@ -19,8 +18,25 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "vozeb-points-wallet-"));
+    dataDir = await mkdtemp(join(tmpdir(), "vozeb-wallet-holds-"));
     process.env.VOZEB_PRO_DATA_DIR = dataDir;
+    const db = emptyDb();
+    db.users.push({
+        id: "user-one",
+        accountId: "0001",
+        username: "wallet-user",
+        displayName: "钱包用户",
+        bio: "",
+        role: "user",
+        adminPermissions: [],
+        status: "active",
+        settledBalance: "10.5",
+        passwordHash: "test",
+        createdAt: "2026-08-23T00:00:00.000Z",
+        updatedAt: "2026-08-23T00:00:00.000Z",
+    });
+    db.pointRecords.push({ id: "opening-credit", userId: "user-one", type: "credit", amount: "10.5", balanceAfter: "10.5", description: "测试充值", idempotencyKey: "opening-credit", createdAt: "2026-08-23T00:00:00.000Z" });
+    await writeAuthDb(db);
 });
 
 afterEach(async () => {
@@ -34,350 +50,289 @@ afterAll(() => {
     else process.env.VOZEB_PRO_DATA_DIR = previousDataDir;
 });
 
-describe("points wallet service", () => {
-    it("settles one daily plan wallet lazily", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 30 });
+describe("prepaid wallet holds", () => {
+    it("credits settled balance once from a stable business identity", async () => {
+        const input = { userId: "user-one", businessId: "topup:one", amount: "0.125", description: "充值" };
 
-        const first = await getPointsWalletSnapshot("user-one", { now: at("2026-07-22T08:00:00+08:00") });
-        const second = await getPointsWalletSnapshot("user-one", { now: at("2026-07-22T12:00:00+08:00") });
-        const db = await readAuthDb();
+        const first = await creditWalletBalance(input);
+        const replay = await creditWalletBalance(input);
 
-        expect(first).toMatchObject({ permanentPoints: 50, dailyPoints: 30, totalPoints: 80, dailyDate: "2026-07-22", activePlanId: "pro" });
-        expect(second.dailyPoints).toBe(30);
-        expect(db.dailyPlanPointWallets).toHaveLength(1);
+        expect(first).toMatchObject({ applied: true, snapshot: { settledBalance: "10.625", heldBalance: "0", availableBalance: "10.625" }, record: { amount: "0.125", balanceAfter: "10.625" } });
+        expect(replay).toMatchObject({ applied: false, record: { id: first.record.id } });
+        expect((await readAuthDb()).pointRecords).toHaveLength(2);
     });
 
-    it("consumes daily points before permanent points", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 30 });
+    it("reserves credits outside the ledger and reuses only the same fingerprint", async () => {
+        const input = { userId: "user-one", businessId: "generation:one", requestFingerprint: "a".repeat(64), amount: "4.25", description: "图片生成预留" };
+        const first = await reserveWalletCredits(input);
+        const replay = await reserveWalletCredits(input);
 
-        const result = await consume("consume-one", 40, "2026-07-22T08:00:00+08:00");
-
-        expect(result.snapshot).toMatchObject({ permanentPoints: 40, dailyPoints: 0, totalPoints: 40 });
-        expect(result.record).toMatchObject({ permanentAmount: -10, dailyAmount: -30 });
+        expect(first).toMatchObject({ applied: true, snapshot: { settledBalance: "10.5", heldBalance: "4.25", availableBalance: "6.25" } });
+        expect(replay).toMatchObject({ applied: false, hold: { id: first.hold.id } });
+        await expect(reserveWalletCredits({ ...input, requestFingerprint: "b".repeat(64) })).rejects.toBeInstanceOf(WalletConflictError);
+        expect((await readAuthDb()).pointRecords).toHaveLength(1);
     });
 
-    it("rejects an insufficient debit without partial mutation", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 30 });
+    it("serializes concurrent reservations so they cannot over-reserve", async () => {
+        const results = await Promise.allSettled([
+            reserveWalletCredits({ userId: "user-one", businessId: "generation:a", requestFingerprint: "a".repeat(64), amount: "7", description: "A" }),
+            reserveWalletCredits({ userId: "user-one", businessId: "generation:b", requestFingerprint: "b".repeat(64), amount: "7", description: "B" }),
+        ]);
 
-        await expect(consume("consume-too-much", 81, "2026-07-22T08:00:00+08:00")).rejects.toThrow("积分不足");
-        const snapshot = await getPointsWalletSnapshot("user-one", { now: at("2026-07-22T09:00:00+08:00") });
-        const db = await readAuthDb();
-
-        expect(snapshot).toMatchObject({ permanentPoints: 50, dailyPoints: 30, totalPoints: 80 });
-        expect(db.pointRecords).toHaveLength(0);
-        expect(db.quotaUsage).toHaveLength(0);
+        expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+        expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+        expect(await getWalletSnapshot("user-one")).toEqual({ settledBalance: "10.5", heldBalance: "7", availableBalance: "3.5" });
     });
 
-    it("does not debit twice for the same idempotency key", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 30 });
-
-        const first = await consume("consume-idempotent", 20, "2026-07-22T08:00:00+08:00");
-        const second = await consume("consume-idempotent", 20, "2026-07-22T08:05:00+08:00");
+    it("settles a non-zero charge once, closes the hold, and creates exactly one consume record", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:settle", requestFingerprint: "c".repeat(64), amount: "4.25", description: "视频生成预留" });
+        const input: SettleWalletHoldInput = {
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:settle",
+            requestFingerprint: "d".repeat(64),
+            finalCharge: { credits: "3.75", usage: { capability: "video", source: "actual", count: "1", durationSeconds: "5" }, estimated: false, capped: false, uncappedCredits: "3.75", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1, components: [{ id: "duration", dimension: "durationSeconds", unitPrice: "0.75" }] },
+            description: "视频生成结算",
+        };
+        const first = await settleWalletHold(input);
+        const replay = await settleWalletHold(input);
         const db = await readAuthDb();
 
-        expect(first.applied).toBe(true);
-        expect(second.applied).toBe(false);
-        expect(second.snapshot.totalPoints).toBe(60);
+        expect(first).toMatchObject({ applied: true, snapshot: { settledBalance: "6.75", heldBalance: "0", availableBalance: "6.75" }, charge: { pointRecordId: expect.any(String) } });
+        expect(replay).toMatchObject({ applied: false, charge: { id: "charge:settle" } });
+        expect(db.pointRecords).toHaveLength(2);
+        expect(db.pointRecords[1]).toMatchObject({ type: "consume", amount: "-3.75", balanceAfter: "6.75" });
+        expect(db.walletHolds[0]).toMatchObject({ status: "settled", usageChargeId: "charge:settle" });
+    });
+
+    it("settles zero credits as an auditable usage charge without a ledger row", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:free", requestFingerprint: "e".repeat(64), amount: "0", description: "免费文本预留" });
+        await settleWalletHold({
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:free",
+            requestFingerprint: "f".repeat(64),
+            finalCharge: { credits: "0", usage: { capability: "text", source: "actual", inputTokens: "2", outputTokens: "1" }, estimated: false, capped: false, uncappedCredits: "0", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "0" }] },
+            description: "免费文本结算",
+        });
+        const db = await readAuthDb();
+
+        expect(await getWalletSnapshot("user-one")).toEqual({ settledBalance: "10.5", heldBalance: "0", availableBalance: "10.5" });
         expect(db.pointRecords).toHaveLength(1);
+        expect(db.usageCharges).toEqual([expect.objectContaining({ id: "charge:free", settledCredits: "0" })]);
+        expect(db.usageCharges[0]).not.toHaveProperty("pointRecordId");
     });
 
-    it("rejects reused consumption keys with different billing parameters", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 30 });
-        await consume("consume-parameter-conflict", 5, "2026-07-22T08:00:00+08:00");
+    it("releases a hold without changing the settled ledger", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:release", requestFingerprint: "8".repeat(64), amount: "4", description: "失败任务预留" });
+        const first = await releaseWalletHold({ holdId: reservation.hold.id, businessId: "release:generation", requestFingerprint: "9".repeat(64), reason: "上游确认失败" });
+        const replay = await releaseWalletHold({ holdId: reservation.hold.id, businessId: "release:generation", requestFingerprint: "9".repeat(64), reason: "上游确认失败" });
 
-        await expect(consume("consume-parameter-conflict", 6, "2026-07-22T08:05:00+08:00")).rejects.toThrow("消费参数不一致");
-        await expect(
-            consumePoints({
-                userId: "user-one",
-                amount: 5,
-                units: 1,
-                usageKind: "image",
-                model: "another-image-model",
-                description: "生成图片调用扣除",
-                idempotencyKey: "consume-parameter-conflict",
-                now: at("2026-07-22T08:10:00+08:00"),
-            }),
-        ).rejects.toThrow("消费参数不一致");
+        expect(first).toMatchObject({ applied: true, snapshot: { settledBalance: "10.5", heldBalance: "0", availableBalance: "10.5" } });
+        expect(replay).toMatchObject({ applied: false });
+        await expect(releaseWalletHold({ holdId: reservation.hold.id, businessId: "release:generation", requestFingerprint: "a".repeat(64), reason: "上游确认失败" })).rejects.toBeInstanceOf(WalletConflictError);
+        expect((await readAuthDb()).pointRecords).toHaveLength(1);
     });
 
-    it("rejects one server billing identity when the upstream request fingerprint changes", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 30 });
-        const input = {
-            userId: "user-one",
-            amount: 5,
-            units: 1,
-            usageKind: "text" as const,
-            model: "writer",
-            description: "文本模型调用扣除",
-            idempotencyKey: "system-ai:stable-business-request",
-            now: at("2026-07-22T08:00:00+08:00"),
+    it("keeps a hold active until its pending provider attempt reaches a terminal status", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:release-pending", requestFingerprint: "8".repeat(64), amount: "2", description: "待完成尝试预留" });
+        const pending = {
+            id: "attempt:release-pending",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "9".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
         };
+        await recordProviderUsageAttempt(pending);
 
-        await consumePoints({ ...input, requestFingerprint: "a".repeat(64) });
-        await expect(consumePoints({ ...input, requestFingerprint: "b".repeat(64) })).rejects.toThrow("消费参数不一致");
+        await expect(releaseWalletHold({ holdId: reservation.hold.id, businessId: "release:pending", requestFingerprint: "a".repeat(64), reason: "任务取消" })).rejects.toBeInstanceOf(WalletConflictError);
+        expect((await readAuthDb()).walletHolds[0]).toMatchObject({ status: "active" });
 
-        expect((await readAuthDb()).pointRecords[0]).toMatchObject({ idempotencyKey: input.idempotencyKey, requestFingerprint: "a".repeat(64) });
+        await expect(recordProviderUsageAttempt({ ...pending, status: "canceled", nativeCostAmount: "0.125" })).resolves.toMatchObject({ applied: true, attempt: { status: "canceled", costUsd: "0.125" } });
+        await expect(releaseWalletHold({ holdId: reservation.hold.id, businessId: "release:pending", requestFingerprint: "a".repeat(64), reason: "任务取消" })).resolves.toMatchObject({ applied: true, hold: { status: "released" } });
     });
 
-    it("restores both buckets for a same-day refund", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 10 });
-        const debit = await consume("consume-refund", 30, "2026-07-22T08:00:00+08:00");
-
-        const refund = await refundPoints({
-            userId: "user-one",
-            sourceRecordId: debit.record.id,
-            idempotencyKey: "refund-same-day",
-            usageKind: "image",
-            units: 1,
-            description: "图片任务失败退回",
-            now: at("2026-07-22T09:00:00+08:00"),
-        });
-
-        expect(refund).toMatchObject({ permanentRestored: 20, dailyRestored: 10, dailyExpired: 0, applied: true });
-        expect(refund.snapshot).toMatchObject({ permanentPoints: 50, dailyPoints: 10, totalPoints: 60 });
-    });
-
-    it("does not convert expired daily points into permanent points", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 10 });
-        const debit = await consume("consume-cross-day", 30, "2026-07-22T08:00:00+08:00");
-
-        const refund = await refundPoints({
-            userId: "user-one",
-            sourceRecordId: debit.record.id,
-            idempotencyKey: "refund-cross-day",
-            usageKind: "image",
-            units: 1,
-            description: "图片任务失败退回",
-            now: at("2026-07-23T08:00:00+08:00"),
-        });
-
-        expect(refund).toMatchObject({ permanentRestored: 20, dailyRestored: 0, dailyExpired: 10 });
-        expect(refund.snapshot).toMatchObject({ permanentPoints: 50, dailyPoints: 10, totalPoints: 60, dailyDate: "2026-07-23" });
-        expect(refund.record.amount).toBe(20);
-    });
-
-    it("keeps paid plan daily points while the free-user switch is disabled", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 30, freeDailyPointsEnabled: false });
-
-        const snapshot = await getPointsWalletSnapshot("user-one", { now: at("2026-07-22T08:00:00+08:00") });
-
-        expect(snapshot).toMatchObject({ permanentPoints: 50, dailyPoints: 30, totalPoints: 80 });
-        expect((await readAuthDb()).dailyPlanPointWallets).toHaveLength(1);
-    });
-
-    it("disables only the free-user daily points", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 0, freeDailyPoints: 20, freeDailyPointsEnabled: false, planId: "free" });
-
-        const snapshot = await getPointsWalletSnapshot("user-one", { now: at("2026-07-22T08:00:00+08:00") });
-
-        expect(snapshot).toMatchObject({ permanentPoints: 50, dailyPoints: 0, totalPoints: 50 });
-        expect((await readAuthDb()).dailyPlanPointWallets).toHaveLength(0);
-    });
-
-    it("settles configured daily points for a free user", async () => {
-        await seedWallet({ permanentPoints: 0, dailyPoints: 0, freeDailyPoints: 20, planId: "free" });
-
-        const snapshot = await getPointsWalletSnapshot("user-one", { now: at("2026-07-22T08:00:00+08:00") });
-
-        expect(snapshot).toMatchObject({ permanentPoints: 0, dailyPoints: 20, totalPoints: 20, activePlanId: "free" });
-    });
-
-    it("refunds one consumption only once", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 10 });
-        const debit = await consume("consume-single-refund", 30, "2026-07-22T08:00:00+08:00");
-        const input = {
-            userId: "user-one",
-            sourceRecordId: debit.record.id,
-            usageKind: "image" as const,
-            units: 1,
-            description: "图片任务失败退回",
-            now: at("2026-07-22T09:00:00+08:00"),
+    it("transitions a pending provider attempt once and rejects attempts after the hold closes", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:transition", requestFingerprint: "a".repeat(64), amount: "2", description: "尝试状态预留" });
+        const pending = {
+            id: "attempt:transition",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "b".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "provider-native" as const, provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.125" } },
         };
+        await recordProviderUsageAttempt(pending);
+        await expect(recordProviderUsageAttempt({ ...pending, status: "failed", requestFingerprint: "c".repeat(64), nativeCostAmount: "1.25" })).rejects.toBeInstanceOf(WalletConflictError);
+        const terminal = await recordProviderUsageAttempt({ ...pending, status: "failed", nativeCostAmount: "1.25" });
 
-        const first = await refundPoints({ ...input, idempotencyKey: "refund-first" });
-        const second = await refundPoints({ ...input, idempotencyKey: "refund-second" });
+        expect(terminal).toMatchObject({ applied: true, attempt: { status: "failed", nativeCostAmount: "1.25", costUsd: "0.15625", usdConversionRate: "0.125" } });
+        await releaseWalletHold({ holdId: reservation.hold.id, businessId: "release:transition", requestFingerprint: "c".repeat(64), reason: "上游失败" });
+        await expect(recordProviderUsageAttempt({ ...pending, id: "attempt:late", attemptNumber: 2, status: "failed" })).rejects.toBeInstanceOf(WalletConflictError);
+    });
+
+    it("treats PostgreSQL fixed-scale provider cost strings as the same replay values", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:padded-attempt", requestFingerprint: "b".repeat(64), amount: "2", description: "定标小数预留" });
+        const input = {
+            id: "attempt:padded",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "failed" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "c".repeat(64),
+            nativeCostAmount: "1.25",
+            nativeCostUnit: { kind: "provider-native" as const, provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.125" } },
+        };
+        await recordProviderUsageAttempt(input);
         const db = await readAuthDb();
-
-        expect(first.applied).toBe(true);
-        expect(second.applied).toBe(false);
-        expect(second.record.id).toBe(first.record.id);
-        expect(db.pointRecords.filter((record) => record.type === "refund")).toHaveLength(1);
-    });
-
-    it("separates quota usage by the injected wallet date", async () => {
-        await seedWallet({ permanentPoints: 100, dailyPoints: 0, dailyImages: 1 });
-
-        await consume("quota-day-one", 5, "2026-07-22T08:00:00+08:00");
-        await expect(consume("quota-day-one-extra", 5, "2026-07-22T09:00:00+08:00")).rejects.toThrow("今日图片生成次数不足");
-        await expect(consume("quota-day-two", 5, "2026-07-23T08:00:00+08:00")).resolves.toMatchObject({ applied: true });
-
-        expect((await readAuthDb()).quotaUsage.map((usage) => usage.date)).toEqual(["2026-07-22", "2026-07-23"]);
-    });
-
-    it("tracks and refunds quota usage for a zero-point model", async () => {
-        await seedWallet({ permanentPoints: 0, dailyPoints: 0, dailyText: 1 });
-        const input = {
-            userId: "user-one",
-            amount: 0,
-            units: 1,
-            usageKind: "text" as const,
-            model: "free-text",
-            description: "免费文本调用",
-            now: at("2026-07-22T08:00:00+08:00"),
-        };
-
-        const consumption = await consumePoints({ ...input, idempotencyKey: "free-text:first" });
-        await expect(consumePoints({ ...input, idempotencyKey: "free-text:limited" })).rejects.toThrow("今日文本生成次数不足");
-        const refund = await refundPoints({
-            userId: "user-one",
-            sourceRecordId: consumption.record.id,
-            idempotencyKey: "free-text:refund",
-            usageKind: "text",
-            units: 1,
-            description: "免费文本调用失败回滚",
-            now: at("2026-07-22T08:05:00+08:00"),
-        });
-        await expect(consumePoints({ ...input, idempotencyKey: "free-text:after-refund" })).resolves.toMatchObject({ applied: true });
-
-        expect(consumption).toMatchObject({ applied: true, snapshot: { totalPoints: 0 }, record: { amount: 0 } });
-        expect(refund).toMatchObject({ applied: true, permanentRestored: 0, dailyRestored: 0 });
-        expect((await readAuthDb()).quotaUsage).toEqual([expect.objectContaining({ usageKind: "text", units: 1, pointsSpent: 0 })]);
-    });
-
-    it("enforces the configured per-task cost guard while entitlements are disabled", async () => {
-        await seedWallet({ permanentPoints: 100, dailyPoints: 0, entitlementsEnabled: false, generationCostControl: { maxPointsPerTask: 6 } });
-
-        await expect(consume("cost-task-rejected", 7, "2026-07-22T08:00:00+08:00")).rejects.toThrow("当前任务成本超过平台保护上限");
-        expect((await readAuthDb()).pointRecords).toHaveLength(0);
-    });
-
-    it("aggregates the configured daily user cost across generation capabilities", async () => {
-        await seedWallet({ permanentPoints: 100, dailyPoints: 0, entitlementsEnabled: false, generationCostControl: { dailyUserPointSpend: 6 } });
-        await consume("cost-user-image", 4, "2026-07-22T08:00:00+08:00");
-
-        await expect(consumePoints({ userId: "user-one", amount: 3, units: 1, usageKind: "text", model: "test-text-model", description: "文本调用", idempotencyKey: "cost-user-text", now: at("2026-07-22T09:00:00+08:00") })).rejects.toThrow(
-            "今日个人生成成本保护已触发",
-        );
-        expect((await readAuthDb()).quotaUsage).toEqual([expect.objectContaining({ usageKind: "image", pointsSpent: 4 })]);
-    });
-
-    it("shares the configured daily total cost across users and releases refunded cost", async () => {
-        await seedWallet({ permanentPoints: 100, dailyPoints: 0, entitlementsEnabled: false, generationCostControl: { dailyTotalPointSpend: 6 } });
-        const db = await readAuthDb();
-        db.users.push({ ...user(100, "pro"), id: "user-two", accountId: "0002", username: "wallet-user-two" });
+        Object.assign(db.providerUsageAttempts[0], { nativeCostAmount: "1.250000000000", usdConversionRate: "0.125000000000", costUsd: "0.156250000000" });
         await writeAuthDb(db);
-        const first = await consume("cost-total-first", 4, "2026-07-22T08:00:00+08:00");
-        const secondInput = { userId: "user-two", amount: 3, units: 1, usageKind: "video" as const, model: "test-video-model", description: "视频调用", now: at("2026-07-22T09:00:00+08:00") };
 
-        await expect(consumePoints({ ...secondInput, idempotencyKey: "cost-total-rejected" })).rejects.toThrow("平台今日生成成本保护已触发");
-        await refundPoints({ userId: "user-one", sourceRecordId: first.record.id, idempotencyKey: "cost-total-refund", usageKind: "image", units: 1, description: "图片失败退款", now: at("2026-07-22T09:30:00+08:00") });
-        await expect(consumePoints({ ...secondInput, idempotencyKey: "cost-total-after-refund" })).resolves.toMatchObject({ applied: true });
+        await expect(recordProviderUsageAttempt(input)).resolves.toMatchObject({ applied: false, attempt: { id: "attempt:padded" } });
     });
 
-    it("applies the plan daily point limit across all generation capabilities", async () => {
-        await seedWallet({ permanentPoints: 100, dailyPoints: 0 });
-        const db = await readAuthDb();
-        db.settings.entitlements.plans.find((item) => item.id === "pro")!.limits.dailyPointSpend = 6;
-        await writeAuthDb(db);
-        await consume("plan-total-image", 4, "2026-07-22T08:00:00+08:00");
-
-        await expect(consumePoints({ userId: "user-one", amount: 3, units: 1, usageKind: "text", model: "test-text-model", description: "文本调用", idempotencyKey: "plan-total-text", now: at("2026-07-22T09:00:00+08:00") })).rejects.toThrow(
-            "今日积分消费额度不足",
-        );
-    });
-
-    it("rejects a credit idempotency key owned by another record type", async () => {
-        await seedWallet({ permanentPoints: 50, dailyPoints: 0 });
-        await consume("shared-key", 5, "2026-07-22T08:00:00+08:00");
+    it("persists a provider-native USD conversion rate at the 12-decimal boundary", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:fx-boundary", requestFingerprint: "d".repeat(64), amount: "2", description: "汇率边界预留" });
 
         await expect(
-            creditPermanentPoints({
-                userId: "user-one",
-                amount: 10,
-                description: "充值积分",
-                idempotencyKey: "shared-key",
-                now: at("2026-07-22T09:00:00+08:00"),
+            recordProviderUsageAttempt({
+                id: "attempt:fx-boundary",
+                holdId: reservation.hold.id,
+                attemptNumber: 1,
+                status: "failed",
+                provider: "vendor",
+                bindingId: "binding",
+                requestFingerprint: "e".repeat(64),
+                nativeCostAmount: "1",
+                nativeCostUnit: { kind: "provider-native", provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.123456789012" } },
             }),
-        ).rejects.toThrow("积分幂等键已被其他业务使用");
+        ).resolves.toMatchObject({ attempt: { usdConversionRate: "0.123456789012", costUsd: "0.123456789012", nativeCostUnit: { usdConversion: { usdPerUnit: "0.123456789012" } } } });
+    });
+
+    it("rejects a provider-native USD conversion rate beyond 12 decimals", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:fx-overflow", requestFingerprint: "f".repeat(64), amount: "2", description: "汇率超限预留" });
+
+        await expect(
+            recordProviderUsageAttempt({
+                id: "attempt:fx-overflow",
+                holdId: reservation.hold.id,
+                attemptNumber: 1,
+                status: "failed",
+                provider: "vendor",
+                bindingId: "binding",
+                requestFingerprint: "0".repeat(64),
+                nativeCostAmount: "1",
+                nativeCostUnit: { kind: "provider-native", provider: "vendor", unit: "job", usdConversion: { version: "v1", usdPerUnit: "0.1234567890123" } },
+            }),
+        ).rejects.toThrow("最多保留 12 位小数");
+    });
+
+    it("serializes settlement against pending attempt completion so cost cannot be omitted", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:serialized-attempt", requestFingerprint: "1".repeat(64), amount: "2", description: "串行成本预留" });
+        const pending = {
+            id: "attempt:serialized",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "2".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+        };
+        await recordProviderUsageAttempt(pending);
+        const settlement = {
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:serialized",
+            requestFingerprint: "3".repeat(64),
+            finalCharge: { credits: "1", usage: { capability: "image" as const, source: "actual" as const, count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1 as const, components: [{ id: "count", dimension: "count" as const, unitPrice: "1" }] },
+            description: "串行结算",
+        };
+
+        const [earlySettlement, completion] = await Promise.allSettled([settleWalletHold(settlement), recordProviderUsageAttempt({ ...pending, status: "failed", nativeCostAmount: "0.4" })]);
+        expect(earlySettlement.status).toBe("rejected");
+        expect(completion.status).toBe("fulfilled");
+        const settled = await settleWalletHold(settlement);
+        expect(settled.charge).toMatchObject({ settledCredits: "1", totalProviderCostUsd: "0.4" });
+    });
+
+    it("rejects a settlement snapshot that was not produced by the supplied sale rate", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:mismatch", requestFingerprint: "d".repeat(64), amount: "2", description: "结算快照预留" });
+
+        await expect(
+            settleWalletHold({
+                holdId: reservation.hold.id,
+                usageChargeId: "charge:mismatch",
+                requestFingerprint: "e".repeat(64),
+                finalCharge: { credits: "1.5", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" },
+                saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1" }] },
+                description: "不匹配结算",
+            } as never),
+        ).rejects.toThrow("结算快照");
+    });
+
+    it("reconciles signed ledger balance, active holds, availability, and charge linkage", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:reconcile", requestFingerprint: "1".repeat(64), amount: "2.125", description: "对账预留" });
+        await settleWalletHold({
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:reconcile",
+            requestFingerprint: "2".repeat(64),
+            finalCharge: { credits: "1.125", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1.125", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1.125" }] },
+            description: "对账结算",
+        });
+        await reserveWalletCredits({ userId: "user-one", businessId: "generation:active", requestFingerprint: "3".repeat(64), amount: "2.25", description: "活跃预留" });
+
+        expect(await reconcileWallet("user-one")).toEqual({ userId: "user-one", ledgerBalance: "9.375", settledBalance: "9.375", activeHolds: "2.25", availableBalance: "7.125", issues: [] });
+    });
+
+    it("preserves native and USD costs from every provider attempt, including failures", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:attempts", requestFingerprint: "4".repeat(64), amount: "3", description: "尝试成本预留" });
+        await recordProviderUsageAttempt({
+            id: "attempt:failed",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "failed",
+            provider: "vendor-a",
+            bindingId: "binding-a",
+            requestFingerprint: "5".repeat(64),
+            nativeCostAmount: "3",
+            nativeCostUnit: { kind: "provider-native", provider: "vendor-a", unit: "token-block", usdConversion: { version: "2026-08", usdPerUnit: "0.125" } },
+        });
+        await recordProviderUsageAttempt({
+            id: "attempt:success",
+            holdId: reservation.hold.id,
+            attemptNumber: 2,
+            status: "succeeded",
+            provider: "vendor-b",
+            bindingId: "binding-b",
+            requestFingerprint: "6".repeat(64),
+            nativeCostAmount: "0.2",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+        });
+        const settlement = await settleWalletHold({
+            holdId: reservation.hold.id,
+            usageChargeId: "charge:attempts",
+            requestFingerprint: "7".repeat(64),
+            finalCharge: { credits: "1", usage: { capability: "image", source: "actual", count: "1" }, estimated: false, capped: false, uncappedCredits: "1", platformLossCredits: "0" },
+            saleRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "1" }] },
+            description: "尝试成本结算",
+        });
+
+        expect(settlement.charge).toMatchObject({ settledCredits: "1", totalProviderCostUsd: "0.575", finalSaleCharge: { credits: "1" } });
+        expect(settlement.charge).not.toHaveProperty("marginCredits");
+        expect((await readAuthDb()).providerUsageAttempts).toEqual([
+            expect.objectContaining({ id: "attempt:failed", nativeCostAmount: "3", costUsd: "0.375", status: "failed" }),
+            expect.objectContaining({ id: "attempt:success", nativeCostAmount: "0.2", costUsd: "0.2", status: "succeeded" }),
+        ]);
     });
 });
-
-async function seedWallet({
-    permanentPoints,
-    dailyPoints,
-    freeDailyPoints = 0,
-    freeDailyPointsEnabled = true,
-    dailyImages = 0,
-    dailyText = 0,
-    planId = "pro",
-    entitlementsEnabled = true,
-    generationCostControl = {},
-}: {
-    permanentPoints: number;
-    dailyPoints: number;
-    freeDailyPoints?: number;
-    freeDailyPointsEnabled?: boolean;
-    dailyImages?: number;
-    dailyText?: number;
-    planId?: "free" | "pro";
-    entitlementsEnabled?: boolean;
-    generationCostControl?: Partial<AuthDatabase["settings"]["generationCostControl"]>;
-}) {
-    const db = structuredClone(emptyDb());
-    db.settings.freeDailyPointsEnabled = freeDailyPointsEnabled;
-    db.settings.freeDailyPoints = freeDailyPoints;
-    db.settings.entitlements = {
-        enabled: entitlementsEnabled,
-        defaultPlanId: "free",
-        plans: [plan({ id: "free", dailyPoints: 0, dailyImages: 0, dailyText: 0 }), plan({ id: "pro", dailyPoints, dailyImages, dailyText })],
-    };
-    db.settings.generationCostControl = { ...db.settings.generationCostControl, ...generationCostControl };
-    db.users.push(user(permanentPoints, planId));
-    await writeAuthDb(db);
-}
-
-function user(pointsBalance: number, planId: "free" | "pro"): StoredUser {
-    return {
-        id: "user-one",
-        accountId: "0001",
-        username: "wallet-user",
-        displayName: "钱包用户",
-        bio: "",
-        role: "user",
-        adminPermissions: [],
-        status: "active",
-        planId,
-        pointsBalance,
-        passwordHash: "test",
-        createdAt: "2026-07-01T00:00:00.000Z",
-        updatedAt: "2026-07-01T00:00:00.000Z",
-    };
-}
-
-function plan({ id, dailyPoints, dailyImages, dailyText }: { id: "free" | "pro"; dailyPoints: number; dailyImages: number; dailyText: number }): EntitlementPlan {
-    return {
-        id,
-        name: id === "pro" ? "专业版" : "免费版",
-        enabled: true,
-        dailyPoints,
-        limits: { dailyPointSpend: 0, dailyApiCalls: 0, dailyImages, dailyVideos: 0, dailyAudio: 0, dailyText },
-        features: ["points-wallet"],
-    };
-}
-
-function consume(idempotencyKey: string, amount: number, iso: string) {
-    return consumePoints({
-        userId: "user-one",
-        amount,
-        units: 1,
-        usageKind: "image",
-        model: "test-image-model",
-        description: "生成图片调用扣除",
-        idempotencyKey,
-        now: at(iso),
-    });
-}
-
-function at(iso: string) {
-    return new Date(iso);
-}

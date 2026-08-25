@@ -1,12 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { consumeUserPoints, getAuthSettings, isAuthInputError, isQuotaExceededError, refundUserPoints, type ApiCallFormat, type GenerationPointMultipliers, type PointUsageKind } from "@/lib/auth/store";
+import { getAuthSettings, isAuthInputError, isQuotaExceededError, type ApiCallFormat, type GenerationPointMultipliers, type PointUsageKind } from "@/lib/auth/store";
 import { getCurrentUser } from "@/lib/auth/session";
 import { DEFAULT_CHANNEL_CONNECT_ERROR } from "@/lib/server/generation-errors";
 import { UnsupportedMediaContentError } from "@/lib/server/media-content-validation";
 import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/media-concurrency";
+import { cloneMultipartFormDataWithDigest } from "@/lib/server/multipart-body-digest";
 import { MediaProxyResponseError, fetchSafeUpstreamMedia } from "@/lib/server/media-proxy-service";
 import { MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
@@ -15,7 +16,7 @@ import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
-import { readVerifiedSystemAiBusinessRequestId, SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiPointsIdempotencyKey, systemAiRequestFingerprint } from "@/lib/server/system-ai-billing";
+import { canonicalizeSystemAiQuery, readVerifiedSystemAiUsageContext, SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiUsageResponseHeaders, type SystemAiUsageBilling } from "@/lib/server/system-ai-billing";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 import { normalizeYumengModelCenterBaseUrl } from "@/lib/yumeng-model-center";
@@ -23,6 +24,11 @@ import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
 import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
+import { createStreamingUsageAccumulator, deriveProxyBillableUsage, normalizeProxyBillableRequest } from "@/lib/server/usage-billing-adapter";
+import { attachUsageProviderEvidence, finishUsageProviderAttempt, recordUsageProviderAttempt, releaseUsageBilling, reserveUsageBilling, reuseExistingUsageBilling, settleCancelledUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
+import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
+import { usageRecoveryIdentity } from "@/lib/server/generation-usage-context";
+import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,6 +76,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (!userId) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { channelId, path } = await context.params;
+    const requestUrl = new URL(request.url);
     const settings = await getAuthSettings();
     const channel = settings.systemChannels.find((item) => item.id === channelId && item.enabled);
     if (!channel || !channelConnectionReady(channel)) return NextResponse.json({ error: "默认接口未配置或已停用" }, { status: 404 });
@@ -115,7 +122,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     const access = authorizeSystemAiProxyRequest({
         method: request.method,
         path: globalAdaptation?.path || path,
-        search: new URL(request.url).search,
+        search: requestUrl.search,
         channelId: channel.id,
         upstreamModel,
         preferredLogicalModelId: request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "",
@@ -138,7 +145,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         if (!owned) return NextResponse.json({ error: "任务不存在或无权访问" }, { status: 404 });
     }
 
-    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
+    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, requestUrl.search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
     if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
     const headers = new Headers();
     if (contentType && !isMultipart) headers.set("content-type", contentType);
@@ -149,41 +156,95 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (clientRequestId) headers.set("x-client-request-id", clientRequestId);
     const authConfig = modelConfig?.protocol ? { ...channel.advancedConfig, protocol: modelConfig.protocol } : channel.advancedConfig;
     Object.entries(protocolAuthHeaders(channel.apiKey, authConfig, globalChannel ? "openai" : apiFormat)).forEach(([key, value]) => headers.set(key, value));
-    const callType = `${access.capability}:${access.operation}:/${(globalAdaptation?.path || path).join("/")}`;
-    const businessRequestId = readVerifiedSystemAiBusinessRequestId(request.headers, access.logicalModelId, upstreamModel) || `direct:${randomUUID()}`;
-    const pointsIdempotencyKey = pointsRequest ? systemAiPointsIdempotencyKey({ userId, businessRequestId, logicalModel: access.logicalModelId, channelId: channel.id, upstreamModel, callType }) : undefined;
-    const requestFingerprint = pointsRequest
-        ? systemAiRequestFingerprint({
-              method: request.method,
-              callType,
-              logicalModel: access.logicalModelId,
-              channelId: channel.id,
-              upstreamModel,
-              usageKind: pointsRequest.usageKind,
-              amount: pointsRequest.amount,
-              bodyDigest: requestBody.bodyDigest,
-          })
-        : undefined;
-    let pointsResult: Awaited<ReturnType<typeof consumeUserPoints>> | null = null;
-    let refundedPointsRemaining: number | null = null;
-    let pointsSettled = false;
-    const refundConsumedPoints = async () => {
-        if (!pointsResult || pointsSettled) return;
-        pointsSettled = true;
-        const refundedUser = await refundUserPoints(userId, pointsResult.model, pointsResult.cost, pointsResult.usageKind, pointsResult.units, undefined, pointsResult.recordId);
-        refundedPointsRemaining = typeof refundedUser?.pointsBalance === "number" ? refundedUser.pointsBalance : null;
-    };
-    if (pointsRequest) {
+    const usageContext =
+        access.operation === "create"
+            ? readVerifiedSystemAiUsageContext(request.headers, access.logicalModelId, upstreamModel, {
+                  userId,
+                  channelId: channel.id,
+                  capability: access.capability,
+                  method: request.method,
+                  canonicalPath: requestUrl.pathname,
+                  canonicalQuery: canonicalizeSystemAiQuery(requestUrl.searchParams),
+                  bodyDigest: requestBody.bodyDigest,
+              })
+            : undefined;
+    if (access.operation === "create" && !usageContext) return NextResponse.json({ error: "生成请求缺少有效的用量预留签名" }, { status: 401 });
+    if (usageContext?.providerIdempotencySupported) {
+        headers.set("idempotency-key", usageContext.providerIdempotencyKey!);
+        headers.set("x-client-request-id", usageContext.providerIdempotencyKey!);
+    } else if (access.operation === "create") {
+        headers.delete("idempotency-key");
+        headers.delete("x-client-request-id");
+    }
+    let usageBilling: UsageBilling | undefined;
+    let usageAttempt: Parameters<typeof recordUsageProviderAttempt>[0] | undefined;
+    if (usageContext) {
+        const logicalModel = settings.logicalModels.find((model) => model.enabled && model.id === access.logicalModelId);
+        const binding = logicalModel?.bindings.find((item) => item.enabled && item.id === usageContext.bindingId && item.channelId === channel.id && sameModel(item.upstreamModel, upstreamModel));
+        if (!logicalModel || !binding?.costRateCard || !binding.providerCostUnit) return NextResponse.json({ error: "逻辑模型缺少完整售卖或供应商成本价格快照" }, { status: 400 });
+        const capabilityProfile = resolveLogicalModelCapabilityProfile(binding, access.capability, channel, upstreamModel);
         try {
-            pointsResult = await consumeUserPoints(userId, access.logicalModelId, pointsRequest.amount, pointsRequest.usageKind, pointsIdempotencyKey, requestFingerprint);
+            const now = new Date();
+            usageBilling = await reuseExistingUsageBilling({ userId, businessId: usageContext.businessRequestId, requestFingerprint: usageContext.requestFingerprint });
+            if (!usageBilling) {
+                if (!logicalModel.saleRateCard) return NextResponse.json({ error: "逻辑模型缺少完整售卖价格快照" }, { status: 400 });
+                const inputLimits = capabilityProfile
+                    ? { maxInputTokens: capabilityProfile.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined, maxOutputTokens: capabilityProfile.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined }
+                    : undefined;
+                const requestUsage = normalizeProxyBillableRequest({ capability: access.capability, payload: readRequestBody(contentType, requestBody.pointsPayload), rateCard: logicalModel.saleRateCard, inputLimits });
+                usageBilling = await reserveUsageBilling({
+                    userId,
+                    businessId: usageContext.businessRequestId,
+                    requestFingerprint: usageContext.requestFingerprint,
+                    logicalModelId: logicalModel.id,
+                    saleRateSnapshot: logicalModel.saleRateCard,
+                    requestUsage,
+                    description: `${logicalModel.name}用量预留`,
+                    inputLimits,
+                    providerIdempotency: { supported: usageContext.providerIdempotencySupported, key: usageContext.providerIdempotencyKey },
+                    recovery: usageRecoveryIdentity(usageContext.businessRequestId),
+                    expiresAt: new Date(now.getTime() + resolveModelRequestTimeoutMs({ capabilityProfile }, access.capability)),
+                    now,
+                });
+            }
+            usageAttempt = {
+                billing: usageBilling,
+                attemptNumber: usageContext.attemptNumber,
+                status: "pending",
+                provider: channel.advancedConfig?.protocol || channel.id,
+                bindingId: binding.id,
+                requestFingerprint: createHash("sha256")
+                    .update(
+                        [
+                            usageContext.requestFingerprint,
+                            usageContext.userId,
+                            usageContext.channelId,
+                            usageContext.capability,
+                            usageContext.method,
+                            usageContext.canonicalPath,
+                            usageContext.canonicalQuery,
+                            usageContext.bodyDigest,
+                            String(usageContext.attemptNumber),
+                            usageContext.bindingId,
+                        ].join("\0"),
+                    )
+                    .digest("hex"),
+                providerIdempotencySupported: usageContext.providerIdempotencySupported,
+                providerIdempotencyKey: usageContext.providerIdempotencyKey,
+                nativeCostAmount: "0",
+                nativeCostUnit: binding.providerCostUnit,
+                costRateSnapshot: binding.costRateCard,
+                normalizedUsage: usageBilling.snapshot.reserve.usage,
+            };
+            const recorded = await recordUsageProviderAttempt(usageAttempt);
+            if (recorded.applied === false && (!usageContext.providerIdempotencySupported || recorded.attempt.providerIdempotencyKey !== usageContext.providerIdempotencyKey)) {
+                return NextResponse.json({ error: "供应商不支持安全重复创建，请查询现有任务或转人工复核" }, { status: 409 });
+            }
         } catch (error) {
-            if (isQuotaExceededError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
-            if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
-            throw error;
+            if (isQuotaExceededError(error) || isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+            return NextResponse.json({ error: error instanceof Error ? error.message : "用量预留失败" }, { status: 400 });
         }
     }
-    request.signal.addEventListener("abort", () => void refundConsumedPoints(), { once: true });
-
     let upstream: Response;
     try {
         upstream = await fetchSafeOutbound(target, {
@@ -195,29 +256,91 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             signal: request.signal,
         });
     } catch (error) {
-        await refundConsumedPoints();
+        if (usageBilling && usageContext) await finishUsageProviderAttempt({ billing: usageBilling, attemptNumber: usageContext.attemptNumber, status: "failed" });
         console.error("System API proxy request failed", error instanceof Error ? error.message : error);
-        return NextResponse.json({ error: DEFAULT_CHANNEL_CONNECT_ERROR }, { status: 502, headers: responseHeaders(new Headers(), null, refundedPointsRemaining) });
+        return NextResponse.json({ error: DEFAULT_CHANNEL_CONNECT_ERROR }, { status: 502, headers: responseHeaders(new Headers()) });
     }
 
-    if (!upstream.ok && pointsResult) {
-        await refundConsumedPoints();
-        pointsResult = null;
+    if (!upstream.ok && usageBilling && usageContext) {
+        const payload = upstream.headers.get("content-type")?.includes("json")
+            ? await upstream
+                  .clone()
+                  .json()
+                  .catch(() => undefined)
+            : undefined;
+        const usage = payload ? deriveProxyBillableUsage({ capability: access.capability, requestUsage: usageBilling.snapshot.requestUsage, payload }) : undefined;
+        await finishUsageProviderAttempt({ billing: usageBilling, attemptNumber: usageContext.attemptNumber, status: "failed", normalizedUsage: usage });
     }
     if (isRedirectStatus(upstream.status)) {
-        return NextResponse.json({ error: "上游接口不允许重定向，请检查后台渠道地址" }, { status: 502, headers: responseHeaders(new Headers(), null, refundedPointsRemaining) });
+        return NextResponse.json({ error: "上游接口不允许重定向，请检查后台渠道地址" }, { status: 502, headers: responseHeaders(new Headers()) });
     }
-    if (upstream.ok) pointsSettled = true;
     if (globalAdaptation && upstream.ok) {
         const payload = await upstream.json().catch(() => null);
-        if (!payload) return NextResponse.json({ error: "上游文本接口返回了无效 JSON" }, { status: 502, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
-        return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), { status: upstream.status, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
+        if (!payload) {
+            if (usageBilling && usageContext) await finishUsageProviderAttempt({ billing: usageBilling, attemptNumber: usageContext.attemptNumber, status: "failed" });
+            return NextResponse.json({ error: "上游文本接口返回了无效 JSON" }, { status: 502, headers: responseHeaders(upstream.headers, target) });
+        }
+        if (usageBilling && usageContext) {
+            const usage = deriveProxyBillableUsage({ capability: "text", requestUsage: usageBilling.snapshot.requestUsage, payload });
+            if (usage) await attachUsageProviderEvidence({ billing: usageBilling, attemptNumber: usageContext.attemptNumber, usage });
+        }
+        return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), {
+            status: upstream.status,
+            headers: responseHeaders(upstream.headers, target, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined),
+        });
     }
 
-    return new Response(upstream.body, {
+    const responseBody = upstream.ok && usageBilling && usageContext && access.capability === "text" && upstream.body ? meteredTextResponseBody(upstream.body, usageBilling, usageContext.attemptNumber) : upstream.body;
+    return new Response(responseBody, {
         status: upstream.status,
         statusText: upstream.statusText,
-        headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target),
+        headers: responseHeaders(upstream.headers, target, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined),
+    });
+}
+
+export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billing: UsageBilling, attemptNumber: number) {
+    const reader = body.getReader();
+    const accumulator = createStreamingUsageAccumulator("text", billing.snapshot.requestUsage);
+    let finalized = false;
+    const finalize = async (status: "succeeded" | "failed" | "canceled") => {
+        if (finalized) return;
+        finalized = true;
+        const usage = accumulator.finish();
+        try {
+            if (status === "succeeded") {
+                if (usage) await attachUsageProviderEvidence({ billing, attemptNumber, usage });
+            } else {
+                await finishUsageProviderAttempt({ billing, attemptNumber, status, normalizedUsage: usage });
+                if (status === "canceled") await settleCancelledUsageBilling({ billing, description: "用户取消已由上游接受的文本生成", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
+                else await releaseUsageBilling({ billing, reason: "上游文本流读取失败" });
+            }
+        } catch (error) {
+            console.error("System API text usage settlement failed", error instanceof Error ? error.message : error);
+        }
+    };
+    return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            try {
+                const next = await reader.read();
+                if (next.done) {
+                    await finalize("succeeded");
+                    controller.close();
+                    return;
+                }
+                accumulator.push(next.value);
+                controller.enqueue(next.value);
+            } catch (error) {
+                await finalize("failed");
+                controller.error(error);
+            }
+        },
+        async cancel(reason) {
+            try {
+                await reader.cancel(reason);
+            } finally {
+                await finalize("canceled");
+            }
+        },
     });
 }
 
@@ -363,7 +486,7 @@ async function readProxyRequestBody(request: Request, isMultipart: boolean): Pro
     }
 
     const formData = await new Request(request.url, { method: request.method, headers: { "Content-Type": request.headers.get("content-type") || "" }, body: bytes }).formData();
-    const cloned = await cloneFormData(formData);
+    const cloned = await cloneMultipartFormDataWithDigest(formData);
     return { body: cloned.body, pointsPayload: formDataFields(formData), bodyDigest: cloned.bodyDigest };
 }
 
@@ -374,33 +497,6 @@ function formDataFields(formData: FormData): Record<string, string> {
         if (typeof value === "string" && value.trim()) fields[key] = value.trim();
     }
     return fields;
-}
-
-async function cloneFormData(formData: FormData) {
-    const next = new FormData();
-    const digest = createHash("sha256");
-    for (const [key, value] of formData.entries()) {
-        if (typeof value === "string") {
-            next.append(key, value);
-            updateMultipartDigest(digest, ["field", key, value]);
-            continue;
-        }
-        const bytes = new Uint8Array(await value.arrayBuffer());
-        const type = value.type || "application/octet-stream";
-        const name = value.name || "file";
-        next.append(key, new Blob([bytes], { type }), name);
-        updateMultipartDigest(digest, ["file", key, name, type, String(bytes.byteLength), digestBytes(bytes)]);
-    }
-    return { body: next, bodyDigest: digest.digest("hex") };
-}
-
-function updateMultipartDigest(digest: ReturnType<typeof createHash>, parts: string[]) {
-    for (const part of parts)
-        digest
-            .update(String(Buffer.byteLength(part)))
-            .update(":")
-            .update(part)
-            .update("\0");
 }
 
 function digestBytes(bytes: Uint8Array) {
@@ -634,7 +730,7 @@ function normalizeApiBaseUrl(baseUrl: string, apiFormat: "openai" | "gemini", gl
     return `${normalized}/v1`;
 }
 
-function responseHeaders(headers: Headers, pointsResult?: Awaited<ReturnType<typeof consumeUserPoints>> | null, refundedPointsRemaining?: number | null, upstreamUrl?: string) {
+function responseHeaders(headers: Headers, upstreamUrl?: string, usageBilling?: SystemAiUsageBilling) {
     const nextHeaders = new Headers();
     const passthrough = ["content-type", "cache-control", "content-disposition"];
     passthrough.forEach((key) => {
@@ -642,15 +738,6 @@ function responseHeaders(headers: Headers, pointsResult?: Awaited<ReturnType<typ
         if (value) nextHeaders.set(key, value);
     });
     if (upstreamUrl) nextHeaders.set("x-vozeb-pro-upstream-url", upstreamUrl);
-    if (pointsResult) {
-        nextHeaders.set("x-vozeb-pro-points-cost", String(pointsResult.cost));
-        nextHeaders.set("x-vozeb-pro-points-remaining", String(pointsResult.remaining));
-        nextHeaders.set("x-vozeb-pro-points-permanent", String(pointsResult.permanentRemaining));
-        nextHeaders.set("x-vozeb-pro-points-daily", String(pointsResult.dailyRemaining));
-        nextHeaders.set("x-vozeb-pro-points-daily-expires-at", pointsResult.dailyExpiresAt);
-        if (pointsResult.recordId) nextHeaders.set("x-vozeb-pro-points-record-id", pointsResult.recordId);
-    } else if (typeof refundedPointsRemaining === "number") {
-        nextHeaders.set("x-vozeb-pro-points-remaining", String(refundedPointsRemaining));
-    }
+    if (usageBilling) Object.entries(systemAiUsageResponseHeaders(usageBilling)).forEach(([key, value]) => nextHeaders.set(key, value));
     return nextHeaders;
 }

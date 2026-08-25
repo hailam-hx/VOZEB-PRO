@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { billingProductsFixture, expectDialogWithinViewport, expectNoHorizontalOverflow, masonryGalleryFixture, masonryLayoutIsReady, openCreativeHistory, readMasonryLayout } from "./responsive-helpers";
+import { expectDialogWithinViewport, expectNoHorizontalOverflow, masonryGalleryFixture, masonryLayoutIsReady, openCreativeHistory, readMasonryLayout, topUpPresetsFixture } from "./responsive-helpers";
 
 async function waitForCreativeComposerReady(page: Page) {
     await expect(page.locator(".creative-composer")).toHaveAttribute("data-ready", "true", { timeout: 45_000 });
@@ -1327,49 +1327,71 @@ test("conversation and Canvas deletion stay deleted after refresh", async ({ pag
     expect((await request.get(`/api/creative/conversations/${canvasProject.creativeConversationId}`)).status()).toBe(404);
 });
 
-test("eight billing plans remain dense and usable across desktop and mobile", async ({ page }, testInfo) => {
-    await page.route("**/api/billing/products", (route) =>
+test("top-up presets and custom amount remain dense and usable across desktop and mobile", async ({ page }, testInfo) => {
+    const presets = topUpPresetsFixture();
+    await page.route(/\/api\/billing\/top-ups\/presets$/, (route) =>
         route.fulfill({
             status: 200,
             contentType: "application/json",
-            body: JSON.stringify({ products: billingProductsFixture(), paymentProviders: ["payply"] }),
+            body: JSON.stringify({ code: 0, data: { presets, paymentProviders: ["manual"] }, msg: "OK" }),
+        }),
+    );
+    await page.route(/\/api\/billing\/top-ups\/quotes$/, (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                code: 0,
+                data: {
+                    quote: {
+                        presetId: presets[0].id,
+                        currency: "VND",
+                        currencyExponent: 0,
+                        nominalNativeAmount: presets[0].nominalNativeAmount,
+                        promotionDiscountNativeAmount: "0",
+                        couponDiscountNativeAmount: "0",
+                        payableNativeAmount: presets[0].nominalNativeAmount,
+                        nominalUsdValue: "4",
+                        paidUsdValue: "4",
+                        creditAmount: "1000",
+                        pricingVersion: "responsive-v1",
+                        customerFx: { version: "fx-v1", usdPerVnd: "0.00004" },
+                        paymentAmount: { kind: "fiat", currency: "VND", amountMinor: presets[0].nominalNativeAmount, minorUnitExponent: 0 },
+                    },
+                },
+                msg: "OK",
+            }),
         }),
     );
     await page.goto("/profile?section=billing", { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "可选套餐" })).toBeVisible();
-    await expect.poll(() => page.locator("[role='tab']").count()).toBe(8);
+    await expect(page.getByRole("heading", { name: "充值中心" })).toBeVisible();
+    await expect(page.locator("[data-top-up-preset]")).toHaveCount(8);
+    await expect(page.locator("[data-top-up-custom='true']")).toHaveCount(1);
 
     const layout = await page.evaluate(() => {
-        const visible = (element: Element) => {
-            const bounds = element.getBoundingClientRect();
-            return bounds.width > 0 && bounds.height > 0;
-        };
-        const cards = [...document.querySelectorAll<HTMLElement>("[data-billing-plan-card]")].filter(visible);
-        const tabs = [...document.querySelectorAll<HTMLElement>("[role='tab']")];
-        const tabViewport = tabs[0]?.parentElement?.parentElement;
+        const cards = [...document.querySelectorAll<HTMLElement>("[data-top-up-preset], [data-top-up-custom]")];
+        const grid = cards[0]?.parentElement;
         return {
             documentClientWidth: document.documentElement.clientWidth,
             documentScrollWidth: document.documentElement.scrollWidth,
-            visibleCards: cards.length,
+            gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length : 0,
             cardOverflow: cards.some((card) => card.scrollWidth > card.clientWidth + 1),
-            actionsOutsideCards: cards.some((card) => {
-                const action = card.querySelector<HTMLElement>("[data-billing-plan-action]");
-                if (!action) return true;
-                const cardBounds = card.getBoundingClientRect();
-                const actionBounds = action.getBoundingClientRect();
-                return actionBounds.left < cardBounds.left - 1 || actionBounds.right > cardBounds.right + 1;
+            outsideViewport: cards.some((card) => {
+                const bounds = card.getBoundingClientRect();
+                return bounds.left < -1 || bounds.right > document.documentElement.clientWidth + 1;
             }),
-            tabViewportWidth: tabViewport?.clientWidth || 0,
-            tabScrollWidth: tabViewport?.scrollWidth || 0,
         };
     });
 
     const mobile = testInfo.project.name.startsWith("mobile-");
-    expect(layout.visibleCards).toBe(mobile ? 1 : 8);
+    expect(layout.gridColumns).toBe(mobile ? 2 : 4);
     expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.documentClientWidth + 1);
     expect(layout.cardOverflow).toBe(false);
-    expect(layout.actionsOutsideCards).toBe(false);
-    if (mobile) expect(layout.tabScrollWidth).toBeGreaterThan(layout.tabViewportWidth);
+    expect(layout.outsideViewport).toBe(false);
+    await page.getByRole("button", { name: /E2E 充值预设 1/ }).click();
+    await expect(page).toHaveURL(/\/billing\/checkout\?preset=e2e-top-up-1$/);
+    await expect(page.getByRole("heading", { name: "充值积分" })).toBeVisible();
+    await expectNoHorizontalOverflow(page, `top-up checkout ${testInfo.project.name}`);
 });
 
 test("inspiration works fill each row before continuing down the shortest masonry column", async ({ page }, testInfo) => {

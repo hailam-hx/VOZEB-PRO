@@ -1,4 +1,5 @@
 import { formatAccountId } from "@/lib/account-id";
+import { decimal } from "@/lib/billing/decimal";
 import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type {
     AuthenticatedUserRecord,
@@ -21,21 +22,7 @@ import type {
     UserSummaryRecord,
 } from "./repository-shared";
 import { mapCdkCode, mapCdkRedemption, mapEmailCode, mapPointRecord, mapQuotaUsage, mapSession, mapUser } from "./repository-record-mappers";
-import { jsonValue, normalizePage, normalizePageSize, numberValue, optionalString, pageResult, stringValue } from "./repository-shared";
-
-function assignmentDailyPoints(metadata: unknown, fallback: number) {
-    const value = jsonValue(metadata);
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-        const configured = Number(value.dailyPoints);
-        if (Number.isFinite(configured)) return nonNegativeNumber(configured);
-    }
-    return nonNegativeNumber(fallback);
-}
-
-function nonNegativeNumber(value: unknown) {
-    const number = Number(value);
-    return Number.isFinite(number) ? Math.max(0, number) : 0;
-}
+import { decimalValue, jsonValue, normalizePage, normalizePageSize, numberValue, optionalString, pageResult, stringValue } from "./repository-shared";
 
 type UserUpdatePatch = Partial<Omit<UserRecord, "id" | "createdAt" | "updatedAt" | "email" | "avatarStorageKey" | "mfaSecretCiphertext" | "mfaEnabledAt">> & {
     email?: string | null;
@@ -105,51 +92,14 @@ export class UsersRepository {
             `
             SELECT
                 users.*,
-                resolved_plan.id AS resolved_plan_id,
-                resolved_plan.name AS resolved_plan_name,
-                resolved_plan.daily_points AS resolved_plan_daily_points,
-                active_assignment.id AS active_assignment_id,
-                active_assignment.metadata AS active_assignment_metadata,
-                app_settings.free_daily_points_enabled,
-                app_settings.free_daily_points,
-                daily_wallet.user_id AS daily_wallet_user_id,
-                daily_wallet.plan_id AS daily_wallet_plan_id,
-                daily_wallet.assignment_id AS daily_wallet_assignment_id,
-                daily_wallet.granted_points AS daily_wallet_granted_points,
-                daily_wallet.remaining_points AS daily_wallet_remaining_points
+                coalesce(holds.held_balance, 0)::text AS held_balance
             FROM users
-            LEFT JOIN app_settings ON app_settings.id = 'default'
             LEFT JOIN LATERAL (
-                SELECT assignments.id, assignments.plan_id, assignments.metadata
-                FROM user_plan_assignments AS assignments
-                INNER JOIN entitlement_plans AS assignment_plan ON assignment_plan.id = assignments.plan_id AND assignment_plan.enabled = true
-                WHERE assignments.user_id = users.id
-                  AND assignments.status = 'active'
-                  AND assignments.starts_at <= $2
-                  AND (assignments.ends_at IS NULL OR assignments.ends_at > $2)
-                ORDER BY assignments.starts_at DESC, assignments.created_at DESC, assignments.id DESC
-                LIMIT 1
-            ) AS active_assignment ON true
-            LEFT JOIN LATERAL (
-                SELECT entitlement_plans.id, entitlement_plans.name, entitlement_plans.daily_points
-                FROM entitlement_plans
-                WHERE entitlement_plans.enabled = true
-                ORDER BY
-                    CASE
-                        WHEN entitlement_plans.id = active_assignment.plan_id THEN 0
-                        WHEN entitlement_plans.id = users.plan_id THEN 1
-                        WHEN entitlement_plans.id = app_settings.default_plan_id THEN 2
-                        ELSE 3
-                    END,
-                    entitlement_plans.sort_order ASC,
-                    entitlement_plans.created_at ASC
-                LIMIT 1
-            ) AS resolved_plan ON true
-            LEFT JOIN daily_plan_point_wallets AS daily_wallet
-                ON daily_wallet.user_id = users.id AND daily_wallet.date = $3
+                SELECT sum(amount) AS held_balance FROM wallet_holds WHERE user_id = users.id AND status = 'active'
+            ) AS holds ON true
             WHERE users.id = ANY($1::text[])
             `,
-            [userIds, input.now, input.date],
+            [userIds],
         );
         return result.rows.map(mapAuthenticatedUser);
     }
@@ -157,81 +107,16 @@ export class UsersRepository {
     async summarize(input: { now: string; date: string }): Promise<UserSummaryRecord> {
         const result = await this.db.query(
             `
-            WITH resolved_users AS (
-                SELECT
-                    users.id,
-                    users.role,
-                    users.status,
-                    users.points_balance,
-                    app_settings.default_plan_id,
-                    app_settings.free_daily_points_enabled,
-                    app_settings.free_daily_points,
-                    resolved_plan.id AS resolved_plan_id,
-                    resolved_plan.daily_points AS resolved_plan_daily_points,
-                    active_assignment.id AS active_assignment_id,
-                    active_assignment.metadata AS active_assignment_metadata,
-                    daily_wallet.plan_id AS daily_wallet_plan_id,
-                    daily_wallet.assignment_id AS daily_wallet_assignment_id,
-                    daily_wallet.remaining_points AS daily_wallet_remaining_points
-                FROM users
-                LEFT JOIN app_settings ON app_settings.id = 'default'
-                LEFT JOIN LATERAL (
-                    SELECT assignments.id, assignments.plan_id, assignments.metadata
-                    FROM user_plan_assignments AS assignments
-                    INNER JOIN entitlement_plans AS assignment_plan ON assignment_plan.id = assignments.plan_id AND assignment_plan.enabled = true
-                    WHERE assignments.user_id = users.id
-                      AND assignments.status = 'active'
-                      AND assignments.starts_at <= $1
-                      AND (assignments.ends_at IS NULL OR assignments.ends_at > $1)
-                    ORDER BY assignments.starts_at DESC, assignments.created_at DESC, assignments.id DESC
-                    LIMIT 1
-                ) AS active_assignment ON true
-                LEFT JOIN LATERAL (
-                    SELECT entitlement_plans.id, entitlement_plans.daily_points
-                    FROM entitlement_plans
-                    WHERE entitlement_plans.enabled = true
-                    ORDER BY
-                        CASE
-                            WHEN entitlement_plans.id = active_assignment.plan_id THEN 0
-                            WHEN entitlement_plans.id = users.plan_id THEN 1
-                            WHEN entitlement_plans.id = app_settings.default_plan_id THEN 2
-                            ELSE 3
-                        END,
-                        entitlement_plans.sort_order ASC,
-                        entitlement_plans.created_at ASC
-                    LIMIT 1
-                ) AS resolved_plan ON true
-                LEFT JOIN daily_plan_point_wallets AS daily_wallet
-                    ON daily_wallet.user_id = users.id AND daily_wallet.date = $2
-            )
             SELECT
                 count(*) AS total,
                 count(*) FILTER (WHERE status = 'active') AS active,
                 count(*) FILTER (WHERE status = 'disabled') AS disabled,
                 count(*) FILTER (WHERE role = 'admin') AS admins,
                 count(*) FILTER (WHERE role = 'admin' AND status = 'active') AS active_admins,
-                count(*) FILTER (WHERE active_assignment_id IS NOT NULL) AS users_with_plan,
-                coalesce(sum(greatest(0, points_balance + CASE
-                    WHEN resolved_plan_id IS NULL THEN 0
-                    WHEN active_assignment_id IS NOT NULL THEN
-                        CASE
-                            WHEN daily_wallet_plan_id = resolved_plan_id AND coalesce(daily_wallet_assignment_id, '') = active_assignment_id
-                                THEN greatest(0, coalesce(daily_wallet_remaining_points, 0))
-                            WHEN active_assignment_metadata->>'dailyPoints' ~ '^-?[0-9]+([.][0-9]+)?$'
-                                THEN greatest(0, (active_assignment_metadata->>'dailyPoints')::numeric)
-                            ELSE greatest(0, coalesce(resolved_plan_daily_points, 0))
-                        END
-                    WHEN free_daily_points_enabled IS NOT FALSE THEN
-                        CASE
-                            WHEN daily_wallet_plan_id = resolved_plan_id AND daily_wallet_assignment_id IS NULL
-                                THEN greatest(0, coalesce(daily_wallet_remaining_points, 0))
-                            ELSE greatest(0, coalesce(free_daily_points, 0))
-                        END
-                    ELSE 0
-                END)), 0) AS total_points_balance
-            FROM resolved_users
+                coalesce(sum(settled_balance), 0)::text AS total_settled_balance
+            FROM users
             `,
-            [input.now, input.date],
+            [],
         );
         const row = result.rows[0] || {};
         return {
@@ -240,8 +125,7 @@ export class UsersRepository {
             disabled: numberValue(row.disabled),
             admins: numberValue(row.admins),
             activeAdmins: numberValue(row.active_admins),
-            usersWithPlan: numberValue(row.users_with_plan),
-            totalPointsBalance: numberValue(row.total_points_balance),
+            totalSettledBalance: decimalValue(row.total_settled_balance),
         };
     }
 
@@ -309,8 +193,8 @@ export class UsersRepository {
     async create(user: UserRecord) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, plan_id, points_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12::numeric, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, settled_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::numeric, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             RETURNING *
             `,
             [
@@ -324,8 +208,7 @@ export class UsersRepository {
                 user.role,
                 JSON.stringify(user.adminPermissions),
                 user.status,
-                user.planId,
-                user.pointsBalance,
+                user.settledBalance,
                 user.passwordHash,
                 user.mfaSecretCiphertext || null,
                 user.mfaEnabledAt || null,
@@ -345,8 +228,8 @@ export class UsersRepository {
     async createWithNextAccountId(user: Omit<UserRecord, "accountId">) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, plan_id, points_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
-            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::numeric, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, settled_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::numeric, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             RETURNING *
             `,
             [
@@ -359,8 +242,7 @@ export class UsersRepository {
                 user.role,
                 JSON.stringify(user.adminPermissions),
                 user.status,
-                user.planId,
-                user.pointsBalance,
+                user.settledBalance,
                 user.passwordHash,
                 user.mfaSecretCiphertext || null,
                 user.mfaEnabledAt || null,
@@ -394,12 +276,11 @@ export class UsersRepository {
                 role = COALESCE($9, role),
                 admin_permissions = CASE WHEN $10::boolean THEN $11::jsonb ELSE admin_permissions END,
                 status = COALESCE($12, status),
-                plan_id = COALESCE($13, plan_id),
-                points_balance = COALESCE($14::numeric, points_balance),
-                password_hash = COALESCE($15, password_hash),
-                last_login_at = COALESCE($16, last_login_at),
-                mfa_secret_ciphertext = CASE WHEN $17::boolean THEN $18 ELSE mfa_secret_ciphertext END,
-                mfa_enabled_at = CASE WHEN $19::boolean THEN $20 ELSE mfa_enabled_at END,
+                settled_balance = COALESCE($13::numeric, settled_balance),
+                password_hash = COALESCE($14, password_hash),
+                last_login_at = COALESCE($15, last_login_at),
+                mfa_secret_ciphertext = CASE WHEN $16::boolean THEN $17 ELSE mfa_secret_ciphertext END,
+                mfa_enabled_at = CASE WHEN $18::boolean THEN $19 ELSE mfa_enabled_at END,
                 updated_at = now()
             WHERE id = $1
             RETURNING *
@@ -417,8 +298,7 @@ export class UsersRepository {
                 hasAdminPermissions,
                 JSON.stringify(patch.adminPermissions || []),
                 patch.status,
-                patch.planId,
-                patch.pointsBalance,
+                patch.settledBalance,
                 patch.passwordHash,
                 patch.lastLoginAt,
                 hasMfaSecret,
@@ -469,61 +349,24 @@ export class SessionsRepository {
         return result.rows[0] ? mapSession(result.rows[0]) : null;
     }
 
-    async getAuthenticatedUser(input: { sessionId: string; tokenHash: string; now: string; date: string }): Promise<AuthenticatedUserRecord | null> {
+    async getAuthenticatedUser(input: { sessionId: string; tokenHash: string; now: string }): Promise<AuthenticatedUserRecord | null> {
         const result = await this.db.query(
             `
             SELECT
                 users.*,
-                resolved_plan.id AS resolved_plan_id,
-                resolved_plan.name AS resolved_plan_name,
-                resolved_plan.daily_points AS resolved_plan_daily_points,
-                active_assignment.id AS active_assignment_id,
-                active_assignment.metadata AS active_assignment_metadata,
-                app_settings.free_daily_points_enabled,
-                app_settings.free_daily_points,
-                daily_wallet.user_id AS daily_wallet_user_id,
-                daily_wallet.plan_id AS daily_wallet_plan_id,
-                daily_wallet.assignment_id AS daily_wallet_assignment_id,
-                daily_wallet.granted_points AS daily_wallet_granted_points,
-                daily_wallet.remaining_points AS daily_wallet_remaining_points
+                coalesce(holds.held_balance, 0)::text AS held_balance
             FROM sessions
             INNER JOIN users ON users.id = sessions.user_id
-            LEFT JOIN app_settings ON app_settings.id = 'default'
             LEFT JOIN LATERAL (
-                SELECT assignments.id, assignments.plan_id, assignments.metadata
-                FROM user_plan_assignments AS assignments
-                INNER JOIN entitlement_plans AS assignment_plan ON assignment_plan.id = assignments.plan_id AND assignment_plan.enabled = true
-                WHERE assignments.user_id = users.id
-                  AND assignments.status = 'active'
-                  AND assignments.starts_at <= $3
-                  AND (assignments.ends_at IS NULL OR assignments.ends_at > $3)
-                ORDER BY assignments.starts_at DESC, assignments.created_at DESC, assignments.id DESC
-                LIMIT 1
-            ) AS active_assignment ON true
-            LEFT JOIN LATERAL (
-                SELECT entitlement_plans.id, entitlement_plans.name, entitlement_plans.daily_points
-                FROM entitlement_plans
-                WHERE entitlement_plans.enabled = true
-                ORDER BY
-                    CASE
-                        WHEN entitlement_plans.id = active_assignment.plan_id THEN 0
-                        WHEN entitlement_plans.id = users.plan_id THEN 1
-                        WHEN entitlement_plans.id = app_settings.default_plan_id THEN 2
-                        ELSE 3
-                    END,
-                    entitlement_plans.sort_order ASC,
-                    entitlement_plans.created_at ASC
-                LIMIT 1
-            ) AS resolved_plan ON true
-            LEFT JOIN daily_plan_point_wallets AS daily_wallet
-                ON daily_wallet.user_id = users.id AND daily_wallet.date = $4
+                SELECT sum(amount) AS held_balance FROM wallet_holds WHERE user_id = users.id AND status = 'active'
+            ) AS holds ON true
             WHERE sessions.id = $1
               AND sessions.token_hash = $2
               AND sessions.expires_at > $3
               AND users.status = 'active'
             LIMIT 1
             `,
-            [input.sessionId, input.tokenHash, input.now, input.date],
+            [input.sessionId, input.tokenHash, input.now],
         );
         return result.rows[0] ? mapAuthenticatedUser(result.rows[0]) : null;
     }
@@ -622,50 +465,17 @@ export class EmailCodesRepository {
 
 function mapAuthenticatedUser(row: Record<string, unknown>): AuthenticatedUserRecord {
     const user = mapUser(row);
-    const planId = stringValue(row.resolved_plan_id) || user.planId;
-    const assignmentId = optionalString(row.active_assignment_id);
-    const configuredDailyPoints = assignmentId ? assignmentDailyPoints(row.active_assignment_metadata, numberValue(row.resolved_plan_daily_points)) : row.free_daily_points_enabled === false ? 0 : nonNegativeNumber(row.free_daily_points);
-    const walletExists = row.daily_wallet_user_id !== null && row.daily_wallet_user_id !== undefined;
-    const walletMatches = walletExists && stringValue(row.daily_wallet_plan_id) === planId && (optionalString(row.daily_wallet_assignment_id) || "") === (assignmentId || "");
-    const consumedDailyPoints = walletMatches ? Math.max(0, nonNegativeNumber(row.daily_wallet_granted_points) - nonNegativeNumber(row.daily_wallet_remaining_points)) : 0;
-    return {
-        user,
-        planId,
-        planName: stringValue(row.resolved_plan_name),
-        hasActivePlan: Boolean(assignmentId),
-        permanentPoints: numberValue(user.pointsBalance),
-        dailyPoints: configuredDailyPoints > 0 ? Math.max(0, configuredDailyPoints - consumedDailyPoints) : 0,
-    };
+    const heldBalance = decimalValue(row.held_balance || "0");
+    return { user, heldBalance, availableBalance: decimal(user.settledBalance).minus(decimal(heldBalance)).toString() };
 }
 
 export class PointsRepository {
     constructor(private readonly db: QueryExecutor) {}
 
     async addRecord(record: PointRecordInput) {
-        const permanentAmount = record.permanentAmount ?? record.amount;
-        const dailyAmount = record.dailyAmount ?? 0;
-        const permanentBalanceAfter = record.permanentBalanceAfter ?? record.balanceAfter;
-        const dailyBalanceAfter = record.dailyBalanceAfter ?? 0;
         const result = await this.db.query(
-            "INSERT INTO point_records (id, user_id, type, amount, balance_after, permanent_amount, daily_amount, permanent_balance_after, daily_balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, source_date, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *",
-            [
-                record.id,
-                record.userId,
-                record.type,
-                record.amount,
-                record.balanceAfter,
-                permanentAmount,
-                dailyAmount,
-                permanentBalanceAfter,
-                dailyBalanceAfter,
-                record.description,
-                record.model || null,
-                record.idempotencyKey || null,
-                record.requestFingerprint || null,
-                record.sourceRecordId || null,
-                record.sourceDate || null,
-                record.createdAt,
-            ],
+            "INSERT INTO point_records (id, user_id, type, amount, balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, created_at) VALUES ($1, $2, $3, $4::numeric, $5::numeric, $6, $7, $8, $9, $10, $11) RETURNING *",
+            [record.id, record.userId, record.type, record.amount, record.balanceAfter, record.description, record.model || null, record.idempotencyKey || null, record.requestFingerprint || null, record.sourceRecordId || null, record.createdAt],
         );
         return mapPointRecord(result.rows[0]);
     }

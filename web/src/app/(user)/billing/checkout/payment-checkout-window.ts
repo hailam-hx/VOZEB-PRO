@@ -14,7 +14,7 @@ export function openPaymentCheckoutWindow(checkout: PaymentCheckout, openWindow:
     const redirectUrl = safePaymentUrl(checkout.url || checkout.qrContent);
     if (redirectUrl) return openPaymentRedirect(redirectUrl, fallbackValue, openWindow);
 
-    if (checkout.kind === "form" && checkout.form) return openPaymentRedirect(`/api/billing/orders/${encodeURIComponent(checkout.orderId)}/payment-form`, fallbackValue, openWindow);
+    if (checkout.kind === "form" && checkout.form) return openPaymentRedirect(`/api/billing/top-ups/orders/${encodeURIComponent(checkout.orderId)}/payment-form`, fallbackValue, openWindow);
 
     return { status: "invalid", fallbackValue };
 }

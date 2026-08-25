@@ -1,10 +1,12 @@
-import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
+import { getAuthSettings } from "@/lib/auth/store";
 import type { AgentSkillWorkspace } from "@/lib/auth/store-types";
 import { AGENT_SKILL_EXTRACTION_SOURCE_LENGTH, type ImportedAgentSkill } from "@/lib/agent-skill-import-types";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { systemAiTextUsageContext } from "@/lib/server/generation-usage-context";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
-import { rankTextPlanningCandidates, requestStructuredText } from "@/lib/server/text-planning-runtime";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey } from "@/lib/server/system-ai-billing";
+import { rankTextPlanningCandidates, requestStructuredText, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
+import { systemAiBillingHeaders, systemAiIdempotencyKey, systemAiUsageRequestFingerprint } from "@/lib/server/system-ai-billing";
+import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 
 const WORKSPACES: AgentSkillWorkspace[] = ["image", "video", "canvas", "drama"];
 
@@ -68,30 +70,49 @@ export async function refineImportedAgentSkill(input: { skill: ImportedAgentSkil
     if (!logicalModel || !candidates.length) throw new AgentSkillRefinementError("请先配置并启用默认文本模型，再提取 GitHub Skill", 503);
 
     const origin = resolveInternalOrigin(new URL(input.requestUrl).origin);
+    const businessRequestId = systemAiIdempotencyKey("agent-skill-import", input.userId, input.skill.sourceContentHash);
+    const requestFingerprint = systemAiUsageRequestFingerprint({ userId: input.userId, businessRequestId, logicalModel, capability: "text", payload: { skill: input.skill, tool: skillExtractionTool.name } });
     let latestError: unknown;
-    for (const candidate of rankTextPlanningCandidates(candidates.map((item) => ({ ...item, channelId: item.channel.id })))) {
+    const ranked = rankTextPlanningCandidates(candidates.map((item) => ({ ...item, channelId: item.channel.id })));
+    for (const [index, candidate] of ranked.entries()) {
+        const attemptNumber = index + 1;
+        const usageContext = systemAiTextUsageContext({ candidate, userId: input.userId, logicalModelId: logicalModel, businessRequestId, requestFingerprint, attemptNumber });
         try {
-            const idempotencyKey = systemAiIdempotencyKey("agent-skill-import", input.userId, input.skill.sourceContentHash, candidate.channel.id, candidate.upstreamModel);
             const result = await requestStructuredText({
                 origin,
                 cookie: input.cookie,
                 candidate,
                 messages: extractionMessages(input.skill),
                 tool: skillExtractionTool,
-                headers: systemAiBillingHeaders(logicalModel, idempotencyKey, candidate.upstreamModel),
-                onInvalidResponse: (headers) => refundTextResponse(input.userId, logicalModel, headers),
+                headers: systemAiBillingHeaders(logicalModel, usageContext, candidate.upstreamModel),
+                onInvalidResponse: (headers) => finishSystemAiTextAttempt(headers, { status: "failed" }),
             });
-            const refined = normalizeRefinedSkill(JSON.parse(result.arguments));
+            let refined: RefinedAgentSkill | null = null;
+            try {
+                refined = normalizeRefinedSkill(JSON.parse(result.arguments));
+            } catch {
+                refined = null;
+            }
             if (!refined) {
-                await refundTextResponse(input.userId, logicalModel, result.headers);
+                await finishSystemAiTextAttempt(result.headers, { status: "failed" });
                 throw new AgentSkillRefinementError("文本模型返回的 Skill 内容不完整");
             }
+            await finishSystemAiTextAttempt(result.headers, { status: "succeeded" });
             return { ...input.skill, ...refined };
         } catch (error) {
             latestError = error;
+            const resolution = await resolveSystemAiTextFailure({
+                userId: input.userId,
+                businessId: businessRequestId,
+                reason: error instanceof Error ? error.message : "Skill 提取请求状态未知",
+                final: false,
+                currentAttempt: { attemptNumber, acceptance: error instanceof TextPlanningRequestError ? error.requestAcceptance : "response" },
+            });
+            if (resolution.state !== "safe_to_failover") throw error;
         }
     }
 
+    await resolveSystemAiTextFailure({ userId: input.userId, businessId: businessRequestId, reason: latestError instanceof Error ? latestError.message : "Skill 提取失败", final: true });
     if (latestError instanceof AgentSkillRefinementError) throw latestError;
     throw new AgentSkillRefinementError("默认文本模型无法完成 Skill 提取，请检查文本模型渠道后重试");
 }
@@ -209,9 +230,4 @@ function hasChinese(value: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-async function refundTextResponse(userId: string, model: string, headers: Headers) {
-    const billing = readSystemAiBilling(headers);
-    if (hasSystemAiCharge(billing)) await refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
 }

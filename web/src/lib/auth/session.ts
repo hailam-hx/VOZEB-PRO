@@ -90,13 +90,9 @@ export function serializeCurrentUser(user: CurrentUser) {
         role: user.role,
         adminPermissions: [...user.adminPermissions],
         status: user.status,
-        planId: user.planId,
-        planName: user.planName,
-        hasActivePlan: user.hasActivePlan,
-        pointsBalance: user.pointsBalance,
-        permanentPointsBalance: user.permanentPointsBalance,
-        dailyPointsBalance: user.dailyPointsBalance,
-        dailyPointsExpiresAt: user.dailyPointsExpiresAt,
+        settledBalance: user.settledBalance,
+        heldBalance: user.heldBalance,
+        availableBalance: user.availableBalance,
         mfaEnabled: user.mfaEnabled,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
@@ -121,12 +117,6 @@ export function serializePublicSettings(settings: AuthSettings) {
         },
         registrationEnabled: settings.registrationEnabled,
         emailRegistrationEnabled: settings.emailRegistrationEnabled,
-        modelPointCosts: { ...settings.modelPointCosts },
-        generationPointMultipliers: {
-            imageQuality: { ...settings.generationPointMultipliers.imageQuality },
-            videoQuality: { ...settings.generationPointMultipliers.videoQuality },
-            videoSeconds: { ...settings.generationPointMultipliers.videoSeconds },
-        },
         generationConcurrency: { ...settings.generationConcurrency },
         generationDefaults: {
             canvasImageCount: settings.generationDefaults.canvasImageCount,
@@ -146,6 +136,7 @@ export function serializePublicSettings(settings: AuthSettings) {
                 name: model.name,
                 capability: model.capability,
                 enabled: true,
+                ...(model.saleRateCard ? { saleRateCard: model.saleRateCard } : {}),
                 bindings: model.bindings
                     .filter((binding) => binding.enabled)
                     .map((binding) => ({
@@ -154,6 +145,14 @@ export function serializePublicSettings(settings: AuthSettings) {
                         upstreamModel: binding.upstreamModel,
                         enabled: true,
                         priority: binding.priority,
+                        ...(binding.capabilityProfile?.maxInputTokens || binding.capabilityProfile?.maxOutputTokens
+                            ? {
+                                  capabilityProfile: {
+                                      ...(binding.capabilityProfile.maxInputTokens ? { maxInputTokens: binding.capabilityProfile.maxInputTokens } : {}),
+                                      ...(binding.capabilityProfile.maxOutputTokens ? { maxOutputTokens: binding.capabilityProfile.maxOutputTokens } : {}),
+                                  },
+                              }
+                            : {}),
                     })),
             })),
         systemChannels: settings.systemChannels

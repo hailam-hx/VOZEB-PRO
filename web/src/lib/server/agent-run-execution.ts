@@ -1,4 +1,4 @@
-import { getAuthSettings, refundUserPoints, type LogicalModelCapability } from "@/lib/auth/store";
+import { getAuthSettings, type LogicalModelCapability } from "@/lib/auth/store";
 import { withCreativeFoundation, type CreativeReview } from "@/lib/creative-agent-contract";
 import type { CreativeAsset, CreativeGenerationPreferences, CreativeSurface } from "@/lib/creative-runtime-contract";
 import { creativeAssetReferenceAliases } from "@/lib/creative-asset-references";
@@ -21,7 +21,8 @@ import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-reference-contract";
 import type { AgentFunctionCallResult } from "./agent-function-call";
 import { agentSurfaceImageSize, canvasReferenceContext, canvasReferenceSupportsTask, canvasSnapshotNodes, isMediaReferenceType, resolveAgentTaskRatio, resolveCanvasTaskTargetNodeId, selectedCanvasReferenceNodes } from "./agent-run-task-input";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "./system-ai-billing";
+import { readSystemAiBilling, systemAiBillingHeaders, type SystemAiUsageContextDraft } from "./system-ai-billing";
+import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "./usage-billing-runtime";
 import { acceptsMediaReference, mergeTaskReferences, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
 
 export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
@@ -469,15 +470,14 @@ export async function requestFunctionCall(
     tool: typeof agentPlanTool,
     name: string,
     signal: AbortSignal,
-    userId: string,
+    _userId: string,
     billingModel: string,
     allowNaturalLanguage = false,
-    pointsIdempotencyKey?: string,
+    usageContext?: SystemAiUsageContextDraft,
 ) {
     const requestHeaders = runtimeRequestHeaders(cookie, {
         "Content-Type": "application/json",
-        ...(pointsIdempotencyKey ? { "Idempotency-Key": pointsIdempotencyKey, "X-Client-Request-Id": pointsIdempotencyKey } : {}),
-        ...systemAiBillingHeaders(billingModel, pointsIdempotencyKey, candidate.upstreamModel),
+        ...systemAiBillingHeaders(billingModel, usageContext, candidate.upstreamModel),
     });
     const call = await requestStructuredText({
         origin,
@@ -488,9 +488,14 @@ export async function requestFunctionCall(
         headers: requestHeaders,
         signal,
         allowNaturalLanguage,
-        onInvalidResponse: (headers) => refundTextResponse(userId, billingModel, headers),
+        onInvalidResponse: (headers) => finishSystemAiTextAttempt(headers, { status: "failed" }),
     });
-    return readFunctionCallResult(call.arguments, call.headers, call.protocol, call.elapsedMs);
+    return {
+        ...readFunctionCallResult(call.arguments, call.headers, call.protocol, call.elapsedMs),
+        usageHeaders: call.headers,
+        usageBusinessId: usageContext?.businessRequestId,
+        usageAttemptNumber: usageContext?.attemptNumber,
+    };
 }
 
 export function responseOutputText(payload: { output_text?: string; output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }) {
@@ -515,13 +520,20 @@ export function readFunctionCallResult(argumentsText: string, headers: Headers, 
     };
 }
 
-export async function refundFunctionCall(userId: string, model: string, call: AgentFunctionCallResult) {
-    if (hasSystemAiCharge(call)) await refundUserPoints(userId, model, call.pointsCost, "text", 1, undefined, call.pointsRecordId);
+export async function voidFunctionCall(call: AgentFunctionCallResult) {
+    if (call.usageHeaders) await finishSystemAiTextAttempt(call.usageHeaders, { status: "failed" });
 }
 
-export async function refundTextResponse(userId: string, model: string, headers: Headers) {
-    const billing = readSystemAiBilling(headers);
-    if (hasSystemAiCharge(billing)) await refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
+export async function releaseFunctionCall(userId: string, call: AgentFunctionCallResult, reason: string) {
+    await voidFunctionCall(call);
+    if (call.usageBusinessId)
+        await resolveSystemAiTextFailure({
+            userId,
+            businessId: call.usageBusinessId,
+            reason,
+            final: true,
+            ...(call.usageAttemptNumber ? { currentAttempt: { attemptNumber: call.usageAttemptNumber, acceptance: "response" as const } } : {}),
+        });
 }
 
 export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin: string, cookie: string, executionId: string, settings?: Awaited<ReturnType<typeof getAuthSettings>>) {

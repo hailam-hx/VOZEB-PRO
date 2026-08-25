@@ -1,11 +1,15 @@
-import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
+import { randomUUID } from "node:crypto";
+
+import { getAuthSettings } from "@/lib/auth/store";
 import { normalizeCreativeReview, unavailableCreativeReview, type CreativeFoundation, type CreativeMediaType, type CreativeReview } from "@/lib/creative-agent-contract";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
+import { systemAiTextUsageContext } from "@/lib/server/generation-usage-context";
 import { resolveLogicalModel } from "@/lib/server/logical-model-router";
 import { fetchOptionalResponses } from "@/lib/server/responses-request";
 import { TEXT_MODEL_REQUEST_TIMEOUT_MS } from "@/lib/server/model-request-policy";
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
+import { systemAiBillingHeaders, systemAiIdempotencyKey, systemAiUsageRequestFingerprint } from "@/lib/server/system-ai-billing";
+import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 
 export type CreativeReviewTaskInput = {
     id: string;
@@ -16,7 +20,8 @@ export type CreativeReviewTaskInput = {
     imageUrls?: string[];
 };
 
-type ReviewCall = { arguments: string } & SystemAiBilling;
+type ReviewCall = { arguments: string; headers: Headers };
+type ReviewAttempt = { call?: ReviewCall; acceptance: "response" | "unknown" };
 
 export async function reviewCreativeOutputs(input: { origin: string; cookie: string; userId: string; billingId?: string; foundation: CreativeFoundation; tasks: CreativeReviewTaskInput[] }): Promise<CreativeReview> {
     const validTaskIds = new Set(input.tasks.map((task) => task.id));
@@ -41,61 +46,110 @@ export async function reviewCreativeOutputs(input: { origin: string; cookie: str
         { role: "user", content: [{ type: "text", text: reviewContext }, ...imageInputs.map((item) => ({ type: "image_url", image_url: { url: item.url } }))] },
     ];
 
+    const businessRequestId = systemAiIdempotencyKey("creative-review", input.userId, input.billingId || randomUUID());
+    const requestFingerprint = systemAiUsageRequestFingerprint({ userId: input.userId, businessRequestId, logicalModel: model, capability: "text", payload: { mode, reviewContext, imageUrls: imageInputs.map((item) => item.url) } });
+    const headersForAttempt = (attemptNumber: number) => ({
+        "Content-Type": "application/json",
+        cookie: input.cookie,
+        ...systemAiBillingHeaders(model, systemAiTextUsageContext({ candidate: resolved, userId: input.userId, logicalModelId: model, businessRequestId, requestFingerprint, attemptNumber }), resolved.upstreamModel),
+    });
+    let activeAttempt = 1;
     try {
-        const idempotencyKey = input.billingId ? systemAiIdempotencyKey("creative-review", input.userId, input.billingId, resolved.channel.id) : undefined;
-        const headers = { "Content-Type": "application/json", cookie: input.cookie, ...systemAiBillingHeaders(model, idempotencyKey, resolved.upstreamModel) };
-        let call = await callResponses(input.origin, resolved.channel.id, resolved.upstreamModel, responsesInput, headers, input.userId, model);
-        if (!call) call = await callChat(input.origin, resolved.channel.id, resolved.upstreamModel, chatMessages, headers, input.userId, model);
-        if (!call) return unavailableCreativeReview("默认文本模型没有返回有效复盘结果，生成结果已保留。");
+        const responses = await callResponses(input.origin, resolved.channel.id, resolved.upstreamModel, responsesInput, headersForAttempt(1));
+        let call = responses.call;
+        let finalAcceptance = responses.acceptance;
+        if (!call) {
+            const resolution = await resolveSystemAiTextFailure({
+                userId: input.userId,
+                businessId: businessRequestId,
+                reason: responses.acceptance === "unknown" ? "自动复盘 Responses 请求状态未知" : "自动复盘 Responses 请求失败",
+                final: false,
+                requestNotReceived: responses.acceptance === "response",
+                currentAttempt: { attemptNumber: 1, acceptance: responses.acceptance },
+            });
+            if (resolution.state !== "safe_to_failover") return unavailableCreativeReview("自动复盘渠道状态待确认，生成结果已保留。");
+            activeAttempt = 2;
+            const chat = await callChat(input.origin, resolved.channel.id, resolved.upstreamModel, chatMessages, headersForAttempt(2));
+            call = chat.call;
+            finalAcceptance = chat.acceptance;
+        }
+        if (!call) {
+            await resolveSystemAiTextFailure({
+                userId: input.userId,
+                businessId: businessRequestId,
+                reason: finalAcceptance === "unknown" ? "自动复盘请求状态未知" : "默认文本模型没有返回有效复盘结果",
+                final: finalAcceptance === "response",
+                requestNotReceived: finalAcceptance === "response",
+                currentAttempt: { attemptNumber: activeAttempt, acceptance: finalAcceptance },
+            });
+            return unavailableCreativeReview("默认文本模型没有返回有效复盘结果，生成结果已保留。");
+        }
         let review: CreativeReview | null = null;
         try {
             review = normalizeCreativeReview(JSON.parse(call.arguments), validTaskIds);
         } catch {
             review = null;
         }
-        if (review) return { ...review, mode };
-        if (hasSystemAiCharge(call)) await refundUserPoints(input.userId, model, call.pointsCost, "text", 1, undefined, call.pointsRecordId);
-        return unavailableCreativeReview("默认文本模型返回了无效复盘结构，相关积分已退款，生成结果已保留。");
-    } catch {
+        if (review) {
+            await finishSystemAiTextAttempt(call.headers, { status: "succeeded" });
+            return { ...review, mode };
+        }
+        await finishSystemAiTextAttempt(call.headers, { status: "failed" });
+        await resolveSystemAiTextFailure({ userId: input.userId, businessId: businessRequestId, reason: "默认文本模型返回了无效复盘结构", final: true, currentAttempt: { attemptNumber: activeAttempt, acceptance: "response" } });
+        return unavailableCreativeReview("默认文本模型返回了无效复盘结构，生成结果已保留。");
+    } catch (error) {
+        await resolveSystemAiTextFailure({
+            userId: input.userId,
+            businessId: businessRequestId,
+            reason: error instanceof Error ? error.message : "自动复盘状态未知",
+            final: false,
+            currentAttempt: { attemptNumber: activeAttempt, acceptance: "unknown" },
+        }).catch(() => undefined);
         return unavailableCreativeReview("自动复盘服务暂时不可用，生成结果已保留，可稍后根据实际画面继续调整。");
     }
 }
 
-async function callResponses(origin: string, channelId: string, upstreamModel: string, input: unknown[], headers: Record<string, string>, userId: string, billingModel: string) {
+async function callResponses(origin: string, channelId: string, upstreamModel: string, input: unknown[], headers: Record<string, string>): Promise<ReviewAttempt> {
     const response = await fetchOptionalResponses(`${origin}/api/ai/system/${encodeURIComponent(channelId)}/responses`, {
         method: "POST",
         headers,
         cache: "no-store",
         body: JSON.stringify({ model: upstreamModel, input, tools: [reviewTool], tool_choice: { type: "function", name: reviewTool.name } }),
     });
-    if (!response?.ok) return null;
+    if (!response) return { acceptance: "unknown" };
+    if (!response.ok) return { acceptance: "response" };
     const payload = (await response.json()) as { output?: Array<{ type?: string; name?: string; arguments?: string }> };
     const argumentsText = payload.output?.find((item) => item.type === "function_call" && item.name === reviewTool.name)?.arguments;
-    if (argumentsText) return readCall(argumentsText, response.headers);
-    await refundResponse(userId, billingModel, response.headers);
-    return null;
+    if (argumentsText) return { call: readCall(argumentsText, response.headers), acceptance: "response" };
+    await finishSystemAiTextAttempt(response.headers, { status: "failed" });
+    return { acceptance: "response" };
 }
 
-async function callChat(origin: string, channelId: string, upstreamModel: string, messages: unknown[], headers: Record<string, string>, userId: string, billingModel: string) {
-    const response = await fetchInternalApi(`${origin}/api/ai/system/${encodeURIComponent(channelId)}/chat/completions`, {
-        method: "POST",
-        headers,
-        cache: "no-store",
-        signal: AbortSignal.timeout(TEXT_MODEL_REQUEST_TIMEOUT_MS),
-        body: JSON.stringify({
-            model: upstreamModel,
-            messages,
-            tools: [{ type: "function", function: { name: reviewTool.name, description: reviewTool.description, parameters: reviewTool.parameters } }],
-            tool_choice: { type: "function", function: { name: reviewTool.name } },
-        }),
-    });
-    if (!response.ok) return null;
+async function callChat(origin: string, channelId: string, upstreamModel: string, messages: unknown[], headers: Record<string, string>): Promise<ReviewAttempt> {
+    let response: Response;
+    try {
+        response = await fetchInternalApi(`${origin}/api/ai/system/${encodeURIComponent(channelId)}/chat/completions`, {
+            method: "POST",
+            headers,
+            cache: "no-store",
+            signal: AbortSignal.timeout(TEXT_MODEL_REQUEST_TIMEOUT_MS),
+            body: JSON.stringify({
+                model: upstreamModel,
+                messages,
+                tools: [{ type: "function", function: { name: reviewTool.name, description: reviewTool.description, parameters: reviewTool.parameters } }],
+                tool_choice: { type: "function", function: { name: reviewTool.name } },
+            }),
+        });
+    } catch {
+        return { acceptance: "unknown" };
+    }
+    if (!response.ok) return { acceptance: "response" };
     const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> } }> };
     const message = payload.choices?.[0]?.message;
     const argumentsText = message?.tool_calls?.find((item) => item.function?.name === reviewTool.name)?.function?.arguments || strictJsonObjectText(message?.content);
-    if (argumentsText) return readCall(argumentsText, response.headers);
-    await refundResponse(userId, billingModel, response.headers);
-    return null;
+    if (argumentsText) return { call: readCall(argumentsText, response.headers), acceptance: "response" };
+    await finishSystemAiTextAttempt(response.headers, { status: "failed" });
+    return { acceptance: "response" };
 }
 
 async function reviewImages(tasks: CreativeReviewTaskInput[], origin: string, cookie: string) {
@@ -123,15 +177,7 @@ async function normalizeReviewImage(value: string, origin: string, cookie: strin
 }
 
 function readCall(argumentsText: string, headers: Headers): ReviewCall {
-    return {
-        arguments: argumentsText,
-        ...readSystemAiBilling(headers),
-    };
-}
-
-async function refundResponse(userId: string, model: string, headers: Headers) {
-    const billing = readSystemAiBilling(headers);
-    if (hasSystemAiCharge(billing)) await refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
+    return { arguments: argumentsText, headers };
 }
 
 const reviewTool = {

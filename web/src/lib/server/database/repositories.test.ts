@@ -23,10 +23,10 @@ describe("split Postgres repositories", () => {
         );
         const loading = createPostgresRepositories({ query } as unknown as QueryExecutor).settings.getSettings();
 
-        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(3));
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
         resolvers.forEach((resolve) => resolve());
 
-        await expect(loading).resolves.toEqual({ settings: undefined, plans: [], channels: [] });
+        await expect(loading).resolves.toEqual({ settings: undefined, channels: [] });
     });
 
     it("loads settings without touching user or billing tables", async () => {
@@ -43,18 +43,6 @@ describe("split Postgres repositories", () => {
                     generation_defaults: {},
                     payment_config: {},
                     default_models: {},
-                    default_plan_id: "free",
-                    created_at: timestamp,
-                    updated_at: timestamp,
-                },
-            ],
-            [
-                {
-                    id: "free",
-                    name: "免费版",
-                    enabled: true,
-                    limits: {},
-                    features: [],
                     created_at: timestamp,
                     updated_at: timestamp,
                 },
@@ -64,25 +52,8 @@ describe("split Postgres repositories", () => {
 
         const settings = await createPostgresRepositories(executor).settings.getSettings();
 
-        expect(settings.settings?.defaultPlanId).toBe("free");
-        expect(settings.plans).toHaveLength(1);
-        expect(query).toHaveBeenCalledTimes(3);
-        expect(query.mock.calls.map((_, index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("FROM app_settings"), expect.stringContaining("FROM entitlement_plans"), expect.stringContaining("FROM system_model_channels")]);
-    });
-
-    it("loads wallet settings without loading model channels", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([
-            [{ id: "default", free_daily_points_enabled: true, free_daily_points: 3, default_plan_id: "free", created_at: timestamp, updated_at: timestamp }],
-            [{ id: "free", name: "免费版", enabled: true, daily_points: 0, limits: {}, features: [], created_at: timestamp, updated_at: timestamp }],
-        ]);
-
-        const settings = await createPostgresRepositories(executor).settings.getWalletSettings();
-
-        expect(settings.plans).toHaveLength(1);
         expect(query).toHaveBeenCalledTimes(2);
-        expect([0, 1].map((index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("FROM app_settings"), expect.stringContaining("FROM entitlement_plans")]);
-        expect(String(queryArgs(query, 0)[0])).not.toContain("system_model_channels");
+        expect(query.mock.calls.map((_, index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("FROM app_settings"), expect.stringContaining("FROM system_model_channels")]);
     });
 
     it("persists channel configuration without validation records", async () => {
@@ -133,33 +104,27 @@ describe("split Postgres repositories", () => {
                     display_name: "User One",
                     role: "user",
                     status: "active",
-                    plan_id: "pro",
-                    points_balance: 120,
+                    settled_balance: "120",
+                    held_balance: "5",
                     password_hash: "hash",
                     created_at: timestamp,
                     updated_at: timestamp,
-                    resolved_plan_id: "pro",
-                    resolved_plan_name: "专业版",
                 },
             ],
         ]);
 
-        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-one", tokenHash: "token-hash", now: timestamp, date: "2026-01-01" });
+        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-one", tokenHash: "token-hash", now: timestamp });
 
         expect(user).toMatchObject({
-            user: { id: "user-one", username: "user-one", pointsBalance: 120 },
-            planId: "pro",
-            planName: "专业版",
-            hasActivePlan: false,
-            permanentPoints: 120,
-            dailyPoints: 0,
+            user: { id: "user-one", username: "user-one", settledBalance: "120" },
+            heldBalance: "5",
+            availableBalance: "115",
         });
         expect(query).toHaveBeenCalledTimes(1);
         expect(queryArgs(query, 0)[0]).toContain("sessions.id = $1");
         expect(queryArgs(query, 0)[0]).toContain("sessions.token_hash = $2");
         expect(queryArgs(query, 0)[0]).toContain("sessions.expires_at > $3");
-        expect(queryArgs(query, 0)[0]).not.toContain("check_ins");
-        expect(queryArgs(query, 0)[1]).toEqual(["session-one", "token-hash", timestamp, "2026-01-01"]);
+        expect(queryArgs(query, 0)[1]).toEqual(["session-one", "token-hash", timestamp]);
     });
 
     it("looks up a login by username or email without reading the user table", async () => {
@@ -173,8 +138,7 @@ describe("split Postgres repositories", () => {
                     display_name: "User One",
                     role: "user",
                     status: "active",
-                    plan_id: "free",
-                    points_balance: 20,
+                    settled_balance: "20",
                     password_hash: "hash",
                     created_at: timestamp,
                     updated_at: timestamp,
@@ -231,8 +195,7 @@ describe("split Postgres repositories", () => {
                     display_name: "User One",
                     role: "user",
                     status: "active",
-                    plan_id: "free",
-                    points_balance: 20,
+                    settled_balance: "20",
                     password_hash: "hash",
                     created_at: timestamp,
                     updated_at: timestamp,
@@ -295,25 +258,8 @@ describe("split Postgres repositories", () => {
 
     it("paginates and searches users before loading wallet details", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
-        const userRow = { id: "admin-one", username: "admin-one", display_name: "管理员", role: "admin", status: "active", plan_id: "pro", points_balance: 40, password_hash: "hash", created_at: timestamp, updated_at: timestamp };
-        const { executor, query } = mockExecutor([
-            [{ total: 41 }],
-            [userRow],
-            [
-                {
-                    ...userRow,
-                    resolved_plan_id: "pro",
-                    resolved_plan_name: "专业版",
-                    active_assignment_id: "assignment-one",
-                    active_assignment_metadata: { dailyPoints: 30 },
-                    daily_wallet_user_id: "admin-one",
-                    daily_wallet_plan_id: "pro",
-                    daily_wallet_assignment_id: "assignment-one",
-                    daily_wallet_granted_points: 30,
-                    daily_wallet_remaining_points: 12,
-                },
-            ],
-        ]);
+        const userRow = { id: "admin-one", username: "admin-one", display_name: "管理员", role: "admin", status: "active", settled_balance: "40", password_hash: "hash", created_at: timestamp, updated_at: timestamp };
+        const { executor, query } = mockExecutor([[{ total: 41 }], [userRow], [{ ...userRow, held_balance: "12" }]]);
         const users = createPostgresRepositories(executor).users;
 
         const page = await users.list({ page: 9, pageSize: 20, keyword: "管理员", role: "admin", status: "active" });
@@ -323,25 +269,25 @@ describe("split Postgres repositories", () => {
         );
 
         expect(page).toMatchObject({ total: 41, page: 3, pageSize: 20, items: [{ id: "admin-one" }] });
-        expect(details[0]).toMatchObject({ planId: "pro", planName: "专业版", hasActivePlan: true, permanentPoints: 40, dailyPoints: 12 });
+        expect(details[0]).toMatchObject({ user: { settledBalance: "40" }, heldBalance: "12", availableBalance: "28" });
         expect(queryArgs(query, 0)[0]).toContain("CASE WHEN role = 'admin' THEN '管理员'");
         expect(queryArgs(query, 0)[0]).toContain("lpad(account_id::text, 4, '0') LIKE $2");
         expect(queryArgs(query, 0)[1]).toEqual(["管理员", "%管理员%", "admin", "active"]);
         expect(queryArgs(query, 1)[1]).toEqual(["管理员", "%管理员%", "admin", "active", 20, 40]);
         expect(queryArgs(query, 2)[0]).toContain("users.id = ANY($1::text[])");
-        expect(queryArgs(query, 2)[1]).toEqual([["admin-one"], timestamp, "2026-01-01"]);
+        expect(queryArgs(query, 2)[1]).toEqual([["admin-one"]]);
     });
 
     it("summarizes users without returning the full user table", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([[{ total: 10, active: 8, disabled: 2, admins: 2, active_admins: 1, users_with_plan: 3, total_points_balance: 980.5 }]]);
+        const { executor, query } = mockExecutor([[{ total: 10, active: 8, disabled: 2, admins: 2, active_admins: 1, total_settled_balance: "980.5" }]]);
 
         const summary = await createPostgresRepositories(executor).users.summarize({ now: timestamp, date: "2026-01-01" });
 
-        expect(summary).toEqual({ total: 10, active: 8, disabled: 2, admins: 2, activeAdmins: 1, usersWithPlan: 3, totalPointsBalance: 980.5 });
+        expect(summary).toEqual({ total: 10, active: 8, disabled: 2, admins: 2, activeAdmins: 1, totalSettledBalance: "980.5" });
         expect(query).toHaveBeenCalledTimes(1);
-        expect(queryArgs(query, 0)[0]).toContain("count(*) FILTER (WHERE active_assignment_id IS NOT NULL)");
-        expect(queryArgs(query, 0)[1]).toEqual([timestamp, "2026-01-01"]);
+        expect(queryArgs(query, 0)[0]).toContain("sum(settled_balance)");
+        expect(queryArgs(query, 0)[1]).toEqual([]);
     });
 
     it("paginates CDK codes and loads redemptions only for the current page", async () => {
@@ -378,7 +324,7 @@ describe("split Postgres repositories", () => {
         expect(String(queryArgs(query, 2)[0])).toContain("'account_id', users.account_id");
     });
 
-    it("preserves a negative permanent balance in the authenticated wallet", async () => {
+    it("preserves a negative settled balance in the authenticated wallet", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor } = mockExecutor([
             [
@@ -388,47 +334,18 @@ describe("split Postgres repositories", () => {
                     display_name: "Negative Balance",
                     role: "user",
                     status: "active",
-                    plan_id: "free",
-                    points_balance: -80,
+                    settled_balance: "-80",
+                    held_balance: "0",
                     password_hash: "hash",
                     created_at: timestamp,
                     updated_at: timestamp,
-                    resolved_plan_id: "free",
-                    resolved_plan_name: "免费版",
-                    resolved_plan_daily_points: 0,
-                    free_daily_points_enabled: true,
-                    free_daily_points: 20,
                 },
             ],
         ]);
 
-        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-negative", tokenHash: "token-hash", now: timestamp, date: "2026-01-01" });
+        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-negative", tokenHash: "token-hash", now: timestamp });
 
-        expect(user).toMatchObject({ permanentPoints: -80, dailyPoints: 20 });
-    });
-
-    it("updates only the free-user daily points switch", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([
-            [
-                {
-                    id: "default",
-                    free_daily_points_enabled: false,
-                    free_daily_points: 20,
-                    created_at: timestamp,
-                    updated_at: timestamp,
-                },
-            ],
-        ]);
-
-        const settings = await createPostgresRepositories(executor).settings.updateSettings({ freeDailyPointsEnabled: false, freeDailyPoints: 20 });
-        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
-
-        expect(settings).toMatchObject({ freeDailyPointsEnabled: false, freeDailyPoints: 20 });
-        expect(sql).toContain("free_daily_points_enabled");
-        expect(sql).not.toContain("daily_plan_points_enabled");
-        expect(sql).not.toContain("site =");
-        expect(params).toEqual([false, 20]);
+        expect(user).toMatchObject({ user: { settledBalance: "-80" }, heldBalance: "0", availableBalance: "-80" });
     });
 
     it("persists generation cost controls as structured settings", async () => {
@@ -459,65 +376,10 @@ describe("split Postgres repositories", () => {
         expect(params).toEqual([JSON.stringify(dataLifecycle)]);
     });
 
-    it("preserves the product list boolean contract", async () => {
-        const { executor, query } = mockExecutor([
-            [
-                {
-                    id: "product-pro",
-                    plan_id: "pro",
-                    name: "Pro",
-                    amount_cents: 1990,
-                    currency: "CNY",
-                    enabled: true,
-                    created_at: "2026-01-01T00:00:00.000Z",
-                    updated_at: "2026-01-01T00:00:00.000Z",
-                },
-            ],
-        ]);
-
-        const products = await createPostgresRepositories(executor).billing.listProducts(true);
-
-        expect(products).toHaveLength(1);
-        expect(products[0]).toMatchObject({ id: "product-pro", planId: "pro" });
-        expect(query).toHaveBeenCalledWith(expect.stringContaining("FROM billing_products"), [true]);
-    });
-
-    it("only deletes billing products without order references", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([[{ id: "unused", plan_id: "creator", name: "Unused", amount_cents: 100, currency: "CNY", enabled: true, created_at: timestamp, updated_at: timestamp }]]);
-
-        const deleted = await createPostgresRepositories(executor).billing.deleteProductIfUnused("unused");
-
-        expect(deleted?.id).toBe("unused");
-        expect(queryArgs(query, 0)[0]).toContain("NOT EXISTS");
-        expect(queryArgs(query, 0)[1]).toEqual(["unused"]);
-    });
-
-    it("keeps boolean row locking for billing orders", async () => {
-        const { executor, query } = mockExecutor([[{ id: "order-one", status: "pending", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }]]);
-
-        await createPostgresRepositories(executor).billing.getOrderById("order-one", true);
-
-        expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE");
-        expect(queryArgs(query, 0)[1]).toEqual(["order-one"]);
-    });
-
-    it("atomically closes expired pending orders with skip-locked batching", async () => {
-        const timestamp = "2026-07-25T00:00:00.000Z";
-        const { executor, query } = mockExecutor([[{ id: "order-one", status: "closed", expires_at: timestamp, closed_at: timestamp, metadata: { close: { source: "expiration-job" } }, created_at: timestamp, updated_at: timestamp }]]);
-
-        const expired = await createPostgresRepositories(executor).billing.expirePendingOrders({ expiredAt: timestamp, limit: 100 });
-
-        expect(expired).toHaveLength(1);
-        expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE SKIP LOCKED");
-        expect(queryArgs(query, 0)[0]).toContain("orders.status = 'pending'");
-        expect(queryArgs(query, 0)[1]).toEqual([timestamp, 100, null, "订单超时自动关闭", "expiration-job"]);
-    });
-
     it("locks wallet rows and resolves point records by idempotency and refund source", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([
-            [{ id: "user-one", username: "user-one", display_name: "User One", role: "user", status: "active", plan_id: "pro", points_balance: 80, password_hash: "hash", created_at: timestamp, updated_at: timestamp }],
+            [{ id: "user-one", username: "user-one", display_name: "User One", role: "user", status: "active", settled_balance: "80", password_hash: "hash", created_at: timestamp, updated_at: timestamp }],
             [
                 {
                     id: "point-one",
@@ -525,14 +387,9 @@ describe("split Postgres repositories", () => {
                     type: "consume",
                     amount: -20,
                     balance_after: 60,
-                    permanent_amount: -10,
-                    daily_amount: -10,
-                    permanent_balance_after: 40,
-                    daily_balance_after: 20,
                     description: "生成图片",
                     idempotency_key: "image:task-one",
                     request_fingerprint: "a".repeat(64),
-                    source_date: "2026-01-01",
                     created_at: timestamp,
                 },
             ],
@@ -543,10 +400,6 @@ describe("split Postgres repositories", () => {
                     type: "refund",
                     amount: 20,
                     balance_after: 80,
-                    permanent_amount: 10,
-                    daily_amount: 10,
-                    permanent_balance_after: 50,
-                    daily_balance_after: 30,
                     description: "生成失败退回",
                     source_record_id: "point-one",
                     source_date: "2026-01-01",
@@ -560,7 +413,7 @@ describe("split Postgres repositories", () => {
         const record = await repos.points.getRecordByIdempotencyKey("image:task-one");
         const refund = await repos.points.getRefundRecordBySourceRecordId("point-one");
 
-        expect(record).toMatchObject({ id: "point-one", permanentAmount: -10, dailyAmount: -10, idempotencyKey: "image:task-one", requestFingerprint: "a".repeat(64) });
+        expect(record).toMatchObject({ id: "point-one", amount: "-20", balanceAfter: "60", idempotencyKey: "image:task-one", requestFingerprint: "a".repeat(64) });
         expect(refund).toMatchObject({ id: "refund-one", sourceRecordId: "point-one" });
         expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE");
         expect(queryArgs(query, 0)[1]).toEqual(["user-one"]);
@@ -580,10 +433,6 @@ describe("split Postgres repositories", () => {
                     type: "consume",
                     amount: -20,
                     balance_after: 60,
-                    permanent_amount: -20,
-                    daily_amount: 0,
-                    permanent_balance_after: 60,
-                    daily_balance_after: 0,
                     description: "生成视频",
                     created_at: timestamp,
                     total_count: "17",
@@ -593,202 +442,9 @@ describe("split Postgres repositories", () => {
 
         const result = await createPostgresRepositories(executor).points.listRecords("user-one", { direction: "debit", page: 2, pageSize: 8 });
 
-        expect(result).toMatchObject({ total: 17, page: 2, pageSize: 8, items: [{ id: "point-one", amount: -20 }] });
+        expect(result).toMatchObject({ total: 17, page: 2, pageSize: 8, items: [{ id: "point-one", amount: "-20", balanceAfter: "60" }] });
         expect(queryArgs(query, 0)[0]).toContain("$2 = 'debit' AND amount < 0");
         expect(queryArgs(query, 0)[1]).toEqual(["user-one", "debit", 8, 8]);
-    });
-
-    it("creates one daily plan wallet and can lock the existing row", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const walletRow = { user_id: "user-one", date: "2026-01-01", plan_id: "pro", assignment_id: "assignment-one", granted_points: 100, remaining_points: 100, created_at: timestamp, updated_at: timestamp };
-        const { executor, query } = mockExecutor([[walletRow], [walletRow]]);
-        const wallet = createPostgresRepositories(executor).pointsWallet;
-
-        const created = await wallet.createDailyWallet({ userId: "user-one", date: "2026-01-01", planId: "pro", assignmentId: "assignment-one", grantedPoints: 100, remainingPoints: 100, createdAt: timestamp, updatedAt: timestamp });
-        const locked = await wallet.getDailyWallet("user-one", "2026-01-01", true);
-
-        expect(created).toMatchObject({ userId: "user-one", planId: "pro", grantedPoints: 100, remainingPoints: 100 });
-        expect(locked?.assignmentId).toBe("assignment-one");
-        expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (user_id, date) DO NOTHING");
-        expect(queryArgs(query, 1)[0]).toContain("FOR UPDATE");
-        expect(queryArgs(query, 1)[1]).toEqual(["user-one", "2026-01-01"]);
-    });
-
-    it("casts decimal daily wallet balances to PostgreSQL numeric", async () => {
-        const walletRow = { user_id: "user-one", date: "2026-01-01", plan_id: "pro", assignment_id: null, granted_points: 2, remaining_points: 1.7 };
-        const { executor, query } = mockExecutor([[walletRow]]);
-
-        const updated = await createPostgresRepositories(executor).pointsWallet.updateRemaining("user-one", "2026-01-01", 1.7);
-
-        expect(updated?.remainingPoints).toBe(1.7);
-        expect(queryArgs(query, 0)[0]).toContain("SET remaining_points = $3::numeric");
-        expect(queryArgs(query, 0)[0]).toContain("$3::numeric >= 0::numeric");
-        expect(queryArgs(query, 0)[1]).toEqual(["user-one", "2026-01-01", 1.7]);
-    });
-
-    it("selects one current assignment with stable ordering", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([[{ id: "assignment-one", user_id: "user-one", plan_id: "pro", status: "active", source: "order", starts_at: timestamp, created_at: timestamp, updated_at: timestamp }]]);
-
-        const assignment = await createPostgresRepositories(executor).billing.getActivePlanAssignment("user-one", new Date(timestamp), true);
-
-        expect(assignment?.id).toBe("assignment-one");
-        expect(queryArgs(query, 0)[0]).toContain("ORDER BY starts_at DESC, created_at DESC, id DESC");
-        expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE");
-        expect(queryArgs(query, 0)[1]).toEqual(["user-one", timestamp]);
-    });
-
-    it("writes plan assignments and provider events to the established tables", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([
-            [{ id: "assignment-one", user_id: "user-one", plan_id: "pro", status: "active", source: "order", source_id: "order-one", starts_at: timestamp, created_at: timestamp, updated_at: timestamp }],
-            [{ id: "event-one", provider: "stripe", event_id: "evt-one", event_type: "paid", signature_valid: true, created_at: timestamp, updated_at: timestamp }],
-        ]);
-        const billing = createPostgresRepositories(executor).billing;
-
-        await billing.createPlanAssignment({
-            id: "assignment-one",
-            userId: "user-one",
-            planId: "pro",
-            status: "active",
-            source: "order",
-            sourceId: "order-one",
-            startsAt: timestamp,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-        });
-        await billing.upsertProviderEvent({
-            id: "event-one",
-            provider: "stripe",
-            eventId: "evt-one",
-            eventType: "paid",
-            signatureValid: true,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-        });
-
-        expect(queryArgs(query, 0)[0]).toContain("INSERT INTO user_plan_assignments");
-        expect(queryArgs(query, 1)[0]).toContain("INSERT INTO payment_provider_events");
-    });
-
-    it("atomically deduplicates and claims payment provider events", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const eventRow = { id: "event-one", provider: "stripe", event_id: "evt-one", event_type: "paid", signature_valid: true, created_at: timestamp, updated_at: timestamp };
-        const { executor, query } = mockExecutor([[eventRow], [{ ...eventRow, processing_at: timestamp }]]);
-        const billing = createPostgresRepositories(executor).billing;
-
-        const recorded = await billing.upsertProviderEvent({
-            id: "event-one",
-            provider: "stripe",
-            eventId: "evt-one",
-            eventType: "paid",
-            signatureValid: true,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-        });
-        const claimed = await billing.claimProviderEvent("event-one");
-
-        expect(recorded).toMatchObject({ event: { id: "event-one" }, conflict: false });
-        expect(claimed?.processingAt).toBe(timestamp);
-        expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (provider, event_id)");
-        expect(queryArgs(query, 0)[0]).toContain("DO NOTHING");
-        expect(queryArgs(query, 0)[0]).toContain("RETURNING *");
-        expect(queryArgs(query, 1)[0]).toContain("processed_at IS NULL");
-        expect(queryArgs(query, 1)[0]).toContain("processing_at IS NULL OR processing_at < now() - interval '5 minutes'");
-        expect(queryArgs(query, 1)[0]).toContain("RETURNING *");
-        expect(queryArgs(query, 1)[1]).toEqual(["event-one"]);
-    });
-
-    it("preserves the original payment and event record when a duplicate identity conflicts", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const paymentRow = {
-            id: "payment-one",
-            order_id: "order-one",
-            user_id: "user-one",
-            provider: "stripe",
-            channel: "webhook",
-            status: "succeeded",
-            amount_cents: 1299,
-            currency: "CNY",
-            provider_trade_id: "trade-one",
-            created_at: timestamp,
-            updated_at: timestamp,
-        };
-        const eventRow = { id: "event-one", provider: "stripe", event_id: "evt-one", event_type: "paid", order_id: "order-one", signature_valid: true, payload: { amountCents: 1299 }, created_at: timestamp, updated_at: timestamp };
-        const { executor, query } = mockExecutor([[], [paymentRow], [], [eventRow]]);
-        const billing = createPostgresRepositories(executor).billing;
-
-        const payment = await billing.upsertPayment({
-            id: "payment-one",
-            orderId: "order-two",
-            userId: "user-two",
-            provider: "stripe",
-            channel: "webhook",
-            status: "succeeded",
-            amountCents: 1299,
-            currency: "CNY",
-            providerTradeId: "trade-one",
-            createdAt: timestamp,
-            updatedAt: timestamp,
-        });
-        const event = await billing.upsertProviderEvent({
-            id: "event-two",
-            provider: "stripe",
-            eventId: "evt-one",
-            eventType: "paid",
-            orderId: "order-two",
-            signatureValid: true,
-            payload: { amountCents: 1299 },
-            createdAt: timestamp,
-            updatedAt: timestamp,
-        });
-
-        expect(payment).toMatchObject({ orderId: "order-one", userId: "user-one" });
-        expect(event).toMatchObject({ event: { id: "event-one", orderId: "order-one" }, conflict: true });
-        expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (id) DO NOTHING");
-        expect(queryArgs(query, 1)[0]).toContain("SELECT * FROM payment_transactions WHERE id = $1");
-        expect(queryArgs(query, 2)[0]).toContain("ON CONFLICT (provider, event_id)");
-        expect(queryArgs(query, 3)[0]).toContain("SELECT * FROM payment_provider_events");
-    });
-
-    it("updates payment state without allowing transaction ownership fields to change", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const refundedAt = "2026-01-02T00:00:00.000Z";
-        const paymentRow = {
-            id: "payment-one",
-            order_id: "order-one",
-            user_id: "user-one",
-            provider: "stripe",
-            channel: "webhook",
-            status: "refunded",
-            amount_cents: 1299,
-            currency: "CNY",
-            provider_trade_id: "trade-one",
-            refunded_at: refundedAt,
-            created_at: timestamp,
-            updated_at: refundedAt,
-        };
-        const { executor, query } = mockExecutor([[paymentRow]]);
-
-        const payment = await createPostgresRepositories(executor).billing.updatePaymentState({
-            id: "payment-one",
-            orderId: "order-one",
-            userId: "different-user-is-ignored",
-            provider: "stripe",
-            channel: "different-channel-is-ignored",
-            status: "refunded",
-            amountCents: 1,
-            currency: "USD",
-            providerTradeId: "different-trade-is-ignored",
-            refundedAt,
-            createdAt: timestamp,
-            updatedAt: refundedAt,
-        });
-
-        expect(payment).toMatchObject({ orderId: "order-one", userId: "user-one", providerTradeId: "trade-one", amountCents: 1299, currency: "CNY", status: "refunded" });
-        expect(queryArgs(query, 0)[0]).toContain("WHERE id = $1 AND order_id = $2 AND provider = $3");
-        expect(queryArgs(query, 0)[0]).not.toContain("user_id =");
-        expect(queryArgs(query, 0)[0]).not.toContain("provider_trade_id =");
     });
 
     it("replaces generation assets during upsert", async () => {
