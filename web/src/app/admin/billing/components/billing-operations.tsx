@@ -561,6 +561,7 @@ function pricingColumns(onEdit: (model: LogicalModel) => void): TableColumnsType
     return [
         {
             title: "逻辑模型",
+            width: 240,
             render: (_, model) => (
                 <div>
                     <b>{model.name}</b>
@@ -570,21 +571,25 @@ function pricingColumns(onEdit: (model: LogicalModel) => void): TableColumnsType
                 </div>
             ),
         },
-        { title: "销售价格卡", render: (_, model) => <RateCard value={model.saleRateCard} /> },
+        { title: "销售价格卡", width: 300, render: (_, model) => <RateCard value={model.saleRateCard} priceUnit="积分" /> },
         {
             title: "绑定成本与单位换算",
+            width: 360,
             render: (_, model) => (
-                <div className="space-y-2">
-                    {model.bindings.map((binding) => (
-                        <div key={binding.id} className="text-xs">
-                            <b>
-                                {binding.channelId} / {binding.upstreamModel}
-                            </b>
-                            <div className="text-stone-500">
-                                成本：{rateCardText(binding.costRateCard)} · 单位：{providerUnitText(binding.providerCostUnit)}
+                <div className="min-w-0 space-y-3">
+                    {model.bindings.map((binding) => {
+                        const costUnit = formatProviderCostUnitForAdmin(binding.providerCostUnit);
+                        return (
+                            <div key={binding.id} className="min-w-0 text-xs">
+                                <b>
+                                    {binding.channelId} / {binding.upstreamModel}
+                                </b>
+                                <div className="mt-1 text-stone-500 dark:text-stone-400">成本价格卡</div>
+                                <RateCard value={binding.costRateCard} priceUnit={costUnit.priceUnit} />
+                                <div className="mt-1 break-words text-stone-500 dark:text-stone-400">单位换算：{costUnit.conversionLabel}</div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             ),
         },
@@ -916,21 +921,57 @@ function Metric({ label, value, tone }: { label: string; value: React.ReactNode;
         </div>
     );
 }
-function RateCard({ value }: { value?: LogicalModel["saleRateCard"] }) {
-    return <span className="text-xs text-stone-500">{rateCardText(value)}</span>;
+function RateCard({ value, priceUnit }: { value?: LogicalModel["saleRateCard"]; priceUnit: string }) {
+    const summary = formatPricingRateCardForAdmin(value, priceUnit);
+    return (
+        <div className="min-w-0 space-y-1 text-xs text-stone-600 dark:text-stone-300">
+            {summary.componentLabels.map((label, index) => (
+                <div key={`${index}-${label}`} className="break-words leading-5">
+                    {label}
+                </div>
+            ))}
+            {summary.versionLabel ? <div className="text-[11px] text-stone-400 dark:text-stone-500">{summary.versionLabel}</div> : null}
+        </div>
+    );
 }
-function rateCardText(value: LogicalModel["saleRateCard"] | undefined) {
-    return value?.components?.length
-        ? `${value.components
-              .map((item) => {
-                  const conditions = item.when ? Object.entries(item.when).map(([dimension, match]) => `${dimension}=${match}`) : [];
-                  return `${item.dimension}=${item.unitPrice}${item.per ? `/${item.per}` : ""}${conditions.length ? ` [${conditions.join(", ")}]` : ""}`;
-              })
-              .join("；")} · ${value.revision || "待保存版本"}`
-        : "未配置";
+
+const pricingDimensionLabels: Record<PricingDimension, { label: string; unit: string }> = {
+    request: { label: "请求次数", unit: "次" },
+    inputTokens: { label: "输入 Token", unit: "Token" },
+    cachedInputTokens: { label: "缓存输入 Token", unit: "Token" },
+    outputTokens: { label: "输出 Token", unit: "Token" },
+    count: { label: "生成数量", unit: "个" },
+    megapixels: { label: "总百万像素", unit: "MP" },
+    characters: { label: "字符数", unit: "字符" },
+    durationSeconds: { label: "时长", unit: "秒" },
+    quality: { label: "质量", unit: "个" },
+    resolution: { label: "分辨率", unit: "个" },
+    format: { label: "格式", unit: "个" },
+};
+const pricingConditionLabels: Record<PricingConditionDimension, string> = { quality: "质量", resolution: "分辨率", format: "格式" };
+const pricingConditionOrder: PricingConditionDimension[] = ["quality", "resolution", "format"];
+
+export function formatPricingRateCardForAdmin(value: LogicalModel["saleRateCard"] | undefined, priceUnit: string) {
+    if (!value?.components?.length) return { versionLabel: "", componentLabels: ["未配置"] };
+    return {
+        versionLabel: `价格卡 v${value.version}`,
+        componentLabels: value.components.map((item) => {
+            const dimension = pricingDimensionLabels[item.dimension];
+            const subject = item.match ? `${dimension.label} ${item.match}` : dimension.label;
+            const conditions = pricingConditionOrder.flatMap((condition) => (item.when?.[condition] ? [`${pricingConditionLabels[condition]} ${item.when[condition]}`] : []));
+            return `${subject}：${item.unitPrice} ${priceUnit} / ${item.per || "1"} ${dimension.unit}${conditions.length ? `（${conditions.join(" · ")}）` : ""}`;
+        }),
+    };
 }
+
+export function formatProviderCostUnitForAdmin(value: LogicalModel["bindings"][number]["providerCostUnit"]): { priceUnit: string; conversionLabel: string } {
+    if (!value) return { priceUnit: "成本单位", conversionLabel: "未配置" };
+    if (value.kind === "fiat") return { priceUnit: value.currency, conversionLabel: value.currency };
+    return { priceUnit: value.unit, conversionLabel: `${value.provider} · 1 ${value.unit} = ${value.usdConversion.usdPerUnit} USD · ${value.usdConversion.version}` };
+}
+
 function providerUnitText(value: LogicalModel["bindings"][number]["providerCostUnit"]) {
-    return !value ? "未配置" : value.kind === "fiat" ? value.currency : `${value.provider}:${value.unit} × ${value.usdConversion.usdPerUnit} USD (${value.usdConversion.version})`;
+    return formatProviderCostUnitForAdmin(value).conversionLabel;
 }
 export async function resolveFormValidation<T>(validation: Promise<T>) {
     try {
