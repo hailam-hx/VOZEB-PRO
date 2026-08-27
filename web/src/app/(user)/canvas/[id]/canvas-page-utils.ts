@@ -254,6 +254,10 @@ export function getGenerationCount(count: string) {
     return Number.isSafeInteger(value) && value > 0 ? value : 1;
 }
 
+export function getGenerationCountPreference(count: string) {
+    return count.trim().toLowerCase() === "auto" ? ("auto" as const) : getGenerationCount(count);
+}
+
 export function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {
     const safePatch = patch || {};
     const next = { ...node, metadata: { ...node.metadata, ...safePatch } };
@@ -306,17 +310,17 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     return {
         ...config,
         model,
-        quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
-        size: node?.type === CanvasNodeType.Panorama ? PANORAMA_IMAGE_SIZE : node?.metadata?.size || config.size || defaultConfig.size,
-        videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
-        videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
-        videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
-        audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
-        audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
-        audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
+        quality: node?.metadata?.quality ?? config.quality ?? defaultConfig.quality,
+        size: node?.type === CanvasNodeType.Panorama ? PANORAMA_IMAGE_SIZE : (node?.metadata?.size ?? config.size ?? defaultConfig.size),
+        videoSeconds: node?.metadata?.seconds ?? config.videoSeconds ?? defaultConfig.videoSeconds,
+        vquality: node?.metadata?.vquality ?? config.vquality ?? defaultConfig.vquality,
+        videoGenerateAudio: node?.metadata?.generateAudio ?? config.videoGenerateAudio ?? defaultConfig.videoGenerateAudio,
+        videoWatermark: node?.metadata?.watermark ?? config.videoWatermark ?? defaultConfig.videoWatermark,
+        audioVoice: node?.metadata?.audioVoice ?? config.audioVoice ?? defaultConfig.audioVoice,
+        audioFormat: node?.metadata?.audioFormat ?? config.audioFormat ?? defaultConfig.audioFormat,
+        audioSpeed: node?.metadata?.audioSpeed ?? config.audioSpeed ?? defaultConfig.audioSpeed,
         audioInstructions: node?.metadata?.audioInstructions || defaultConfig.audioInstructions,
-        count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
+        count: String(node?.metadata?.count ?? (mode === "image" ? config.canvasImageCount || config.count : config.count) ?? defaultConfig.count),
     };
 }
 

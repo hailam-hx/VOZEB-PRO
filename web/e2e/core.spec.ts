@@ -146,6 +146,86 @@ test("admin data lifecycle settings persist without password re-verification", a
     }
 });
 
+test("admin saves and reloads logical model generation capability", async ({ page, request }) => {
+    type SettingsSnapshot = {
+        logicalModels: Array<{
+            id: string;
+            bindings: Array<{
+                generationParameters?: {
+                    aspectRatios: string[];
+                    durationSeconds?: number[];
+                    maxBatchSize?: number;
+                    supportsCustomDuration?: boolean;
+                    customDurationRange?: { min: number; max: number };
+                };
+            }>;
+        }>;
+        defaultModels: Record<string, string>;
+    };
+
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: SettingsSnapshot }).settings;
+
+    try {
+        await page.goto("/admin?section=channels", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await page.getByRole("tab", { name: "逻辑模型" }).click();
+        await page.getByPlaceholder("搜索模型昵称、ID 或上游模型").fill("e2e-video");
+
+        const modelId = page.getByText("ID：e2e-video", { exact: true });
+        const modelCard = modelId.locator("..").locator("..").locator("..");
+        await modelCard.getByRole("button", { name: "路由设置" }).click();
+
+        const drawer = page.getByRole("dialog", { name: "模型路由设置" });
+        const aspectRatios = drawer.getByRole("textbox", { name: "支持比例（逗号分隔）" }).first();
+        await expect(aspectRatios).toBeVisible();
+        await drawer.getByRole("button", { name: "重新启用全部选项" }).first().click();
+        await page.getByRole("button", { name: /覆\s*盖/ }).click();
+        await expect(drawer.getByRole("spinbutton", { name: "最大批量数量" }).first()).toHaveValue("4");
+        await expect(drawer.getByRole("checkbox", { name: "允许自定义数量" }).first()).toBeChecked();
+        await expect(drawer.getByRole("spinbutton", { name: "自定义数量上限" }).first()).toHaveValue("30");
+        await expect(drawer.getByRole("checkbox", { name: "允许自定义时长" }).first()).toBeChecked();
+        await expect(drawer.getByRole("textbox", { name: "可选秒数（逗号分隔）" }).first()).toHaveValue("5, 15");
+        const customDurationMax = drawer.getByRole("spinbutton", { name: "自定义时长上限（秒）" }).first();
+        const originalCustomDurationMax = Number(await customDurationMax.inputValue());
+        const nextCustomDurationMax = originalCustomDurationMax === 19 ? 20 : 19;
+        const originalValue = await aspectRatios.inputValue();
+        expect(originalValue).not.toContain("5:4");
+        await aspectRatios.fill(`${originalValue}, 5:4`);
+        await aspectRatios.press("Tab");
+        await customDurationMax.fill(String(nextCustomDurationMax));
+        await drawer.getByRole("button", { name: "应用修改" }).click();
+        await expect(page.getByText("模型路由设置已更新，请保存渠道配置")).toBeVisible();
+
+        const saved = page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === "/api/admin/settings");
+        await page.getByRole("button", { name: "保存模型渠道配置" }).click();
+        expect((await saved).ok()).toBe(true);
+        await expect(page.getByText("模型渠道配置已保存", { exact: true })).toBeVisible();
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await page.getByRole("tab", { name: "逻辑模型" }).click();
+        await page.getByPlaceholder("搜索模型昵称、ID 或上游模型").fill("e2e-video");
+        await modelCard.getByRole("button", { name: "路由设置" }).click();
+        await expect(drawer.getByRole("textbox", { name: "支持比例（逗号分隔）" }).first()).toHaveValue(/5:4/);
+        await expect(drawer.getByRole("spinbutton", { name: "最大批量数量" }).first()).toHaveValue("4");
+        await expect(drawer.getByRole("textbox", { name: "可选秒数（逗号分隔）" }).first()).toHaveValue("5, 15");
+        await expect(drawer.getByRole("spinbutton", { name: "自定义时长上限（秒）" }).first()).toHaveValue(String(nextCustomDurationMax));
+
+        const persistedResponse = await request.get("/api/admin/settings");
+        expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
+        const persisted = ((await persistedResponse.json()) as { settings: SettingsSnapshot }).settings;
+        expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.aspectRatios).toContain("5:4");
+        expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.durationSeconds).toEqual([5, 15]);
+        expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.maxBatchSize).toBe(4);
+        expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.customDurationRange?.max).toBe(nextCustomDurationMax);
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { logicalModels: before.logicalModels, defaultModels: before.defaultModels } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
 test("text tasks return content, fail over automatically, and surface terminal failures", async ({ request }) => {
     const fallback = await request.post("/api/text-tasks", { data: { config: { model: "e2e-text-fallback" }, messages: [{ role: "user", content: "protocol fallback" }] } });
     expect(fallback.ok(), await fallback.text()).toBe(true);

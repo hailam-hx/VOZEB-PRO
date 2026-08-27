@@ -67,13 +67,35 @@ type ModelChannel = {
     advancedConfig?: SystemChannelAdvancedConfig;
 };
 
+type LogicalModelGenerationParameters = {
+    referenceInputs: Array<"image" | "video" | "audio">;
+    maxReferenceImages?: number;
+    aspectRatios: string[];
+    pixelSizes: string[];
+    supportsCustomSize: boolean;
+    qualities: string[];
+    resolutions: string[];
+    durationMode?: "discrete" | "range";
+    durationSeconds: number[];
+    durationRange?: { min: number; max: number };
+    supportsCustomDuration?: boolean;
+    customDurationRange?: { min: number; max: number };
+    maxBatchSize?: number;
+    supportsCustomBatchSize?: boolean;
+    customBatchSizeRange?: { min: number; max: number };
+    videoReferenceModes: Array<"reference" | "first_frame" | "first_last">;
+    voices: string[];
+    formats: string[];
+    speedRange?: { min: number; max: number };
+};
+
 type LogicalModel = {
     id: string;
     name: string;
     capability: ModelCapability;
     enabled: boolean;
     saleRateCard?: PricingRateCardV1;
-    bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number; capabilityProfile?: { maxInputTokens?: number; maxOutputTokens?: number } }>;
+    bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number; generationParameters?: LogicalModelGenerationParameters }>;
 };
 
 export type AiConfig = {
@@ -133,10 +155,10 @@ export type PublicSystemSettings = {
     generationPointMultipliers?: GenerationPointMultipliers;
     generationConcurrency?: GenerationConcurrencySettings;
     generationDefaults?: {
-        canvasImageCount?: number;
+        canvasImageCount?: number | "auto";
         imageSize?: string;
         imageQuality?: string;
-        imageCount?: number;
+        imageCount?: number | "auto";
         videoQuality?: string;
         videoSeconds?: number;
         audioVoice?: string;
@@ -349,6 +371,7 @@ function normalizeGenerationConcurrency(settings?: Partial<GenerationConcurrency
 }
 
 function normalizeCanvasImageCount(value: unknown) {
+    if (value === "auto") return "auto";
     return String(positiveInteger(value, Number(defaultConfig.canvasImageCount) || 1));
 }
 

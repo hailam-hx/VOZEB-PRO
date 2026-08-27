@@ -71,6 +71,25 @@ describe("serializePublicSettings", () => {
                         priority: 1,
                         weight: 8,
                         capabilityProfile: { maxInputTokens: 100_000, maxOutputTokens: 4096, unitCost: 3, unitCostCurrency: "USD", timeoutMs: 60_000 },
+                        generationParameters: {
+                            referenceInputs: ["image"],
+                            aspectRatios: ["16:9"],
+                            pixelSizes: ["1024x768"],
+                            supportsCustomSize: true,
+                            qualities: ["high"],
+                            resolutions: [],
+                            durationMode: "discrete",
+                            durationSeconds: [5],
+                            supportsCustomDuration: true,
+                            customDurationRange: { min: 3, max: 20 },
+                            maxBatchSize: 4,
+                            supportsCustomBatchSize: true,
+                            customBatchSizeRange: { min: 5, max: 10 },
+                            videoReferenceModes: [],
+                            voices: ["alloy"],
+                            formats: ["mp3"],
+                            speedRange: { min: 0.5, max: 2 },
+                        },
                         costRateCard: { version: 1, revision: "cost-secret", components: [{ id: "count", dimension: "count", unitPrice: "0.4" }] },
                     },
                 ],
@@ -104,10 +123,31 @@ describe("serializePublicSettings", () => {
             upstreamModel: "vendor-image",
             enabled: true,
             priority: 1,
-            capabilityProfile: { maxInputTokens: 100_000, maxOutputTokens: 4096 },
+            generationParameters: {
+                referenceInputs: ["image"],
+                aspectRatios: ["16:9"],
+                pixelSizes: ["1024x768"],
+                supportsCustomSize: true,
+                qualities: ["high"],
+                resolutions: [],
+                durationMode: "discrete",
+                durationSeconds: [5],
+                supportsCustomDuration: true,
+                customDurationRange: { min: 3, max: 20 },
+                maxBatchSize: 4,
+                supportsCustomBatchSize: true,
+                customBatchSizeRange: { min: 5, max: 10 },
+                videoReferenceModes: [],
+                voices: ["alloy"],
+                formats: ["mp3"],
+                speedRange: { min: 0.5, max: 2 },
+            },
         });
         expect(result.logicalModels[0]?.saleRateCard).toEqual(settings.logicalModels[0]?.saleRateCard);
         expect(serialized).not.toContain("cost-secret");
+        expect(serialized).not.toContain("timeoutMs");
+        expect(serialized).not.toContain("unitCost");
+        expect(serialized).not.toContain("maxInputTokens");
         expect(result).not.toHaveProperty("modelPointCosts");
         expect(result).not.toHaveProperty("generationPointMultipliers");
         expect(serialized).not.toContain("provider-secret");

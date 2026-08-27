@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 
-import type { LogicalModelCapabilityProfile, SystemChannelAdvancedConfig } from "@/lib/auth/store";
+import type { LogicalModelCapabilityProfile, LogicalModelGenerationParameters, SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import type { GenerationLogSource } from "@/lib/server/generation-log-store";
 import { countActiveStoredGenerationTasks, createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
@@ -18,8 +18,10 @@ export type ImageTaskConfig = {
     channelId?: string;
     logicalModel?: string;
     capabilityProfile?: LogicalModelCapabilityProfile;
+    generationParameters?: LogicalModelGenerationParameters;
     quality?: string;
     size?: string;
+    count?: number;
     systemPrompt?: string;
     advancedConfig?: SystemChannelAdvancedConfig;
     usagePricing?: import("@/lib/server/generation-channel").SystemGenerationChannelConfig["usagePricing"];

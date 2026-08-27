@@ -53,9 +53,8 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
     const {} = settingsActions;
     const canManageUsers = hasAdminPermission(currentUser, "users.manage");
     const canManageAdministrators = hasAdminPermission(currentUser, "administrators.manage");
-    const canManageBilling = hasAdminPermission(currentUser, "billing.manage");
     const canManageAdministratorRecord = (user: PublicUser) => canManageAdministrators && hasAllAdminPermissions(currentUser, user.adminPermissions);
-    const canEditUserRecord = (user: PublicUser) => canManageBilling || (user.role === "admin" ? canManageAdministratorRecord(user) : canManageUsers || canManageAdministrators);
+    const canEditUserRecord = (user: PublicUser) => (user.role === "admin" ? canManageAdministratorRecord(user) : canManageUsers || canManageAdministrators);
     const canDeleteUserRecord = (user: PublicUser) => user.id !== currentUser.id && (user.role === "admin" ? canManageAdministratorRecord(user) : canManageUsers);
 
     const openUserEditor = (user: PublicUser) => {
@@ -70,7 +69,6 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
             adminPermissions: user.adminPermissions,
             permissionPreset: ADMIN_PERMISSION_PRESETS.find((preset) => normalizeAdminPermissions(preset.permissions).join() === normalizeAdminPermissions(user.adminPermissions).join())?.key,
             status: user.status,
-            settledBalance: user.settledBalance,
         });
     };
 
@@ -88,7 +86,6 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
             adminPermissions,
             permissionPreset: ADMIN_PERMISSION_PRESETS.find((preset) => normalizeAdminPermissions(preset.permissions).join() === adminPermissions.join())?.key,
             status: "active",
-            settledBalance: "0",
         });
     };
 
@@ -119,7 +116,6 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
                       status: value.status,
                   }
                 : {}),
-            ...(canManageBilling ? { settledBalance: value.settledBalance } : {}),
         });
         if (user) closeUserEditor();
     };

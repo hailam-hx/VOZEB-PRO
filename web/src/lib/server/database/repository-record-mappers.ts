@@ -134,6 +134,7 @@ export function mapPointRecord(row: Record<string, unknown>): PointRecord {
     return {
         id: stringValue(row.id),
         userId: stringValue(row.user_id),
+        operatorUserId: optionalString(row.operator_user_id),
         type: row.type === "consume" || row.type === "refund" || row.type === "credit" ? row.type : "admin-adjust",
         amount: decimalValue(row.amount),
         balanceAfter: decimalValue(row.balance_after),

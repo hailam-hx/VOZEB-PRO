@@ -81,10 +81,13 @@ describe("executeAgentRun backend settings", () => {
                 if (task.id !== taskId) return task;
                 const children = new Map((task.childTasks || []).map((child) => [child.id, child]));
                 for (const child of patch.childTasks || []) children.set(child.id, child);
+                const childSlots = new Map((task.childSlots || []).map((slot) => [slot.index, slot]));
+                for (const slot of patch.childSlots || []) childSlots.set(slot.index, slot);
                 return {
                     ...task,
                     ...patch,
                     ...(patch.childTasks ? { childTasks: Array.from(children.values()) } : {}),
+                    ...(patch.childSlots ? { childSlots: Array.from(childSlots.values()).sort((left, right) => left.index - right.index) } : {}),
                     ...(patch.taskIds ? { taskIds: Array.from(new Set([...(task.taskIds || []), ...patch.taskIds])) } : {}),
                     ...(patch.assetIds ? { assetIds: Array.from(new Set([...(task.assetIds || []), ...patch.assetIds])) } : {}),
                 };
@@ -133,6 +136,48 @@ describe("executeAgentRun backend settings", () => {
         const body = JSON.parse(String(createCall?.[1]?.body)) as { config: { model: string; baseUrl: string; apiKey: string } };
         expect(body.config).toMatchObject({ model: "old-image", baseUrl: "/api/ai/system/old-channel", apiKey: "" });
         expect(mocks.run?.status).toBe("completed");
+    });
+
+    it("fails a persisted manual task when its selected model is disabled instead of using the default", async () => {
+        mocks.run = {
+            ...runWithTasks([{ ...imageTask("manual-image"), model: "image-low", ratio: "16:9", quality: "low" }]),
+            requestedModelIds: ["image-low"],
+        };
+        const currentSettings = agentCapabilitySettings() as unknown as { logicalModels: Array<{ id: string; enabled: boolean }> };
+        currentSettings.logicalModels.find((model) => model.id === "image-low")!.enabled = false;
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run?.status).toBe("failed");
+        expect(mocks.run?.tasks[0]).toMatchObject({ model: "image-low", status: "failed", error: expect.stringContaining("手动选择") });
+        expect(mocks.fetchInternalApi.mock.calls.filter(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toHaveLength(0);
+        expect(mocks.events.find((event) => event.type === "run.failed")?.data).toMatchObject({ message: expect.stringContaining("手动选择") });
+    });
+
+    it("persists a per-binding Smart fallback before submitting a resumed task", async () => {
+        mocks.run = runWithTasks([{ ...imageTask("smart-image"), model: "image-low", ratio: "16:9", quality: "low" }]);
+        const currentSettings = agentCapabilitySettings() as unknown as { logicalModels: Array<{ id: string; enabled: boolean; bindings: Array<{ generationParameters: { qualities: string[] } }> }> };
+        currentSettings.logicalModels.find((model) => model.id === "image-low")!.enabled = false;
+        currentSettings.logicalModels.find((model) => model.id === "image-high")!.bindings[0].generationParameters.qualities = ["low", "high"];
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+        let persistedModelAtSubmit = "";
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST") {
+                persistedModelAtSubmit = mocks.run?.tasks[0].model || "";
+                return Response.json({ task: { id: "child-smart-fallback" } });
+            }
+            if (url.endsWith("/api/image-tasks/child-smart-fallback")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/fallback.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const createCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"));
+        const createBody = JSON.parse(String(createCall?.[1]?.body)) as { config: { model: string; quality: string } };
+        expect(persistedModelAtSubmit).toBe("image-high");
+        expect(createBody.config).toMatchObject({ model: "image-high", quality: "low" });
+        expect(mocks.run?.tasks[0]).toMatchObject({ model: "image-high", quality: "low", status: "completed" });
     });
 
     it("completes a single media run and schedules its persistent review", async () => {
@@ -223,6 +268,33 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.status).toBe("completed");
     });
 
+    it("rejects an incompatible manual model without substituting the compatible default", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "生成高清商品图", requestedModelIds: ["image-low"], generationPreferences: { mode: "image", image: { quality: "high" } } });
+        mocks.getAuthSettings.mockResolvedValue(agentCapabilitySettings());
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run?.status).toBe("failed");
+        expect(mocks.events.find((event) => event.type === "run.failed")?.data).toMatchObject({ message: expect.stringContaining("画质 high") });
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("resolves manual Auto fields inside the selected logical model without substituting it", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "生成商品主图", requestedModelIds: ["image-low"] });
+        const currentSettings = agentCapabilitySettings() as unknown as { generationDefaults: Record<string, unknown> };
+        currentSettings.generationDefaults = { imageQuality: "high", imageSize: "16:9", imageCount: 3, canvasImageCount: 1 };
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const createCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"));
+        const createBody = JSON.parse(String(createCall?.[1]?.body)) as { config: { model: string; size?: string; quality?: string } };
+        expect(createBody.config).toMatchObject({ model: "image-low", size: "16:9", quality: "low" });
+        expect(mocks.run?.tasks[0]).toMatchObject({ model: "image-low", ratio: "16:9", quality: "low", count: 3 });
+        expect(mocks.fetchInternalApi.mock.calls.filter(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toHaveLength(3);
+        expect(mocks.run?.status).toBe("completed");
+    });
+
     it("creates Canvas plan nodes when a generation model is selected explicitly", async () => {
         mocks.run = runFixture({ surface: "canvas", prompt: "生成商品主图", requestedModelIds: ["image-model"] });
         mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
@@ -293,6 +365,120 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(0);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).endsWith("/api/image-tasks/child-existing"))).toBe(true);
         expect(mocks.run?.status).toBe("completed");
+    });
+
+    it("keeps polling an existing manual child after the selected model is disabled", async () => {
+        mocks.run = {
+            ...runWithTasks([{ ...imageTask("manual-existing"), model: "image-low", status: "running", attempts: 1, taskId: "child-manual-existing" }]),
+            requestedModelIds: ["image-low"],
+        };
+        const currentSettings = agentCapabilitySettings() as unknown as { logicalModels: Array<{ id: string; enabled: boolean }> };
+        currentSettings.logicalModels.find((model) => model.id === "image-low")!.enabled = false;
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST") throw new Error("existing child must not be resubmitted");
+            if (url.endsWith("/api/image-tasks/child-manual-existing")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/existing.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(0);
+        expect(mocks.run?.tasks[0]).toMatchObject({ model: "image-low", status: "completed", taskId: "child-manual-existing" });
+        expect(mocks.run?.status).toBe("completed");
+    });
+
+    it("keeps polling an existing manual child while only the missing copy fails capability recovery", async () => {
+        mocks.run = {
+            ...runWithTasks([
+                {
+                    ...imageTask("manual-mixed"),
+                    model: "image-low",
+                    ratio: "16:9",
+                    quality: "low",
+                    count: 2,
+                    status: "running",
+                    attempts: 1,
+                    taskId: "child-manual-existing",
+                    taskIds: ["child-manual-existing"],
+                    childTasks: [{ id: "child-manual-existing", status: "pending", attempt: 1, model: "image-low", ratio: "16:9", quality: "low" }],
+                },
+            ]),
+            requestedModelIds: ["image-low"],
+        };
+        const currentSettings = agentCapabilitySettings() as unknown as { logicalModels: Array<{ id: string; enabled: boolean }> };
+        currentSettings.logicalModels.find((model) => model.id === "image-low")!.enabled = false;
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST") throw new Error("disabled manual model must not create the missing child");
+            if (url.endsWith("/api/image-tasks/child-manual-existing")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/manual-existing.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi.mock.calls.some(([url, init]) => !init?.method && String(url).endsWith("/api/image-tasks/child-manual-existing"))).toBe(true);
+        expect(mocks.fetchInternalApi.mock.calls.filter(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toHaveLength(0);
+        expect(mocks.run?.tasks[0]).toMatchObject({ model: "image-low", status: "failed", error: expect.stringContaining("手动选择") });
+        expect(mocks.run?.tasks[0].childTasks).toEqual([expect.objectContaining({ id: "child-manual-existing", status: "completed", model: "image-low", ratio: "16:9", quality: "low" })]);
+        expect(mocks.run?.tasks[0].childSlots).toContainEqual(expect.objectContaining({ index: 1, status: "failed", model: "image-low", error: expect.stringContaining("手动选择") }));
+    });
+
+    it("keeps the existing child identity while persisting Smart fallback only for the missing copy", async () => {
+        mocks.run = runWithTasks([
+            {
+                ...imageTask("smart-mixed"),
+                model: "image-low",
+                ratio: "16:9",
+                quality: "low",
+                count: 2,
+                status: "running",
+                attempts: 1,
+                taskId: "child-smart-existing",
+                taskIds: ["child-smart-existing"],
+            },
+        ]);
+        const currentSettings = agentCapabilitySettings() as unknown as { logicalModels: Array<{ id: string; enabled: boolean; bindings: Array<{ generationParameters: { qualities: string[] } }> }> };
+        currentSettings.logicalModels.find((model) => model.id === "image-low")!.enabled = false;
+        currentSettings.logicalModels.find((model) => model.id === "image-high")!.bindings[0].generationParameters.qualities = ["low", "high"];
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+        let persistedAtSubmit: AgentRunTask | undefined;
+        let existingPolls = 0;
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST") {
+                persistedAtSubmit = structuredClone(mocks.run?.tasks[0]);
+                return Response.json({ task: { id: "child-smart-fallback" } });
+            }
+            if (url.endsWith("/api/image-tasks/child-smart-existing")) {
+                existingPolls += 1;
+                return existingPolls === 1 ? Response.json({ task: { status: "pending" } }) : Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/smart-existing.png" } } });
+            }
+            if (url.endsWith("/api/image-tasks/child-smart-fallback")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/smart-fallback.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+        expect(mocks.run?.status).toBe("running");
+        await executeAgentRun(mocks.run!, "http://localhost", "session=test");
+
+        const createCalls = mocks.fetchInternalApi.mock.calls.filter(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"));
+        expect(createCalls).toHaveLength(1);
+        expect(JSON.parse(String(createCalls[0]?.[1]?.body))).toMatchObject({ config: { model: "image-high", quality: "low", size: "16:9" } });
+        expect(mocks.fetchInternalApi.mock.calls.some(([url, init]) => !init?.method && String(url).endsWith("/api/image-tasks/child-smart-existing"))).toBe(true);
+        expect(persistedAtSubmit).toMatchObject({
+            model: "image-low",
+            taskIds: ["child-smart-existing"],
+            childSlots: [expect.objectContaining({ index: 1, status: "resolved", model: "image-high", ratio: "16:9", quality: "low" })],
+        });
+        expect(mocks.run?.tasks[0]).toMatchObject({ model: "image-low", status: "completed", attempts: 1 });
+        expect(existingPolls).toBe(2);
+        expect(mocks.run?.tasks[0].childTasks).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ id: "child-smart-existing", status: "completed", attempt: 1, model: "image-low", ratio: "16:9", quality: "low" }),
+                expect.objectContaining({ id: "child-smart-fallback", status: "completed", model: "image-high", ratio: "16:9", quality: "low" }),
+            ]),
+        );
+        expect(mocks.run?.tasks[0].childSlots).toContainEqual(expect.objectContaining({ index: 1, status: "resolved", taskId: "child-smart-fallback", model: "image-high", ratio: "16:9", quality: "low" }));
     });
 
     it("persists every child result for a multi-copy image task", async () => {
@@ -555,6 +741,65 @@ describe("executeAgentRun backend settings", () => {
         expect(billingHeaders.get("x-vozeb-pro-billing-user-id")).toBe("user");
         expect(billingHeaders.get("x-vozeb-pro-billing-binding-id")).toBe("planner-binding");
         expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "succeeded" });
+    });
+
+    it("shows Smart planning only compatible media models and falls back from an incompatible planned model", async () => {
+        mocks.run = { ...planningRun(), generationPreferences: { mode: "image", image: { quality: "high" } } };
+        mocks.getAuthSettings.mockResolvedValue(agentCapabilitySettings());
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(canvasPlan("image-low")) }] });
+            if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-compatible" } });
+            if (url.endsWith("/api/image-tasks/child-compatible")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/compatible.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const planningCall = mocks.fetchInternalApi.mock.calls.find(([url]) => String(url).endsWith("/chat/completions"));
+        const planningBody = JSON.parse(String(planningCall?.[1]?.body)) as { messages: Array<{ content: string }> };
+        const planningInput = JSON.parse(planningBody.messages[1].content) as { availableModels: Array<{ id: string }> };
+        expect(planningInput.availableModels.map((model) => model.id)).toContain("image-high");
+        expect(planningInput.availableModels.map((model) => model.id)).not.toContain("image-low");
+        const createCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"));
+        expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({ config: { model: "image-high", quality: "high" } });
+    });
+
+    it("keeps no-mode references in Smart model filtering", async () => {
+        const asset = creativeImageAsset("reference", "参考图", "https://cdn.example.com/reference.png");
+        mocks.run = { ...planningRun(), referencedAssetIds: [asset.id] };
+        mocks.getCreativeAssetsByIds.mockResolvedValue([asset]);
+        mocks.getAuthSettings.mockResolvedValue(agentCapabilitySettings());
+        const plan = { ...canvasPlan("image-high"), deliverables: [{ ...canvasPlan("image-high").deliverables[0], assetIds: [asset.id] }] };
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(plan) }] });
+            if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-reference" } });
+            if (url.endsWith("/api/image-tasks/child-reference")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/output.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const planningCall = mocks.fetchInternalApi.mock.calls.find(([url]) => String(url).endsWith("/chat/completions"));
+        const planningBody = JSON.parse(String(planningCall?.[1]?.body)) as { messages: Array<{ content: string }> };
+        const planningInput = JSON.parse(planningBody.messages[1].content) as { availableModels: Array<{ id: string }> };
+        expect(planningInput.availableModels.map((model) => model.id)).toContain("image-high");
+        expect(planningInput.availableModels.map((model) => model.id)).not.toContain("image-low");
+    });
+
+    it("falls back after planning when the planner adds an unsupported concrete quality", async () => {
+        mocks.run = { ...planningRun(), generationPreferences: { mode: "image", image: {} } };
+        mocks.getAuthSettings.mockResolvedValue(agentCapabilitySettings());
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(canvasPlan("image-low")) }] });
+            if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-post-plan" } });
+            if (url.endsWith("/api/image-tasks/child-post-plan")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/output.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const createCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"));
+        expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({ config: { model: "image-high", quality: "high" } });
     });
 
     it("passes the persistent summary and recent messages to the planner", async () => {
@@ -834,7 +1079,22 @@ describe("executeAgentRun backend settings", () => {
         };
         nextSettings.defaultModels.videoModel = "video-model";
         nextSettings.systemChannels.push({ id: "video-channel", name: "视频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "video-secret", models: ["vendor/video-model"] });
-        nextSettings.logicalModels.push({ id: "video-model", name: "视频", capability: "video", enabled: true, bindings: [{ id: "video-binding", channelId: "video-channel", upstreamModel: "vendor/video-model", enabled: true, priority: 1 }] });
+        nextSettings.logicalModels.push({
+            id: "video-model",
+            name: "视频",
+            capability: "video",
+            enabled: true,
+            bindings: [
+                {
+                    id: "video-binding",
+                    channelId: "video-channel",
+                    upstreamModel: "vendor/video-model",
+                    enabled: true,
+                    priority: 1,
+                    generationParameters: testGenerationParameters({ referenceInputs: ["image"], maxReferenceImages: 10, maxBatchSize: 1, videoReferenceModes: ["reference"] }),
+                },
+            ],
+        });
         mocks.getAuthSettings.mockResolvedValue(nextSettings as never);
         mocks.getCreativeAssetsByIds.mockImplementation(async (ids?: string[]) =>
             ids?.includes("asset-0")
@@ -902,7 +1162,22 @@ describe("executeAgentRun backend settings", () => {
         };
         nextSettings.defaultModels.videoModel = "video-model";
         nextSettings.systemChannels.push({ id: "video-channel", name: "视频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "video-secret", models: ["vendor/video-model"] });
-        nextSettings.logicalModels.push({ id: "video-model", name: "视频", capability: "video", enabled: true, bindings: [{ id: "video-binding", channelId: "video-channel", upstreamModel: "vendor/video-model", enabled: true, priority: 1 }] });
+        nextSettings.logicalModels.push({
+            id: "video-model",
+            name: "视频",
+            capability: "video",
+            enabled: true,
+            bindings: [
+                {
+                    id: "video-binding",
+                    channelId: "video-channel",
+                    upstreamModel: "vendor/video-model",
+                    enabled: true,
+                    priority: 1,
+                    generationParameters: testGenerationParameters({ referenceInputs: ["image"], maxReferenceImages: 2, maxBatchSize: 1, videoReferenceModes: ["first_last"] }),
+                },
+            ],
+        });
         mocks.getAuthSettings.mockResolvedValue(nextSettings as never);
         mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
             if (init?.method === "POST" && url.endsWith("/api/video-generation-tasks")) return Response.json({ task: { id: "child-video-frames" } });
@@ -938,8 +1213,38 @@ describe("executeAgentRun backend settings", () => {
             { id: "audio-channel", name: "音频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "audio-secret", models: ["vendor/audio-model"] },
         );
         nextSettings.logicalModels.push(
-            { id: "video-model", name: "视频", capability: "video", enabled: true, bindings: [{ id: "video-binding", channelId: "video-channel", upstreamModel: "vendor/video-model", enabled: true, priority: 1 }] },
-            { id: "audio-model", name: "音频", capability: "audio", enabled: true, bindings: [{ id: "audio-binding", channelId: "audio-channel", upstreamModel: "vendor/audio-model", enabled: true, priority: 1 }] },
+            {
+                id: "video-model",
+                name: "视频",
+                capability: "video",
+                enabled: true,
+                bindings: [
+                    {
+                        id: "video-binding",
+                        channelId: "video-channel",
+                        upstreamModel: "vendor/video-model",
+                        enabled: true,
+                        priority: 1,
+                        generationParameters: testGenerationParameters({ aspectRatios: ["21:9"], resolutions: ["2160"], durationMode: "discrete", durationSeconds: [60], maxBatchSize: 1 }),
+                    },
+                ],
+            },
+            {
+                id: "audio-model",
+                name: "音频",
+                capability: "audio",
+                enabled: true,
+                bindings: [
+                    {
+                        id: "audio-binding",
+                        channelId: "audio-channel",
+                        upstreamModel: "vendor/audio-model",
+                        enabled: true,
+                        priority: 1,
+                        generationParameters: testGenerationParameters({ voices: ["nova"], formats: ["wav"], speedRange: { min: 1, max: 2 } }),
+                    },
+                ],
+            },
         );
         mocks.getAuthSettings.mockResolvedValue(nextSettings as never);
         mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -1112,3 +1417,44 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.status).toBe("cancelled");
     });
 });
+
+function agentCapabilitySettings() {
+    const value = canvasSettings("image-low", "image-low-channel", "image-high", "image-high-channel") as unknown as {
+        defaultModels: { imageModel: string };
+        logicalModels: Array<{ id: string; bindings: Array<Record<string, unknown>> }>;
+    };
+    value.defaultModels.imageModel = "image-high";
+    for (const model of value.logicalModels.filter((item) => item.id.startsWith("image-"))) {
+        model.bindings[0].generationParameters = {
+            referenceInputs: model.id === "image-high" ? ["image"] : [],
+            maxReferenceImages: model.id === "image-high" ? 10 : undefined,
+            aspectRatios: ["16:9"],
+            pixelSizes: [],
+            supportsCustomSize: false,
+            qualities: [model.id === "image-high" ? "high" : "low"],
+            resolutions: [],
+            durationSeconds: [],
+            videoReferenceModes: [],
+            voices: [],
+            formats: [],
+            maxBatchSize: 4,
+        };
+    }
+    return value as never;
+}
+
+function testGenerationParameters(patch: Record<string, unknown> = {}) {
+    return {
+        referenceInputs: [],
+        aspectRatios: [],
+        pixelSizes: [],
+        supportsCustomSize: false,
+        qualities: [],
+        resolutions: [],
+        durationSeconds: [],
+        videoReferenceModes: [],
+        voices: [],
+        formats: [],
+        ...patch,
+    };
+}

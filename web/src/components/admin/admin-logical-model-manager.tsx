@@ -1,11 +1,14 @@
 "use client";
 
-import { App, Button, Checkbox, Drawer, Empty, Input, InputNumber, Select, Space, Switch, Tag } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Tag } from "antd";
 import { AlertTriangle, GitBranch, Pencil, RefreshCw, Route, Search } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 
 import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
-import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
+import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, LogicalModelGenerationParameters, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
+import { fullGenerationParametersPreset, normalizeGenerationParameters } from "@/lib/generation-parameters";
+import { generationParametersStatus } from "@/lib/generation-defaults-validation";
+import { validateGenerationParametersInput } from "@/lib/generation-parameters-admin-validation";
 import { capabilityLabel, isLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 
 type Props = {
@@ -106,6 +109,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                         {visibleModels.map((model) => {
                             const resolved = resolveLogicalModelConfig(logicalModels, channels, model.capability, model.id);
                             const isDefault = Object.values(defaultModels).some((value) => value.toLowerCase() === model.id.toLowerCase());
+                            const capabilityStatus = logicalModelCapabilityStatus(model);
                             return (
                                 <div key={model.id} className="flex min-w-0 flex-col gap-3 rounded-lg border border-stone-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between dark:border-stone-800 dark:bg-stone-950">
                                     <div className="min-w-0">
@@ -115,6 +119,11 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                                             <Tag color={model.enabled ? "green" : "default"} className="m-0">
                                                 {model.enabled ? "启用" : "停用"}
                                             </Tag>
+                                            {capabilityStatus ? (
+                                                <Tag color={capabilityStatus.state === "configured" ? "green" : capabilityStatus.state === "incomplete" ? "orange" : "default"} className="m-0">
+                                                    {capabilityStatus.label}
+                                                </Tag>
+                                            ) : null}
                                             {isDefault ? (
                                                 <Tag color="blue" className="m-0">
                                                     默认
@@ -170,7 +179,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
 
             <Drawer
                 title="模型路由设置"
-                size={760}
+                size="min(760px, 100vw)"
                 styles={{ wrapper: { maxWidth: "100vw" } }}
                 open={drawerOpen}
                 destroyOnHidden
@@ -232,19 +241,45 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
 }
 
 function BindingEditor({ binding, capability, channels, onChange }: { binding: LogicalModelBinding; capability: LogicalModelCapability; channels: SystemModelChannel[]; onChange: (patch: Partial<LogicalModelBinding>) => void }) {
+    const { message } = App.useApp();
     const channel = channels.find((item) => item.id === binding.channelId);
     const profile = binding.capabilityProfile || {};
     const effectiveAsync = profile.supportsAsync ?? (capability === "image" || capability === "video");
     const timeoutSeconds = profile.timeoutMs ? Math.round(profile.timeoutMs / 1000) : undefined;
     const defaultTimeoutSeconds = capability === "image" ? 600 : capability === "text" ? 180 : 1800;
     const updateProfile = (patch: Partial<LogicalModelCapabilityProfile>) => onChange({ capabilityProfile: { ...profile, ...patch } });
-    const updateList = (value: string) =>
-        updateProfile({
-            aspectRatios: value
-                .split(",")
-                .map((item) => item.trim())
-                .filter(Boolean),
-        });
+    const updateGenerationParameters = (patch: Partial<LogicalModelGenerationParameters>) => {
+        const raw = { ...(binding.generationParameters || {}), ...patch };
+        const error = validateGenerationParametersInput(raw);
+        if (error) return message.error(error);
+        onChange({ generationParameters: normalizeGenerationParameters(raw) });
+    };
+    const applyList = (label: string, field: "aspectRatios" | "pixelSizes" | "qualities" | "resolutions" | "voices" | "formats", value: string) => {
+        const requested = value
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        const raw = { ...(binding.generationParameters || {}), [field]: requested };
+        const error = validateGenerationParametersInput(raw);
+        if (error) {
+            message.error(error);
+            return;
+        }
+        onChange({ generationParameters: normalizeGenerationParameters(raw) });
+    };
+    const applyDurationList = (value: string) => {
+        const requested = value
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        const raw = { ...(binding.generationParameters || {}), durationMode: "discrete", durationSeconds: requested };
+        const error = validateGenerationParametersInput(raw);
+        if (error) {
+            message.error(error);
+            return;
+        }
+        onChange({ generationParameters: normalizeGenerationParameters(raw) });
+    };
     return (
         <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-900/40">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_90px_90px_auto] sm:items-end">
@@ -264,25 +299,61 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                     <Switch size="small" checked={binding.enabled} aria-label={`${channel?.name || "渠道"}绑定启用状态`} onChange={(enabled) => onChange({ enabled })} />
                 </div>
             </div>
-            <div className="mt-3 rounded-md border border-stone-200/80 bg-white/70 p-3 dark:border-stone-800 dark:bg-stone-950/40">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                        <div className="text-xs font-semibold text-stone-700 dark:text-stone-200">能力档案</div>
-                        <div className="mt-1 text-[11px] text-stone-500 dark:text-stone-400">控制参考素材、任务能力和资源限制。</div>
+            {capability !== "text" ? (
+                <div className="mt-3 rounded-md border border-stone-200/80 bg-white/70 p-3 dark:border-stone-800 dark:bg-stone-950/40">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                            <div className="text-xs font-semibold text-stone-700 dark:text-stone-200">生成能力档案</div>
+                            <div className="mt-1 text-[11px] text-stone-500 dark:text-stone-400">仅描述这个绑定可执行的生成参数；留空的能力不会对外开放。</div>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                            <Tag
+                                color={
+                                    generationParametersStatus(capability, binding.generationParameters).state === "configured" ? "green" : generationParametersStatus(capability, binding.generationParameters).state === "incomplete" ? "orange" : "default"
+                                }
+                                className="m-0"
+                            >
+                                {generationParametersStatus(capability, binding.generationParameters).label}
+                            </Tag>
+                            {binding.generationParameters ? (
+                                <>
+                                    <Popconfirm
+                                        title="覆盖当前能力配置？"
+                                        description="将使用 VOZEB 全部当前选项替换这个 binding 的能力草稿。"
+                                        okText="覆盖"
+                                        cancelText="取消"
+                                        onConfirm={() => onChange({ generationParameters: fullGenerationParametersPreset(capability) })}
+                                    >
+                                        <Button size="small">重新启用全部选项</Button>
+                                    </Popconfirm>
+                                    <Button size="small" onClick={() => onChange({ generationParameters: undefined })}>
+                                        清除能力配置
+                                    </Button>
+                                </>
+                            ) : (
+                                <>
+                                    <Button size="small" type="primary" onClick={() => onChange({ generationParameters: fullGenerationParametersPreset(capability) })}>
+                                        启用全部选项
+                                    </Button>
+                                    <Button size="small" onClick={() => onChange({ generationParameters: normalizeGenerationParameters({}) })}>
+                                        空白配置
+                                    </Button>
+                                </>
+                            )}
+                        </div>
                     </div>
-                    <Tag className="m-0">{capabilityLabel(capability)}</Tag>
+                    <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
+                        快速模板只覆盖 VOZEB 当前选项，不代表上游已确认支持；保存前请删除不支持的参数。
+                    </div>
+                    {binding.generationParameters ? (
+                        <GenerationCapabilityEditor capability={capability} parameters={binding.generationParameters} onUpdate={updateGenerationParameters} onApplyList={applyList} onApplyDurationList={applyDurationList} />
+                    ) : null}
                 </div>
+            ) : null}
+            <div className="mt-3 rounded-md border border-stone-200/80 bg-white/70 p-3 dark:border-stone-800 dark:bg-stone-950/40">
+                <div className="mb-3 text-xs font-semibold text-stone-700 dark:text-stone-200">运行与计费设置</div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <div className="flex flex-wrap items-center gap-3 text-xs text-stone-600 dark:text-stone-300 sm:col-span-2 lg:col-span-4">
-                        <Checkbox checked={profile.supportsReferenceImage === true} onChange={(event) => updateProfile({ supportsReferenceImage: event.target.checked })}>
-                            参考图片
-                        </Checkbox>
-                        <Checkbox checked={profile.supportsReferenceVideo === true} onChange={(event) => updateProfile({ supportsReferenceVideo: event.target.checked })}>
-                            参考视频
-                        </Checkbox>
-                        <Checkbox checked={profile.supportsReferenceAudio === true} onChange={(event) => updateProfile({ supportsReferenceAudio: event.target.checked })}>
-                            参考音频
-                        </Checkbox>
                         <Checkbox checked={effectiveAsync} onChange={(event) => updateProfile({ supportsAsync: event.target.checked })}>
                             异步查询
                         </Checkbox>
@@ -293,21 +364,6 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                             Webhook
                         </Checkbox>
                     </div>
-                    <LabeledControl label="最大参考图数量">
-                        <InputNumber className="w-full" min={0} max={16} precision={0} value={profile.maxReferenceImages} onChange={(value) => updateProfile({ maxReferenceImages: Number(value) || 0 })} />
-                    </LabeledControl>
-                    <LabeledControl label="最大批量数量">
-                        <InputNumber className="w-full" min={1} max={100} precision={0} value={profile.maxBatchSize} onChange={(value) => updateProfile({ maxBatchSize: Number(value) || 1 })} />
-                    </LabeledControl>
-                    <LabeledControl label="最短时长（秒）">
-                        <InputNumber className="w-full" min={0} max={3600} precision={0} value={profile.minDurationSeconds} onChange={(value) => updateProfile({ minDurationSeconds: Number(value) || 0 })} />
-                    </LabeledControl>
-                    <LabeledControl label="最长时长（秒）">
-                        <InputNumber className="w-full" min={0} max={3600} precision={0} value={profile.maxDurationSeconds} onChange={(value) => updateProfile({ maxDurationSeconds: Number(value) || 0 })} />
-                    </LabeledControl>
-                    <LabeledControl label="支持比例（逗号分隔）">
-                        <Input value={profile.aspectRatios?.join(", ") || ""} placeholder="1:1, 16:9, 9:16" onChange={(event) => updateList(event.target.value)} />
-                    </LabeledControl>
                     <LabeledControl label="请求超时（秒）">
                         <InputNumber
                             className="w-full"
@@ -334,6 +390,225 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
     );
 }
 
+function GenerationCapabilityEditor({
+    capability,
+    parameters,
+    onUpdate,
+    onApplyList,
+    onApplyDurationList,
+}: {
+    capability: Exclude<LogicalModelCapability, "text">;
+    parameters: LogicalModelGenerationParameters;
+    onUpdate: (patch: Partial<LogicalModelGenerationParameters>) => void;
+    onApplyList: (label: string, field: "aspectRatios" | "pixelSizes" | "qualities" | "resolutions" | "voices" | "formats", value: string) => void;
+    onApplyDurationList: (value: string) => void;
+}) {
+    const toggleReference = (value: LogicalModelGenerationParameters["referenceInputs"][number], checked: boolean) =>
+        onUpdate({ referenceInputs: checked ? [...parameters.referenceInputs, value] : parameters.referenceInputs.filter((item) => item !== value) });
+    const listInput = (label: string, field: "aspectRatios" | "pixelSizes" | "qualities" | "resolutions" | "voices" | "formats", placeholder: string) => (
+        <LabeledControl label={label}>
+            <Input
+                key={`${field}:${parameters[field].join(",")}`}
+                defaultValue={parameters[field].join(", ")}
+                placeholder={placeholder}
+                onBlur={(event) => onApplyList(label, field, event.target.value)}
+                onPressEnter={(event) => onApplyList(label, field, event.currentTarget.value)}
+            />
+        </LabeledControl>
+    );
+    return (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-stone-600 dark:text-stone-300 sm:col-span-2 lg:col-span-4">
+                {(["image", "video", "audio"] as const).map((value) => (
+                    <Checkbox key={value} checked={parameters.referenceInputs.includes(value)} onChange={(event) => toggleReference(value, event.target.checked)}>
+                        参考{value === "image" ? "图片" : value === "video" ? "视频" : "音频"}
+                    </Checkbox>
+                ))}
+                {(capability === "image" || capability === "video") && (
+                    <Checkbox checked={parameters.supportsCustomSize} onChange={(event) => onUpdate({ supportsCustomSize: event.target.checked })}>
+                        支持自定义尺寸
+                    </Checkbox>
+                )}
+                {(capability === "image" || capability === "video") && (
+                    <Checkbox
+                        checked={parameters.supportsCustomBatchSize === true}
+                        onChange={(event) =>
+                            onUpdate({
+                                supportsCustomBatchSize: event.target.checked || undefined,
+                                customBatchSizeRange: event.target.checked ? parameters.customBatchSizeRange || { min: 1, max: parameters.maxBatchSize || 4 } : undefined,
+                            })
+                        }
+                    >
+                        允许自定义数量
+                    </Checkbox>
+                )}
+                {capability === "video" && parameters.durationMode === "discrete" ? (
+                    <Checkbox
+                        checked={parameters.supportsCustomDuration === true}
+                        onChange={(event) =>
+                            onUpdate({
+                                supportsCustomDuration: event.target.checked || undefined,
+                                customDurationRange: event.target.checked ? parameters.customDurationRange || { min: parameters.durationSeconds[0] || 1, max: parameters.durationSeconds.at(-1) || 15 } : undefined,
+                            })
+                        }
+                    >
+                        允许自定义时长
+                    </Checkbox>
+                ) : null}
+            </div>
+            {(capability === "image" || capability === "video") && (
+                <>
+                    <LabeledControl label="最大参考图片数">
+                        <InputNumber className="w-full" min={1} precision={0} value={parameters.maxReferenceImages} onChange={(value) => onUpdate({ maxReferenceImages: value ? Number(value) : undefined })} />
+                    </LabeledControl>
+                    <LabeledControl label="最大批量数量">
+                        <InputNumber className="w-full" min={1} precision={0} value={parameters.maxBatchSize} onChange={(value) => onUpdate({ maxBatchSize: value ? Number(value) : undefined })} />
+                    </LabeledControl>
+                    {parameters.supportsCustomBatchSize ? (
+                        <>
+                            <LabeledControl label="自定义数量下限">
+                                <InputNumber
+                                    className="w-full"
+                                    min={1}
+                                    precision={0}
+                                    value={parameters.customBatchSizeRange?.min}
+                                    onChange={(value) => onUpdate({ customBatchSizeRange: { min: Number(value), max: parameters.customBatchSizeRange?.max || Number(value) } })}
+                                />
+                            </LabeledControl>
+                            <LabeledControl label="自定义数量上限">
+                                <InputNumber
+                                    className="w-full"
+                                    min={1}
+                                    precision={0}
+                                    value={parameters.customBatchSizeRange?.max}
+                                    onChange={(value) => onUpdate({ customBatchSizeRange: { min: parameters.customBatchSizeRange?.min || Number(value), max: Number(value) } })}
+                                />
+                            </LabeledControl>
+                        </>
+                    ) : null}
+                    {listInput("支持比例（逗号分隔）", "aspectRatios", "1:1, 16:9, 9:16")}
+                    {listInput("精确尺寸（逗号分隔）", "pixelSizes", "1024x1024, 1920x1080")}
+                </>
+            )}
+            {capability === "image" && listInput("图片质量（逗号分隔）", "qualities", "low, medium, high")}
+            {capability === "video" && (
+                <>
+                    {listInput("视频清晰度（逗号分隔）", "resolutions", "720, 1080")}
+                    <LabeledControl label="时长模式">
+                        <Select
+                            className="w-full"
+                            value={parameters.durationMode}
+                            placeholder="选择时长模式"
+                            options={[
+                                { value: "discrete", label: "离散秒数" },
+                                { value: "range", label: "连续范围" },
+                            ]}
+                            onChange={(durationMode) => onUpdate(durationMode === "discrete" ? { durationMode, durationRange: undefined } : { durationMode, durationSeconds: [], durationRange: parameters.durationRange })}
+                        />
+                    </LabeledControl>
+                    {parameters.durationMode === "discrete" ? (
+                        <LabeledControl label="可选秒数（逗号分隔）">
+                            <Input
+                                key={parameters.durationSeconds.join(",")}
+                                defaultValue={parameters.durationSeconds.join(", ")}
+                                placeholder="5, 10"
+                                onBlur={(event) => onApplyDurationList(event.target.value)}
+                                onPressEnter={(event) => onApplyDurationList(event.currentTarget.value)}
+                            />
+                        </LabeledControl>
+                    ) : null}
+                    {parameters.durationMode === "discrete" && parameters.supportsCustomDuration ? (
+                        <>
+                            <LabeledControl label="自定义时长下限（秒）">
+                                <InputNumber
+                                    className="w-full"
+                                    min={0.01}
+                                    value={parameters.customDurationRange?.min}
+                                    onChange={(value) => onUpdate({ customDurationRange: { min: Number(value), max: parameters.customDurationRange?.max || Number(value) } })}
+                                />
+                            </LabeledControl>
+                            <LabeledControl label="自定义时长上限（秒）">
+                                <InputNumber
+                                    className="w-full"
+                                    min={0.01}
+                                    value={parameters.customDurationRange?.max}
+                                    onChange={(value) => onUpdate({ customDurationRange: { min: parameters.customDurationRange?.min || Number(value), max: Number(value) } })}
+                                />
+                            </LabeledControl>
+                        </>
+                    ) : null}
+                    {parameters.durationMode === "range" ? (
+                        <>
+                            <LabeledControl label="最短时长（秒）">
+                                <InputNumber className="w-full" min={0.01} value={parameters.durationRange?.min} onChange={(value) => onUpdate({ durationRange: { min: Number(value), max: parameters.durationRange?.max || Number(value) } })} />
+                            </LabeledControl>
+                            <LabeledControl label="最长时长（秒）">
+                                <InputNumber className="w-full" min={0.01} value={parameters.durationRange?.max} onChange={(value) => onUpdate({ durationRange: { min: parameters.durationRange?.min || Number(value), max: Number(value) } })} />
+                            </LabeledControl>
+                        </>
+                    ) : null}
+                    <LabeledControl label="视频参考方式">
+                        <Checkbox.Group
+                            className="flex flex-wrap gap-2"
+                            value={parameters.videoReferenceModes}
+                            options={[
+                                { value: "reference", label: "普通参考" },
+                                { value: "first_frame", label: "首帧" },
+                                { value: "first_last", label: "首尾帧" },
+                            ]}
+                            onChange={(videoReferenceModes) => onUpdate({ videoReferenceModes: videoReferenceModes as LogicalModelGenerationParameters["videoReferenceModes"] })}
+                        />
+                    </LabeledControl>
+                </>
+            )}
+            {capability === "audio" && (
+                <>
+                    {listInput("音色（逗号分隔）", "voices", "alloy, nova")}
+                    {listInput("输出格式（逗号分隔）", "formats", "mp3, wav")}
+                    <LabeledControl label="最慢语速">
+                        <InputNumber className="w-full" min={0.01} value={parameters.speedRange?.min} onChange={(value) => onUpdate({ speedRange: { min: Number(value), max: parameters.speedRange?.max || Number(value) } })} />
+                    </LabeledControl>
+                    <LabeledControl label="最快语速">
+                        <InputNumber className="w-full" min={0.01} value={parameters.speedRange?.max} onChange={(value) => onUpdate({ speedRange: { min: parameters.speedRange?.min || Number(value), max: Number(value) } })} />
+                    </LabeledControl>
+                </>
+            )}
+        </div>
+    );
+}
+
 function cloneLogicalModel(model: LogicalModel): LogicalModel {
-    return { ...model, bindings: model.bindings.map((binding) => ({ ...binding, capabilityProfile: binding.capabilityProfile ? { ...binding.capabilityProfile } : undefined })) };
+    return {
+        ...model,
+        bindings: model.bindings.map((binding) => ({
+            ...binding,
+            capabilityProfile: binding.capabilityProfile ? { ...binding.capabilityProfile } : undefined,
+            generationParameters: binding.generationParameters
+                ? {
+                      ...binding.generationParameters,
+                      referenceInputs: [...binding.generationParameters.referenceInputs],
+                      aspectRatios: [...binding.generationParameters.aspectRatios],
+                      pixelSizes: [...binding.generationParameters.pixelSizes],
+                      qualities: [...binding.generationParameters.qualities],
+                      resolutions: [...binding.generationParameters.resolutions],
+                      durationSeconds: [...binding.generationParameters.durationSeconds],
+                      videoReferenceModes: [...binding.generationParameters.videoReferenceModes],
+                      voices: [...binding.generationParameters.voices],
+                      formats: [...binding.generationParameters.formats],
+                      ...(binding.generationParameters.durationRange ? { durationRange: { ...binding.generationParameters.durationRange } } : {}),
+                      ...(binding.generationParameters.customDurationRange ? { customDurationRange: { ...binding.generationParameters.customDurationRange } } : {}),
+                      ...(binding.generationParameters.customBatchSizeRange ? { customBatchSizeRange: { ...binding.generationParameters.customBatchSizeRange } } : {}),
+                      ...(binding.generationParameters.speedRange ? { speedRange: { ...binding.generationParameters.speedRange } } : {}),
+                  }
+                : undefined,
+        })),
+    };
+}
+
+function logicalModelCapabilityStatus(model: LogicalModel) {
+    if (model.capability === "text") return undefined;
+    const statuses = model.bindings.map((binding) => generationParametersStatus(model.capability, binding.generationParameters).state);
+    if (statuses.every((status) => status === "configured")) return { state: "configured" as const, label: "已配置" };
+    if (statuses.some((status) => status !== "unconfigured")) return { state: "incomplete" as const, label: "能力档案未完成" };
+    return { state: "unconfigured" as const, label: "能力档案未配置" };
 }

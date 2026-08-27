@@ -1,7 +1,7 @@
 import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
-import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
+import { normalizeGenerationParameters } from "@/lib/generation-parameters";
 import { inferModelCapability, isCreativeGenerationModel, normalizeModelId } from "@/lib/model-capability";
-import { channelConnectionReady, protocolCatalogCapability, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
+import { channelConnectionReady, protocolCatalogCapability } from "@/lib/channel-protocol-registry";
 import { validatePricingRateCard } from "@/lib/billing/pricing";
 import { validateProviderCostUnit } from "@/lib/billing/money";
 
@@ -57,6 +57,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
             .map(({ channel, channelIndex, upstreamModel }) => {
                 const stored = findStoredBinding(existingModels, channel.id, upstreamModel);
                 const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile);
+                const generationParameters = normalizeGenerationParameters(stored?.generationParameters);
                 const weight = clampWeight(stored?.weight);
                 const costRateCard = stored?.costRateCard === undefined ? undefined : validatePricingRateCard(stored.costRateCard);
                 const providerCostUnit = stored?.providerCostUnit === undefined ? undefined : validateProviderCostUnit(stored.providerCostUnit);
@@ -69,6 +70,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                     priority: clampPriority(stored?.priority, channelIndex + 1),
                     ...(weight !== undefined ? { weight } : {}),
                     ...(capabilityProfile ? { capabilityProfile } : {}),
+                    ...(generationParameters ? { generationParameters } : {}),
                     ...(costRateCard ? { costRateCard } : {}),
                     ...(providerCostUnit ? { providerCostUnit } : {}),
                 };
@@ -168,31 +170,10 @@ export function channelDetectedCapabilities(channel: Pick<SystemModelChannel, "a
 }
 
 export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelBinding, "capabilityProfile">, capability: LogicalModelCapability, channel?: Pick<SystemModelChannel, "advancedConfig">, upstreamModel = "") {
-    if (!binding.capabilityProfile && !channel?.advancedConfig) return undefined;
-    const stored = binding.capabilityProfile || {};
-    const advanced = channel?.advancedConfig;
-    const globalPreset = resolveGlobalAiOpcPreset(advanced, upstreamModel);
-    const modelConfig = resolveChannelModelConfig(advanced, upstreamModel) || advanced?.operationConfigs?.[capability];
-    return {
-        supportsReferenceImage: booleanValue(stored.supportsReferenceImage, globalPreset?.supportsReferenceImage ?? modelConfig?.supportsReferenceImage ?? advanced?.supportsReferenceImage),
-        supportsReferenceVideo: booleanValue(stored.supportsReferenceVideo, globalPreset?.supportsReferenceVideo ?? modelConfig?.supportsReferenceVideo ?? advanced?.supportsReferenceVideo),
-        supportsReferenceAudio: booleanValue(stored.supportsReferenceAudio, globalPreset?.supportsReferenceAudio ?? modelConfig?.supportsReferenceAudio ?? advanced?.supportsReferenceAudio),
-        maxReferenceImages: positiveInteger(stored.maxReferenceImages),
-        aspectRatios: normalizeAspectRatios(stored.aspectRatios),
-        minDurationSeconds: positiveNumber(stored.minDurationSeconds),
-        maxDurationSeconds: positiveNumber(stored.maxDurationSeconds),
-        maxBatchSize: positiveInteger(stored.maxBatchSize),
-        supportsAsync: booleanValue(stored.supportsAsync, capability === "video" || capability === "image"),
-        supportsCancel: booleanValue(stored.supportsCancel),
-        supportsWebhook: booleanValue(stored.supportsWebhook),
-        timeoutMs: timeoutMilliseconds(stored.timeoutMs),
-        concurrencyLimit: positiveInteger(stored.concurrencyLimit),
-        maxInputTokens: positiveInteger(stored.maxInputTokens),
-        maxOutputTokens: positiveInteger(stored.maxOutputTokens),
-        supportsIdempotency: booleanValue(stored.supportsIdempotency),
-        unitCost: positiveNumber(stored.unitCost),
-        unitCostCurrency: text(stored.unitCostCurrency, 12) || undefined,
-    };
+    void upstreamModel;
+    const profile = normalizeStoredCapabilityProfile(binding.capabilityProfile);
+    if (!profile && !channel?.advancedConfig) return undefined;
+    return { ...profile, supportsAsync: profile?.supportsAsync ?? (capability === "image" || capability === "video") };
 }
 
 function channelSupportsModel(channel: Pick<SystemModelChannel, "models">, model: string) {
@@ -221,14 +202,6 @@ function normalizeStoredCapabilityProfile(value: unknown): LogicalModelCapabilit
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const input = value as Record<string, unknown>;
     const profile: LogicalModelCapabilityProfile = {
-        supportsReferenceImage: optionalBoolean(input.supportsReferenceImage),
-        supportsReferenceVideo: optionalBoolean(input.supportsReferenceVideo),
-        supportsReferenceAudio: optionalBoolean(input.supportsReferenceAudio),
-        maxReferenceImages: positiveInteger(input.maxReferenceImages),
-        aspectRatios: normalizeAspectRatios(input.aspectRatios),
-        minDurationSeconds: positiveNumber(input.minDurationSeconds),
-        maxDurationSeconds: positiveNumber(input.maxDurationSeconds),
-        maxBatchSize: positiveInteger(input.maxBatchSize),
         supportsAsync: optionalBoolean(input.supportsAsync),
         supportsCancel: optionalBoolean(input.supportsCancel),
         supportsWebhook: optionalBoolean(input.supportsWebhook),
@@ -247,10 +220,6 @@ function optionalBoolean(value: unknown) {
     return typeof value === "boolean" ? value : undefined;
 }
 
-function booleanValue(value: unknown, fallback = false) {
-    return typeof value === "boolean" ? value : Boolean(fallback);
-}
-
 function positiveInteger(value: unknown) {
     const number = Math.floor(Number(value));
     return Number.isFinite(number) && number > 0 ? Math.min(number, 1000000) : undefined;
@@ -264,19 +233,6 @@ function timeoutMilliseconds(value: unknown) {
 function positiveNumber(value: unknown) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? Math.min(number, 100000000) : undefined;
-}
-
-function normalizeAspectRatios(value: unknown) {
-    if (!Array.isArray(value)) return undefined;
-    const ratios = Array.from(
-        new Set(
-            value
-                .filter((item): item is string => typeof item === "string")
-                .map((item) => item.trim().slice(0, 20))
-                .filter(Boolean),
-        ),
-    ).slice(0, 12);
-    return ratios.length ? ratios : undefined;
 }
 
 function normalizeModelName(value: string) {

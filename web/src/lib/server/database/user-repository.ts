@@ -474,10 +474,53 @@ export class PointsRepository {
 
     async addRecord(record: PointRecordInput) {
         const result = await this.db.query(
-            "INSERT INTO point_records (id, user_id, type, amount, balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, created_at) VALUES ($1, $2, $3, $4::numeric, $5::numeric, $6, $7, $8, $9, $10, $11) RETURNING *",
-            [record.id, record.userId, record.type, record.amount, record.balanceAfter, record.description, record.model || null, record.idempotencyKey || null, record.requestFingerprint || null, record.sourceRecordId || null, record.createdAt],
+            "INSERT INTO point_records (id, user_id, operator_user_id, type, amount, balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, created_at) VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7, $8, $9, $10, $11, $12) RETURNING *",
+            [
+                record.id,
+                record.userId,
+                record.operatorUserId || null,
+                record.type,
+                record.amount,
+                record.balanceAfter,
+                record.description,
+                record.model || null,
+                record.idempotencyKey || null,
+                record.requestFingerprint || null,
+                record.sourceRecordId || null,
+                record.createdAt,
+            ],
         );
         return mapPointRecord(result.rows[0]);
+    }
+
+    async listAdminRecords(input: PageInput & { userId?: string; type?: PointRecord["type"]; direction?: "credit" | "debit"; startAt?: string; endBefore?: string } = {}): Promise<PageResult<PointRecord>> {
+        const page = normalizePage(input.page);
+        const pageSize = normalizePageSize(input.pageSize);
+        const result = await this.db.query(
+            `SELECT *, count(*) OVER() AS total_count
+             FROM point_records
+             WHERE ($1::text IS NULL OR user_id = $1)
+               AND ($2::text IS NULL OR type = $2)
+               AND ($3::text IS NULL OR ($3 = 'credit' AND amount > 0) OR ($3 = 'debit' AND amount < 0))
+               AND ($4::timestamptz IS NULL OR created_at >= $4::timestamptz)
+               AND ($5::timestamptz IS NULL OR created_at < $5::timestamptz)
+             ORDER BY created_at DESC, id DESC
+             LIMIT $6 OFFSET $7`,
+            [input.userId || null, input.type || null, input.direction || null, input.startAt || null, input.endBefore || null, pageSize, (page - 1) * pageSize],
+        );
+        return pageResult(result.rows.map(mapPointRecord), numberValue(result.rows[0]?.total_count), page, pageSize);
+    }
+
+    async getAdminSummary() {
+        const result = await this.db.query(
+            `SELECT
+                (SELECT coalesce(sum(settled_balance), 0)::text FROM users) AS settled_balance,
+                (SELECT coalesce(sum(amount), 0)::text FROM wallet_holds WHERE status = 'active') AS held_balance,
+                ((SELECT coalesce(sum(settled_balance), 0) FROM users) - (SELECT coalesce(sum(amount), 0) FROM wallet_holds WHERE status = 'active'))::text AS available_balance,
+                (SELECT count(*) FROM point_records) AS record_count`,
+        );
+        const row = result.rows[0] || {};
+        return { settledBalance: decimalValue(row.settled_balance), heldBalance: decimalValue(row.held_balance), availableBalance: decimalValue(row.available_balance), recordCount: numberValue(row.record_count) };
     }
 
     async listRecords(userId: string, input: PageInput & { direction?: "credit" | "debit" } = {}): Promise<PageResult<PointRecord>> {

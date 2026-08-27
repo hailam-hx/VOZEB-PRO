@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { adjustWalletBalanceInPostgresTransaction } from "@/lib/server/points-wallet-service";
 import { getWalletSnapshot, reserveWalletCredits } from "@/lib/server/points-wallet-service";
-import { updateUserByAdmin } from "@/lib/auth/store";
+import { adjustAdminPointBalance } from "@/lib/server/admin-points-service";
 import { decimal } from "@/lib/billing/decimal";
 
 import { createPostgresRepositories, ensurePostgresSchema, withPostgresTransaction } from "./index";
@@ -106,13 +106,63 @@ describe("PostgreSQL auth entity concurrency", () => {
             });
 
             const outcomes = await Promise.allSettled([
-                updateUserByAdmin(actorId, userId, { settledBalance: "6" }),
+                adjustAdminPointBalance({ actorUserId: actorId, targetUserId: userId, operation: "decrease", amount: "4", reason: "并发扣减", requestId: `concurrent-adjust-${suffix}` }),
                 reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "b".repeat(64), amount: "8", description: "并发预留", now }),
             ]);
 
             expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
             expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
             expect(decimal((await getWalletSnapshot(userId)).availableBalance).isNegative()).toBe(false);
+        } finally {
+            await repositories.users.delete(userId);
+            await repositories.users.delete(actorId);
+        }
+    });
+
+    postgresIt("applies concurrent administrator retries with the same request ID only once", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const actorId = `test-idempotent-admin-${suffix}`;
+        const userId = `test-idempotent-user-${suffix}`;
+        const requestId = `concurrent-retry-${suffix}`;
+        const now = new Date().toISOString();
+        try {
+            await repositories.users.createWithNextAccountId({
+                id: actorId,
+                username: `retry_admin_${suffix.replaceAll("-", "").slice(0, 12)}`,
+                displayName: "幂等管理员",
+                bio: "",
+                role: "admin",
+                adminPermissions: ["billing.manage"],
+                status: "active",
+                settledBalance: "0",
+                passwordHash: "integration-test-only",
+                createdAt: now,
+                updatedAt: now,
+            });
+            await repositories.users.createWithNextAccountId({
+                id: userId,
+                username: `retry_user_${suffix.replaceAll("-", "").slice(0, 12)}`,
+                displayName: "幂等用户",
+                bio: "",
+                role: "user",
+                adminPermissions: [],
+                status: "active",
+                settledBalance: "10",
+                passwordHash: "integration-test-only",
+                createdAt: now,
+                updatedAt: now,
+            });
+
+            const results = await Promise.all([
+                adjustAdminPointBalance({ actorUserId: actorId, targetUserId: userId, operation: "increase", amount: "1.25", reason: "并发重试", requestId }),
+                adjustAdminPointBalance({ actorUserId: actorId, targetUserId: userId, operation: "increase", amount: "1.25", reason: "并发重试", requestId }),
+            ]);
+
+            expect(results.map((result) => result.applied).sort()).toEqual([false, true]);
+            await expect(repositories.users.getById(userId)).resolves.toMatchObject({ settledBalance: "11.25" });
+            await expect(repositories.points.getRecordByIdempotencyKey(`admin-adjust:${requestId}`)).resolves.toMatchObject({ amount: "1.25", balanceAfter: "11.25", operatorUserId: actorId });
         } finally {
             await repositories.users.delete(userId);
             await repositories.users.delete(actorId);

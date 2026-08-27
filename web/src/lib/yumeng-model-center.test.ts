@@ -63,6 +63,12 @@ describe("Yumeng model center contracts", () => {
         expect(payload).not.toHaveProperty("first_image");
     });
 
+    it("rejects provider-incompatible concrete resolution instead of rewriting it", () => {
+        expect(() => buildVideo("sd_2.0_fast_special", {}, { resolution: "1080p" })).toThrow("1080p");
+        expect(() => buildVideo("videos_fast_933_c1", {}, { resolution: "1080p" })).toThrow("1080p");
+        expect(() => buildVideo("happyhorse-1.0-t2v", {}, { resolution: "480p" })).toThrow("480p");
+    });
+
     it.each([
         ["seedance_1_5_pro_1080p", { images: ["https://cdn.example.com/first.png"] }, { size: "16:9", first_image: "https://cdn.example.com/first.png" }],
         ["videos_933_c1", { firstFrame: "https://cdn.example.com/first.png", lastFrame: "https://cdn.example.com/last.png" }, { reference_mode: "frame", reference_images: ["https://cdn.example.com/first.png", "https://cdn.example.com/last.png"] }],
@@ -89,7 +95,11 @@ describe("Yumeng model center contracts", () => {
     });
 });
 
-function buildVideo(model: string, references: Partial<Pick<Parameters<typeof buildYumengVideoRequest>[0], "images" | "videos" | "audios" | "firstFrame" | "lastFrame">> = {}) {
+function buildVideo(
+    model: string,
+    references: Partial<Pick<Parameters<typeof buildYumengVideoRequest>[0], "images" | "videos" | "audios" | "firstFrame" | "lastFrame">> = {},
+    patch: Partial<Pick<Parameters<typeof buildYumengVideoRequest>[0], "duration" | "aspectRatio" | "resolution" | "generateAudio" | "watermark">> = {},
+) {
     return buildYumengVideoRequest({
         model,
         prompt: "电影感产品镜头",
@@ -98,6 +108,7 @@ function buildVideo(model: string, references: Partial<Pick<Parameters<typeof bu
         resolution: "720p",
         generateAudio: true,
         watermark: false,
+        ...patch,
         images: references.images || [],
         videos: references.videos || [],
         audios: references.audios || [],

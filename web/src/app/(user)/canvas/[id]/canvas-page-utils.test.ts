@@ -16,7 +16,7 @@ vi.mock("@/services/image-storage", async (importOriginal) => ({
     uploadImage: mocks.uploadImage,
 }));
 
-import { applyNodeConfigPatch, getGenerationCount, hydrateAssistantImages, hydrateCanvasImages, normalizeCanvasConfigNodeLayout, replaceCanvasNodeMediaMetadata } from "./canvas-page-utils";
+import { applyNodeConfigPatch, getGenerationCount, getGenerationCountPreference, hydrateAssistantImages, hydrateCanvasImages, normalizeCanvasConfigNodeLayout, replaceCanvasNodeMediaMetadata } from "./canvas-page-utils";
 
 describe("Canvas project hydration", () => {
     beforeEach(() => {
@@ -84,6 +84,7 @@ describe("Canvas config node layout", () => {
         expect(getGenerationCount("120")).toBe(120);
         expect(getGenerationCount("0")).toBe(1);
         expect(getGenerationCount("-2")).toBe(1);
+        expect(getGenerationCountPreference("auto")).toBe("auto");
     });
 });
 

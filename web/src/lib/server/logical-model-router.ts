@@ -3,6 +3,7 @@ import { channelModelCapability, resolveLogicalModelCapabilityProfile } from "@/
 import { channelSupportsModel, rawModelName } from "./generation-channel";
 import { filterHealthyRuntimeCandidates } from "./channel-runtime-health";
 import { channelConnectionReady } from "@/lib/channel-protocol-registry";
+import { normalizeGenerationParameters } from "@/lib/generation-parameters";
 
 export type ResolvedLogicalModel = {
     logicalModelId: string;
@@ -10,6 +11,7 @@ export type ResolvedLogicalModel = {
     channelId: string;
     channel: SystemModelChannel;
     capabilityProfile?: ReturnType<typeof resolveLogicalModelCapabilityProfile>;
+    generationParameters?: LogicalModelBinding["generationParameters"];
     logicalModel: LogicalModel;
     binding: LogicalModelBinding;
 };
@@ -37,6 +39,7 @@ export function resolveLogicalModelCandidates(settings: Pick<AuthSettings, "logi
                     logicalModel: logical,
                     binding,
                     capabilityProfile: resolveLogicalModelCapabilityProfile(binding, capability, channel, binding.upstreamModel),
+                    generationParameters: normalizeGenerationParameters(binding.generationParameters),
                 });
         }
         // Text planning tracks health per channel + upstream model in
@@ -56,6 +59,7 @@ export function resolveLogicalModelCandidates(settings: Pick<AuthSettings, "logi
             logicalModel: { id: requested, name: requested, capability, enabled: true, bindings: [] },
             binding: { id: `${channel.id}:${requested}`, channelId: channel.id, upstreamModel: requested, enabled: true, priority: 1 },
             capabilityProfile: resolveLogicalModelCapabilityProfile({}, capability, channel, requested),
+            generationParameters: undefined,
         }));
     return capability === "text" ? resolved : filterHealthyRuntimeCandidates(resolved, capability);
 }

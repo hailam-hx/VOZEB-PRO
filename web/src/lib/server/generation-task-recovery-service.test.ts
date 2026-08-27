@@ -10,10 +10,14 @@ const mocks = vi.hoisted(() => ({
     getAgentRun: vi.fn(),
     getImageTask: vi.fn(),
     updateImageTask: vi.fn(),
+    createImageTaskUpstreamStep: vi.fn(),
+    markImageTaskFailed: vi.fn(),
     getVideoTask: vi.fn(),
     queryVideoTaskUpstream: vi.fn(),
     getAudioTask: vi.fn(),
     updateAudioTask: vi.fn(),
+    createAudioTaskUpstreamStep: vi.fn(),
+    markAudioTaskFailed: vi.fn(),
     queryAudioTaskUpstreamStep: vi.fn(),
     queryCancelledImageTaskUpstreamStep: vi.fn(),
     queryImageTaskUpstreamStep: vi.fn(),
@@ -27,6 +31,7 @@ const mocks = vi.hoisted(() => ({
     refundAudioTask: vi.fn(),
     refundTextTask: vi.fn(),
     getAuthSettings: vi.fn(),
+    getFreshAuthSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-scheduler", () => ({
@@ -42,11 +47,16 @@ vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun 
 vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn((userId: string) => `worker-context:${userId}`) }));
 vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: vi.fn(), persistVideoTaskResult: vi.fn(), queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
 vi.mock("@/lib/server/video-task-store", () => ({ getVideoTask: mocks.getVideoTask }));
-vi.mock("@/lib/server/audio-task-runtime", () => ({ createAudioTaskUpstreamStep: vi.fn(), markAudioTaskFailed: vi.fn(), persistAudioTaskResult: vi.fn(), queryAudioTaskUpstreamStep: mocks.queryAudioTaskUpstreamStep }));
+vi.mock("@/lib/server/audio-task-runtime", () => ({
+    createAudioTaskUpstreamStep: mocks.createAudioTaskUpstreamStep,
+    markAudioTaskFailed: mocks.markAudioTaskFailed,
+    persistAudioTaskResult: vi.fn(),
+    queryAudioTaskUpstreamStep: mocks.queryAudioTaskUpstreamStep,
+}));
 vi.mock("@/lib/server/audio-task-store", () => ({ getAudioTask: mocks.getAudioTask, updateAudioTask: mocks.updateAudioTask }));
 vi.mock("@/lib/server/image-task-runtime", () => ({
-    createImageTaskUpstreamStep: vi.fn(),
-    markImageTaskFailed: vi.fn(),
+    createImageTaskUpstreamStep: mocks.createImageTaskUpstreamStep,
+    markImageTaskFailed: mocks.markImageTaskFailed,
     persistImageTaskResult: vi.fn(),
     queryCancelledImageTaskUpstreamStep: mocks.queryCancelledImageTaskUpstreamStep,
     queryImageTaskUpstreamStep: mocks.queryImageTaskUpstreamStep,
@@ -64,7 +74,7 @@ vi.mock("@/lib/server/generation-task-cancellation-service", () => ({
     isCancellationExecutionPhase: vi.fn((value: string) => value === "cancel_requested" || value === "cancel_polling"),
     requestUpstreamGenerationCancellation: mocks.requestCancellation,
 }));
-vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
+vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings, getFreshAuthSettings: mocks.getFreshAuthSettings }));
 
 import { runGenerationTaskRecoveryBatch } from "./generation-task-recovery-service";
 
@@ -74,6 +84,7 @@ describe("generation task recovery service", () => {
         mocks.release.mockResolvedValue({});
         mocks.renew.mockResolvedValue(1);
         mocks.getAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });
+        mocks.getFreshAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });
     });
 
     it("returns without starting a heartbeat when no task is due", async () => {
@@ -174,6 +185,35 @@ describe("generation task recovery service", () => {
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
     });
 
+    it("rechecks current image bindings before a new upstream attempt", async () => {
+        const task = mediaTask("image");
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "pending", executionPhase: "created" }]);
+        mocks.getImageTask.mockResolvedValue(task);
+        mocks.getAuthSettings.mockResolvedValue(mediaSettings("image", false));
+        mocks.getFreshAuthSettings.mockResolvedValue(mediaSettings("image", false));
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.getFreshAuthSettings).toHaveBeenCalled();
+        expect(mocks.createImageTaskUpstreamStep).not.toHaveBeenCalled();
+        expect(mocks.markImageTaskFailed).toHaveBeenCalledWith(task, expect.stringContaining("没有兼容当前生成参数"));
+        expect(result).toMatchObject({ claimed: 1, failed: 1 });
+    });
+
+    it("rechecks current audio bindings before a new upstream attempt", async () => {
+        const task = mediaTask("audio");
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "audio", status: "pending", executionPhase: "created" }]);
+        mocks.getAudioTask.mockResolvedValue(task);
+        mocks.getAuthSettings.mockResolvedValue(mediaSettings("audio", false));
+        mocks.getFreshAuthSettings.mockResolvedValue(mediaSettings("audio", false));
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.createAudioTaskUpstreamStep).not.toHaveBeenCalled();
+        expect(mocks.markAudioTaskFailed).toHaveBeenCalledWith(task, expect.stringContaining("没有兼容当前生成参数"));
+        expect(result).toMatchObject({ claimed: 1, failed: 1 });
+    });
+
     it("recovers a Gemini operation already persisted while submission was in flight", async () => {
         const task = {
             id: "video-gemini",
@@ -237,6 +277,8 @@ describe("generation task recovery service", () => {
             }),
         );
         expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+        expect(mocks.getFreshAuthSettings).not.toHaveBeenCalled();
         expect(mocks.refundImageTask).not.toHaveBeenCalled();
     });
 
@@ -359,5 +401,47 @@ function lease() {
         createdAt: 1_000,
         updatedAt: 1_000,
         expiresAt: 60_000,
+    };
+}
+
+function mediaTask(type: "image" | "audio") {
+    const base = {
+        id: `${type}-capability-change`,
+        userId: "user-one",
+        status: "pending",
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        prompt: "test",
+        config: {
+            baseUrl: "https://provider.example",
+            apiKey: "secret",
+            apiFormat: "openai",
+            model: `${type}-upstream`,
+            logicalModel: `${type}-logical`,
+            channelId: `${type}-channel`,
+            generationParameters: type === "image" ? { qualities: ["high"] } : { voices: ["alloy"], formats: ["mp3"], speedRange: { min: 1, max: 1 } },
+            ...(type === "image" ? { quality: "high", size: "1:1", count: 1 } : { voice: "alloy", format: "mp3", speed: "1" }),
+        },
+        candidateConfigs: [],
+    };
+    return type === "image" ? { ...base, kind: "generation", source: "image-workbench", username: "user", displayName: "User", references: [] } : base;
+}
+
+function mediaSettings(type: "image" | "audio", bindingEnabled: boolean) {
+    const channelId = `${type}-channel`;
+    return {
+        systemChannels: [{ id: channelId, name: channelId, baseUrl: "https://provider.example", apiKey: "secret", apiFormat: "openai", models: [`${type}-upstream`], enabled: true }],
+        logicalModels: [
+            {
+                id: `${type}-logical`,
+                name: type,
+                capability: type,
+                enabled: true,
+                bindings: [{ id: `${type}-binding`, channelId, upstreamModel: `${type}-upstream`, enabled: bindingEnabled, priority: 1 }],
+            },
+        ],
+        defaultModels: type === "image" ? { imageModel: `${type}-logical` } : { audioModel: `${type}-logical` },
+        generationDefaults: { imageSize: "1:1", imageQuality: "high", audioVoice: "alloy", audioFormat: "mp3" },
+        dataLifecycle: { maintenanceBatchSize: 20 },
     };
 }

@@ -6,5 +6,10 @@ export function shouldShowVideoFrameControls(creationMode: "agent" | CreativeGen
 }
 
 export function applyAgentGenerationCapability(creationMode: "agent" | CreativeGenerationMode, capability: CreativeGenerationMode, preferences: CreativeGenerationPreferences) {
-    return creationMode === "agent" ? { ...preferences, mode: capability } : preferences;
+    const next = creationMode === "agent" ? { ...preferences, mode: capability } : preferences;
+    if (capability !== "video" || (creationMode !== "agent" && creationMode !== "video") || next.video?.referenceMode) return next;
+    const video = { ...next.video };
+    delete video.firstFrameAssetId;
+    delete video.lastFrameAssetId;
+    return { ...next, video: { ...video, referenceMode: "reference" as const } };
 }

@@ -122,7 +122,7 @@ export type CreativeRunEvent = {
 export type CreativeGenerationMode = "image" | "video" | "audio";
 export type CreativeGenerationPreferences = {
     mode?: CreativeGenerationMode;
-    image?: { size?: string; quality?: "auto" | "high" | "medium" | "low"; count?: number };
+    image?: { size?: string; quality?: string; count?: number };
     video?: {
         size?: string;
         quality?: string;
@@ -208,7 +208,8 @@ function normalizeImagePreferences(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const input = value as Record<string, unknown>;
     const size = normalizePreferenceSize(input.size);
-    const quality: NonNullable<CreativeGenerationPreferences["image"]>["quality"] = input.quality === "auto" || input.quality === "high" || input.quality === "medium" || input.quality === "low" ? input.quality : undefined;
+    const rawQuality = optionalText(input.quality, 40);
+    const quality = rawQuality?.toLowerCase() === "auto" ? undefined : rawQuality;
     const count = Number(input.count);
     const normalizedCount = Number.isSafeInteger(count) && count > 0 ? count : undefined;
     return size || quality || normalizedCount ? { ...(size ? { size } : {}), ...(quality ? { quality } : {}), ...(normalizedCount ? { count: normalizedCount } : {}) } : undefined;
@@ -219,7 +220,7 @@ function normalizeVideoPreferences(value: unknown) {
     const input = value as Record<string, unknown>;
     const size = normalizePreferenceSize(input.size);
     const rawQuality = optionalText(input.quality, 40);
-    const quality = rawQuality?.match(/^(\d+)p$/i)?.[1] || rawQuality;
+    const quality = rawQuality?.toLowerCase() === "auto" ? undefined : rawQuality;
     const seconds = Number(input.seconds);
     const count = Number(input.count);
     const normalizedCount = Number.isSafeInteger(count) && count > 0 ? count : undefined;
@@ -234,11 +235,11 @@ function normalizeVideoPreferences(value: unknown) {
     if (referenceMode === "first_last" && (!firstFrameAssetId || !lastFrameAssetId)) throw new CreativeRuntimeInputError("首尾帧模式需要同时选择首帧和尾帧图片");
     if (firstFrameAssetId && lastFrameAssetId && firstFrameAssetId === lastFrameAssetId) throw new CreativeRuntimeInputError("首帧和尾帧不能使用同一张图片");
     if (input.referenceMode !== undefined && !referenceMode) throw new CreativeRuntimeInputError("视频参考方式不正确");
-    return size || quality || (Number.isInteger(seconds) && seconds > 0) || normalizedCount || generateAudio !== undefined || watermark !== undefined || referenceMode || firstFrameAssetId || lastFrameAssetId
+    return size || quality || (Number.isFinite(seconds) && seconds > 0) || normalizedCount || generateAudio !== undefined || watermark !== undefined || referenceMode || firstFrameAssetId || lastFrameAssetId
         ? {
               ...(size ? { size } : {}),
               ...(quality ? { quality } : {}),
-              ...(Number.isInteger(seconds) && seconds > 0 ? { seconds } : {}),
+              ...(Number.isFinite(seconds) && seconds > 0 ? { seconds } : {}),
               ...(normalizedCount ? { count: normalizedCount } : {}),
               ...(generateAudio !== undefined ? { generateAudio } : {}),
               ...(watermark !== undefined ? { watermark } : {}),
@@ -252,8 +253,10 @@ function normalizeVideoPreferences(value: unknown) {
 function normalizeAudioPreferences(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const input = value as Record<string, unknown>;
-    const voice = optionalText(input.voice, 40);
-    const format = optionalText(input.format, 16);
+    const rawVoice = optionalText(input.voice, 40);
+    const rawFormat = optionalText(input.format, 16);
+    const voice = rawVoice?.toLowerCase() === "auto" ? undefined : rawVoice;
+    const format = rawFormat?.toLowerCase() === "auto" ? undefined : rawFormat;
     const speed = Number(input.speed);
     const normalizedSpeed = Number.isFinite(speed) && speed > 0 ? speed : undefined;
     return voice || format || normalizedSpeed ? { ...(voice ? { voice } : {}), ...(format ? { format } : {}), ...(normalizedSpeed ? { speed: normalizedSpeed } : {}) } : undefined;
@@ -262,7 +265,7 @@ function normalizeAudioPreferences(value: unknown) {
 function normalizePreferenceSize(value: unknown) {
     if (typeof value !== "string") return undefined;
     const size = value.trim().replace(/[：；;]/g, ":");
-    if (!size || size === "auto") return size || undefined;
+    if (!size || size.toLowerCase() === "auto") return undefined;
     const dimensions = size.match(/^(\d+)\s*[x*×]\s*(\d+)$/i);
     if (dimensions && Number(dimensions[1]) > 0 && Number(dimensions[2]) > 0) return `${Number(dimensions[1])}x${Number(dimensions[2])}`;
     const ratio = size.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);

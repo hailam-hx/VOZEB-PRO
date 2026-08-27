@@ -4,14 +4,17 @@ import { Button, Input, Popover, Tooltip } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import { ArrowUp, AtSign, Boxes, Check, ChevronDown, ChevronLeft, ChevronRight, FileAudio, FileVideo, ImageIcon, Plus, Sparkles, Square, WandSparkles, X } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useRef, useState, type MouseEventHandler, type PointerEventHandler, type RefObject, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEventHandler, type PointerEventHandler, type ReactNode, type RefObject, type WheelEvent } from "react";
 
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
+import { creativeReferenceAdditionAvailability, type CreativeGenerationCapabilityState } from "@/lib/creative-generation-capabilities";
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { creativeAssetReferenceAliases } from "@/lib/creative-asset-references";
 import { clipboardImageFiles } from "@/lib/clipboard-image-files";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { cn } from "@/lib/utils";
+import { useConfigStore } from "@/stores/use-config-store";
 
 import { creativeComposerPopoverOverflow, useCreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
@@ -19,8 +22,10 @@ import { shouldShowVideoFrameControls } from "./creative-composer-video-mode";
 import { creativeAssetMentionAtCursor, creativeAssetMentionCandidates, creativeAssetMentionDeletionAtKey, creativeAssetMentionSegments, replaceCreativeAssetMention, type CreativeAssetMentionSegment } from "./creative-asset-mention";
 import { CreativeAssetMentionPicker } from "./creative-asset-mention-picker";
 import { CreativeGenerationControls, type CreativeModelOption } from "./creative-generation-controls";
-import { CreativeModeIcon, creativeModeOptions } from "@/components/creative-generation-preferences";
+import { CreativeModeIcon, creativeModeOptions, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
 import { CreativeVideoFrameControls } from "./creative-video-frame-controls";
+import { CreativeCreditIndicator } from "./creative-credit-indicator";
+import { estimateCreativeCredits } from "./creative-credit-estimate";
 
 type SkillOption = {
     id: string;
@@ -53,6 +58,7 @@ export function CreativeComposer({
     smartPlanning,
     creationMode,
     generationPreferences,
+    referenceCapabilityState,
     uploading,
     onRemoveAttachment,
     onReferenceAsset,
@@ -64,6 +70,7 @@ export function CreativeComposer({
     onChangeCreationMode,
     onChangeGenerationCapability,
     onChangeGenerationPreference,
+    onReplaceGenerationPreferences,
     onSelectVideoFrame,
     onUploadVideoFrame,
     onRemoveVideoFrame,
@@ -92,6 +99,7 @@ export function CreativeComposer({
     smartPlanning: boolean;
     creationMode: "agent" | CreativeGenerationMode;
     generationPreferences: CreativeGenerationPreferences;
+    referenceCapabilityState: CreativeGenerationCapabilityState;
     uploading: boolean;
     onRemoveAttachment: (id: string) => void;
     onReferenceAsset: (id: string) => void;
@@ -102,7 +110,8 @@ export function CreativeComposer({
     onToggleSmartPlanning: () => void;
     onChangeCreationMode: (mode: "agent" | CreativeGenerationMode) => void;
     onChangeGenerationCapability: (capability: CreativeModelOption["capability"]) => void;
-    onChangeGenerationPreference: (capability: CreativeModelOption["capability"], patch: Record<string, string | number | boolean>) => void;
+    onChangeGenerationPreference: (capability: CreativeModelOption["capability"], patch: CreativeGenerationPreferencePatch) => void;
+    onReplaceGenerationPreferences: (preferences: CreativeGenerationPreferences) => void;
     onSelectVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">, assetId: string) => void;
     onUploadVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">) => void;
     onRemoveVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">) => void;
@@ -111,6 +120,7 @@ export function CreativeComposer({
     onExpand?: () => void;
 }) {
     const t = useTranslations("create");
+    const config = useConfigStore((state) => state.config);
     const [ready, setReady] = useState(false);
     const [skillPickerOpen, setSkillPickerOpen] = useState(false);
     const [modePickerOpen, setModePickerOpen] = useState(false);
@@ -151,6 +161,11 @@ export function CreativeComposer({
     const visibleAttachments = attachments.filter((asset) => !showVideoFrames || !frameAssetIds.has(asset.id));
     const mediaAttachments = visibleAttachments.filter((asset) => (asset.type === "image" || asset.type === "video") && Boolean(asset.serverUrl || asset.remoteUrl));
     const otherAttachments = visibleAttachments.filter((asset) => !mediaAttachments.some((media) => media.id === asset.id));
+    const creditEstimate = estimateCreativeCredits({ config, prompt: value, smartPlanning, selectedModels, preferences: generationPreferences });
+    const referenceAvailabilities = (["image", "video", "audio"] as const).map((type) => creativeReferenceAdditionAvailability(referenceCapabilityState, attachments, type));
+    const referenceDisabledReason = referenceAvailabilities.some((availability) => availability.supported)
+        ? undefined
+        : referenceAvailabilityMessage(t, referenceAvailabilities.find((availability) => "maxReferenceImages" in availability) || referenceAvailabilities[0]);
 
     useEffect(() => setReady(true), []);
 
@@ -212,7 +227,7 @@ export function CreativeComposer({
                 if (!open) setMentionQuery(null);
             }}
             styles={{ container: { padding: 0, borderRadius: 16, overflow: "hidden" } }}
-            content={<CreativeAssetMentionPicker assets={mentionCandidates} selectedAssetIds={selectedAssetIds} onSelect={selectMentionAsset} />}
+            content={<CreativeAssetMentionPicker assets={mentionCandidates} selectedAssetIds={selectedAssetIds} referenceCapabilityState={referenceCapabilityState} selectedReferenceAssets={attachments} onSelect={selectMentionAsset} />}
         >
             <div className="relative min-w-0 flex-1">
                 {hasMentionReferences ? <ComposerMentionPreview previewRef={mentionHighlightRef} segments={mentionSegments} assetsById={referenceAssetsById} /> : null}
@@ -295,7 +310,7 @@ export function CreativeComposer({
                         {allMediaAttachments.map((asset) => (
                             <ComposerMediaThumbnail key={asset.id} asset={asset} compact onRemove={onRemoveAttachment} />
                         ))}
-                        <Tooltip title={allMediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}>
+                        <CapabilityActionTooltip reason={referenceDisabledReason} title={allMediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}>
                             <Button
                                 type="text"
                                 className="!size-11 !min-w-11 !shrink-0 !rounded-xl !border !border-[#dedcff] !bg-[#f8f7ff] !text-[#5f61d8] hover:!border-[#cbc7ff] hover:!bg-[#f1efff] hover:!text-[#4f52c4] dark:!border-[#45416d] dark:!bg-[#29263d] dark:!text-[#aaa6ff] dark:hover:!border-[#5b558c] dark:hover:!bg-[#302d47] dark:hover:!text-white"
@@ -305,16 +320,20 @@ export function CreativeComposer({
                                     onAttachment();
                                 }}
                                 loading={uploading}
+                                disabled={Boolean(referenceDisabledReason)}
+                                aria-disabled={Boolean(referenceDisabledReason)}
                                 aria-label={allMediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}
                             />
-                        </Tooltip>
+                        </CapabilityActionTooltip>
                     </div>
                     {composerInput(true)}
-                    <Tooltip title={t("referenceConversationAssets")}>
+                    <CapabilityActionTooltip reason={referenceDisabledReason} title={t("referenceConversationAssets")}>
                         <Button
                             type="text"
                             className="!size-11 !min-w-11 !shrink-0 !rounded-xl !text-[#66717e] hover:!bg-[#f2f4f6] hover:!text-[#20242a] dark:!text-[#a3acb7] dark:hover:!bg-[#292f37] dark:hover:!text-white"
                             icon={<AtSign className="size-4" />}
+                            disabled={Boolean(referenceDisabledReason)}
+                            aria-disabled={Boolean(referenceDisabledReason)}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={(event) => {
                                 event.stopPropagation();
@@ -322,7 +341,7 @@ export function CreativeComposer({
                             }}
                             aria-label={t("referenceConversationAssets")}
                         />
-                    </Tooltip>
+                    </CapabilityActionTooltip>
                     <Tooltip title={t("optimizePrompt")}>
                         <Button
                             type="text"
@@ -408,6 +427,8 @@ export function CreativeComposer({
                                 lastFrameAssetId={videoPreference?.lastFrameAssetId}
                                 uploading={uploading}
                                 placement={popoverPlacement}
+                                referenceCapabilityState={referenceCapabilityState}
+                                selectedReferenceAssets={attachments}
                                 onSelect={onSelectVideoFrame}
                                 onUpload={onUploadVideoFrame}
                                 onRemove={onRemoveVideoFrame}
@@ -417,7 +438,7 @@ export function CreativeComposer({
                                 {mediaAttachments.map((asset) => {
                                     return <ComposerMediaThumbnail key={asset.id} asset={asset} onRemove={onRemoveAttachment} />;
                                 })}
-                                <Tooltip title={mediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}>
+                                <CapabilityActionTooltip reason={referenceDisabledReason} title={mediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}>
                                     <Button
                                         type="text"
                                         className={cn(
@@ -427,9 +448,11 @@ export function CreativeComposer({
                                         icon={<Plus className="size-5" />}
                                         onClick={onAttachment}
                                         loading={uploading}
+                                        disabled={Boolean(referenceDisabledReason)}
+                                        aria-disabled={Boolean(referenceDisabledReason)}
                                         aria-label={mediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}
                                     />
-                                </Tooltip>
+                                </CapabilityActionTooltip>
                             </>
                         )}
                     </div>
@@ -507,19 +530,22 @@ export function CreativeComposer({
                             onToggleSmartPlanning={onToggleSmartPlanning}
                             onCapabilityChange={onChangeGenerationCapability}
                             onChangeGenerationPreference={onChangeGenerationPreference}
+                            onReplaceGenerationPreferences={onReplaceGenerationPreferences}
                         />
-                        <Tooltip title={t("referenceConversationAssets")}>
+                        <CapabilityActionTooltip reason={referenceDisabledReason} title={t("referenceConversationAssets")}>
                             <Button
                                 type="text"
                                 className={creativeComposerToolButtonClass(mentionQuery !== null)}
                                 icon={<AtSign className="size-4" />}
+                                disabled={Boolean(referenceDisabledReason)}
+                                aria-disabled={Boolean(referenceDisabledReason)}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={openAssetMention}
                                 aria-label={t("referenceConversationAssets")}
                             >
                                 <span className="hidden text-xs font-medium sm:inline">{t("reference")}</span>
                             </Button>
-                        </Tooltip>
+                        </CapabilityActionTooltip>
                         <Popover
                             trigger="click"
                             placement={composerPopoverPlacement}
@@ -632,6 +658,7 @@ export function CreativeComposer({
                             </Button>
                         </Tooltip>
                     </div>
+                    <CreativeCreditIndicator estimate={creditEstimate} />
                     <Tooltip title={busy ? t("stopGeneration") : t("send")}>
                         <Button
                             type="primary"
@@ -717,6 +744,24 @@ function ComposerMediaThumbnail({ asset, compact = false, onRemove }: { asset: C
             </button>
         </div>
     );
+}
+
+function CapabilityActionTooltip({ reason, title, children }: { reason?: string; title: string; children: ReactNode }) {
+    return reason ? <CapabilityControlTooltip reason={reason}>{children}</CapabilityControlTooltip> : <Tooltip title={title}>{children}</Tooltip>;
+}
+
+const capabilityReasonMessageKeys = {
+    unconfigured: "generationCapabilityUnconfigured",
+    unsupported: "generationCapabilityUnsupported",
+    intersection: "generationCapabilityIntersection",
+} as const;
+
+function referenceAvailabilityMessage(t: ReturnType<typeof useTranslations<"create">>, availability: ReturnType<typeof creativeReferenceAdditionAvailability>) {
+    if (availability.supported) return undefined;
+    if ("maxReferenceImages" in availability && availability.maxReferenceImages) {
+        return t(availability.reason === "intersection" ? "generationReferenceImageIntersectionLimit" : "generationReferenceImageLimit", { count: availability.maxReferenceImages });
+    }
+    return t(capabilityReasonMessageKeys[availability.reason]);
 }
 
 function scrollHorizontalCategories(event: WheelEvent<HTMLDivElement>) {

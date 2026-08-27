@@ -16,7 +16,7 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask } from "./video";
 import { createUpstreamVideoGenerationTask } from "./video-core";
-import { buildCompatibleVideoPayloadVariants, compatibleVideoCreatePaths, compatibleVideoPollPaths, isGlobalAiOpcVideoConfig } from "./video-providers";
+import { buildCompatibleVideoPayloadVariants, compatibleVideoCreatePaths, compatibleVideoPollPaths, createSeedanceTask, isGlobalAiOpcVideoConfig } from "./video-providers";
 import { normalizeCompatibleVideoDuration, normalizeGlobalAiOpcVideoDuration } from "./video-payloads";
 import { normalizeVideoSeconds } from "./video-support";
 import { GLOBAL_AIOPC_VIDEO_CREATE_PATH } from "./video-types";
@@ -142,6 +142,14 @@ describe("video API service", () => {
         expect(normalizeCompatibleVideoDuration("-1")).toBe(-1);
     });
 
+    it("forwards an explicit fractional duration through the direct Seedance service", async () => {
+        const post = vi.spyOn(axios, "post").mockResolvedValue({ data: { id: "seedance-task" }, headers: {} });
+
+        await expect(createSeedanceTask({ ...config, baseUrl: "https://ark.cn-beijing.volces.com/api/v3", videoSeconds: "5.5" }, config.model, "生成视频", [], [], [])).resolves.toMatchObject({ id: "seedance-task" });
+
+        expect(post.mock.calls[0][1]).toMatchObject({ duration: 5.5 });
+    });
+
     it("keeps every explicit reference in compatible video payloads", async () => {
         const images = Array.from({ length: 10 }, (_, index) => ({
             id: `image-${index + 1}`,
@@ -188,7 +196,7 @@ describe("video API service", () => {
             expect.objectContaining({
                 model: "seedance-2.5",
                 prompt: "生成视频",
-                duration: 15,
+                duration: 60,
                 aspect_ratio: "16:9",
                 reference_images: ["https://cdn.example.com/reference.png"],
                 reference_videos: ["https://cdn.example.com/reference.mp4"],

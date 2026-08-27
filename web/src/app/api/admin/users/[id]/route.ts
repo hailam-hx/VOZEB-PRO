@@ -16,12 +16,13 @@ type RouteContext = {
 export async function PATCH(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (!hasAnyAdminPermission(currentUser, ["users.manage", "administrators.manage", "billing.manage"])) return NextResponse.json({ code: 403, data: null, msg: "当前管理员没有编辑用户的职责权限" }, { status: 403 });
+    if (!hasAnyAdminPermission(currentUser, ["users.manage", "administrators.manage"])) return NextResponse.json({ code: 403, data: null, msg: "当前管理员没有编辑用户的职责权限" }, { status: 403 });
 
     try {
         const { id } = await context.params;
         const body = await readJsonBody<{ displayName?: unknown; email?: unknown; password?: unknown; role?: unknown; adminPermissions?: unknown; status?: unknown; settledBalance?: unknown }>(request);
-        const patch: { displayName?: string; email?: string; password?: string; role?: UserRole; adminPermissions?: ReturnType<typeof normalizeAdminPermissions>; status?: UserStatus; settledBalance?: string } = {};
+        if (Object.prototype.hasOwnProperty.call(body, "settledBalance")) return NextResponse.json({ code: 400, data: null, msg: "请前往积分账务按增加或扣减调整余额" }, { status: 400 });
+        const patch: { displayName?: string; email?: string; password?: string; role?: UserRole; adminPermissions?: ReturnType<typeof normalizeAdminPermissions>; status?: UserStatus } = {};
 
         if (typeof body.displayName === "string") patch.displayName = body.displayName;
         if (typeof body.email === "string") patch.email = body.email;
@@ -29,7 +30,6 @@ export async function PATCH(request: Request, context: RouteContext) {
         if (body.role === "admin" || body.role === "user") patch.role = body.role;
         if (Array.isArray(body.adminPermissions)) patch.adminPermissions = normalizeAdminPermissions(body.adminPermissions);
         if (body.status === "active" || body.status === "disabled") patch.status = body.status;
-        if (typeof body.settledBalance === "string") patch.settledBalance = body.settledBalance;
 
         const user = await updateUserByAdmin(currentUser.id, id, patch);
         await safeRecordAuditLog({

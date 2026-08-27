@@ -14,9 +14,11 @@ import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover } from "./canvas-audio-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasCameraControl } from "./canvas-camera-control";
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 import { buildCanvasNodeConfig, canvasAudioConfigPatch, canvasVideoConfigPatch, resolveCanvasGenerationModel } from "../utils/canvas-node-config";
+import { canvasGenerationPreflight, resolveCanvasGenerationCapability } from "../utils/canvas-generation-capabilities";
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
@@ -31,6 +33,7 @@ type CanvasConfigNodePanelProps = {
 
 export function CanvasConfigNodePanel({ node, isRunning, inputSummary, references, onConfigChange, onGenerate, onStop, onComposerToggle }: CanvasConfigNodePanelProps) {
     const t = useTranslations("canvas");
+    const createT = useTranslations("create");
     const [detailsOpen, setDetailsOpen] = useState(node.metadata?.configDetailsOpen === true);
     const [modeMenuOpen, setModeMenuOpen] = useState(false);
     const globalConfig = useEffectiveConfig();
@@ -38,7 +41,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = node.metadata?.generationMode || "image";
     const config = buildNodeConfig(globalConfig, node, mode);
-    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const count = positiveInteger(config.count) || 1;
     const credits = requestCreditCost({
         apiSource: config.apiSource,
         logicalModels: config.logicalModels,
@@ -55,7 +58,13 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
     const inputTotal = inputSummary.textCount + inputSummary.imageCount + inputSummary.videoCount + inputSummary.audioCount;
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
-    const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
+    const hasGenerationInput = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
+    const capabilityState = resolveCanvasGenerationCapability(config, mode, config.model);
+    const preflight = canvasGenerationPreflight({ mode, config, capability: capabilityState, references: selectedCapabilityReferences(node, references) });
+    const capabilityReason = preflight.compatible
+        ? undefined
+        : createT(preflight.issue.reason === "intersection" ? "generationCapabilityIntersection" : preflight.issue.reason === "unsupported" ? "generationCapabilityUnsupported" : "generationCapabilityUnconfigured");
+    const canGenerate = hasGenerationInput && preflight.compatible;
     const modeLabel = t(`configPanel.modes.${mode}`);
     const setDetails = (nextOpen: boolean) => {
         setDetailsOpen(nextOpen);
@@ -161,7 +170,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                         config={config}
                         placement="topRight"
                         buttonClassName="canvas-compact-control !h-9 !w-full !justify-start !rounded-none !border-0 !bg-transparent !px-2.5 !shadow-none"
-                        onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                        onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: value === "auto" ? "auto" : Number(value) } : { [key]: value })}
                     />
                 ) : mode === "audio" ? (
                     <CanvasAudioSettingsPopover
@@ -226,40 +235,43 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, reference
                 ) : null}
             </div>
 
-            <Button
-                type="primary"
-                className="canvas-generate-button mt-auto !h-9 !w-full !cursor-pointer !rounded-xl !border !text-[13px] !font-semibold"
-                danger={isRunning}
-                disabled={!isRunning && !canGenerate}
-                style={
-                    isRunning
-                        ? { background: theme.node.danger, borderColor: theme.node.danger, color: theme.node.actionDangerText }
-                        : canGenerate
-                          ? { background: theme.node.action, borderColor: theme.node.action, color: theme.node.actionText }
-                          : { background: theme.toolbar.itemHover, borderColor: theme.node.stroke, color: theme.node.muted }
-                }
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={() => (isRunning ? onStop(node.id) : onGenerate(node.id))}
-            >
-                <span className="inline-flex items-center gap-1.5">
-                    {isRunning ? (
-                        <>
-                            <LoaderCircle className="size-4 animate-spin" />
-                            <Square className="size-3.5 fill-current" />
-                            <span>{t("promptPanel.stop")}</span>
-                        </>
-                    ) : (
-                        <>
-                            <span className="inline-flex items-center gap-1">
-                                <CreditSymbol />
-                                {formatCreditAmount(credits)}
-                            </span>
-                            <Play className="size-4" />
-                            <span>{t("configPanel.startGeneration")}</span>
-                        </>
-                    )}
-                </span>
-            </Button>
+            <CapabilityControlTooltip reason={!isRunning && hasGenerationInput ? capabilityReason : undefined} className="mt-auto w-full">
+                <Button
+                    type="primary"
+                    className="canvas-generate-button !h-9 !w-full !cursor-pointer !rounded-xl !border !text-[13px] !font-semibold"
+                    danger={isRunning}
+                    disabled={!isRunning && !canGenerate}
+                    aria-disabled={!isRunning && !canGenerate}
+                    style={
+                        isRunning
+                            ? { background: theme.node.danger, borderColor: theme.node.danger, color: theme.node.actionDangerText }
+                            : canGenerate
+                              ? { background: theme.node.action, borderColor: theme.node.action, color: theme.node.actionText }
+                              : { background: theme.toolbar.itemHover, borderColor: theme.node.stroke, color: theme.node.muted }
+                    }
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={() => (isRunning ? onStop(node.id) : onGenerate(node.id))}
+                >
+                    <span className="inline-flex items-center gap-1.5">
+                        {isRunning ? (
+                            <>
+                                <LoaderCircle className="size-4 animate-spin" />
+                                <Square className="size-3.5 fill-current" />
+                                <span>{t("promptPanel.stop")}</span>
+                            </>
+                        ) : (
+                            <>
+                                <span className="inline-flex items-center gap-1">
+                                    <CreditSymbol />
+                                    {formatCreditAmount(credits)}
+                                </span>
+                                <Play className="size-4" />
+                                <span>{t("configPanel.startGeneration")}</span>
+                            </>
+                        )}
+                    </span>
+                </Button>
+            </CapabilityControlTooltip>
         </div>
     );
 }
@@ -288,4 +300,15 @@ function ModeLabel({ mode, label }: { mode: CanvasGenerationMode; label: string 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasGenerationMode): AiConfig {
     const model = resolveCanvasGenerationModel(globalConfig, mode, node.metadata?.model);
     return buildCanvasNodeConfig(globalConfig, node, mode, model);
+}
+
+function positiveInteger(value: unknown) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function selectedCapabilityReferences(node: CanvasNodeData, references: CanvasResourceReference[]) {
+    const composerContent = node.metadata?.composerContent?.trim();
+    const selected = composerContent ? new Set(Array.from(composerContent.matchAll(/@\[node:([^\]]+)\]/g), (match) => match[1])) : undefined;
+    return references.filter((reference) => reference.kind !== "text" && (!selected || selected.has(reference.nodeId))).map((reference) => ({ type: reference.kind as "image" | "video" | "audio" }));
 }

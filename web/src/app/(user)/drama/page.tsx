@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { App, Button, Input, InputNumber, Modal, Segmented } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import { App, Button, Input, InputNumber, Modal } from "antd";
 import { Clapperboard, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useUserStore } from "@/stores/use-user-store";
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { normalizeDramaImageSize } from "@/lib/drama-image-size";
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
+import { useEffectiveConfig } from "@/stores/use-config-store";
 
 import { DramaProjectCard } from "./components/drama-project-card";
+import { checkDramaProjectSize, resolveDramaGenerationCapabilities, resolveDramaSmartProjectSize } from "./drama-generation-capabilities";
 import { useDramaStore } from "./stores/use-drama-store";
 
 export default function DramaPage() {
@@ -24,24 +27,34 @@ export default function DramaPage() {
     const loadingMore = useDramaStore((state) => state.summaryLoadingMore);
     const loadMore = useDramaStore((state) => state.loadMore);
     const createProject = useDramaStore((state) => state.createProject);
+    const config = useEffectiveConfig();
     const userId = useUserStore((state) => state.user?.id || "");
     const [open, setOpen] = useState(false);
     const [title, setTitle] = useState("");
     const [summary, setSummary] = useState("");
     const [style, setStyle] = useState(() => t("defaultStyle"));
-    const [ratio, setRatio] = useState("9:16");
-    const [customWidth, setCustomWidth] = useState(1080);
-    const [customHeight, setCustomHeight] = useState(1920);
+    const [ratio, setRatio] = useState("auto");
+    const [customWidth, setCustomWidth] = useState<number | null>(1080);
+    const [customHeight, setCustomHeight] = useState<number | null>(1920);
     const [creating, setCreating] = useState(false);
     const episodeCount = projects.reduce((total, project) => total + project.episodeCount, 0);
     const pendingCount = projects.reduce((total, project) => total + project.pendingTaskCount, 0);
+    const generationCapabilities = useMemo(() => resolveDramaGenerationCapabilities(config), [config]);
+    const concreteSizes = useMemo(() => Array.from(new Set(["9:16", "16:9", ...(generationCapabilities.projectParameters?.aspectRatios || []), ...(generationCapabilities.projectParameters?.pixelSizes || [])])), [generationCapabilities.projectParameters]);
+    const customSupported = Boolean(generationCapabilities.imageParameters && generationCapabilities.videoParameters && generationCapabilities.projectParameters?.supportsCustomSize);
     useEffect(() => {
         void hydrate();
     }, [hydrate, userId]);
     const create = async () => {
         if (!title.trim()) return message.warning(t("errors.titleRequired"));
-        const normalizedSize = normalizeDramaImageSize(ratio);
-        if (!normalizedSize) return message.warning(t("errors.invalidSize"));
+        const requestedSize = ratio === "auto" ? resolveDramaSmartProjectSize(generationCapabilities, config.size) : ratio === "custom" ? `${customWidth ?? ""}x${customHeight ?? ""}` : ratio;
+        const normalizedSize = normalizeDramaImageSize(requestedSize);
+        if (!normalizedSize) {
+            const compatibility = checkDramaProjectSize(generationCapabilities, requestedSize || config.size);
+            return message.warning(compatibility.compatible ? t("errors.invalidSize") : compatibility.reason);
+        }
+        const compatibility = checkDramaProjectSize(generationCapabilities, normalizedSize);
+        if (!compatibility.compatible) return message.warning(compatibility.reason);
         setCreating(true);
         try {
             const id = await createProject({ title: title.trim(), summary: summary.trim(), style: style.trim(), ratio: normalizedSize });
@@ -139,44 +152,57 @@ export default function DramaPage() {
                     </div>
                     <div className="grid min-w-0 gap-1.5">
                         <span className="text-sm font-medium leading-5">{t("generationSize")}</span>
-                        <div className="min-w-0">
-                            <Segmented
-                                block
-                                className="!w-full"
-                                value={ratio.includes("x") ? "custom" : ratio}
-                                options={[
-                                    { label: "9:16", value: "9:16" },
-                                    { label: "16:9", value: "16:9" },
-                                    { label: t("custom"), value: "custom" },
-                                ]}
-                                onChange={(value) => setRatio(value === "custom" ? `${customWidth}x${customHeight}` : String(value))}
-                            />
+                        <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-4" role="group" aria-label={t("generationSize")}>
+                            <button
+                                type="button"
+                                className={`h-9 rounded-lg border px-2 text-sm transition ${ratio === "auto" ? "border-foreground/30 bg-muted font-medium" : "border-border bg-background hover:bg-muted/50"}`}
+                                aria-pressed={ratio === "auto"}
+                                onClick={() => setRatio("auto")}
+                            >
+                                Auto
+                            </button>
+                            {concreteSizes.map((size) => {
+                                const compatibility = checkDramaProjectSize(generationCapabilities, size);
+                                const disabled = !compatibility.compatible;
+                                const button = (
+                                    <button
+                                        type="button"
+                                        className={`h-9 w-full rounded-lg border px-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${ratio === size ? "border-foreground/30 bg-muted font-medium" : "border-border bg-background hover:bg-muted/50"}`}
+                                        disabled={disabled}
+                                        aria-disabled={disabled}
+                                        aria-pressed={ratio === size}
+                                        onClick={() => setRatio(size)}
+                                    >
+                                        {size}
+                                    </button>
+                                );
+                                return (
+                                    <CapabilityControlTooltip key={size} reason={disabled ? compatibility.reason : undefined} className="w-full">
+                                        {button}
+                                    </CapabilityControlTooltip>
+                                );
+                            })}
+                            <CapabilityControlTooltip
+                                reason={customSupported ? undefined : generationCapabilities.imageParameters && generationCapabilities.videoParameters ? "默认图片模型和默认视频模型不共同支持自定义尺寸" : "管理员尚未为该模型配置此能力"}
+                                className="w-full"
+                            >
+                                <button
+                                    type="button"
+                                    className={`h-9 w-full rounded-lg border px-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${ratio === "custom" ? "border-foreground/30 bg-muted font-medium" : "border-border bg-background hover:bg-muted/50"}`}
+                                    disabled={!customSupported}
+                                    aria-disabled={!customSupported}
+                                    aria-pressed={ratio === "custom"}
+                                    onClick={() => setRatio("custom")}
+                                >
+                                    {t("custom")}
+                                </button>
+                            </CapabilityControlTooltip>
                         </div>
-                        {ratio.includes("x") ? (
+                        {ratio === "custom" ? (
                             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-                                <InputNumber
-                                    className="!w-full"
-                                    min={256}
-                                    value={customWidth}
-                                    prefix="W"
-                                    onChange={(value) => {
-                                        const width = Number(value) || 256;
-                                        setCustomWidth(width);
-                                        setRatio(`${width}x${customHeight}`);
-                                    }}
-                                />
+                                <InputNumber className="!w-full" min={1} step={1} value={customWidth} prefix="W" onChange={(value) => setCustomWidth(typeof value === "number" ? value : null)} />
                                 <span className="text-muted-foreground">×</span>
-                                <InputNumber
-                                    className="!w-full"
-                                    min={256}
-                                    value={customHeight}
-                                    prefix="H"
-                                    onChange={(value) => {
-                                        const height = Number(value) || 256;
-                                        setCustomHeight(height);
-                                        setRatio(`${customWidth}x${height}`);
-                                    }}
-                                />
+                                <InputNumber className="!w-full" min={1} step={1} value={customHeight} prefix="H" onChange={(value) => setCustomHeight(typeof value === "number" ? value : null)} />
                             </div>
                         ) : null}
                     </div>

@@ -6,6 +6,8 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
+import { creativeReferenceAdditionAvailability, type CreativeGenerationCapabilityState, type CreativeReferenceAsset } from "@/lib/creative-generation-capabilities";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { listMyPrompts } from "@/services/api/my-prompts";
@@ -31,6 +33,8 @@ export function CreativeAssetsPanel({
     conversationId,
     assets,
     selectedAssetIds,
+    referenceCapabilityState,
+    selectedReferenceAssets,
     onToggleAsset,
     onUsePrompt,
     onClose,
@@ -39,6 +43,8 @@ export function CreativeAssetsPanel({
     conversationId?: string;
     assets: CreativeAsset[];
     selectedAssetIds: string[];
+    referenceCapabilityState: CreativeGenerationCapabilityState;
+    selectedReferenceAssets: readonly CreativeReferenceAsset[];
     onToggleAsset: (id: string) => void;
     onUsePrompt: (prompt: string) => void;
     onClose: () => void;
@@ -111,7 +117,17 @@ export function CreativeAssetsPanel({
                         {
                             key: "assets",
                             label: <TabLabel text={t("currentConversation")} count={mediaAssets.length} />,
-                            children: <ConversationAssets conversationId={conversationId} assets={mediaAssets} selectedAssetIds={selectedAssetIds} onToggle={onToggleAsset} onPreview={setPreview} />,
+                            children: (
+                                <ConversationAssets
+                                    conversationId={conversationId}
+                                    assets={mediaAssets}
+                                    selectedAssetIds={selectedAssetIds}
+                                    referenceCapabilityState={referenceCapabilityState}
+                                    selectedReferenceAssets={selectedReferenceAssets}
+                                    onToggle={onToggleAsset}
+                                    onPreview={setPreview}
+                                />
+                            ),
                         },
                         {
                             key: "my",
@@ -180,12 +196,16 @@ export function ConversationAssets({
     conversationId,
     assets,
     selectedAssetIds,
+    referenceCapabilityState = { reason: "unconfigured" },
+    selectedReferenceAssets = [],
     onToggle,
     onPreview,
 }: {
     conversationId?: string;
     assets: CreativeAsset[];
     selectedAssetIds: string[];
+    referenceCapabilityState?: CreativeGenerationCapabilityState;
+    selectedReferenceAssets?: readonly CreativeReferenceAsset[];
     onToggle: (id: string) => void;
     onPreview: (preview: PanelPreview) => void;
 }) {
@@ -206,6 +226,8 @@ export function ConversationAssets({
             <div className="hide-scrollbar grid min-h-0 flex-1 auto-rows-max grid-cols-4 gap-2 overflow-y-auto px-3 pb-4" data-testid={`creative-conversation-${visibleType}-assets`}>
                 {visibleAssets.map((asset) => {
                     const active = selected.has(asset.id);
+                    const availability = creativeReferenceAdditionAvailability(referenceCapabilityState, selectedReferenceAssets, asset.type === "image" ? "image" : "video");
+                    const disabledReason = active ? undefined : referenceAvailabilityMessage(t, availability);
                     return (
                         <article key={asset.id} className="group min-w-0" title={asset.title}>
                             <div
@@ -232,26 +254,44 @@ export function ConversationAssets({
                                     </span>
                                 ) : null}
                             </div>
-                            <button
-                                type="button"
-                                data-testid="creative-asset-reference-action"
-                                className={`mt-1 flex h-5 w-full items-center justify-center gap-1 rounded-sm !bg-transparent !text-[11px] font-medium transition-colors hover:!bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6268d8] ${
-                                    active ? "!text-[#555bc7] dark:!text-[#c3c5ff]" : "!text-[#68727e] hover:!text-[#555bc7] dark:!text-[#aab3bd] dark:hover:!text-[#c3c5ff]"
-                                }`}
-                                onClick={() => onToggle(asset.id)}
-                                aria-pressed={active}
-                                aria-label={t(active ? "unreferenceNamedAsset" : "referenceNamedAsset", { name: asset.title })}
-                                title={active ? t("cancelReference") : t("reference")}
-                            >
-                                <AtSign className="size-3" aria-hidden="true" />
-                                {active ? t("referenced") : t("reference")}
-                            </button>
+                            <CapabilityControlTooltip reason={disabledReason} className="w-full">
+                                <button
+                                    type="button"
+                                    data-testid="creative-asset-reference-action"
+                                    className={`mt-1 flex h-5 w-full items-center justify-center gap-1 rounded-sm !bg-transparent !text-[11px] font-medium transition-colors hover:!bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6268d8] disabled:cursor-not-allowed disabled:opacity-40 ${
+                                        active ? "!text-[#555bc7] dark:!text-[#c3c5ff]" : "!text-[#68727e] hover:!text-[#555bc7] dark:!text-[#aab3bd] dark:hover:!text-[#c3c5ff]"
+                                    }`}
+                                    disabled={Boolean(disabledReason)}
+                                    aria-disabled={Boolean(disabledReason)}
+                                    onClick={() => onToggle(asset.id)}
+                                    aria-pressed={active}
+                                    aria-label={t(active ? "unreferenceNamedAsset" : "referenceNamedAsset", { name: asset.title })}
+                                    title={active ? t("cancelReference") : t("reference")}
+                                >
+                                    <AtSign className="size-3" aria-hidden="true" />
+                                    {active ? t("referenced") : t("reference")}
+                                </button>
+                            </CapabilityControlTooltip>
                         </article>
                     );
                 })}
             </div>
         </div>
     );
+}
+
+const capabilityReasonMessageKeys = {
+    unconfigured: "generationCapabilityUnconfigured",
+    unsupported: "generationCapabilityUnsupported",
+    intersection: "generationCapabilityIntersection",
+} as const;
+
+function referenceAvailabilityMessage(t: ReturnType<typeof useTranslations<"create">>, availability: ReturnType<typeof creativeReferenceAdditionAvailability>) {
+    if (availability.supported) return undefined;
+    if ("maxReferenceImages" in availability && availability.maxReferenceImages) {
+        return t(availability.reason === "intersection" ? "generationReferenceImageIntersectionLimit" : "generationReferenceImageLimit", { count: availability.maxReferenceImages });
+    }
+    return t(capabilityReasonMessageKeys[availability.reason]);
 }
 
 function ConversationAssetTypeTab({ label, count, active, disabled, onClick }: { label: string; count: number; active: boolean; disabled: boolean; onClick: () => void }) {

@@ -80,7 +80,30 @@ export function settings(imageModel: string, channelId: string) {
         ],
         logicalModels: [
             { id: "planner", name: "规划", capability: "text", enabled: true, bindings: [{ id: "planner-binding", channelId: "planner-channel", upstreamModel: "vendor/planner", enabled: true, priority: 1 }] },
-            { id: imageModel, name: "图片", capability: "image", enabled: true, bindings: [{ id: `${imageModel}-binding`, channelId, upstreamModel: `vendor/${imageModel}`, enabled: true, priority: 1 }] },
+            {
+                id: imageModel,
+                name: "图片",
+                capability: "image",
+                enabled: true,
+                bindings: [
+                    {
+                        id: `${imageModel}-binding`,
+                        channelId,
+                        upstreamModel: `vendor/${imageModel}`,
+                        enabled: true,
+                        priority: 1,
+                        generationParameters: {
+                            referenceInputs: ["image"],
+                            maxReferenceImages: 10,
+                            aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
+                            pixelSizes: [],
+                            supportsCustomSize: true,
+                            qualities: ["low", "medium", "high"],
+                            maxBatchSize: 20,
+                        },
+                    },
+                ],
+            },
         ],
         agentSkills: [],
         generationDefaults: {},
@@ -111,7 +134,13 @@ export function plannerFailoverSettings(imageModel: string, channelId: string) {
 export function canvasSettings(defaultImageModel: string, defaultChannelId: string, extraImageModel?: string, extraChannelId?: string) {
     const value = settings(defaultImageModel, defaultChannelId) as unknown as {
         systemChannels: Array<{ id: string; name: string; enabled: boolean; baseUrl: string; apiKey: string; models: string[] }>;
-        logicalModels: Array<{ id: string; name: string; capability: string; enabled: boolean; bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number }> }>;
+        logicalModels: Array<{
+            id: string;
+            name: string;
+            capability: string;
+            enabled: boolean;
+            bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number; generationParameters?: Record<string, unknown> }>;
+        }>;
     };
     if (extraImageModel && extraChannelId) {
         value.systemChannels.push({ id: extraChannelId, name: "创意图片", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "creative-secret", models: [`vendor/${extraImageModel}`] });
@@ -120,7 +149,24 @@ export function canvasSettings(defaultImageModel: string, defaultChannelId: stri
             name: "创意图像模型",
             capability: "image",
             enabled: true,
-            bindings: [{ id: `${extraImageModel}-binding`, channelId: extraChannelId, upstreamModel: `vendor/${extraImageModel}`, enabled: true, priority: 1 }],
+            bindings: [
+                {
+                    id: `${extraImageModel}-binding`,
+                    channelId: extraChannelId,
+                    upstreamModel: `vendor/${extraImageModel}`,
+                    enabled: true,
+                    priority: 1,
+                    generationParameters: {
+                        referenceInputs: ["image"],
+                        maxReferenceImages: 10,
+                        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
+                        pixelSizes: [],
+                        supportsCustomSize: true,
+                        qualities: ["low", "medium", "high"],
+                        maxBatchSize: 20,
+                    },
+                },
+            ],
         });
     }
     return value as never;

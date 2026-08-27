@@ -4,25 +4,39 @@ import { ChevronDown, ChevronUp, FileAudio, FileText, FileVideo, ImageIcon, Play
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
+import { creativeReferenceAdditionAvailability, type CreativeGenerationCapabilityState, type CreativeReferenceAsset } from "@/lib/creative-generation-capabilities";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
-export function CreativeAssetMentionPicker({ assets, selectedAssetIds, onSelect }: { assets: CreativeAsset[]; selectedAssetIds: string[]; onSelect: (asset: CreativeAsset) => void }) {
+export function CreativeAssetMentionPicker({
+    assets,
+    selectedAssetIds,
+    referenceCapabilityState = { reason: "unconfigured" },
+    selectedReferenceAssets = [],
+    onSelect,
+}: {
+    assets: CreativeAsset[];
+    selectedAssetIds: string[];
+    referenceCapabilityState?: CreativeGenerationCapabilityState;
+    selectedReferenceAssets?: readonly CreativeReferenceAsset[];
+    onSelect: (asset: CreativeAsset) => void;
+}) {
     const t = useTranslations("create");
-    const [activeType, setActiveType] = useState<"image" | "video">("image");
+    const [activeType, setActiveType] = useState<MentionAssetType>("image");
     const gridRef = useRef<HTMLDivElement>(null);
     const [scrollEdges, setScrollEdges] = useState({ previous: false, next: false });
-    const { imageAssets, videoAssets } = useMemo(() => {
-        const next = { imageAssets: [] as CreativeAsset[], videoAssets: [] as CreativeAsset[] };
+    const assetsByType = useMemo(() => {
+        const next: Record<MentionAssetType, CreativeAsset[]> = { image: [], video: [], audio: [] };
         for (const asset of assets) {
-            if (asset.type === "image") next.imageAssets.push(asset);
-            if (asset.type === "video") next.videoAssets.push(asset);
+            if (asset.type === "image" || asset.type === "video" || asset.type === "audio") next[asset.type].push(asset);
         }
         return next;
     }, [assets]);
-    const visibleType = activeType === "image" && imageAssets.length ? "image" : activeType === "video" && videoAssets.length ? "video" : imageAssets.length ? "image" : videoAssets.length ? "video" : undefined;
-    const visibleAssets = visibleType === "video" ? videoAssets : imageAssets;
-    const showTypeSwitcher = imageAssets.length > 0 && videoAssets.length > 0;
+    const populatedTypes = mentionAssetTypes.filter((type) => assetsByType[type].length > 0);
+    const visibleType = populatedTypes.includes(activeType) ? activeType : populatedTypes[0];
+    const visibleAssets = visibleType ? assetsByType[visibleType] : [];
+    const showTypeSwitcher = populatedTypes.length > 1;
     const selected = useMemo(() => new Set(selectedAssetIds), [selectedAssetIds]);
 
     useEffect(() => {
@@ -45,32 +59,20 @@ export function CreativeAssetMentionPicker({ assets, selectedAssetIds, onSelect 
         };
     }, [visibleAssets.length, visibleType]);
 
-    if (!visibleType) return <p className="w-64 px-3 py-5 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noMatchingImageOrVideo")}</p>;
+    if (!visibleType) return <p className="w-64 px-3 py-5 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noMatchingReferenceMedia")}</p>;
     return (
         <div className="flex w-[min(17rem,calc(100vw-2rem))] min-w-0 flex-col overflow-hidden p-1.5" data-testid="creative-asset-mention-picker">
             {showTypeSwitcher ? (
-                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-black/[0.035] p-1 dark:bg-white/[0.06]" role="tablist" aria-label={t("referenceMediaType")}>
-                    <TypeTab type="image" count={imageAssets.length} active={visibleType === "image"} onClick={() => setActiveType("image")} />
-                    <TypeTab type="video" count={videoAssets.length} active={visibleType === "video"} onClick={() => setActiveType("video")} />
+                <div className={`mb-2 grid gap-1 rounded-lg bg-black/[0.035] p-1 dark:bg-white/[0.06] ${populatedTypes.length === 3 ? "grid-cols-3" : "grid-cols-2"}`} role="tablist" aria-label={t("referenceMediaType")}>
+                    {populatedTypes.map((type) => (
+                        <TypeTab key={type} type={type} count={assetsByType[type].length} active={visibleType === type} onClick={() => setActiveType(type)} />
+                    ))}
                 </div>
             ) : null}
             <div className="relative min-h-0 overflow-hidden">
                 <div ref={gridRef} className="hide-scrollbar grid max-h-[min(16rem,calc(100dvh-10rem))] grid-cols-4 gap-1.5 overflow-y-auto overscroll-contain p-0.5" data-testid={`creative-asset-mention-${visibleType}-grid`}>
                     {visibleAssets.map((asset) => (
-                        <button
-                            key={asset.id}
-                            type="button"
-                            data-asset-id={asset.id}
-                            className={`group relative aspect-square min-w-0 overflow-hidden rounded-md border-2 bg-[#eef1f3] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6268d8] dark:bg-[#292f37] ${
-                                selected.has(asset.id) ? "border-[#6268d8] dark:border-[#a8abff]" : "border-transparent hover:border-[#c8ccef] dark:hover:border-[#60658f]"
-                            }`}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => onSelect(asset)}
-                            aria-label={t("selectNamedAsset", { name: asset.title })}
-                            title={asset.title}
-                        >
-                            <AssetPreview asset={asset} />
-                        </button>
+                        <MentionAssetButton key={asset.id} asset={asset} selected={selected.has(asset.id)} disabledReason={referenceDisabledReason(t, referenceCapabilityState, selectedReferenceAssets, asset)} onSelect={onSelect} />
                     ))}
                 </div>
                 {scrollEdges.previous ? (
@@ -94,10 +96,49 @@ export function CreativeAssetMentionPicker({ assets, selectedAssetIds, onSelect 
     );
 }
 
-function TypeTab({ type, count, active, onClick }: { type: "image" | "video"; count: number; active: boolean; onClick: () => void }) {
+function MentionAssetButton({ asset, selected, disabledReason, onSelect }: { asset: CreativeAsset; selected: boolean; disabledReason?: string; onSelect: (asset: CreativeAsset) => void }) {
     const t = useTranslations("create");
-    const label = t(type === "image" ? "imageCapability" : "videoCapability");
-    const Icon = type === "image" ? ImageIcon : FileVideo;
+    const disabled = Boolean(disabledReason && !selected);
+    return (
+        <CapabilityControlTooltip reason={disabled ? disabledReason : undefined} className="w-full">
+            <button
+                type="button"
+                data-asset-id={asset.id}
+                disabled={disabled}
+                aria-disabled={disabled}
+                className={`group relative aspect-square min-w-0 overflow-hidden rounded-md border-2 bg-[#eef1f3] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6268d8] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-[#292f37] ${
+                    selected ? "border-[#6268d8] dark:border-[#a8abff]" : "border-transparent hover:border-[#c8ccef] dark:hover:border-[#60658f]"
+                }`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onSelect(asset)}
+                aria-label={t("selectNamedAsset", { name: asset.title })}
+                title={asset.title}
+            >
+                <AssetPreview asset={asset} />
+            </button>
+        </CapabilityControlTooltip>
+    );
+}
+
+function referenceDisabledReason(t: ReturnType<typeof useTranslations<"create">>, state: CreativeGenerationCapabilityState, selectedAssets: readonly CreativeReferenceAsset[], asset: CreativeAsset) {
+    if (asset.type !== "image" && asset.type !== "video" && asset.type !== "audio") return undefined;
+    const availability = creativeReferenceAdditionAvailability(state, selectedAssets, asset.type);
+    return availability.supported ? undefined : t(capabilityReasonMessageKeys[availability.reason]);
+}
+
+const capabilityReasonMessageKeys = {
+    unconfigured: "generationCapabilityUnconfigured",
+    unsupported: "generationCapabilityUnsupported",
+    intersection: "generationCapabilityIntersection",
+} as const;
+
+const mentionAssetTypes = ["image", "video", "audio"] as const;
+type MentionAssetType = (typeof mentionAssetTypes)[number];
+
+function TypeTab({ type, count, active, onClick }: { type: MentionAssetType; count: number; active: boolean; onClick: () => void }) {
+    const t = useTranslations("create");
+    const label = t(type === "image" ? "imageCapability" : type === "video" ? "videoCapability" : "audioCapability");
+    const Icon = type === "image" ? ImageIcon : type === "video" ? FileVideo : FileAudio;
     return (
         <button
             type="button"

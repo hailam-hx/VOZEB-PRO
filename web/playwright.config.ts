@@ -27,16 +27,16 @@ export default defineConfig({
     },
     projects: [
         { name: "setup", testMatch: /installation\.spec\.ts/ },
-        { name: "chromium", testMatch: [/(?:all-pages|canvas|commerce|core|creative-video-result|home|i18n|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
+        { name: "chromium", testMatch: [/(?:admin-points|all-pages|canvas|commerce|core|creative-video-result|home|i18n|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
         {
             name: "mobile-390",
-            testMatch: /(?:all-pages|commerce|creative-video-result|home|i18n|responsive)\.spec\.ts/,
+            testMatch: /(?:admin-points|all-pages|commerce|creative-video-result|home|i18n|responsive)\.spec\.ts/,
             dependencies: ["setup"],
             use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState },
         },
         {
             name: "mobile-430",
-            testMatch: /(?:all-pages|commerce|creative-video-result|home|i18n|responsive)\.spec\.ts/,
+            testMatch: /(?:admin-points|all-pages|commerce|creative-video-result|home|i18n|responsive)\.spec\.ts/,
             dependencies: ["setup"],
             use: { ...devices["iPhone 14 Pro Max"], browserName: "chromium", viewport: { width: 430, height: 932 }, storageState },
         },
@@ -65,6 +65,8 @@ export default defineConfig({
                 ...process.env,
                 PORT: String(port),
                 NEXT_PUBLIC_SITE_URL: baseURL,
+                VOZEB_PRO_INTERNAL_ORIGIN: baseURL,
+                VOZEB_PRO_WORKER_API_ORIGIN: baseURL,
                 VOZEB_PRO_DATABASE_PROVIDER: databaseUrl ? "postgres" : "file",
                 VOZEB_PRO_DATA_DIR: path.join(process.cwd(), ".e2e-data"),
                 VOZEB_PRO_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",

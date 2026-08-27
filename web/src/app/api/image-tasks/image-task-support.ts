@@ -22,7 +22,6 @@ import { resolveImageTaskOptions } from "@/lib/server/image-task-config";
 import { linkStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
-import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
@@ -680,7 +679,7 @@ export async function buildImageEditFormData(task: ImageTask, quality: string | 
     const formData = new FormData();
     formData.set("model", task.config.model);
     formData.set("prompt", withSystemPrompt(task.config, buildImageReferencePromptText(task.prompt, task.references)));
-    formData.set("n", "1");
+    if (task.config.count) formData.set("n", String(task.config.count));
     if (includeCompatibilityFields) {
         formData.set("response_format", responseFormat);
         formData.set("output_format", IMAGE_OUTPUT_FORMAT);

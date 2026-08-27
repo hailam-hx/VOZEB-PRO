@@ -5,6 +5,7 @@ import { deleteSession, getPublicUsersByIds, getUserBySession, sessionMaxAgeSeco
 import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
 import { parseSessionCookie } from "./store-normalizers";
+import { normalizeGenerationParameters } from "@/lib/generation-parameters";
 
 const SESSION_COOKIE_NAME = "vozeb_pro_session";
 
@@ -145,14 +146,7 @@ export function serializePublicSettings(settings: AuthSettings) {
                         upstreamModel: binding.upstreamModel,
                         enabled: true,
                         priority: binding.priority,
-                        ...(binding.capabilityProfile?.maxInputTokens || binding.capabilityProfile?.maxOutputTokens
-                            ? {
-                                  capabilityProfile: {
-                                      ...(binding.capabilityProfile.maxInputTokens ? { maxInputTokens: binding.capabilityProfile.maxInputTokens } : {}),
-                                      ...(binding.capabilityProfile.maxOutputTokens ? { maxOutputTokens: binding.capabilityProfile.maxOutputTokens } : {}),
-                                  },
-                              }
-                            : {}),
+                        ...(normalizeGenerationParameters(binding.generationParameters) ? { generationParameters: normalizeGenerationParameters(binding.generationParameters) } : {}),
                     })),
             })),
         systemChannels: settings.systemChannels

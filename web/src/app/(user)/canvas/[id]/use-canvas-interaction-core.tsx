@@ -11,7 +11,7 @@ import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } fro
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "../utils/canvas-resource-references";
 
 import { PendingConnectionCreate, type CanvasCreatableNodeType, createCanvasNode } from "./canvas-page-elements";
-import { getGenerationCount, normalizeConnection } from "./canvas-page-utils";
+import { getGenerationCountPreference, normalizeConnection } from "./canvas-page-utils";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 
@@ -116,7 +116,8 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
 
     const createConnectedNode = useCallback(
         (type: CanvasCreatableNodeType, pending: PendingConnectionCreate) => {
-            const metadata = type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) } : undefined;
+            const metadata =
+                type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCountPreference(effectiveConfig.canvasImageCount || effectiveConfig.count) } : undefined;
             const newNode = createCanvasNode(type, pending.position, metadata, t(`nodeTitles.${type}`));
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {

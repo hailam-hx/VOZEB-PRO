@@ -84,7 +84,7 @@ export function buildAgentPlannerInput(
         requestedSkillIds: run.selectedSkillIds || [],
         ...(run.generationPreferences ? { generationPreferences: run.generationPreferences } : {}),
         availableSkills: availableSkills.map(plannerSkillSummary),
-        availableModels: prioritizedModels,
+        availableModels: prioritizedModels.map(plannerModelSummary),
         defaultModels: settings.defaultModels,
         generationDefaults: settings.generationDefaults,
     };
@@ -96,6 +96,16 @@ export function buildAgentPlannerInput(
             kept,
             omitted: { modelIds: [], skillIds: [], assetIds: [], recentMessageSequences: [] },
         },
+    };
+}
+
+function plannerModelSummary(model: { id: string; name: string; capability: string; capabilityProfile?: unknown; generationParameters?: unknown }) {
+    return {
+        id: model.id,
+        name: model.name,
+        capability: model.capability,
+        ...(model.capabilityProfile ? { capabilityProfile: model.capabilityProfile } : {}),
+        ...(model.generationParameters ? { generationParameters: model.generationParameters } : {}),
     };
 }
 

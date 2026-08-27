@@ -8,6 +8,8 @@ import type { PublicUser } from "@/lib/auth/store";
 import { formatAccountId, parseAccountId } from "@/lib/account-id";
 import { listAdminUsers } from "@/services/api/admin-users";
 
+export type AdminUserSearchEntry = { id: string; accountId?: string; username: string; displayName: string; avatarUrl?: string; email?: string; status: PublicUser["status"] };
+
 function normalizedAccountId(value?: string) {
     return parseAccountId(value) ? formatAccountId(value) : undefined;
 }
@@ -45,17 +47,21 @@ export function AdminUserSearchSelect({
     activeOnly = false,
     placeholder = "搜索昵称、用户名、邮箱或用户 ID",
     className = "w-full",
+    loadUsers,
+    onUserChange,
 }: {
     value?: string;
     onChange?: (value?: string) => void;
     activeOnly?: boolean;
     placeholder?: string;
     className?: string;
+    loadUsers?: (keyword: string) => Promise<AdminUserSearchEntry[]>;
+    onUserChange?: (user?: AdminUserSearchEntry) => void;
 }) {
     const requestIdRef = useRef(0);
     const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const [users, setUsers] = useState<PublicUser[]>([]);
-    const [selectedUser, setSelectedUser] = useState<PublicUser>();
+    const [users, setUsers] = useState<AdminUserSearchEntry[]>([]);
+    const [selectedUser, setSelectedUser] = useState<AdminUserSearchEntry>();
     const [loading, setLoading] = useState(false);
     const [failed, setFailed] = useState(false);
 
@@ -73,8 +79,8 @@ export function AdminUserSearchSelect({
             setLoading(true);
             setFailed(false);
             try {
-                const result = await listAdminUsers({ page: 1, pageSize: 20, keyword: keyword.trim() || undefined, status: activeOnly ? "active" : undefined });
-                if (requestId === requestIdRef.current) setUsers(result.users);
+                const result = loadUsers ? await loadUsers(keyword.trim()) : (await listAdminUsers({ page: 1, pageSize: 20, keyword: keyword.trim() || undefined, status: activeOnly ? "active" : undefined })).users;
+                if (requestId === requestIdRef.current) setUsers(result);
             } catch {
                 if (requestId === requestIdRef.current) {
                     setUsers([]);
@@ -84,7 +90,7 @@ export function AdminUserSearchSelect({
                 if (requestId === requestIdRef.current) setLoading(false);
             }
         },
-        [activeOnly],
+        [activeOnly, loadUsers],
     );
 
     const optionUsers = [...(selectedUser ? [selectedUser] : []), ...users.filter((user) => user.id !== selectedUser?.id)];
@@ -135,7 +141,9 @@ export function AdminUserSearchSelect({
                 searchTimerRef.current = setTimeout(() => void load(keyword), 250);
             }}
             onChange={(nextValue) => {
-                setSelectedUser(users.find((user) => user.id === nextValue));
+                const user = users.find((item) => item.id === nextValue);
+                setSelectedUser(user);
+                onUserChange?.(user);
                 onChange?.(nextValue);
             }}
         />

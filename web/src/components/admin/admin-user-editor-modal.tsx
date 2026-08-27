@@ -1,6 +1,6 @@
 "use client";
 
-import { Checkbox, Form, Input, InputNumber, Modal, Select } from "antd";
+import { Checkbox, Form, Input, Modal, Select } from "antd";
 
 import type { AdminDashboardController } from "./use-admin-dashboard-controller";
 import { ADMIN_PERMISSION_DEFINITIONS, ADMIN_PERMISSION_GROUPS, ADMIN_PERMISSION_PRESETS, adminPermissionSummary, hasAdminPermission, hasAllAdminPermissions, normalizeAdminPermissions } from "@/lib/admin-permissions";
@@ -10,7 +10,6 @@ export function AdminUserEditorModal({ controller }: { controller: AdminDashboar
     const selectedRole = Form.useWatch("role", userForm) || editingUser?.role || "user";
     const canManageUsers = hasAdminPermission(currentUser, "users.manage");
     const canManageAdministrators = hasAdminPermission(currentUser, "administrators.manage");
-    const canManageBilling = hasAdminPermission(currentUser, "billing.manage");
     const targetWithinScope = editingUser?.role !== "admin" || hasAllAdminPermissions(currentUser, editingUser.adminPermissions);
     const touchesAdministrator = selectedRole === "admin" || editingUser?.role === "admin";
     const canEditAccount = touchesAdministrator ? canManageAdministrators && targetWithinScope : canManageUsers;
@@ -83,7 +82,7 @@ export function AdminUserEditorModal({ controller }: { controller: AdminDashboar
                         <Input.Password disabled={!canEditAccount} placeholder="至少 8 位" />
                     </Form.Item>
                 </div>
-                <div className="grid gap-x-4 md:grid-cols-3">
+                <div className="grid gap-x-4 md:grid-cols-2">
                     <Form.Item label="角色" name="role" rules={[{ required: true, message: "请选择角色" }]}>
                         <Select disabled={!roleOptions.some((option) => !option.disabled)} options={roleOptions} onChange={selectRole} />
                     </Form.Item>
@@ -95,9 +94,6 @@ export function AdminUserEditorModal({ controller }: { controller: AdminDashboar
                                 { value: "disabled", label: "禁用" },
                             ]}
                         />
-                    </Form.Item>
-                    <Form.Item label="结算余额" name="settledBalance" extra={editingUser ? "修改会生成可审计的钱包调整流水" : "新账号余额默认为 0"} rules={[{ required: true, message: "请输入结算余额" }]}>
-                        <InputNumber className="!w-full" stringMode disabled={!canManageBilling || creatingUser} min="0" precision={8} />
                     </Form.Item>
                 </div>
                 {selectedRole === "admin" ? (
@@ -148,9 +144,7 @@ export function AdminUserEditorModal({ controller }: { controller: AdminDashboar
                             </Form.Item>
                         </div>
                     ) : (
-                        <div className="border-t border-stone-200 py-4 text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">
-                            该管理员的职责范围为“{adminPermissionSummary(editingUser?.adminPermissions)}”，超出当前账号权限，只能查看或调整积分。
-                        </div>
+                        <div className="border-t border-stone-200 py-4 text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">该管理员的职责范围为“{adminPermissionSummary(editingUser?.adminPermissions)}”，超出当前账号权限，只能查看。</div>
                     )
                 ) : null}
             </Form>

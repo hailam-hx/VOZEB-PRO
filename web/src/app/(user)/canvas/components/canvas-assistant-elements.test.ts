@@ -100,7 +100,7 @@ describe("Canvas Agent current-turn references", () => {
         expect(controlsSource).toContain('compact ? "max-w-[280px]"');
         expect(controlsSource).toContain('compact ? "max-h-40"');
         expect(toolbar.indexOf("{left}")).toBeLessThan(toolbar.indexOf('aria-label={t("assistant.send")}'));
-        expect(assistantSource.indexOf("middle={<CanvasAgentGenerationSettings")).toBeGreaterThan(assistantSource.indexOf("<CreativeAgentControls"));
+        expect(assistantSource.indexOf("<CanvasAgentGenerationSettings")).toBeGreaterThan(assistantSource.indexOf("<CreativeAgentControls"));
         expect(controls.indexOf("skillOpen")).toBeLessThan(controls.indexOf("smartPlanning"));
         expect(controls.indexOf("smartPlanning")).toBeLessThan(controls.indexOf("modelOpen"));
         expect(controls.indexOf("modelOpen")).toBeLessThan(controls.indexOf("{middle}"));

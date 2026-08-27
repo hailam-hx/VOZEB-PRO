@@ -7,6 +7,9 @@ import { useTranslations } from "next-intl";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import type { CreativeVideoReferenceMode, VideoReferenceRole } from "@/lib/video-reference-contract";
+import type { LogicalModelGenerationParameters } from "@/lib/auth/store-types";
+import { creativeGenerationValueSupported, type CreativeGenerationCapabilityReason } from "@/lib/creative-generation-capabilities";
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
 
 import type { CanvasNodeMetadata, CanvasVideoFrameSelection } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
@@ -14,30 +17,36 @@ import { canvasVideoFrameSelection, canvasVideoFrameSelectionPatch, canvasVideoR
 
 type FrameRole = Extract<VideoReferenceRole, "first_frame" | "last_frame">;
 
-const referenceModes: CreativeVideoReferenceMode[] = ["reference", "first_frame", "first_last"];
+const referenceModes = ["auto", "reference", "first_frame", "first_last"] as const;
 
 export function CanvasVideoReferenceSettings({
     metadata,
     references,
+    generationParameters,
+    capabilityReason,
     theme,
     compact = false,
     onChange,
 }: {
     metadata?: CanvasNodeMetadata;
     references: CanvasResourceReference[];
+    generationParameters?: LogicalModelGenerationParameters;
+    capabilityReason: CreativeGenerationCapabilityReason;
     theme: CanvasTheme;
     compact?: boolean;
     onChange: (patch: Partial<CanvasNodeMetadata>) => void;
 }) {
     const t = useTranslations("canvas");
-    const mode = normalizeCanvasVideoReferenceMode(metadata?.videoReferenceMode);
+    const createT = useTranslations("create");
+    const mode = metadata?.videoReferenceMode ? normalizeCanvasVideoReferenceMode(metadata.videoReferenceMode) : "auto";
+    const disabledReason = createT(capabilityReason === "intersection" ? "generationCapabilityIntersection" : capabilityReason === "unsupported" ? "generationCapabilityUnsupported" : "generationCapabilityUnconfigured");
     const [activeRole, setActiveRole] = useState<FrameRole>("first_frame");
     const [feedback, setFeedback] = useState("");
     const selectedRole = mode === "first_frame" ? "first_frame" : activeRole;
     const frameOptions = references.filter((reference) => reference.kind === "image").map((reference) => ({ reference, selection: canvasVideoFrameSelection(reference) }));
 
-    const updateMode = (nextMode: CreativeVideoReferenceMode) => {
-        onChange(canvasVideoReferenceModePatch(nextMode));
+    const updateMode = (nextMode: (typeof referenceModes)[number]) => {
+        onChange(nextMode === "auto" ? { videoReferenceMode: undefined, videoFirstFrame: undefined, videoLastFrame: undefined } : canvasVideoReferenceModePatch(nextMode));
         setActiveRole("first_frame");
         setFeedback("");
     };
@@ -59,33 +68,44 @@ export function CanvasVideoReferenceSettings({
             <div className="text-xs font-medium" style={{ color: theme.node.muted }}>
                 {t("videoReferences.referenceMode")}
             </div>
-            <div className={compact ? "grid grid-cols-3 gap-1" : "grid grid-cols-3 gap-2"}>
+            <div className={compact ? "grid grid-cols-4 gap-1" : "grid grid-cols-4 gap-2"}>
                 {referenceModes.map((value) => {
                     const selected = value === mode;
-                    const label = t(`videoReferences.modes.${value}.label`);
-                    return (
+                    const label = value === "auto" ? createT("smart") : t(`videoReferences.modes.${value}.label`);
+                    const requiredImages = value === "first_last" ? 2 : value === "first_frame" ? 1 : 0;
+                    const disabled =
+                        value !== "auto" &&
+                        (!creativeGenerationValueSupported(generationParameters, "videoReferenceMode", value) ||
+                            Boolean(requiredImages && (!generationParameters?.referenceInputs.includes("image") || !generationParameters.maxReferenceImages || generationParameters.maxReferenceImages < requiredImages)));
+                    const button = (
                         <button
-                            key={value}
                             type="button"
-                            className={compact ? "h-8 min-w-0 rounded-lg px-1 text-center text-[11px] font-medium transition hover:opacity-80" : "min-w-0 rounded-xl border px-2 py-2 text-left transition hover:opacity-80"}
+                            disabled={disabled}
+                            aria-disabled={disabled}
+                            className={`${compact ? "h-8 min-w-0 rounded-lg px-1 text-center text-[11px] font-medium transition hover:opacity-80" : "min-w-0 rounded-xl border px-2 py-2 text-left transition hover:opacity-80"} disabled:cursor-not-allowed disabled:opacity-40`}
                             style={{ background: selected ? theme.toolbar.itemHover : theme.node.fill, borderColor: selected ? theme.node.text : theme.node.stroke, color: selected ? theme.node.action : theme.node.muted }}
-                            aria-label={t("videoReferences.modeAria", { mode: label })}
+                            aria-label={value === "auto" ? createT("smart") : t("videoReferences.modeAria", { mode: label })}
                             aria-pressed={selected}
                             onMouseDown={(event) => event.stopPropagation()}
                             onClick={() => updateMode(value)}
                         >
                             <span className="block truncate text-xs font-medium">{label}</span>
-                            {!compact ? (
+                            {!compact && value !== "auto" ? (
                                 <span className="mt-0.5 block truncate text-[10px]" style={{ color: theme.node.faint }}>
                                     {t(`videoReferences.modes.${value}.description`)}
                                 </span>
                             ) : null}
                         </button>
                     );
+                    return (
+                        <CapabilityControlTooltip key={value} reason={disabled ? disabledReason : undefined} className="w-full">
+                            {button}
+                        </CapabilityControlTooltip>
+                    );
                 })}
             </div>
 
-            {mode === "reference" ? (
+            {mode === "reference" || mode === "auto" ? (
                 <p className="text-[11px] leading-4" style={{ color: theme.node.faint }}>
                     {t("videoReferences.referenceHint")}
                 </p>
@@ -126,11 +146,12 @@ export function CanvasVideoReferenceSettings({
                                 const selected = sameFrameSelection(selection, selectedRole === "first_frame" ? metadata?.videoFirstFrame : metadata?.videoLastFrame);
                                 const first = sameFrameSelection(selection, metadata?.videoFirstFrame);
                                 const last = sameFrameSelection(selection, metadata?.videoLastFrame);
-                                return (
+                                const capabilityDisabled = !generationParameters?.referenceInputs.includes("image") || !generationParameters.maxReferenceImages;
+                                const button = (
                                     <button
-                                        key={reference.nodeId}
                                         type="button"
-                                        disabled={!selection}
+                                        disabled={!selection || capabilityDisabled}
+                                        aria-disabled={!selection || capabilityDisabled}
                                         className="relative aspect-square min-w-0 overflow-hidden rounded-lg border transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
                                         style={{ background: theme.node.fill, borderColor: selected ? theme.node.text : theme.node.stroke }}
                                         aria-label={t("videoReferences.setNamed", { role: t(`videoReferences.roles.${frameRoleKey(selectedRole)}`), title: reference.title })}
@@ -149,6 +170,11 @@ export function CanvasVideoReferenceSettings({
                                             </span>
                                         ) : null}
                                     </button>
+                                );
+                                return (
+                                    <CapabilityControlTooltip key={reference.nodeId} reason={capabilityDisabled ? disabledReason : undefined} className="w-full">
+                                        {button}
+                                    </CapabilityControlTooltip>
                                 );
                             })}
                         </div>

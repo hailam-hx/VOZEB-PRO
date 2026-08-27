@@ -148,6 +148,28 @@ describe("agentPlannerInput", () => {
         expect(summary).not.toHaveProperty("maxInputChars");
     });
 
+    it("does not expose internal per-binding generation candidates to the planner", () => {
+        const models = [
+            {
+                id: "image",
+                name: "图片",
+                capability: "image",
+                generationParameters: { aspectRatios: ["1:1", "16:9"], qualities: ["low", "high"] },
+                generationParameterCandidates: [
+                    { aspectRatios: ["1:1"], qualities: ["low"] },
+                    { aspectRatios: ["16:9"], qualities: ["high"] },
+                ],
+            },
+        ];
+
+        const input = agentPlannerInput({ surface: "chat", prompt: "生成图片", referencedAssetIds: [], selectedSkillIds: [] } as never, { summary: "", summaryThroughSequence: 0, recentMessages: [] } as never, [], "none", [], models, DEFAULT_SETTINGS) as {
+            availableModels: Array<Record<string, unknown>>;
+        };
+
+        expect(input.availableModels[0]).toMatchObject({ id: "image", generationParameters: { aspectRatios: ["1:1", "16:9"] } });
+        expect(input.availableModels[0]).not.toHaveProperty("generationParameterCandidates");
+    });
+
     it("keeps all current-turn and memory candidate assets without a platform character budget", () => {
         const assets = Array.from({ length: 40 }, (_, index) => ({
             id: `asset-${index}`,

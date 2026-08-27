@@ -3,8 +3,11 @@ import type { useEffectiveConfig } from "@/stores/use-config-store";
 import { resolveDramaGenerationSize } from "@/lib/drama-image-size";
 import type { ReferenceImage } from "@/types/image";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
+import { parseImageDimensions } from "@/lib/image-size";
 import { requestCreditCost } from "@/constant/credits";
 import { decimal } from "@/lib/billing/decimal";
+import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
+import { checkDramaImageRequest, checkDramaVideoRequest, resolveDramaGenerationCapabilities } from "../drama-generation-capabilities";
 
 export function shotReferenceImages(project: DramaProject, shot: DramaShot) {
     const assetUrls = [...project.characters.filter((item) => shot.characterIds.includes(item.id)), ...project.scenes.filter((item) => item.id === shot.sceneId), ...project.props.filter((item) => shot.propIds.includes(item.id))].flatMap((item) => {
@@ -38,6 +41,84 @@ export function referenceImage(id: string, name: string, url: string, type = "im
 
 export function dramaGenerationSize(project: DramaProject, prompt: string, references: ReferenceImage[] = []) {
     return resolveDramaGenerationSize({ projectSize: project.ratio, prompt, references });
+}
+
+export function dramaImageGenerationPreflight(config: ReturnType<typeof useEffectiveConfig>, project: DramaProject, prompt: string, references: ReferenceImage[] = []) {
+    return checkDramaImageRequest(resolveDramaGenerationCapabilities(config), {
+        size: dramaGenerationSize(project, prompt, references),
+        referenceCount: references.length || undefined,
+        quality: config.quality,
+    });
+}
+
+export function dramaVideoGenerationPreflight(config: ReturnType<typeof useEffectiveConfig>, project: DramaProject, shot: Pick<DramaShot, "duration">, prompt: string, references: ReferenceImage[] = []) {
+    return checkDramaVideoRequest(resolveDramaGenerationCapabilities(config), {
+        size: dramaGenerationSize(project, prompt, references),
+        durationSeconds: shot.duration,
+        referenceCount: references.length || undefined,
+        referenceMode: videoReferenceMode(references),
+        resolution: config.vquality,
+    });
+}
+
+export function dramaVideoRequestConfig(config: ReturnType<typeof useEffectiveConfig>, shot: Pick<DramaShot, "audioMode">) {
+    return {
+        ...config,
+        videoGenerateAudio: String((shot.audioMode || "source") === "source"),
+        videoWatermark: undefined as unknown as string,
+    };
+}
+
+export function dramaShotQueuePreflight(config: ReturnType<typeof useEffectiveConfig>, project: DramaProject, episode: DramaProject["episodes"][number], shot: DramaShot) {
+    const prompts = compileDramaShotPrompts(project, episode, shot);
+    const mode = shot.videoMode || project.defaultVideoMode;
+    let references: ReferenceImage[];
+    if (mode === "storyboard") {
+        const imageReferences = shotReferenceImages(project, shot);
+        let start = shot.storyboardImageUrl ? referenceImage(`storyboard-start-${shot.id}`, `${shot.title}-起始帧.png`, shot.storyboardImageUrl, "image/png", shot.storyboardImageWidth, shot.storyboardImageHeight, "first_frame") : undefined;
+        if (!start) {
+            const startResult = dramaImageGenerationPreflight(config, project, prompts.imagePrompt, imageReferences);
+            if (!startResult.compatible) return startResult;
+            start = plannedStoryboardReference(shot, "first_frame", dramaGenerationSize(project, prompts.imagePrompt, imageReferences));
+        }
+        let end =
+            shot.storyboardFrameMode === "first_last" && shot.storyboardEndImageUrl
+                ? referenceImage(`storyboard-end-${shot.id}`, `${shot.title}-结束帧.png`, shot.storyboardEndImageUrl, "image/png", shot.storyboardEndImageWidth, shot.storyboardEndImageHeight, "last_frame")
+                : undefined;
+        if (shot.storyboardFrameMode === "first_last" && !end) {
+            const endReferences = [start];
+            const endResult = dramaImageGenerationPreflight(config, project, prompts.endFramePrompt, endReferences);
+            if (!endResult.compatible) return endResult;
+            end = plannedStoryboardReference(shot, "last_frame", dramaGenerationSize(project, prompts.endFramePrompt, endReferences));
+        }
+        references = [start, end].filter((item): item is ReferenceImage => Boolean(item));
+    } else {
+        references = mode === "reference" ? shotReferenceImages(project, shot) : [];
+    }
+    if (mode === "reference" && !references.length) return { compatible: false as const, field: "referenceCount" as const, reason: "参考模式需要至少一张参考图" };
+    const videoConfig = dramaVideoRequestConfig(config, shot);
+    return dramaVideoGenerationPreflight(videoConfig, project, shot, prompts.videoPrompt, references);
+}
+
+function plannedStoryboardReference(shot: DramaShot, role: "first_frame" | "last_frame", size: string): ReferenceImage {
+    const dimensions = parseImageDimensions(size);
+    const ratio = size.match(/^(\d+):(\d+)$/);
+    return {
+        id: `planned-storyboard-${role}-${shot.id}`,
+        name: `${shot.title}-${role}.png`,
+        type: "image/png",
+        dataUrl: "",
+        videoRole: role,
+        width: dimensions?.width || (ratio ? Number(ratio[1]) : undefined),
+        height: dimensions?.height || (ratio ? Number(ratio[2]) : undefined),
+    };
+}
+
+function videoReferenceMode(references: ReferenceImage[]) {
+    if (!references.length) return undefined;
+    if (references.some((item) => item.videoRole === "last_frame")) return "first_last" as const;
+    if (references.some((item) => item.videoRole === "first_frame")) return "first_frame" as const;
+    return "reference" as const;
 }
 
 export function estimateTaskPoints(config: ReturnType<typeof useEffectiveConfig>, type: "image" | "video" | "audio", duration = 5, characters?: string) {

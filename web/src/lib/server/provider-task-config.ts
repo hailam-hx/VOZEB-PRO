@@ -143,7 +143,7 @@ function renderTemplateValue(value: unknown, values: TemplateValues): unknown {
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, renderTemplateValue(item, values)]));
     if (typeof value !== "string") return value;
     const exact = value.match(/^\{\{\s*([\w.]+)\s*\}\}$/);
-    if (exact) return values[exact[1]] ?? value;
+    if (exact) return values[exact[1]];
     return value.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key: string) => String(values[key] ?? match));
 }
 
@@ -192,7 +192,7 @@ function pruneEmptyReferenceFields(value: unknown): unknown {
     if (!value || typeof value !== "object") return value;
     const entries = Object.entries(value).flatMap(([key, item]) => {
         const next = REFERENCE_FIELD_KEYS.has(normalizeFieldKey(key)) ? normalizeReferenceValue(item) : pruneEmptyReferenceFields(item);
-        return next === EMPTY_REFERENCE ? [] : [[key, next] as const];
+        return next === undefined || next === EMPTY_REFERENCE ? [] : [[key, next] as const];
     });
     return Object.fromEntries(entries);
 }

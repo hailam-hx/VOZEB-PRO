@@ -1,17 +1,19 @@
-import { getAuthSettings, type LogicalModelCapability } from "@/lib/auth/store";
+import { getAuthSettings, type LogicalModelCapability, type LogicalModelGenerationParameters } from "@/lib/auth/store";
 import { withCreativeFoundation, type CreativeReview } from "@/lib/creative-agent-contract";
 import type { CreativeAsset, CreativeGenerationPreferences, CreativeSurface } from "@/lib/creative-runtime-contract";
+import { unionGenerationParameters, type NormalizedGenerationRequest } from "@/lib/generation-parameters";
 import { creativeAssetReferenceAliases } from "@/lib/creative-asset-references";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
-import { resolveLogicalModel } from "@/lib/server/logical-model-router";
+import { resolveLogicalModel, resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
+import { audioGenerationRequest, filterGenerationCandidates, imageGenerationRequest, resolveAudioGenerationCandidates, resolveImageGenerationCandidates, resolveVideoGenerationCandidates, videoGenerationRequest } from "@/lib/server/capability-constraints";
 import { reviewCreativeOutputs } from "@/lib/server/creative-review-service";
 import { requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
 import { registerAgentTaskAssets } from "@/lib/server/agent-run-assets";
 import { buildAgentProjectHandoff } from "@/lib/server/agent-run-project-handoff";
-import { getAgentRun, updateAgentRunById, updateAgentRunTaskById, type AgentRun, type AgentRunChildTask, type AgentRunReference, type AgentRunTask } from "@/lib/server/agent-run-store";
+import { getAgentRun, updateAgentRunById, updateAgentRunTaskById, type AgentRun, type AgentRunChildSlot, type AgentRunChildTask, type AgentRunGenerationSelection, type AgentRunReference, type AgentRunTask } from "@/lib/server/agent-run-store";
 import { assetAccessUrl, creativeAssetContext, resolveTaskReferences } from "@/lib/server/agent-run-surface-policy";
 import { selectedCanvasNodeIds } from "@/lib/server/agent-run-canvas-snapshot";
-import { agentChildTaskTerminal, agentTaskCopies, resolveAgentTaskCount, resolveAgentVideoSeconds, validateAgentTaskResult, type AgentPlan } from "@/lib/server/agent-run-validation";
+import { agentChildTaskTerminal, agentTaskCopies, validateAgentTaskResult, type AgentPlan } from "@/lib/server/agent-run-validation";
 import { agentRunCompletionReply, agentRunFailureMessage, resultSummary } from "@/lib/server/agent-run-messages";
 import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
@@ -160,7 +162,6 @@ export function normalizeTasks(
         .map((skill) => skill.instructions.trim())
         .filter(Boolean)
         .join("\n\n");
-    const globalDefaults = settings.generationDefaults;
     const nodes = canvasSnapshotNodes(snapshot);
     const selectedNodeIds = new Set(selectedCanvasNodeIds(snapshot).filter((id) => nodes.has(id)));
     const selectedCanvasReferences = surface === "canvas" ? selectedCanvasReferenceNodes(snapshot) : [];
@@ -213,29 +214,24 @@ export function normalizeTasks(
             model: resolvePlannedModel(settings, item.type, item.model),
             optimizedPrompt,
             prompt: `${withCreativeFoundation(optimizedPrompt, plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${selectedCanvasContext ? `\n\n使用本轮画布引用：\n${selectedCanvasContext}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
-            count: resolveAgentTaskCount(
-                item.type,
-                item.type === "image" ? generationPreferences?.image?.count || item.count : item.type === "video" ? generationPreferences?.video?.count || item.count : item.count,
-                item.type === "video" ? defaults.videoCount || defaults.count : defaults.count,
-                item.type === "image" ? globalDefaults.canvasImageCount : undefined,
-            ),
+            count:
+                item.type === "image" || item.type === "video"
+                    ? positiveTaskInteger(item.type === "image" ? generationPreferences?.image?.count || item.count : generationPreferences?.video?.count || item.count) ||
+                      positiveTaskInteger(item.type === "video" ? defaults.videoCount || defaults.count : defaults.count) ||
+                      0
+                    : 1,
             ratio: resolveAgentTaskRatio({
                 type: item.type,
                 requestedImageSize,
                 configuredImageSize: preferredSize || configuredImageSize,
                 plannedRatio: item.ratio,
                 defaultSize: textDefault(defaults.size),
-                globalSize: ["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined,
                 reference: target || canvasReferences.find((reference) => reference.type === "image") || (selectedAssets[0]?.type === "image" ? selectedAssets[0] : undefined),
             }),
-            quality:
-                preferredQuality ||
-                item.quality?.trim() ||
-                textDefault(item.type === "video" ? defaults.vquality : defaults.quality) ||
-                (item.type === "video" ? globalDefaults.videoQuality : item.type === "image" ? globalDefaults.imageQuality : undefined),
-            seconds: item.type === "video" && generationPreferences?.video?.seconds ? generationPreferences.video.seconds : resolveAgentVideoSeconds(item.type, item.seconds, defaults.videoSeconds, globalDefaults.videoSeconds),
-            voice: item.type === "audio" ? generationPreferences?.audio?.voice || item.voice?.trim() || textDefault(defaults.voice) || globalDefaults.audioVoice : item.voice?.trim() || textDefault(defaults.voice),
-            format: item.type === "audio" ? generationPreferences?.audio?.format || item.format?.trim() || textDefault(defaults.format) || globalDefaults.audioFormat : item.format?.trim() || textDefault(defaults.format),
+            quality: preferredQuality || item.quality?.trim() || textDefault(item.type === "video" ? defaults.vquality : defaults.quality),
+            seconds: item.type === "video" ? positiveTaskNumber(generationPreferences?.video?.seconds) || positiveTaskNumber(item.seconds) || positiveTaskNumber(defaults.videoSeconds) : undefined,
+            voice: item.type === "audio" ? generationPreferences?.audio?.voice || item.voice?.trim() || textDefault(defaults.voice) : item.voice?.trim() || textDefault(defaults.voice),
+            format: item.type === "audio" ? generationPreferences?.audio?.format || item.format?.trim() || textDefault(defaults.format) : item.format?.trim() || textDefault(defaults.format),
             generateAudio: item.type === "video" ? (generationPreferences?.video?.generateAudio ?? item.generateAudio) : undefined,
             watermark: item.type === "video" ? (generationPreferences?.video?.watermark ?? item.watermark) : undefined,
             speed: item.type === "audio" ? (generationPreferences?.audio?.speed ?? item.speed) : undefined,
@@ -246,16 +242,164 @@ export function normalizeTasks(
     });
 }
 
-export function agentModelOptions(settings: Awaited<ReturnType<typeof getAuthSettings>>) {
+export type AgentModelOption = {
+    id: string;
+    name: string;
+    capability: LogicalModelCapability;
+    capabilityProfile?: NonNullable<ReturnType<typeof resolveLogicalModel>>["capabilityProfile"];
+    generationParameters?: LogicalModelGenerationParameters;
+    generationParameterCandidates?: Array<LogicalModelGenerationParameters | undefined>;
+};
+
+export function agentModelOptions(settings: Awaited<ReturnType<typeof getAuthSettings>>): AgentModelOption[] {
     return settings.logicalModels
         .filter((model) => model.enabled && resolveLogicalModel(settings, model.capability, model.id))
         .map((model) => {
             const resolved = resolveLogicalModel(settings, model.capability, model.id);
-            return { id: model.id, name: model.name, capability: model.capability, capabilityProfile: resolved?.capabilityProfile };
+            const candidates = resolveLogicalModelCandidates(settings, model.capability, model.id);
+            const generationParameters = unionGenerationParameters({
+                enabled: true,
+                bindings: candidates.map((candidate) => ({ enabled: true, generationParameters: candidate.generationParameters })),
+            });
+            return {
+                id: model.id,
+                name: model.name,
+                capability: model.capability,
+                capabilityProfile: resolved?.capabilityProfile,
+                ...(generationParameters ? { generationParameters } : {}),
+                generationParameterCandidates: candidates.map((candidate) => candidate.generationParameters),
+            };
         });
 }
 
-export function directAgentPlan(models: Array<ReturnType<typeof agentModelOptions>[number]>, prompt: string, assetIds: string[]): AgentPlan {
+export function agentGenerationRequest(preferences: CreativeGenerationPreferences | undefined, referencedAssetTypes: readonly CreativeAsset["type"][]): NormalizedGenerationRequest {
+    const mode = preferences?.mode || (preferences?.image ? "image" : preferences?.video ? "video" : preferences?.audio ? "audio" : undefined);
+    const references = referenceGenerationRequest(referencedAssetTypes);
+    if (mode === "image") return { ...imageGenerationRequest((preferences?.image || {}) as Record<string, unknown>, referencedAssetTypes.filter((type) => type === "image").length, false), ...references };
+    if (mode === "video") {
+        const video = preferences?.video;
+        const request = videoGenerationRequest(
+            {
+                size: video?.size,
+                vquality: video?.quality,
+                videoSeconds: video?.seconds,
+                count: video?.count,
+                videoGenerateAudio: video?.generateAudio,
+                videoWatermark: video?.watermark,
+            },
+            referencedAssetTypes.filter((type): type is "image" | "video" | "audio" => type === "image" || type === "video" || type === "audio").map((type) => ({ type })),
+        );
+        return video?.referenceMode ? { ...request, ...references, videoReferenceMode: video.referenceMode } : { ...request, ...references };
+    }
+    if (mode === "audio") return { ...audioGenerationRequest((preferences?.audio || {}) as Record<string, unknown>), ...references };
+    return references;
+}
+
+export function agentTaskGenerationRequest(task: AgentRunTask): NormalizedGenerationRequest {
+    if (task.type === "text") return {};
+    const references = (task.references || []).map((reference) => ({ type: reference.type, role: reference.role }));
+    const referenceRequest = referenceGenerationRequest(references.map((reference) => reference.type));
+    if (task.type === "image") return { ...imageGenerationRequest({ size: task.ratio, quality: task.quality, count: task.count }, references.filter((reference) => reference.type === "image").length, false), ...referenceRequest };
+    if (task.type === "video") {
+        return {
+            ...videoGenerationRequest(
+                {
+                    size: task.ratio,
+                    vquality: task.quality,
+                    videoSeconds: task.seconds,
+                    count: task.count,
+                    videoGenerateAudio: task.generateAudio,
+                    videoWatermark: task.watermark,
+                },
+                references,
+            ),
+            ...referenceRequest,
+        };
+    }
+    return { ...audioGenerationRequest({ voice: task.voice, format: task.format, speed: task.speed }), ...referenceRequest };
+}
+
+function referenceGenerationRequest(types: readonly CreativeAsset["type"][]): NormalizedGenerationRequest {
+    const referenceInputs = Array.from(new Set(types.filter((type): type is "image" | "video" | "audio" => type === "image" || type === "video" || type === "audio")));
+    const referenceCount = types.filter((type) => type === "image").length;
+    return { ...(referenceInputs.length ? { referenceInputs } : {}), ...(referenceCount ? { referenceCount } : {}) };
+}
+
+type AgentGenerationModel = AgentModelOption;
+
+type AgentGenerationCandidateModel = {
+    id: string;
+    capability: string;
+    generationParameters?: AgentGenerationModel["generationParameters"];
+    generationParameterCandidates?: AgentGenerationModel["generationParameterCandidates"];
+};
+
+function modelGenerationProfiles(model: Omit<AgentGenerationCandidateModel, "id" | "capability">) {
+    return model.generationParameterCandidates?.length ? model.generationParameterCandidates : [model.generationParameters];
+}
+
+function modelGenerationCompatibility(model: Omit<AgentGenerationCandidateModel, "id" | "capability">, request: NormalizedGenerationRequest) {
+    return filterGenerationCandidates(
+        modelGenerationProfiles(model).map((generationParameters, index) => ({ index, generationParameters })),
+        request,
+    );
+}
+
+export function filterAgentGenerationModels<T extends Omit<AgentGenerationCandidateModel, "id">>(models: readonly T[], request: NormalizedGenerationRequest) {
+    return models.filter((model) => model.capability === "text" || modelGenerationCompatibility(model, request).candidates.length > 0);
+}
+
+export function validateManualAgentModels<T extends AgentGenerationCandidateModel>(models: readonly T[], requestedIds: readonly string[], request: NormalizedGenerationRequest) {
+    const selected = requestedIds.map((id) => models.find((model) => model.id === id && model.capability !== "text")).filter((model): model is T => Boolean(model));
+    if (selected.length !== requestedIds.length) throw new Error("部分所选模型当前不可用，请重新选择");
+    for (const model of selected) {
+        const compatibility = modelGenerationCompatibility(model, request);
+        if (!compatibility.candidates.length) throw compatibility.error || new Error("所选模型不支持当前生成参数");
+    }
+    return selected;
+}
+
+export function resolveCompatiblePlannedModel<T extends AgentGenerationCandidateModel>(models: readonly T[], capability: LogicalModelCapability, planned: unknown, defaultModelId: string, request: NormalizedGenerationRequest) {
+    const compatible = models.filter((model) => model.capability === capability && modelGenerationCompatibility(model, request).candidates.length > 0);
+    const plannedId = typeof planned === "string" ? planned.trim() : "";
+    return compatible.find((model) => model.id === plannedId)?.id || compatible.find((model) => model.id === defaultModelId)?.id || compatible[0]?.id;
+}
+
+export function resolveAgentTaskBinding<T extends AgentGenerationCandidateModel>(models: readonly T[], task: AgentRunTask, modelId: string, defaults: Awaited<ReturnType<typeof getAuthSettings>>["generationDefaults"]) {
+    if (task.type === "text") return { ...task, model: modelId };
+    const model = models.find((item) => item.id === modelId && item.capability === task.type);
+    if (!model) return undefined;
+    const candidates = modelGenerationProfiles(model).map((generationParameters, index) => ({ index, generationParameters }));
+    const references = (task.references || []).map((reference) => ({ type: reference.type, role: reference.role }));
+    if (task.type === "image") {
+        const selected = resolveImageGenerationCandidates(candidates, { size: task.ratio, quality: task.quality, count: task.count }, defaults, references.filter((reference) => reference.type === "image").length, false).candidates[0];
+        return selected ? { ...task, model: modelId, ratio: selected.size, quality: selected.quality, count: selected.count || 1 } : undefined;
+    }
+    if (task.type === "video") {
+        const selected = resolveVideoGenerationCandidates(
+            candidates,
+            { size: task.ratio, vquality: task.quality, videoSeconds: task.seconds, count: task.count, videoGenerateAudio: task.generateAudio, videoWatermark: task.watermark },
+            defaults,
+            references,
+        ).candidates[0];
+        return selected
+            ? { ...task, model: modelId, ratio: selected.size, quality: selected.vquality, seconds: selected.videoSeconds, count: selected.count || 1, generateAudio: selected.videoGenerateAudio, watermark: selected.videoWatermark }
+            : undefined;
+    }
+    const selected = resolveAudioGenerationCandidates(candidates, { voice: task.voice, format: task.format, speed: task.speed }, defaults).candidates[0];
+    return selected ? { ...task, model: modelId, voice: selected.voice, format: selected.format, speed: selected.speed ? Number(selected.speed) : undefined } : undefined;
+}
+
+export function resolveAgentTaskWithFallback<T extends AgentGenerationCandidateModel>(models: readonly T[], task: AgentRunTask, defaultModelId: string, defaults: Awaited<ReturnType<typeof getAuthSettings>>["generationDefaults"]) {
+    const orderedIds = Array.from(new Set([task.model, defaultModelId, ...models.filter((model) => model.capability === task.type).map((model) => model.id)].filter((id): id is string => Boolean(id))));
+    for (const modelId of orderedIds) {
+        const resolved = resolveAgentTaskBinding(models, task, modelId, defaults);
+        if (resolved) return resolved;
+    }
+    return undefined;
+}
+
+export function directAgentPlan(models: AgentModelOption[], prompt: string, assetIds: string[]): AgentPlan {
     if (!models.length || models.some((model) => model.capability === "text")) throw new Error("当前模型不支持直接生成媒体");
     return {
         intent: "generation",
@@ -273,7 +417,6 @@ export function directAgentPlan(models: Array<ReturnType<typeof agentModelOption
             type: model.capability as "image" | "video" | "audio",
             model: model.id,
             prompt,
-            count: 1,
             dependencies: [],
             assetIds,
         })),
@@ -345,6 +488,16 @@ export function agentPlanFallbackExample(models: ReturnType<typeof agentModelOpt
 
 function textDefault(value: unknown) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function positiveTaskInteger(value: unknown) {
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+function positiveTaskNumber(value: unknown) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 export async function executeTasks(runId: string, origin: string, cookie: string, executionId: string, executionSettings?: Awaited<ReturnType<typeof getAuthSettings>>) {
     const settings = executionSettings || (await getAuthSettings());
@@ -537,7 +690,7 @@ export async function releaseFunctionCall(userId: string, call: AgentFunctionCal
 }
 
 export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin: string, cookie: string, executionId: string, settings?: Awaited<ReturnType<typeof getAuthSettings>>) {
-    const resumeExisting = task.childTasks?.some((child) => child.status === "pending") || (task.status === "running" && task.taskId && !task.childTasks?.length);
+    const resumeExisting = normalizeChildTasks(task).some((child) => child.status === "pending");
     const attempt = resumeExisting ? Math.max(1, task.attempts) : task.attempts + 1;
     if (!(await canContinue(runId, executionId))) return;
     if (!resumeExisting && !(await patchTask(runId, task.id, { status: "running", attempts: attempt, error: undefined }, "task.running", executionId))) return;
@@ -545,8 +698,28 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         const activeRun = await getAgentRun(runId);
         if (!activeRun || activeRun.executionId !== executionId) return;
         const currentTask = activeRun.tasks.find((item) => item.id === task.id) || task;
-        const executableTask = await withDependencyContext(runId, currentTask);
-        const dispatched = await dispatchTask(executableTask, origin, cookie, settings || (await getAuthSettings()), activeRun, executionId, attempt);
+        let executableTask = await withDependencyContext(runId, currentTask);
+        const activeSettings = settings || (await getAuthSettings());
+        let resolvedForSubmission = false;
+        if (agentTaskNeedsSubmission(executableTask) && !agentTaskHasSubmittedChild(executableTask)) {
+            const resolvedTask = resolvePersistedAgentTask(activeRun, executableTask, activeSettings);
+            const resolvedPatch = {
+                model: resolvedTask.model,
+                count: resolvedTask.count,
+                ratio: resolvedTask.ratio,
+                quality: resolvedTask.quality,
+                seconds: resolvedTask.seconds,
+                voice: resolvedTask.voice,
+                format: resolvedTask.format,
+                generateAudio: resolvedTask.generateAudio,
+                watermark: resolvedTask.watermark,
+                speed: resolvedTask.speed,
+            };
+            if (!(await patchTask(runId, task.id, resolvedPatch, "task.resolved", executionId))) return;
+            executableTask = resolvedTask;
+            resolvedForSubmission = true;
+        }
+        const dispatched = await dispatchTask(executableTask, origin, cookie, activeSettings, activeRun, executionId, attempt, resolvedForSubmission);
         const result = dispatched.result;
         validateAgentTaskResult(task.type, result);
         await patchTask(runId, task.id, {}, "task.validated", executionId);
@@ -574,19 +747,51 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         if (error instanceof AgentChildTaskDeferredError) {
             const latest = await getAgentRun(runId);
             const latestTask = latest?.tasks.find((item) => item.id === task.id);
-            if (latestTask && latestTask.error !== error.message && (await canContinue(runId, executionId))) {
-                await patchTask(runId, task.id, { error: error.message }, "task.waiting", executionId);
+            const waitingMessage = latestTask?.childSlots?.find((slot) => slot.status === "failed")?.error || error.message;
+            if (latestTask && latestTask.error !== waitingMessage && (await canContinue(runId, executionId))) {
+                await patchTask(runId, task.id, { error: waitingMessage }, "task.waiting", executionId);
             }
             return "deferred" as const;
         }
         const message = toSafeGenerationErrorMessage(error, "生成任务失败");
         if (await canContinue(runId, executionId)) {
-            const latest = await getAgentRun(runId);
-            const childTasks = latest?.tasks.find((item) => item.id === task.id)?.childTasks?.map((child) => (child.status === "pending" ? { ...child, status: "failed" as const, error: message } : child));
-            await patchTask(runId, task.id, { status: "failed", error: message, ...(childTasks ? { childTasks } : {}) }, "task.failed", executionId);
+            await patchTask(runId, task.id, { status: "failed", error: message }, "task.failed", executionId);
         }
         return "failed" as const;
     }
+}
+
+function resolvePersistedAgentTask(run: AgentRun, task: AgentRunTask, settings: Awaited<ReturnType<typeof getAuthSettings>>) {
+    if (task.type === "text") return task;
+    const models = agentModelOptions(settings);
+    const manual = Boolean(run.requestedModelIds?.length || run.plannerAudit?.mode === "direct");
+    if (manual) {
+        const modelId = task.model?.trim() || "";
+        if (!modelId || (run.requestedModelIds?.length && !run.requestedModelIds.includes(modelId))) throw new Error("已持久化的手动模型身份无效");
+        const resolved = resolveAgentTaskBinding(models, task, modelId, settings.generationDefaults);
+        if (!resolved) throw new Error(`手动选择的模型「${modelId}」当前不可用或不支持已保存的生成参数`);
+        return resolved;
+    }
+    const fallback = task.type === "image" ? settings.defaultModels.imageModel : task.type === "video" ? settings.defaultModels.videoModel : settings.defaultModels.audioModel;
+    const resolved = resolveAgentTaskWithFallback(models, task, fallback, settings.generationDefaults);
+    if (!resolved) throw new Error(`没有兼容已保存生成参数的${task.type === "image" ? "图片" : task.type === "video" ? "视频" : "音频"}模型`);
+    return resolved;
+}
+
+function agentTaskNeedsSubmission(task: AgentRunTask) {
+    const children = normalizeChildTasks(task);
+    return Array.from({ length: agentTaskCopies(task.type, task.count) }).some(
+        (_, index) =>
+            !agentChildAtSlot(
+                children,
+                task.childSlots?.find((slot) => slot.index === index),
+                index,
+            )?.id,
+    );
+}
+
+function agentTaskHasSubmittedChild(task: AgentRunTask) {
+    return normalizeChildTasks(task).some((child) => Boolean(child.id));
 }
 
 export async function resumeDispatchedTask(run: AgentRun, task: AgentRunTask, taskId: string, attempt: number, origin: string, cookie: string, executionId: string) {
@@ -626,13 +831,92 @@ export function taskPath(type: AgentRunTask["type"]) {
     return type === "image" ? "/api/image-tasks" : type === "video" ? "/api/video-tasks" : type === "audio" ? "/api/audio-tasks" : "/api/text-tasks";
 }
 
-export async function dispatchTask(task: AgentRunTask, origin: string, cookie: string, settings: Awaited<ReturnType<typeof getAuthSettings>>, run: AgentRun, executionId: string, attempt: number) {
+export async function dispatchTask(task: AgentRunTask, origin: string, cookie: string, settings: Awaited<ReturnType<typeof getAuthSettings>>, run: AgentRun, executionId: string, attempt: number, resolvedForSubmission = false) {
     const directTextContent = run.surface === "canvas" ? directCanvasTextContent(task) : null;
     if (directTextContent) return { result: { content: directTextContent }, sourceTaskIds: [`direct-${run.id}-${task.id}`] };
-    const model = resolvePlannedModel(settings, task.type, task.model);
-    const resolved = resolveLogicalModel(settings, task.type, model || "");
+    const path = task.type === "image" ? "/api/image-tasks" : task.type === "video" ? "/api/video-generation-tasks" : task.type === "audio" ? "/api/audio-tasks" : "/api/text-tasks";
+    const context = { conversationId: run.conversationId, runId: run.id, surface: run.surface, projectId: run.projectId, parentTaskId: task.id, attemptNo: attempt, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}` };
+    const copies = agentTaskCopies(task.type, task.count);
+    const initialChildren = normalizeChildTasks(task);
+    const childSlots = new Map((task.childSlots || []).map((slot) => [slot.index, slot]));
+    const outcomes = await mapWithConcurrency(copies, settings.generationConcurrency[task.type === "image" ? "image" : task.type === "video" ? "video" : task.type === "audio" ? "audio" : "text"], async (index) => {
+        if (!(await canContinue(run.id, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
+        let slot = childSlots.get(index);
+        let child = agentChildAtSlot(initialChildren, slot, index);
+        let taskId = child?.id;
+        let childTask = slot?.status === "resolved" ? agentTaskWithChildSlot(task, slot) : task;
+        if (!taskId) {
+            if (slot?.status === "failed") throw new AgentChildTaskTerminalError(slot.error || "生成任务缺少可提交的模型配置");
+            if (!slot && !resolvedForSubmission) {
+                try {
+                    childTask = resolvePersistedAgentTask(run, task, settings);
+                } catch (error) {
+                    const message = toSafeGenerationErrorMessage(error, "生成任务缺少可提交的模型配置");
+                    slot = agentChildSlot(index, task, "failed", message);
+                    childSlots.set(index, slot);
+                    await patchTask(run.id, task.id, { childSlots: [slot], error: message }, "task.child.failed", executionId);
+                    throw new AgentChildTaskTerminalError(message);
+                }
+            }
+            if (!slot) {
+                slot = agentChildSlot(index, childTask, "resolved");
+                childSlots.set(index, slot);
+                if (!(await patchTask(run.id, task.id, { childSlots: [slot] }, "task.child.resolved", executionId))) throw new Error("Agent Run 已由新执行器接管");
+            }
+            const body = agentTaskSubmissionBody(childTask, settings, run, context);
+            const bodyForCopy = {
+                ...body,
+                context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
+            };
+            const response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify(bodyForCopy), cache: "no-store" });
+            if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
+            const payload = (await response.json()) as { task?: { id?: string } };
+            const createdTaskId = payload.task?.id;
+            if (!createdTaskId) throw new Error("生成任务未返回任务 ID");
+            taskId = createdTaskId;
+            await linkAgentChildTask(run, task, taskId, attempt);
+            child = { ...agentGenerationSelection(childTask), id: taskId, status: "pending", attempt };
+            slot = { ...slot, taskId };
+            childSlots.set(index, slot);
+            if (!(await patchTask(run.id, task.id, { taskId, taskIds: [taskId], childTasks: [child], childSlots: [slot] }, "task.created", executionId))) throw new Error("Agent Run 已由新执行器接管");
+        }
+        const persistedChild = { ...agentGenerationSelection(childTask), ...child };
+        try {
+            if (child?.status === "completed") {
+                const registered = await registerAgentTaskAssets(run, { ...childTask, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result: child.result }, child.result, [taskId]);
+                const assetIds = registered.map((asset) => asset.id);
+                await patchTask(run.id, task.id, { assetIds }, "task.child.restored", executionId);
+                return { index, result: child.result, taskId, assetIds };
+            }
+            const result = await pollTask(origin, task.type === "video" ? "/api/video-tasks" : path, taskId, cookie, run.id, task.type, executionId);
+            const registered = await registerAgentTaskAssets(run, { ...childTask, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result }, result, [taskId]);
+            const assetIds = registered.map((asset) => asset.id);
+            const completedChild = { ...persistedChild, id: taskId, status: "completed" as const, attempt: child?.attempt || attempt, result };
+            if (!(await patchTask(run.id, task.id, { taskId, taskIds: [taskId], childTasks: [completedChild], assetIds }, "task.child.completed", executionId))) throw new Error("Agent Run 已由新执行器接管");
+            return { index, result, taskId, assetIds };
+        } catch (error) {
+            if (error instanceof AgentChildTaskDeferredError) throw error;
+            const message = toSafeGenerationErrorMessage(error, "生成任务失败");
+            if (taskId) await patchTask(run.id, task.id, { taskIds: [taskId], childTasks: [{ ...persistedChild, id: taskId, status: "failed", attempt: child?.attempt || attempt, error: message }] }, "task.child.failed", executionId);
+            throw error;
+        }
+    });
+    const failed = outcomes.find((outcome) => outcome.status === "rejected" && outcome.reason instanceof AgentChildTaskDeferredError) || outcomes.find((outcome) => outcome.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+    const completed = outcomes.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : [])).sort((left, right) => left.index - right.index);
+    const results = completed.map((outcome) => outcome.result);
+    return {
+        result: results.length === 1 ? results[0] : { results },
+        sourceTaskIds: Array.from(new Set([...(task.taskIds || []), ...completed.map((outcome) => outcome.taskId)])),
+        assetIds: Array.from(new Set([...(task.assetIds || []), ...completed.flatMap((outcome) => outcome.assetIds)])),
+    };
+}
+
+function agentTaskSubmissionBody(task: AgentRunTask, settings: Awaited<ReturnType<typeof getAuthSettings>>, run: AgentRun, context: Record<string, unknown>) {
+    const model = task.model?.trim() || "";
+    const resolved = resolveLogicalModel(settings, task.type, model);
     const channel = resolved?.channel;
-    if (!model || !channel || !resolved) throw new Error(`后台尚未配置可用的默认${task.type === "image" ? "图片" : task.type === "video" ? "视频" : task.type === "audio" ? "音频" : "文本"}模型`);
+    if (!model || !channel || !resolved) throw new Error(`已保存的${task.type === "image" ? "图片" : task.type === "video" ? "视频" : task.type === "audio" ? "音频" : "文本"}模型当前不可用`);
     const config = {
         apiSource: "system",
         baseUrl: `/api/ai/system/${encodeURIComponent(channel.id)}`,
@@ -651,76 +935,23 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
             : {}),
         ...(task.type === "audio" ? { ...(task.voice ? { voice: task.voice } : {}), ...(task.format ? { format: task.format } : {}), ...(task.speed ? { speed: String(task.speed) } : {}) } : {}),
     };
-    const path = task.type === "image" ? "/api/image-tasks" : task.type === "video" ? "/api/video-generation-tasks" : task.type === "audio" ? "/api/audio-tasks" : "/api/text-tasks";
     const references = taskReferences(task);
     const source = run.surface === "canvas" ? "canvas" : run.surface === "drama" ? "drama" : "agent";
-    const context = { conversationId: run.conversationId, runId: run.id, surface: run.surface, projectId: run.projectId, parentTaskId: task.id, attemptNo: attempt, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}` };
-    const body =
-        task.type === "image"
-            ? {
-                  config,
-                  prompt: task.prompt,
-                  source,
-                  title: task.title,
-                  kind: references.length ? "edit" : "generation",
-                  references: references.filter((item) => item.type === "image").map((item) => ({ dataUrl: "", url: item.url })),
-                  context,
-              }
-            : task.type === "video"
-              ? { config, prompt: task.prompt, references: references.map((item) => ({ type: item.type, url: item.url, ...(item.role ? { role: item.role } : {}) })), source, context }
-              : task.type === "audio"
-                ? { config, prompt: task.prompt, source, context }
-                : { config, messages: [{ role: "user", content: task.prompt }] };
-    const copies = agentTaskCopies(task.type, task.count);
-    const initialChildren = normalizeChildTasks(task);
-    const outcomes = await mapWithConcurrency(copies, settings.generationConcurrency[task.type === "image" ? "image" : task.type === "video" ? "video" : task.type === "audio" ? "audio" : "text"], async (index) => {
-        if (!(await canContinue(run.id, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
-        let child = initialChildren[index];
-        let taskId = child?.id;
-        if (!taskId) {
-            const bodyForCopy = {
-                ...body,
-                context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
-            };
-            const response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify(bodyForCopy), cache: "no-store" });
-            if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
-            const payload = (await response.json()) as { task?: { id?: string } };
-            const createdTaskId = payload.task?.id;
-            if (!createdTaskId) throw new Error("生成任务未返回任务 ID");
-            taskId = createdTaskId;
-            await linkAgentChildTask(run, task, taskId, attempt);
-            child = { id: taskId, status: "pending", attempt };
-            if (!(await patchTask(run.id, task.id, { taskId, taskIds: [taskId], childTasks: [child] }, "task.created", executionId))) throw new Error("Agent Run 已由新执行器接管");
-        }
-        try {
-            if (child?.status === "completed") {
-                const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result: child.result }, child.result, [taskId]);
-                const assetIds = registered.map((asset) => asset.id);
-                await patchTask(run.id, task.id, { assetIds }, "task.child.restored", executionId);
-                return { index, result: child.result, taskId, assetIds };
-            }
-            const result = await pollTask(origin, task.type === "video" ? "/api/video-tasks" : path, taskId, cookie, run.id, task.type, executionId);
-            const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result }, result, [taskId]);
-            const assetIds = registered.map((asset) => asset.id);
-            const completedChild = { id: taskId, status: "completed" as const, attempt: child?.attempt || attempt, result };
-            if (!(await patchTask(run.id, task.id, { taskId, taskIds: [taskId], childTasks: [completedChild], assetIds }, "task.child.completed", executionId))) throw new Error("Agent Run 已由新执行器接管");
-            return { index, result, taskId, assetIds };
-        } catch (error) {
-            if (error instanceof AgentChildTaskDeferredError) throw error;
-            const message = toSafeGenerationErrorMessage(error, "生成任务失败");
-            if (taskId) await patchTask(run.id, task.id, { taskIds: [taskId], childTasks: [{ id: taskId, status: "failed", attempt: child?.attempt || attempt, error: message }] }, "task.child.failed", executionId);
-            throw error;
-        }
-    });
-    const failed = outcomes.find((outcome) => outcome.status === "rejected");
-    if (failed?.status === "rejected") throw failed.reason;
-    const completed = outcomes.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : [])).sort((left, right) => left.index - right.index);
-    const results = completed.map((outcome) => outcome.result);
-    return {
-        result: results.length === 1 ? results[0] : { results },
-        sourceTaskIds: Array.from(new Set([...(task.taskIds || []), ...completed.map((outcome) => outcome.taskId)])),
-        assetIds: Array.from(new Set([...(task.assetIds || []), ...completed.flatMap((outcome) => outcome.assetIds)])),
-    };
+    return task.type === "image"
+        ? {
+              config,
+              prompt: task.prompt,
+              source,
+              title: task.title,
+              kind: references.length ? "edit" : "generation",
+              references: references.filter((item) => item.type === "image").map((item) => ({ dataUrl: "", url: item.url })),
+              context,
+          }
+        : task.type === "video"
+          ? { config, prompt: task.prompt, references: references.map((item) => ({ type: item.type, url: item.url, ...(item.role ? { role: item.role } : {}) })), source, context }
+          : task.type === "audio"
+            ? { config, prompt: task.prompt, source, context }
+            : { config, messages: [{ role: "user", content: task.prompt }] };
 }
 
 async function mapWithConcurrency<R>(count: number, concurrency: number, worker: (index: number) => Promise<R>): Promise<Array<PromiseSettledResult<R> & { index: number }>> {
@@ -742,9 +973,38 @@ async function mapWithConcurrency<R>(count: number, concurrency: number, worker:
 }
 
 function normalizeChildTasks(task: AgentRunTask): AgentRunChildTask[] {
-    if (task.childTasks?.length) return task.childTasks;
+    const children = task.childTasks || [];
     const ids = task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : [];
-    return ids.map((id) => ({ id, status: "pending", attempt: Math.max(1, task.attempts) }));
+    if (!ids.length) return children;
+    const byId = new Map(children.map((child) => [child.id, child]));
+    const knownIds = new Set(ids);
+    return [...ids.map((id) => byId.get(id) || { id, status: "pending" as const, attempt: Math.max(1, task.attempts) }), ...children.filter((child) => !knownIds.has(child.id))];
+}
+
+function agentGenerationSelection(value: AgentRunGenerationSelection): AgentRunGenerationSelection {
+    return {
+        ...(value.model ? { model: value.model } : {}),
+        ...(value.ratio ? { ratio: value.ratio } : {}),
+        ...(value.quality ? { quality: value.quality } : {}),
+        ...(value.seconds !== undefined ? { seconds: value.seconds } : {}),
+        ...(value.voice ? { voice: value.voice } : {}),
+        ...(value.format ? { format: value.format } : {}),
+        ...(value.generateAudio !== undefined ? { generateAudio: value.generateAudio } : {}),
+        ...(value.watermark !== undefined ? { watermark: value.watermark } : {}),
+        ...(value.speed !== undefined ? { speed: value.speed } : {}),
+    };
+}
+
+function agentChildSlot(index: number, selection: AgentRunGenerationSelection, status: AgentRunChildSlot["status"], error?: string): AgentRunChildSlot {
+    return { index, status, ...agentGenerationSelection(selection), ...(error ? { error } : {}) };
+}
+
+function agentTaskWithChildSlot(task: AgentRunTask, slot: AgentRunChildSlot): AgentRunTask {
+    return { ...task, ...agentGenerationSelection(slot) };
+}
+
+function agentChildAtSlot(children: AgentRunChildTask[], slot: AgentRunChildSlot | undefined, index: number) {
+    return slot?.taskId ? children.find((child) => child.id === slot.taskId) : children[index];
 }
 
 export function linkAgentChildTask(run: AgentRun, task: AgentRunTask, taskId: string, attempt: number) {

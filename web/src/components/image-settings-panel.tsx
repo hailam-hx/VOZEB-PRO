@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { ConfigProvider, Switch } from "antd";
+import { ConfigProvider } from "antd";
 import { useTranslations } from "next-intl";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
@@ -9,8 +9,6 @@ import { parseImageDimensions } from "@/lib/image-size";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = ["auto", "high", "medium", "low"];
-const DIMENSION_STEP = 16;
-
 const aspectOptions = [
     { value: "1:1", label: "1:1", width: 1024, height: 1024, icon: "square" },
     { value: "3:2", label: "3:2", width: 1536, height: 1024, icon: "landscape" },
@@ -38,10 +36,10 @@ type ImageSettingsPanelProps = {
     showSizeControls?: boolean;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10, showSizeControls = true }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount, quickCount = 4, showSizeControls = true }: ImageSettingsPanelProps) {
     const t = useTranslations("create.sharedSettings");
     const quality = config.quality || "auto";
-    const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const count = positiveInteger(config.count);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -69,12 +67,17 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("generationCount")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {Array.from({ length: quickCount }, (_, index) => index + 1).map((value) => (
-                            <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
-                                {t("imageCount", { count: value })}
-                            </OptionPill>
-                        ))}
-                        <CountInput value={count} max={maxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
+                        <OptionPill selected={count === undefined} theme={theme} onClick={() => onConfigChange("count", "auto")}>
+                            {t("smart")}
+                        </OptionPill>
+                        {Array.from({ length: quickCount }, (_, index) => index + 1)
+                            .filter((value) => maxCount === undefined || value <= maxCount)
+                            .map((value) => (
+                                <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
+                                    {t("imageCount", { count: value })}
+                                </OptionPill>
+                            ))}
+                        <CountInput value={count} max={maxCount} theme={theme} onChange={(value) => onConfigChange("count", value === null ? "auto" : String(value))} />
                     </div>
                 </div>
             </div>
@@ -84,35 +87,24 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
 
 export function ImageSizeControls({ size, onChange, theme, compact = false }: { size: string; onChange: (value: string) => void; theme: CanvasTheme; compact?: boolean }) {
     const t = useTranslations("create.sharedSettings");
-    const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
     const activeSize = size || "auto";
     const selectedAspect = aspectOptions.find((item) => imagePresetSize(item.value) === activeSize || item.value === activeSize);
     const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
-    const updateDimension = (key: "width" | "height", value: number | null, commit = false) => {
-        const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
+    const updateDimension = (key: "width" | "height", value: number | null) => {
+        const next = positiveInteger(value) || dimensions[key];
         const width = key === "width" ? next : dimensions.width;
         const height = key === "height" ? next : dimensions.height;
-        onChange(`${alignDimension(width, commit && snapDimensionToStep)}x${alignDimension(height, commit && snapDimensionToStep)}`);
+        if (positiveInteger(width) && positiveInteger(height)) onChange(`${width}x${height}`);
     };
 
     return (
         <div className="space-y-3">
             <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-3">
-                    <SettingTitle color={theme.node.muted}>{t("size")}</SettingTitle>
-                    <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
-                            {t("alignTo16")}
-                        </span>
-                        <span title={t("alignTo16Hint")} onMouseDown={(event) => event.stopPropagation()}>
-                            <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
-                        </span>
-                    </div>
-                </div>
+                <SettingTitle color={theme.node.muted}>{t("size")}</SettingTitle>
                 <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                    <DimensionInput prefix="W" value={dimensions.width} theme={theme} onChange={(value) => updateDimension("width", value)} onCommit={(value) => updateDimension("width", value, true)} />
+                    <DimensionInput prefix="W" value={dimensions.width} theme={theme} onChange={(value) => updateDimension("width", value)} onCommit={(value) => updateDimension("width", value)} />
                     <span className="text-lg opacity-45">×</span>
-                    <DimensionInput prefix="H" value={dimensions.height} theme={theme} onChange={(value) => updateDimension("height", value)} onCommit={(value) => updateDimension("height", value, true)} />
+                    <DimensionInput prefix="H" value={dimensions.height} theme={theme} onChange={(value) => updateDimension("height", value)} onCommit={(value) => updateDimension("height", value)} />
                 </div>
             </div>
             <div className="space-y-2.5">
@@ -175,7 +167,7 @@ function DimensionInput({ prefix, value, theme, onChange, onCommit }: { prefix: 
         if (document.activeElement !== inputRef.current) setDraft(String(value || ""));
     }, [value]);
     const commit = (input: HTMLInputElement) => {
-        const next = Math.max(1, Math.floor(Number(input.value) || value || 1024));
+        const next = positiveInteger(input.value) || value;
         setDraft(String(next));
         onCommit(next);
     };
@@ -193,8 +185,8 @@ function DimensionInput({ prefix, value, theme, onChange, onCommit }: { prefix: 
                 value={draft}
                 onChange={(event) => {
                     setDraft(event.target.value);
-                    const next = Number(event.target.value);
-                    if (Number.isFinite(next) && next > 0) onChange(next);
+                    const next = positiveInteger(event.target.value);
+                    if (next) onChange(next);
                 }}
                 onBlur={(event) => commit(event.currentTarget)}
                 onKeyDown={(event) => {
@@ -212,7 +204,7 @@ export function imagePresetSize(value: string) {
     return option.size || `${option.width}x${option.height}`;
 }
 
-function CountInput({ value, max, theme, onChange }: { value: number; max: number; theme: CanvasTheme; onChange: (value: number | null) => void }) {
+function CountInput({ value, max, theme, onChange }: { value?: number; max?: number; theme: CanvasTheme; onChange: (value: number | null) => void }) {
     return (
         <label className="col-span-2 flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
             <input
@@ -257,6 +249,7 @@ function readSizeDimensions(size: string, fallback: { width: number; height: num
     };
 }
 
-function alignDimension(value: number, enabled: boolean) {
-    return enabled ? Math.ceil(value / DIMENSION_STEP) * DIMENSION_STEP : value;
+function positiveInteger(value: unknown) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }

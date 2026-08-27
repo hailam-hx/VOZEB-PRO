@@ -8,7 +8,25 @@ import { agentPlannerSystemPrompt, agentPlanReply, buildAgentPlannerInput, conve
 import { getCreativeAssetsByIds, getCreativeConversationContext, listRecentCreativeMediaAssets } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { parseAgentPlanCall, type AgentFunctionCallResult } from "./agent-function-call";
-import { agentModelOptions, agentPlanFallbackExample, agentPlanTool, canContinue, directAgentPlan, executeTasks, normalizeTasks, planToOps, releaseFunctionCall, requestFunctionCall, voidFunctionCall } from "./agent-run-execution";
+import {
+    agentGenerationRequest,
+    agentModelOptions,
+    agentTaskGenerationRequest,
+    agentPlanFallbackExample,
+    agentPlanTool,
+    canContinue,
+    directAgentPlan,
+    executeTasks,
+    filterAgentGenerationModels,
+    normalizeTasks,
+    planToOps,
+    releaseFunctionCall,
+    requestFunctionCall,
+    resolveAgentTaskBinding,
+    resolveAgentTaskWithFallback,
+    validateManualAgentModels,
+    voidFunctionCall,
+} from "./agent-run-execution";
 import { isExplicitProjectHandoffRequest, normalizeAgentProjectHandoff } from "./agent-run-project-handoff";
 import { normalizeCanvasPlanForSelection } from "./agent-run-task-input";
 import { GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
@@ -64,17 +82,27 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             usesMemoryCandidates ? listRecentCreativeMediaAssets(claimed.conversationId, claimed.userId, 6) : Promise.resolve([]),
         ]);
         const explicitAssets = orderCreativeAssetsByIds(loadedExplicitAssets, claimed.referencedAssetIds);
+        const referencedAssets = usesMemoryCandidates ? memoryAssets : explicitAssets;
+        const generationRequest = agentGenerationRequest(
+            claimed.generationPreferences,
+            referencedAssets.map((asset) => asset.type),
+        );
         const allModels = agentModelOptions(settings);
-        const availableModels = prioritizeAgentPlannerModels(filterAgentPlannerModels(allModels, claimed), claimed, settings);
+        const compatibleModels = filterAgentGenerationModels(allModels, generationRequest);
+        const availableModels = prioritizeAgentPlannerModels(filterAgentPlannerModels(compatibleModels, claimed), claimed, settings);
         const skillOptions = plannerAgentSkills(settings, claimed);
         const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds);
         if (!(await canContinue(run.id, executionId))) return;
         if (claimed.requestedModelIds?.length) {
-            const directModelOptions = claimed.generationPreferences?.mode ? availableModels : allModels;
-            const selectedModels = claimed.requestedModelIds.map((id) => directModelOptions.find((item) => item.id === id && item.capability !== "text")).filter((item): item is ReturnType<typeof agentModelOptions>[number] => Boolean(item));
-            if (selectedModels.length !== claimed.requestedModelIds.length) throw new Error("部分所选模型当前不可用，请重新选择");
+            const selectedModels = validateManualAgentModels(allModels, claimed.requestedModelIds, generationRequest);
             const plan = directAgentPlan(selectedModels, claimed.prompt, claimed.referencedAssetIds);
-            const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize, claimed.generationPreferences);
+            const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize, claimed.generationPreferences).map((task) => {
+                if (task.type === "text" || !task.model) return task;
+                const resolved = resolveAgentTaskBinding(allModels, task, task.model, settings.generationDefaults);
+                if (resolved) return resolved;
+                validateManualAgentModels(allModels, [task.model], agentTaskGenerationRequest(task));
+                throw new Error("所选模型不支持当前生成参数");
+            });
             await updateAgentRunById(run.id, {}, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId);
             const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply: plan.reply } } : { type: "run.planned", data: { reply: plan.reply, tasks: tasks.map(taskPlanSummary) } };
             await updateAgentRunById(
@@ -87,7 +115,6 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             await executeTasks(run.id, origin, cookie, executionId, settings);
             return;
         }
-        const referencedAssets = usesMemoryCandidates ? memoryAssets : explicitAssets;
         const referenceSource = claimed.referencedAssetIds.length ? "current-turn-explicit" : usesMemoryCandidates && referencedAssets.length ? "conversation-memory-candidates" : "none";
         const model = settings.defaultModels.textModel;
         const candidates = resolveLogicalModelCandidates(settings, "text", model);
@@ -177,7 +204,15 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             await settleAcceptedPlan();
             return;
         }
-        const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize, claimed.generationPreferences);
+        let tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize, claimed.generationPreferences);
+        tasks = tasks.map((task) => {
+            if (task.type === "text") return task;
+            const fallback = task.type === "image" ? settings.defaultModels.imageModel : task.type === "video" ? settings.defaultModels.videoModel : settings.defaultModels.audioModel;
+            const resolved = resolveAgentTaskWithFallback(allModels, task, fallback, settings.generationDefaults);
+            if (!resolved) throw new Error(`没有兼容当前生成参数的${task.type === "image" ? "图片" : task.type === "video" ? "视频" : "音频"}模型`);
+            return resolved;
+        });
+        plan = { ...plan, deliverables: plan.deliverables.map((deliverable, index) => ({ ...deliverable, ...(tasks[index]?.model ? { model: tasks[index].model } : {}) })) };
         const projectHandoff = normalizeAgentProjectHandoff(plan, claimed.surface, referencedAssets, claimed.prompt);
         const reply = agentPlanReply({ ...plan, projectHandoff }, tasks, claimed.surface);
         const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply } } : { type: "run.planned", data: { reply, tasks: tasks.map(taskPlanSummary), projectHandoff } };

@@ -21,6 +21,7 @@ const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
     logicalModels: [{ id: "writer", name: "Writer", capability: "text", enabled: true, bindings: [{ id: "binding", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1 }] }],
     defaultModels: { textModel: "writer", imageModel: "", videoModel: "", audioModel: "" },
+    generationDefaults: { canvasImageCount: "auto", imageCount: "auto", imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto" },
 };
 
 describe("admin settings model routing", () => {
@@ -101,6 +102,115 @@ describe("admin settings model routing", () => {
         expect(response.status).toBe(200);
         expect(mocks.setAuthSettings).toHaveBeenCalledWith({ generationCostControl });
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: { fields: ["generationCostControl"] } }));
+    });
+
+    it("accepts Auto generation defaults and persists the binding JSON shape immediately", async () => {
+        const response = await PATCH(
+            request({
+                logicalModels: [
+                    {
+                        id: "image",
+                        name: "图片",
+                        capability: "image",
+                        enabled: true,
+                        bindings: [
+                            {
+                                id: "image:one",
+                                channelId: "one",
+                                upstreamModel: "vendor/writer",
+                                enabled: true,
+                                priority: 1,
+                                generationParameters: { aspectRatios: ["1:1"], qualities: ["high"], maxBatchSize: 1, supportsCustomBatchSize: true, customBatchSizeRange: { min: 2, max: 8 } },
+                            },
+                        ],
+                    },
+                ],
+                defaultModels: { ...savedSettings.defaultModels, imageModel: "image" },
+                generationDefaults: { ...savedSettings.generationDefaults, imageSize: "auto", imageQuality: "auto" },
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith(
+            expect.objectContaining({
+                logicalModels: [
+                    expect.objectContaining({
+                        bindings: [expect.objectContaining({ generationParameters: expect.objectContaining({ aspectRatios: ["1:1"], qualities: ["high"], supportsCustomBatchSize: true, customBatchSizeRange: { min: 2, max: 8 } }) })],
+                    }),
+                ],
+                generationDefaults: expect.objectContaining({ imageSize: "auto", imageQuality: "auto" }),
+            }),
+        );
+    });
+
+    it("rejects an explicitly submitted incompatible concrete generation default", async () => {
+        mocks.getFreshAuthSettings.mockResolvedValue({
+            ...savedSettings,
+            logicalModels: [
+                {
+                    id: "image",
+                    name: "图片",
+                    capability: "image",
+                    enabled: true,
+                    bindings: [{ id: "image:one", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1, generationParameters: { aspectRatios: ["1:1"], qualities: ["high"], maxBatchSize: 1 } }],
+                },
+            ],
+            defaultModels: { ...savedSettings.defaultModels, imageModel: "image" },
+        });
+
+        const response = await PATCH(request({ generationDefaults: { ...savedSettings.generationDefaults, imageQuality: "low" } }));
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "默认图片质量不受当前默认图片模型支持" });
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
+    it("rejects invalid raw generation parameters instead of silently normalizing them", async () => {
+        const response = await PATCH(
+            request({
+                logicalModels: [
+                    {
+                        id: "image",
+                        name: "图片",
+                        capability: "image",
+                        enabled: true,
+                        bindings: [{ id: "image:one", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1, generationParameters: { aspectRatios: ["bad-ratio"] } }],
+                    },
+                ],
+            }),
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "支持比例必须使用正数 W:H 格式" });
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
+    it("rejects an enabled custom range capability when its min-max range is missing", async () => {
+        const response = await PATCH(
+            request({
+                logicalModels: [
+                    {
+                        id: "image",
+                        name: "图片",
+                        capability: "image",
+                        enabled: true,
+                        bindings: [{ id: "image:one", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1, generationParameters: { supportsCustomBatchSize: true } }],
+                    },
+                ],
+            }),
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "启用自定义数量时必须配置有效范围" });
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
+    it("rejects a concrete image count when no effective default image profile exists", async () => {
+        const response = await PATCH(request({ generationDefaults: { ...savedSettings.generationDefaults, imageCount: 2 } }));
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "默认图片数量不受当前默认图片模型支持" });
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
     });
 
     it("accepts administrator-configured technical data lifecycle controls", async () => {

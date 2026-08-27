@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_SETTINGS } from "./store-foundation";
+import { normalizeGenerationParameters } from "@/lib/generation-parameters";
 
 const mocks = vi.hoisted(() => ({
     lock: vi.fn(),
@@ -64,5 +65,25 @@ describe("updatePostgresAuthSettings", () => {
         expect(mocks.updateSettings).not.toHaveBeenCalled();
         expect(mocks.upsertSystemModelChannel).toHaveBeenCalledTimes(1);
         expect(mocks.deleteSystemModelChannelsNotIn).toHaveBeenCalledWith(["channel-one"]);
+    });
+
+    it("writes nested generation parameters as a logical-model JSONB patch", async () => {
+        mocks.readSettings.mockResolvedValue({
+            ...structuredClone(DEFAULT_SETTINGS),
+            systemChannels: [{ id: "one", name: "渠道", baseUrl: "https://api.example.com/v1", apiKey: "", apiFormat: "openai", models: ["image"], enabled: true }],
+        });
+        const logicalModels = [
+            {
+                id: "image",
+                name: "图片",
+                capability: "image" as const,
+                enabled: true,
+                bindings: [{ id: "image:one", channelId: "one", upstreamModel: "image", enabled: true, priority: 1, generationParameters: normalizeGenerationParameters({ aspectRatios: ["16:9"], qualities: ["ultra"], maxBatchSize: 2 })! }],
+            },
+        ];
+
+        await updatePostgresAuthSettings({ logicalModels });
+
+        expect(mocks.updateSettings).toHaveBeenCalledWith({ logicalModels: expect.arrayContaining([expect.objectContaining({ bindings: [expect.objectContaining({ generationParameters: expect.objectContaining({ qualities: ["ultra"] }) })] })]) });
     });
 });

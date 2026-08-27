@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import { expect, test } from "@playwright/test";
-import { E2E_ADMIN, e2eSettingsPatch } from "./support";
+import { E2E_ADMIN, e2eModelPricingPatches, e2eSettingsPatch } from "./support";
 
 test.describe.configure({ mode: "serial" });
 
@@ -57,6 +57,10 @@ test("initialization rejects a wrong token and creates the first administrator o
     const settings = await request.patch("/api/admin/settings", { data: e2eSettingsPatch() });
     expect(settings.ok(), await settings.text()).toBe(true);
     expect(await settings.json()).toMatchObject({ settings: { defaultModels: { textModel: "e2e-text", imageModel: "e2e-image", videoModel: "e2e-video", audioModel: "e2e-audio" } } });
+    for (const pricing of e2eModelPricingPatches()) {
+        const response = await request.patch("/api/admin/billing/model-pricing", { data: pricing });
+        expect(response.ok(), await response.text()).toBe(true);
+    }
 
     await page.goto("/install");
     await expect(page).toHaveURL(/\/(?:$|\?)/);

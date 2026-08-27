@@ -21,26 +21,8 @@ export type AgentRunReference = {
     type: "image" | "video" | "audio";
     role?: VideoReferenceRole;
 };
-export type AgentRunChildTask = {
-    id: string;
-    status: "pending" | "completed" | "failed" | "cancelled";
-    attempt: number;
-    result?: unknown;
-    error?: string;
-};
-export type AgentRunTask = {
-    id: string;
-    targetNodeId?: string;
-    referenceAssetId?: string;
-    referenceUrl?: string;
-    referenceType?: "image" | "video" | "audio";
-    references?: AgentRunReference[];
-    title: string;
-    type: "text" | "image" | "video" | "audio";
+export type AgentRunGenerationSelection = {
     model?: string;
-    optimizedPrompt?: string;
-    prompt: string;
-    count: number;
     ratio?: string;
     quality?: string;
     seconds?: number;
@@ -49,12 +31,39 @@ export type AgentRunTask = {
     generateAudio?: boolean;
     watermark?: boolean;
     speed?: number;
+};
+export type AgentRunChildTask = AgentRunGenerationSelection & {
+    id: string;
+    status: "pending" | "completed" | "failed" | "cancelled";
+    attempt: number;
+    result?: unknown;
+    error?: string;
+};
+export type AgentRunChildSlot = AgentRunGenerationSelection & {
+    index: number;
+    taskId?: string;
+    status: "resolved" | "failed";
+    error?: string;
+};
+export type AgentRunTask = AgentRunGenerationSelection & {
+    id: string;
+    targetNodeId?: string;
+    referenceAssetId?: string;
+    referenceUrl?: string;
+    referenceType?: "image" | "video" | "audio";
+    references?: AgentRunReference[];
+    title: string;
+    type: "text" | "image" | "video" | "audio";
+    optimizedPrompt?: string;
+    prompt: string;
+    count: number;
     dependencies: string[];
     status: "ready" | "running" | "completed" | "failed" | "cancelled";
     attempts: number;
     taskId?: string;
     taskIds?: string[];
     childTasks?: AgentRunChildTask[];
+    childSlots?: AgentRunChildSlot[];
     assetIds?: string[];
     result?: unknown;
     error?: string;
@@ -288,13 +297,21 @@ function resolveAgentTaskCountForEvent(task: AgentRunTask) {
 
 function mergeAgentTaskPatch(task: AgentRunTask, patch: Partial<AgentRunTask>): AgentRunTask {
     const childTasks = patch.childTasks ? mergeChildTasks(task.childTasks || [], patch.childTasks) : task.childTasks;
+    const childSlots = patch.childSlots ? mergeChildSlots(task.childSlots || [], patch.childSlots) : task.childSlots;
     return {
         ...task,
         ...patch,
         ...(childTasks ? { childTasks } : {}),
+        ...(childSlots ? { childSlots } : {}),
         ...(patch.taskIds ? { taskIds: Array.from(new Set([...(task.taskIds || []), ...patch.taskIds])) } : {}),
         ...(patch.assetIds ? { assetIds: Array.from(new Set([...(task.assetIds || []), ...patch.assetIds])) } : {}),
     };
+}
+
+function mergeChildSlots(current: AgentRunChildSlot[], incoming: AgentRunChildSlot[]) {
+    const merged = new Map(current.map((slot) => [slot.index, slot]));
+    for (const slot of incoming) merged.set(slot.index, slot);
+    return Array.from(merged.values()).sort((left, right) => left.index - right.index);
 }
 
 function mergeChildTasks(current: AgentRunChildTask[], incoming: AgentRunChildTask[]) {

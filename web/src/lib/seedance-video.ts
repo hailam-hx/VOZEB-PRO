@@ -81,21 +81,24 @@ function isArkPlanBaseUrl(baseUrl: string) {
 
 export function normalizeSeedanceResolution(value: string, model = "") {
     const normalized = normalizeResolutionToken(value);
-    if (isSeedanceFastModel(model) && normalized === "1080p") return "720p";
-    return seedanceResolutionOptions.some((item) => item.value === normalized) ? normalized : "720p";
+    if (!normalized) return "";
+    if (!seedanceResolutionOptions.some((item) => item.value === normalized)) throw new Error(`Seedance 不支持 ${value} 清晰度`);
+    if (isSeedanceFastModel(model) && normalized === "1080p") throw new Error(`${model || "当前 Seedance Fast 模型"} 不支持 1080p 清晰度`);
+    return normalized;
 }
 
 function normalizeResolutionToken(value: string) {
-    if (value === "low") return "480p";
-    if (value === "auto" || value === "high" || value === "medium") return "720p";
-    const resolution = String(value || "").replace(/p$/i, "") || "720";
+    if (!value || value === "auto") return "";
+    const resolution = String(value).replace(/p$/i, "");
     return `${resolution}p`;
 }
 
 export function normalizeSeedanceDuration(value: string) {
     if (String(value).trim() === "-1") return -1;
-    const seconds = Math.floor(Number(value) || 5);
-    return Math.max(4, Math.min(15, seconds));
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds <= 0) throw new Error("Seedance 视频时长无效");
+    if (seconds < 4 || seconds > 15) throw new Error(`Seedance 不支持 ${seconds} 秒时长`);
+    return seconds;
 }
 
 export function normalizeSeedanceRatio(value: string) {
@@ -119,7 +122,7 @@ export function normalizeSeedanceRatio(value: string) {
 }
 
 export function seedancePixelLabel(resolution: string, ratio: string) {
-    const normalizedResolution = normalizeSeedanceResolution(resolution) as keyof typeof seedancePixels;
+    const normalizedResolution = (normalizeSeedanceResolution(resolution) || "720p") as keyof typeof seedancePixels;
     const normalizedRatio = normalizeSeedanceRatio(ratio) as keyof (typeof seedancePixels)[typeof normalizedResolution] | "adaptive";
     if (normalizedRatio === "adaptive") return "adaptive";
     return seedancePixels[normalizedResolution][normalizedRatio] || "";

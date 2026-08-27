@@ -635,6 +635,7 @@ export async function deleteAnnouncement(id: string) {
 export function toPublicPointRecord(record: StoredPointRecord): PublicPointRecord {
     const publicRecord = { ...record };
     delete publicRecord.requestFingerprint;
+    delete publicRecord.operatorUserId;
     return { ...publicRecord, description: displayPointRecordDescription(record) };
 }
 

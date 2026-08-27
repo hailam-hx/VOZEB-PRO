@@ -1,4 +1,6 @@
 import { parseImageDimensions } from "@/lib/image-size";
+import type { LogicalModelGenerationParameters } from "@/lib/auth/store";
+import { generationParametersCompatible } from "@/lib/generation-parameters";
 import type { VideoGenerationReference } from "@/lib/video-reference-contract";
 
 export function resolveVideoGenerationParameters(raw: Record<string, unknown>, defaults: { imageSize: string; videoQuality: string; videoSeconds: number }) {
@@ -22,14 +24,18 @@ export function resolveUpstreamVideoDuration(value: unknown, fallback: number, p
     const requested = resolveVideoDuration(value, fallbackSeconds);
     const durationRange = policy.durationRange?.trim() || "";
     if (requested === -1 && /(?:^|\D)-1(?:\D|$)|智能|auto|adaptive/i.test(durationRange)) return -1;
+    return requested === -1 ? fallbackSeconds : requested;
+}
 
-    const seconds = requested === -1 ? fallbackSeconds : requested;
-    const bounds = parseDurationBounds(durationRange);
-    const min = Math.max(1, positiveInteger(policy.minDurationSeconds) || bounds?.min || 1);
-    const max = Math.max(min, Math.min(3600, positiveInteger(policy.maxDurationSeconds) || bounds?.max || 3600));
-    const options = parseDurationOptions(durationRange).filter((item) => item >= min && item <= max);
-    if (options.length) return options.find((item) => item >= seconds) || options.at(-1)!;
-    return Math.max(min, Math.min(max, seconds));
+export function resolveBindingVideoDuration(value: unknown, fallback: number, parameters: LogicalModelGenerationParameters | undefined) {
+    const requested = Number(value);
+    if (Number.isFinite(requested) && requested > 0) return requested;
+    const defaultSeconds = Number(fallback);
+    if (Number.isFinite(defaultSeconds) && defaultSeconds > 0 && generationParametersCompatible(parameters, { durationSeconds: defaultSeconds }).compatible) return defaultSeconds;
+    if (parameters?.durationMode === "discrete") return parameters.durationSeconds[0];
+    if (parameters?.durationMode === "range") return parameters.durationRange?.min;
+    if (parameters?.supportsCustomDuration) return parameters.customDurationRange?.min;
+    return undefined;
 }
 
 export function normalizeVideoAspectRatio(value: unknown, fallback = "16:9") {
@@ -39,8 +45,7 @@ export function normalizeVideoAspectRatio(value: unknown, fallback = "16:9") {
 export function resolveVideoDuration(value: unknown, fallback: number) {
     const number = Number(value);
     if (number === -1) return -1;
-    const seconds = Number.isFinite(number) && number > 0 ? number : fallback;
-    return Math.max(1, Math.floor(seconds));
+    return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
 export function withVideoReferenceFidelity(prompt: string, references: readonly VideoGenerationReference[]) {
@@ -62,20 +67,6 @@ export function withVideoReferenceFidelity(prompt: string, references: readonly 
 
 function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
-}
-
-function parseDurationBounds(value: string) {
-    const match = value.match(/(\d{1,4})\s*(?:-|~|～|—|至|到)\s*(\d{1,4})/);
-    if (!match) return undefined;
-    const left = Number(match[1]);
-    const right = Number(match[2]);
-    return { min: Math.min(left, right), max: Math.max(left, right) };
-}
-
-function parseDurationOptions(value: string) {
-    if (!value || parseDurationBounds(value)) return [];
-    const options = Array.from(value.matchAll(/\d{1,4}/g), (match) => Number(match[0])).filter((item) => item > 0 && item <= 3600);
-    return Array.from(new Set(options)).sort((left, right) => left - right);
 }
 
 function positiveInteger(value: unknown) {

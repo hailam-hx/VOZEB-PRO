@@ -13,6 +13,7 @@ export type SystemGenerationChannelConfig = {
     logicalModel?: string;
     advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig;
     capabilityProfile?: ReturnType<typeof import("@/lib/model-routing-config").resolveLogicalModelCapabilityProfile>;
+    generationParameters?: import("@/lib/auth/store").LogicalModelGenerationParameters;
     usagePricing?: {
         logicalModelId: string;
         bindingId: string;
@@ -62,6 +63,7 @@ export function toSystemGenerationChannel(resolved: ResolvedLogicalModel): Syste
         logicalModel: resolved.logicalModelId,
         advancedConfig: resolveModelAdvancedConfig(resolved.channel.advancedConfig, resolved.upstreamModel),
         capabilityProfile: resolved.capabilityProfile,
+        generationParameters: resolved.generationParameters,
         usagePricing: {
             logicalModelId: resolved.logicalModelId,
             bindingId: resolved.binding.id,

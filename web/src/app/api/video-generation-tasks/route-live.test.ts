@@ -144,9 +144,9 @@ describe("video creation protocols over a live fixture", () => {
             "",
             config,
             "animate a blue logo",
-            { videoSeconds: 5, size: "16:9", vquality: "720", videoGenerateAudio: true },
+            { videoSeconds: 5.5, size: "16:9", vquality: "720", videoGenerateAudio: false },
             [{ type: "image", url: referenceUrl }],
-            { imageQuality: {}, videoQuality: { "720": 1 }, videoSeconds: { "5": 1 } },
+            { imageQuality: {}, videoQuality: { "720": 1 }, videoSeconds: { "5.5": 1 } },
             "vozeb-video-request-live",
         );
 
@@ -156,7 +156,7 @@ describe("video creation protocols over a live fixture", () => {
         expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toEqual({
             model: config.model,
             prompt: "animate a blue logo",
-            duration: 5,
+            duration: 5.5,
             resolution: "720p",
             metadata: { resolution: "720p" },
             generate_audio: false,

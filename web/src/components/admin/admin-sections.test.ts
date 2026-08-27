@@ -21,4 +21,8 @@ describe("admin sections", () => {
         expect(allowedAdminSections(auditor)).toEqual(["updates", "adminHelp"]);
         expect(resolveAdminSection(auditor, "backup")).toBe("updates");
     });
+
+    it("lets finance readers inspect points while reserving mutations for billing.manage", () => {
+        expect(canAccessAdminSection({ role: "admin", status: "active", adminPermissions: ["billing.read"] }, "points")).toBe(true);
+    });
 });

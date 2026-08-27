@@ -1,8 +1,10 @@
 "use client";
 
-import { Button, Input, InputNumber, Segmented, Tag } from "antd";
+import { Button, Input, Tag } from "antd";
 import { ChevronDown, MessageSquareText, Volume1 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { useEffectiveConfig } from "@/stores/use-config-store";
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
 
 import { useDramaStore } from "../stores/use-drama-store";
 import type { DramaProject, DramaShot } from "../types";
@@ -11,12 +13,17 @@ import { DramaShotAudioModeEditor } from "./drama-shot-audio-mode-editor";
 import { DramaShotContinuityEditor } from "./drama-shot-continuity-editor";
 import { DramaShotDialogueEditor } from "./drama-shot-dialogue-editor";
 import { DramaShotFrameEditor } from "./drama-shot-frame-editor";
+import { DramaDurationField } from "./drama-duration-field";
+import { checkDramaVideoReferenceMode, resolveDramaGenerationCapabilities } from "../drama-generation-capabilities";
 
 const shotFieldClass = "!shadow-none hover:!border-foreground/25 focus:!border-foreground/35 focus:!shadow-none";
 
 export function DramaStoryboardShotCard({ project, episodeId, shot, expanded, onToggle }: { project: DramaProject; episodeId: string; shot: DramaShot; expanded: boolean; onToggle: () => void }) {
     const t = useTranslations("drama.editor.storyboardCard");
     const updateShot = useDramaStore((state) => state.updateShot);
+    const config = useEffectiveConfig();
+    const generationCapabilities = resolveDramaGenerationCapabilities(config);
+    const videoParameters = generationCapabilities.videoParameters;
     const dialogueLines = shot.dialogue
         .split(/\n+/)
         .map((line) => line.trim())
@@ -129,33 +136,42 @@ export function DramaStoryboardShotCard({ project, episodeId, shot, expanded, on
                             </label>
                             <label className="block space-y-1.5">
                                 <span className="text-sm font-medium">{t("videoMode")}</span>
-                                <Segmented
-                                    block
-                                    className="!min-w-0 !w-full [&_.ant-segmented-group]:!min-w-0 [&_.ant-segmented-item]:!min-w-0 [&_.ant-segmented-item-label]:!truncate [&_.ant-segmented-item-label]:!px-1.5 sm:[&_.ant-segmented-item-label]:!px-2"
-                                    value={shot.videoMode || project.defaultVideoMode}
-                                    options={[
-                                        { label: t("videoModes.storyboard"), value: "storyboard" },
-                                        { label: t("videoModes.direct"), value: "direct" },
-                                        { label: t("videoModes.reference"), value: "reference" },
-                                    ]}
-                                    onChange={(value) => updateShot(project.id, episodeId, shot.id, { videoMode: value as DramaProject["defaultVideoMode"] })}
-                                />
+                                <div className="grid grid-cols-3 gap-1" role="group" aria-label={t("videoMode")}>
+                                    {(
+                                        [
+                                            { label: t("videoModes.storyboard"), value: "storyboard", capabilityMode: shot.storyboardFrameMode === "first_last" ? "first_last" : "first_frame" },
+                                            { label: t("videoModes.direct"), value: "direct", capabilityMode: undefined },
+                                            { label: t("videoModes.reference"), value: "reference", capabilityMode: "reference" },
+                                        ] as const
+                                    ).map((option) => {
+                                        const compatibility = option.capabilityMode ? checkDramaVideoReferenceMode(generationCapabilities, option.capabilityMode) : ({ compatible: true } as const);
+                                        const disabled = !compatibility.compatible;
+                                        return (
+                                            <CapabilityControlTooltip key={option.value} reason={disabled ? compatibility.reason : undefined} className="w-full">
+                                                <button
+                                                    type="button"
+                                                    className={`h-8 w-full min-w-0 truncate rounded-md px-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${(shot.videoMode || project.defaultVideoMode) === option.value ? "bg-muted font-medium" : "hover:bg-muted/50"}`}
+                                                    disabled={disabled}
+                                                    aria-disabled={disabled}
+                                                    aria-pressed={(shot.videoMode || project.defaultVideoMode) === option.value}
+                                                    onClick={() => updateShot(project.id, episodeId, shot.id, { videoMode: option.value as DramaProject["defaultVideoMode"] })}
+                                                >
+                                                    {option.label}
+                                                </button>
+                                            </CapabilityControlTooltip>
+                                        );
+                                    })}
+                                </div>
                             </label>
                         </div>
                         {(shot.videoMode || project.defaultVideoMode) === "storyboard" ? <DramaShotFrameEditor projectId={project.id} episodeId={episodeId} shot={shot} /> : null}
                         <DramaShotContinuityEditor projectId={project.id} episodeId={episodeId} shot={shot} />
-                        {shot.storyboardError ? <p className="mt-2 text-xs text-red-500">{t("storyboardFailed")}</p> : null}
-                        {shot.storyboardEndError ? <p className="mt-2 text-xs text-red-500">{t("endFrameFailed")}</p> : null}
+                        {shot.storyboardError ? <p className="mt-2 text-xs text-red-500">{shot.storyboardError}</p> : null}
+                        {shot.storyboardEndError ? <p className="mt-2 text-xs text-red-500">{shot.storyboardEndError}</p> : null}
                         <DramaShotAudioModeEditor projectId={project.id} episodeId={episodeId} shot={shot} />
                         <div className="mt-3.5 flex min-h-9 items-center gap-2.5 text-sm">
                             <span className="whitespace-nowrap">{t("duration")}</span>
-                            <InputNumber
-                                className="!h-9 !w-24 [&.ant-input-number-focused]:!border-foreground/35 [&.ant-input-number-focused]:!shadow-none"
-                                min={1}
-                                max={20}
-                                value={shot.duration}
-                                onChange={(value) => updateShot(project.id, episodeId, shot.id, { duration: Number(value) || 5 })}
-                            />
+                            <DramaDurationField className="w-24" ariaLabel={t("duration")} value={shot.duration} parameters={videoParameters} onChange={(duration) => updateShot(project.id, episodeId, shot.id, { duration })} />
                             <span>{t("seconds")}</span>
                         </div>
                     </div>

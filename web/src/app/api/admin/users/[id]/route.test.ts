@@ -42,15 +42,12 @@ describe("admin user detail route", () => {
         expect(await response.json()).toEqual({ code: 0, data: { ok: true }, msg: "" });
     });
 
-    it("returns a domain conflict in the shared response envelope", async () => {
-        const conflict = Object.assign(new Error("结算余额不能低于当前预留积分"), { status: 409 });
-        mocks.updateUserByAdmin.mockRejectedValueOnce(conflict);
-        mocks.isAuthInputError.mockImplementation((error) => error === conflict);
-
+    it("rejects absolute balance changes outside the points ledger", async () => {
         const response = await PATCH(request("PATCH", { settledBalance: "1" }), context());
 
-        expect(response.status).toBe(409);
-        expect(await response.json()).toEqual({ code: 409, data: null, msg: "结算余额不能低于当前预留积分" });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ code: 400, data: null, msg: "请前往积分账务按增加或扣减调整余额" });
+        expect(mocks.updateUserByAdmin).not.toHaveBeenCalled();
     });
 });
 

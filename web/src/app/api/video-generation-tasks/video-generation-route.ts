@@ -11,10 +11,10 @@ import { buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcPreset } from "@/lib/gl
 import { createVideoTask, transitionVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
-import { normalizeVideoAspectRatio, resolveUpstreamVideoDuration, resolveVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "@/lib/server/video-task-config";
+import { normalizeVideoAspectRatio, resolveVideoDuration, withVideoReferenceFidelity } from "@/lib/server/video-task-config";
 import { parseImageDimensions } from "@/lib/image-size";
 import { signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
-import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
+import { resolveVideoGenerationCandidates } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { mediaTaskSource } from "@/lib/media-management-contract";
@@ -23,7 +23,7 @@ import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl } from "@/lib/server/video-provider-response";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
-import { assertGeminiVideoReferences, buildGeminiVideoRequest, geminiVideoCreatePath, normalizeGeminiVideoDuration, parseGeminiVideoCreateResponse } from "@/lib/server/gemini-video-provider";
+import { assertGeminiVideoReferences, buildGeminiVideoRequest, geminiVideoCreatePath, parseGeminiVideoCreateResponse } from "@/lib/server/gemini-video-provider";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
@@ -63,9 +63,9 @@ export async function POST(request: Request) {
     const settings = await getAuthSettings();
     const response = await withGenerationConcurrencyLimit(user.id, "video", 30 * 60_000, settings.generationConcurrency.video, async () => {
         const requestedModel = typeof body.config?.model === "string" && body.config.model.trim() ? body.config.model : settings.defaultModels.videoModel;
-        const channels = resolveLogicalModelCandidates(settings, "video", requestedModel).map(toSystemGenerationChannel);
+        const routedChannels = resolveLogicalModelCandidates(settings, "video", requestedModel).map(toSystemGenerationChannel);
         const prompt = String(body.prompt || "").trim();
-        if (!channels.length || !prompt) return NextResponse.json({ error: "视频任务参数不完整或渠道不支持" }, { status: 400 });
+        if (!routedChannels.length || !prompt) return NextResponse.json({ error: "视频任务参数不完整或渠道不支持" }, { status: 400 });
         const publicOrigin = requestPublicOrigin(request);
         let references: VideoGenerationReference[];
         try {
@@ -73,10 +73,12 @@ export async function POST(request: Request) {
         } catch (error) {
             return NextResponse.json({ error: error instanceof Error ? error.message : "视频参考素材不正确" }, { status: 400 });
         }
+        const capability = resolveVideoGenerationCandidates(routedChannels, body.config || {}, settings.generationDefaults, references);
+        if (!capability.candidates.length) return NextResponse.json({ error: capability.error?.message || "当前模型不支持所选生成参数" }, { status: 400 });
+        const channels = capability.candidates;
         const providerPrompt = withVideoReferenceFidelity(prompt, references);
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = requestRuntimeCredential(request, user.id);
-        const requestedParameters = resolveVideoGenerationParameters(body.config || {}, settings.generationDefaults);
         const billingRequestId = clean(body.context?.clientRequestId) || clean(request.headers.get("x-vozeb-pro-client-request-id")) || `video-request:${user.id}:${Date.now()}`;
         let lastError: unknown;
         let capabilityError: unknown;
@@ -84,24 +86,9 @@ export async function POST(request: Request) {
         let localTask: VideoTask | undefined;
         for (let index = 0; index < channels.length; index += 1) {
             const channel = channels[index];
+            const parameters = { ...body.config, size: channel.size, vquality: channel.vquality, videoSeconds: channel.videoSeconds };
             const geminiVideo = isGeminiVideoChannel(channel);
-            const parameters = {
-                ...requestedParameters,
-                videoSeconds: geminiVideo
-                    ? normalizeGeminiVideoDuration(requestedParameters.videoSeconds)
-                    : resolveUpstreamVideoDuration(requestedParameters.videoSeconds, settings.generationDefaults.videoSeconds, {
-                          durationRange: channel.advancedConfig?.durationRange,
-                          minDurationSeconds: channel.capabilityProfile?.minDurationSeconds,
-                          maxDurationSeconds: channel.capabilityProfile?.maxDurationSeconds,
-                      }),
-            };
             try {
-                assertCapabilityConstraints(channel.capabilityProfile, {
-                    capability: "video",
-                    referenceCount: references.filter((reference) => reference.type === "image").length,
-                    durationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
-                    aspectRatio: normalizeVideoAspectRatio(parameters.size),
-                });
                 const globalPreset = globalAiOpcVideoPreset(channel.advancedConfig, channel.model);
                 if (geminiVideo) {
                     assertGeminiVideoReferences(references);
@@ -122,6 +109,7 @@ export async function POST(request: Request) {
                     if (channel.advancedConfig?.protocol === "yumeng") assertYumengVideoReferences(channel.model, references);
                     assertReferenceUrls(channel.advancedConfig, references, Boolean(globalPreset));
                 }
+                assertProviderVideoParameters(channel, prompt, parameters, references);
             } catch (error) {
                 capabilityError = error;
                 continue;
@@ -209,6 +197,57 @@ export async function POST(request: Request) {
     return response || NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429 });
 }
 
+function assertProviderVideoParameters(channel: NonNullable<ReturnType<typeof toSystemGenerationChannel>>, prompt: string, raw: Record<string, unknown>, references: VideoGenerationReference[]) {
+    const regularReferences = regularVideoReferences(references);
+    const { firstFrame, lastFrame } = videoFrameReferences(references);
+    const images = referenceUrls(regularReferences, "image");
+    const videos = referenceUrls(regularReferences, "video");
+    const audios = referenceUrls(regularReferences, "audio");
+    const input = {
+        duration: upstreamDuration(raw.videoSeconds),
+        ratio: upstreamRatio(raw.size),
+        resolution: upstreamResolution(raw.vquality),
+        generateAudio: optionalBoolean(raw.videoGenerateAudio),
+        watermark: optionalBoolean(raw.videoWatermark),
+    };
+    if (channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data")) assertMultipartVideoParameters(raw);
+    if (channel.advancedConfig?.protocol === "vozeb-recommended") {
+        buildVozebRecommendedVideoRequest({ model: channel.model, prompt, duration: input.duration, aspectRatio: input.ratio, resolution: input.resolution, generateAudio: input.generateAudio, images, videos, audios });
+    }
+    if (channel.advancedConfig?.protocol === "seedance-special") {
+        buildSeedanceSpecialRequest({ model: channel.model, prompt, duration: input.duration, ratio: input.ratio, generateAudio: input.generateAudio, references });
+    }
+    if (channel.advancedConfig?.protocol === "yumeng") {
+        buildYumengVideoRequest({
+            model: channel.model,
+            prompt,
+            duration: input.duration,
+            aspectRatio: input.ratio,
+            resolution: input.resolution,
+            generateAudio: input.generateAudio,
+            watermark: input.watermark,
+            images,
+            videos,
+            audios,
+            firstFrame: firstFrame?.url,
+            lastFrame: lastFrame?.url,
+        });
+    }
+}
+
+function assertMultipartVideoParameters(raw: Record<string, unknown>) {
+    const size = clean(raw.size);
+    const exact = parseImageDimensions(size);
+    const ratio = upstreamRatio(size);
+    const resolution = upstreamResolution(raw.vquality);
+    if (exact) {
+        if (resolution && Math.min(exact.width, exact.height) !== Number(resolution.replace("p", ""))) throw new Error("OpenAI multipart 的精确尺寸与清晰度无法无损映射");
+        return;
+    }
+    if (ratio && !resolution) throw new Error("OpenAI multipart 的具体比例需要可解析的具体清晰度");
+    if (resolution && !ratio) throw new Error("OpenAI multipart 的具体清晰度需要可解析的比例或精确尺寸");
+}
+
 export async function createUpstream(
     userId: string,
     origin: string,
@@ -233,22 +272,23 @@ export async function createUpstream(
     const firstFrameUrl = firstFrame?.url || "";
     const lastFrameUrl = lastFrame?.url || "";
     const dimensions = videoDimensions(raw.size, raw.vquality);
-    const generateAudio = raw.videoGenerateAudio !== false && raw.videoGenerateAudio !== "false";
+    const generateAudio = optionalBoolean(raw.videoGenerateAudio);
+    const watermark = optionalBoolean(raw.videoWatermark);
     if (isGeminiVideoChannel(channel)) {
         return createGeminiVideoUpstream({ userId, origin, cookie, channel, prompt, raw, references, generateAudio, multipliers, billingRequestId, taskId, attemptNumber });
     }
     const values = {
         model: channel.model,
         prompt,
-        duration: duration(raw.videoSeconds),
-        seconds: duration(raw.videoSeconds),
-        ratio: ratio(raw.size),
-        aspect_ratio: ratio(raw.size),
-        size: sizeValue(raw.size),
-        resolution: resolution(raw.vquality),
-        quality: resolution(raw.vquality),
-        width: dimensions.width,
-        height: dimensions.height,
+        duration: upstreamDuration(raw.videoSeconds),
+        seconds: upstreamDuration(raw.videoSeconds),
+        ratio: upstreamRatio(raw.size),
+        aspect_ratio: upstreamRatio(raw.size),
+        size: upstreamSize(raw.size),
+        resolution: upstreamResolution(raw.vquality),
+        quality: upstreamResolution(raw.vquality),
+        width: dimensions?.width,
+        height: dimensions?.height,
         generate_audio: generateAudio,
         images: requestImages,
         videos,
@@ -266,14 +306,11 @@ export async function createUpstream(
     const defaults = {
         model: channel.model,
         prompt,
-        duration: values.duration,
-        seconds: values.seconds,
-        ratio: values.ratio,
-        aspect_ratio: values.aspect_ratio,
-        resolution: values.resolution,
-        quality: values.quality,
-        generate_audio: generateAudio,
-        watermark: raw.videoWatermark === "true",
+        ...(values.duration !== undefined ? { duration: values.duration, seconds: values.seconds } : {}),
+        ...(values.ratio ? { ratio: values.ratio, aspect_ratio: values.aspect_ratio } : {}),
+        ...(values.resolution ? { resolution: values.resolution, quality: values.quality } : {}),
+        ...(generateAudio !== undefined ? { generate_audio: generateAudio } : {}),
+        ...(watermark !== undefined ? { watermark } : {}),
         ...(requestImage ? { image: requestImage } : {}),
         ...(requestImages.length ? { images: requestImages, image_urls: requestImages, reference_images: requestImages } : {}),
         ...(videos.length ? { video: videos[0], videos, reference_videos: videos } : {}),
@@ -302,8 +339,8 @@ export async function createUpstream(
             ? buildSeedanceSpecialRequest({
                   model: channel.model,
                   prompt,
-                  duration: values.duration === -1 ? 5 : (values.duration as number),
-                  ratio: values.ratio as string,
+                  duration: values.duration as number | undefined,
+                  ratio: values.ratio as string | undefined,
                   generateAudio,
                   references,
               })
@@ -315,7 +352,7 @@ export async function createUpstream(
                     aspectRatio: values.aspect_ratio as string,
                     resolution: values.resolution as string,
                     generateAudio,
-                    watermark: raw.videoWatermark === "true",
+                    watermark,
                     images: requestImages,
                     videos,
                     audios,
@@ -338,7 +375,7 @@ export async function createUpstream(
                   })
                 : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
     const requestBody = multipart
-        ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: firstFrameUrl ? [firstFrameUrl] : images, origin, cookie })
+        ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number | undefined, width: dimensions?.width, height: dimensions?.height, imageUrls: firstFrameUrl ? [firstFrameUrl] : images, origin, cookie })
         : JSON.stringify(payload);
     const imageToVideoPath = images.length || firstFrameUrl ? channel.advancedConfig?.imageToVideoPath?.trim() : "";
     const createPaths = globalPreset ? [globalPreset.createPath] : imageToVideoPath ? [imageToVideoPath] : resolvedProviderCreatePaths(channel.advancedConfig, "video", CREATE_PATHS);
@@ -409,7 +446,7 @@ async function createGeminiVideoUpstream(input: {
     prompt: string;
     raw: Record<string, unknown>;
     references: VideoGenerationReference[];
-    generateAudio: boolean;
+    generateAudio?: boolean;
     multipliers: Awaited<ReturnType<typeof getAuthSettings>>["generationPointMultipliers"];
     billingRequestId: string;
     taskId?: string;
@@ -496,24 +533,47 @@ function publicTask(task: VideoTask) {
 function duration(value: unknown) {
     return resolveVideoDuration(value, 5);
 }
+function upstreamDuration(value: unknown) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : undefined;
+}
 function ratio(value: unknown) {
     return normalizeVideoAspectRatio(value);
+}
+function upstreamRatio(value: unknown) {
+    const text = clean(value);
+    return text && text.toLowerCase() !== "auto" ? normalizeVideoAspectRatio(text, "") : undefined;
 }
 function resolution(value: unknown) {
     const text = clean(value).replace(/p$/i, "");
     return text === "480" || text === "1080" ? `${text}p` : "720p";
 }
+function upstreamResolution(value: unknown) {
+    const text = clean(value).replace(/p$/i, "");
+    return text && text.toLowerCase() !== "auto" ? `${text}p` : undefined;
+}
 function videoDimensions(size: unknown, quality: unknown) {
     const exact = parseImageDimensions(String(size || ""));
     if (exact) return exact;
-    const [x, y] = ratio(size).split(":").map(Number);
-    const edge = Number(resolution(quality).replace("p", "")) || 720;
-    if (!x || !y) return { width: 1280, height: 720 };
+    const [x, y] = (upstreamRatio(size) || "").split(":").map(Number);
+    const edge = Number((upstreamResolution(quality) || "").replace("p", ""));
+    if (!x || !y || !edge) return undefined;
     return x >= y ? { width: Math.round((edge * x) / y), height: edge } : { width: edge, height: Math.round((edge * y) / x) };
 }
 function sizeValue(value: unknown) {
     const text = clean(value);
     return parseImageDimensions(text) ? text.replace(/\s+/g, "") : ratio(value);
+}
+function upstreamSize(value: unknown) {
+    const text = clean(value);
+    if (!text || text.toLowerCase() === "auto") return undefined;
+    return parseImageDimensions(text) ? text.replace(/\s+/g, "") : upstreamRatio(text);
+}
+function optionalBoolean(value: unknown) {
+    if (typeof value === "boolean") return value;
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return undefined;
 }
 function billedPointsCost(value: unknown) {
     if (value === null || value === undefined || value === "") return undefined;

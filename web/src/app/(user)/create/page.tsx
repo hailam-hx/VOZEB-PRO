@@ -7,9 +7,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { CREATIVE_UPLOAD_ACCEPT, CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
+import { CREATIVE_UPLOAD_MAX_BYTES, CREATIVE_UPLOAD_MIME_TYPES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { CreateOverviewAsset } from "@/lib/create-workbench-overview";
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences, CreativeMessage } from "@/lib/creative-runtime-contract";
+import { creativeReferenceAdditionAvailability, creativeReferenceCapabilityViolation, creativeReferenceInputFromMimeType, resolveCreativeGenerationCapability } from "@/lib/creative-generation-capabilities";
+import type { CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
 import { cn } from "@/lib/utils";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
@@ -80,6 +82,14 @@ export default function CreatePage() {
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
     const modelOptions = useCreativeAgentModels();
     const selectedModels = modelOptions.filter((model) => selectedModelIds.includes(model.id));
+    const activeGenerationCapability = creationMode === "agent" ? generationPreferences.mode || selectedModels.at(-1)?.capability || "image" : creationMode;
+    const referenceCapabilityState = resolveCreativeGenerationCapability({ models: modelOptions, selectedModels, capability: activeGenerationCapability, smartPlanning });
+    const referenceUploadAccept = CREATIVE_UPLOAD_MIME_TYPES.filter((mimeType) => {
+        const type = creativeReferenceInputFromMimeType(mimeType);
+        return type ? creativeReferenceAdditionAvailability(referenceCapabilityState, agent.selectedAssets, type).supported : false;
+    }).join(",");
+    const referenceCapabilityMessage = (reason: typeof referenceCapabilityState.reason, maxReferenceImages?: number) =>
+        maxReferenceImages ? t(reason === "intersection" ? "generationReferenceImageIntersectionLimit" : "generationReferenceImageLimit", { count: maxReferenceImages }) : t(capabilityReasonMessageKeys[reason]);
     const updatePrompt = useCallback((value: string) => {
         promptValueRef.current = value;
         promptRevisionRef.current += 1;
@@ -190,6 +200,11 @@ export default function CreatePage() {
             message.warning(t("selectModelOrSmart"));
             return;
         }
+        const referenceViolation = creativeReferenceCapabilityViolation(referenceCapabilityState, agent.selectedAssets);
+        if (referenceViolation) {
+            message.warning(referenceCapabilityMessage(referenceViolation.reason, referenceViolation.maxReferenceImages));
+            return;
+        }
         const videoPreference = generationPreferences.video;
         const videoFrameModeActive = shouldShowVideoFrameControls(creationMode, generationPreferences);
         if (videoFrameModeActive && videoPreference?.referenceMode === "first_frame" && !videoPreference.firstFrameAssetId) {
@@ -249,6 +264,17 @@ export default function CreatePage() {
         if (oversized) {
             message.error(t("fileTooLarge", { name: oversized.name }));
             return [] as CreativeAsset[];
+        }
+        const projectedAssets = [...agent.selectedAssets];
+        for (const [index, file] of files.entries()) {
+            const type = creativeReferenceInputFromMimeType(file.type);
+            if (!type) continue;
+            const availability = creativeReferenceAdditionAvailability(referenceCapabilityState, projectedAssets, type);
+            if (!availability.supported) {
+                message.warning(referenceCapabilityMessage(availability.reason, "maxReferenceImages" in availability ? availability.maxReferenceImages : undefined));
+                return [] as CreativeAsset[];
+            }
+            projectedAssets.push({ id: `pending-${index}`, type } as CreativeAsset);
         }
         try {
             const items = await agent.uploadAttachments(files);
@@ -334,7 +360,8 @@ export default function CreatePage() {
             const automaticPreferences = { ...current };
             delete automaticPreferences.mode;
             const next: CreativeGenerationPreferences = mode === "agent" ? automaticPreferences : { ...current, mode };
-            if (mode === "video" || !next.video) return next;
+            if (mode === "video") return applyAgentGenerationCapability("video", "video", next);
+            if (!next.video) return next;
             return { ...next, video: { ...next.video, referenceMode: "reference", firstFrameAssetId: undefined, lastFrameAssetId: undefined } };
         });
         if (mode === "agent") {
@@ -348,24 +375,39 @@ export default function CreatePage() {
 
     const changeGenerationCapability = (capability: CreativeGenerationMode) => {
         setGenerationPreferences((current) => {
-            const next = { ...current, mode: capability };
+            const next = applyAgentGenerationCapability("agent", capability, current);
             if (capability === "video" || !current.video) return next;
             return { ...next, video: { ...current.video, referenceMode: "reference", firstFrameAssetId: undefined, lastFrameAssetId: undefined } };
         });
     };
 
-    const changeGenerationPreference = (capability: "image" | "video" | "audio", patch: Record<string, string | number | boolean>) => {
+    const changeGenerationPreference = (capability: "image" | "video" | "audio", patch: CreativeGenerationPreferencePatch) => {
         setGenerationPreferences((current) => {
             const activePreferences = applyAgentGenerationCapability(creationMode, capability, current);
-            if (capability !== "video") return { ...activePreferences, [capability]: { ...activePreferences[capability], ...patch } };
-            const nextVideo = { ...activePreferences.video, ...patch };
+            const nextCapability = { ...activePreferences[capability], ...patch } as Record<string, unknown>;
+            for (const [key, value] of Object.entries(patch)) if (value === undefined || value === "auto") delete nextCapability[key];
+            if (capability !== "video") {
+                const next = { ...activePreferences };
+                if (Object.keys(nextCapability).length) next[capability] = nextCapability;
+                else delete next[capability];
+                return next as CreativeGenerationPreferences;
+            }
+            const nextVideo = nextCapability as NonNullable<CreativeGenerationPreferences["video"]>;
+            if ("referenceMode" in patch && patch.referenceMode === undefined) return { ...activePreferences, video: { ...nextVideo, firstFrameAssetId: undefined, lastFrameAssetId: undefined } };
             if (patch.referenceMode === "reference") return { ...activePreferences, video: { ...nextVideo, firstFrameAssetId: undefined, lastFrameAssetId: undefined } };
             if (patch.referenceMode === "first_frame") return { ...activePreferences, video: { ...nextVideo, lastFrameAssetId: undefined } };
             return { ...activePreferences, video: nextVideo };
         });
     };
 
+    const replaceGenerationPreferences = useCallback((preferences: CreativeGenerationPreferences) => setGenerationPreferences(preferences), []);
+
     const selectVideoFrame = (role: FrameRole, assetId: string) => {
+        const referenceViolation = creativeReferenceCapabilityViolation(referenceCapabilityState, agent.selectedAssets);
+        if (referenceViolation) {
+            message.warning(referenceCapabilityMessage(referenceViolation.reason, referenceViolation.maxReferenceImages));
+            return;
+        }
         const otherId = role === "first_frame" ? generationPreferences.video?.lastFrameAssetId : generationPreferences.video?.firstFrameAssetId;
         if (otherId === assetId) {
             message.warning(t("sameVideoFrames"));
@@ -420,6 +462,16 @@ export default function CreatePage() {
 
     const toggleReferencedAsset = (id: string) => {
         const currentAssetIds = agent.selectedAssetIds;
+        if (!currentAssetIds.includes(id)) {
+            const asset = agent.assets.find((item) => item.id === id);
+            if (asset && asset.type !== "text") {
+                const availability = creativeReferenceAdditionAvailability(referenceCapabilityState, agent.selectedAssets, asset.type);
+                if (!availability.supported) {
+                    message.warning(referenceCapabilityMessage(availability.reason, "maxReferenceImages" in availability ? availability.maxReferenceImages : undefined));
+                    return;
+                }
+            }
+        }
         const nextAssetIds = currentAssetIds.includes(id) ? currentAssetIds.filter((assetId) => assetId !== id) : [...currentAssetIds, id];
         const nextPrompt = remapCreativeAssetReferences(promptValueRef.current, [...agent.assets, ...agent.selectedAssets], currentAssetIds, nextAssetIds);
         agent.toggleAsset(id);
@@ -484,6 +536,7 @@ export default function CreatePage() {
             smartPlanning={smartPlanning}
             creationMode={creationMode}
             generationPreferences={generationPreferences}
+            referenceCapabilityState={referenceCapabilityState}
             uploading={agent.uploading}
             compact={composerCompact}
             onExpand={() => {
@@ -507,6 +560,7 @@ export default function CreatePage() {
             onChangeCreationMode={changeCreationMode}
             onChangeGenerationCapability={changeGenerationCapability}
             onChangeGenerationPreference={changeGenerationPreference}
+            onReplaceGenerationPreferences={replaceGenerationPreferences}
             onSelectVideoFrame={selectVideoFrame}
             onUploadVideoFrame={(role) => {
                 frameUploadRoleRef.current = role;
@@ -517,7 +571,18 @@ export default function CreatePage() {
             onPasteImages={(files) => void uploadAttachments(files)}
             referenceAssets={agent.assets}
             selectedAssetIds={agent.selectedAssetIds}
-            onReferenceAsset={agent.selectAsset}
+            onReferenceAsset={(id) => {
+                if (agent.selectedAssetIds.includes(id)) return;
+                const asset = agent.assets.find((item) => item.id === id);
+                if (asset && asset.type !== "text") {
+                    const availability = creativeReferenceAdditionAvailability(referenceCapabilityState, agent.selectedAssets, asset.type);
+                    if (!availability.supported) {
+                        message.warning(referenceCapabilityMessage(availability.reason, "maxReferenceImages" in availability ? availability.maxReferenceImages : undefined));
+                        return;
+                    }
+                }
+                agent.selectAsset(id);
+            }}
         />
     );
 
@@ -704,6 +769,8 @@ export default function CreatePage() {
                     conversationId={agent.conversationId}
                     assets={agent.assets}
                     selectedAssetIds={agent.selectedAssetIds}
+                    referenceCapabilityState={referenceCapabilityState}
+                    selectedReferenceAssets={agent.selectedAssets}
                     onToggleAsset={toggleReferencedAsset}
                     onUsePrompt={(value) => {
                         updatePrompt(value);
@@ -717,7 +784,7 @@ export default function CreatePage() {
                 ref={attachmentInputRef}
                 type="file"
                 multiple
-                accept={CREATIVE_UPLOAD_ACCEPT}
+                accept={referenceUploadAccept}
                 className="hidden"
                 onChange={(event) => {
                     const files = Array.from(event.target.files || []);
@@ -758,3 +825,9 @@ function skillVisual(skill: AgentSkillSummary, index: number) {
 }
 
 type FrameRole = Extract<VideoReferenceRole, "first_frame" | "last_frame">;
+
+const capabilityReasonMessageKeys = {
+    unconfigured: "generationCapabilityUnconfigured",
+    unsupported: "generationCapabilityUnsupported",
+    intersection: "generationCapabilityIntersection",
+} as const;

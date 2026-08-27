@@ -369,6 +369,7 @@ export function mapPostgresPointRecord(row: Record<string, unknown>): StoredPoin
     return {
         id: dbText(row.id),
         userId: dbText(row.user_id),
+        operatorUserId: dbOptionalText(row.operator_user_id),
         type: row.type === "consume" || row.type === "refund" || row.type === "credit" ? row.type : "admin-adjust",
         amount: dbText(row.amount),
         balanceAfter: dbText(row.balance_after),
@@ -672,10 +673,11 @@ export async function insertPostgresQuotaUsage(db: QueryExecutor, quotaUsage: St
 export async function insertPostgresPointRecords(db: QueryExecutor, records: StoredPointRecord[]) {
     for (const record of records) {
         await db.query(
-            `INSERT INTO point_records (id, user_id, type, amount, balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, created_at)
-             VALUES ($1, $2, $3, $4::numeric, $5::numeric, $6, $7, $8, $9, $10, $11)
+            `INSERT INTO point_records (id, user_id, operator_user_id, type, amount, balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, created_at)
+             VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7, $8, $9, $10, $11, $12)
              ON CONFLICT (id) DO UPDATE SET
                 user_id = EXCLUDED.user_id,
+                operator_user_id = EXCLUDED.operator_user_id,
                 type = EXCLUDED.type,
                 amount = EXCLUDED.amount,
                 balance_after = EXCLUDED.balance_after,
@@ -685,7 +687,20 @@ export async function insertPostgresPointRecords(db: QueryExecutor, records: Sto
                 request_fingerprint = EXCLUDED.request_fingerprint,
                 source_record_id = EXCLUDED.source_record_id,
                 created_at = EXCLUDED.created_at`,
-            [record.id, record.userId, record.type, record.amount, record.balanceAfter, record.description, record.model || null, record.idempotencyKey || null, record.requestFingerprint || null, record.sourceRecordId || null, record.createdAt],
+            [
+                record.id,
+                record.userId,
+                record.operatorUserId || null,
+                record.type,
+                record.amount,
+                record.balanceAfter,
+                record.description,
+                record.model || null,
+                record.idempotencyKey || null,
+                record.requestFingerprint || null,
+                record.sourceRecordId || null,
+                record.createdAt,
+            ],
         );
     }
 }

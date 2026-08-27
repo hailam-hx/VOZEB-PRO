@@ -401,13 +401,13 @@ test("creative composer controls return to a neutral palette after selection", a
 
         await expect.poll(() => readPalette(selectedModeTrigger)).toEqual(neutralPalette);
 
-        const preferenceTrigger = page.getByRole("button", { name: "生成参数：智能参数 · 5秒" });
+        const preferenceTrigger = page.getByRole("button", { name: "生成参数：智能参数" });
         const preferencePopover = page.locator(".ant-popover").last();
         await openComposerPopover(preferenceTrigger, preferencePopover);
         await expect.poll(() => readPalette(preferenceTrigger)).not.toEqual(neutralPalette);
         await preferencePopover.getByRole("tab", { name: "输出" }).click();
-        const configuredPreferenceTrigger = page.getByRole("button", { name: "生成参数：智能参数 · 10秒" });
-        await selectComposerPopoverOption(preferenceTrigger, preferencePopover, preferencePopover.getByRole("button", { name: "输入视频时长 10 秒" }), () => expect(configuredPreferenceTrigger).toBeVisible());
+        const configuredPreferenceTrigger = page.getByRole("button", { name: "生成参数：15秒" });
+        await selectComposerPopoverOption(preferenceTrigger, preferencePopover, preferencePopover.getByRole("button", { name: "输入视频时长 15 秒" }), () => expect(configuredPreferenceTrigger).toBeVisible());
         await page.keyboard.press("Escape");
         await expect(preferencePopover).toBeHidden();
 
@@ -422,6 +422,49 @@ test("creative composer controls return to a neutral palette after selection", a
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.locator("html")).toHaveClass(/dark/);
     await verifyNeutralControls("creative composer neutral controls dark");
+});
+
+test("creative composer displays the shared PAYG estimate before submission", async ({ page }) => {
+    await page.route(/\/api\/auth\/session$/, async (route) => {
+        const response = await route.fetch();
+        const payload = (await response.json()) as { settings?: { logicalModels?: Array<Record<string, unknown>> } };
+        const models = payload.settings?.logicalModels || [];
+        const current = models.find((model) => model.id === "e2e-image");
+        const priced = {
+            ...(current || {
+                id: "e2e-image",
+                name: "E2E 图片模型",
+                capability: "image",
+                enabled: true,
+                bindings: [{ id: "e2e-image-primary", channelId: "e2e-primary", upstreamModel: "e2e-image", enabled: true, priority: 1 }],
+            }),
+            saleRateCard: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "2.5" }] },
+        };
+        if (payload.settings) payload.settings.logicalModels = [...models.filter((model) => model.id !== "e2e-image"), priced];
+        await route.fulfill({ response, json: payload });
+    });
+
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await waitForCreativeComposerReady(page);
+    const estimate = page.getByTestId("creative-credit-estimate");
+    await expect(estimate).toHaveAttribute("aria-label", "预计积分：智能规划后确定");
+
+    const modelTrigger = page.getByRole("button", { name: "生成模型：智能模型" });
+    const modelPopover = page.locator(".ant-popover").filter({ hasText: "选择模型" }).last();
+    await openComposerPopover(modelTrigger, modelPopover);
+    await modelPopover.getByRole("button", { name: /^e2e-image 图片模型/ }).click();
+    await expect(estimate).toHaveAttribute("aria-label", "预计消耗 2.5 积分");
+
+    const preferenceTrigger = page.getByRole("button", { name: "生成参数：生成参数" });
+    const preferencePopover = page.locator(".ant-popover").last();
+    await openComposerPopover(preferenceTrigger, preferencePopover);
+    await preferencePopover.getByRole("tab", { name: "输出" }).click();
+    await preferencePopover.getByRole("button", { name: "选择图片生成数量 3 份" }).click();
+    await expect(estimate).toHaveAttribute("aria-label", "预计消耗 7.5 积分");
+    await expectNoHorizontalOverflow(page, `${test.info().project.name} creative credit estimate`);
+    const [indicatorRect, sendRect] = await Promise.all([estimate.evaluate((element) => element.getBoundingClientRect().toJSON()), page.getByRole("button", { name: "发送" }).evaluate((element) => element.getBoundingClientRect().toJSON())]);
+    expect(indicatorRect.right).toBeLessThanOrEqual(sendRect.left);
+    expect(sendRect.right).toBeLessThanOrEqual(page.viewportSize()!.width);
 });
 
 test("creative composer optimizes the current prompt without sending it", async ({ page }) => {
@@ -516,12 +559,66 @@ test("Agent generation inputs apply immediately and reveal video frame slots", a
     }
 
     await preferencePopover.getByRole("button", { name: "视频", exact: true }).click();
+    await preferencePopover.getByRole("tab", { name: "画面" }).click();
+    await expect(preferencePopover.getByRole("button", { name: "选择视频参考方式 智能参考" })).toHaveAttribute("aria-pressed", "true");
     await preferencePopover.getByRole("tab", { name: "输出" }).click();
+    const twoKResolution = preferencePopover.getByRole("button", { name: "选择视频清晰度 2K" });
+    const fourKResolution = preferencePopover.getByRole("button", { name: "选择视频清晰度 4K" });
+    await expect(twoKResolution).toBeEnabled();
+    await expect(fourKResolution).toBeEnabled();
+    await twoKResolution.click();
+    await expect(twoKResolution).toHaveAttribute("aria-pressed", "true");
+    await expect(preferencePopover.getByRole("button", { name: "选择视频清晰度 自定义" })).toHaveCount(0);
+    await expect(preferencePopover.getByRole("textbox", { name: "输入自定义视频清晰度" })).toHaveCount(0);
+    const videoCountInput = preferencePopover.getByRole("textbox", { name: "自定义生成数量" });
+    const fixedVideoCount = preferencePopover.getByRole("button", { name: "选择视频生成数量 4 份" });
+    await expect
+        .poll(async () => {
+            const [inputFontSize, fixedFontSize] = await Promise.all([videoCountInput.evaluate((element) => getComputedStyle(element).fontSize), fixedVideoCount.evaluate((element) => getComputedStyle(element).fontSize)]);
+            return { inputFontSize, fixedFontSize };
+        })
+        .toEqual({ inputFontSize: "14px", fixedFontSize: "14px" });
+    await videoCountInput.pressSequentially("28");
+    await expect(videoCountInput).toHaveValue("28");
+    await expect(preferencePopover.getByRole("button", { name: "输入视频时长 5 秒" })).toHaveAttribute("aria-pressed", "true");
+    const audioSwitch = preferencePopover.getByRole("switch", { name: "生成声音" });
+    const watermarkSwitch = preferencePopover.getByRole("switch", { name: "添加水印" });
+    await expect(audioSwitch).toBeChecked();
+    await expect(watermarkSwitch).not.toBeChecked();
+    await expect
+        .poll(() =>
+            audioSwitch.evaluate((element) => {
+                const first = element.closest("label")!;
+                const group = first.parentElement!;
+                const second = group.querySelectorAll("label")[1];
+                const firstBounds = first.getBoundingClientRect();
+                const secondBounds = second.getBoundingClientRect();
+                return { sameRow: Math.abs(firstBounds.top - secondBounds.top) < 1, overflow: group.scrollWidth > group.clientWidth };
+            }),
+        )
+        .toEqual({ sameRow: true, overflow: false });
+    await audioSwitch.click();
+    await watermarkSwitch.click();
+    await expect(audioSwitch).not.toBeChecked();
+    await expect(watermarkSwitch).toBeChecked();
+    await expect(preferencePopover.getByRole("button", { name: "输入视频时长 智能" })).toHaveCount(0);
+    const durationRow = preferencePopover.getByRole("group", { name: "时长" });
+    await expect
+        .poll(() =>
+            durationRow.evaluate((element) => {
+                const controls = Array.from(element.children).map((control) => control.getBoundingClientRect());
+                const firstTop = controls[0]?.top;
+                return { sameRow: firstTop !== undefined && controls.every((control) => Math.abs(control.top - firstTop) < 1), overflow: element.scrollWidth > element.clientWidth };
+            }),
+        )
+        .toEqual({ sameRow: true, overflow: false });
     const durationInput = preferencePopover.getByRole("spinbutton", { name: "输入视频时长" });
-    await expect(durationInput).not.toHaveAttribute("max");
-    await durationInput.fill("60");
-    await durationInput.press("Tab");
-    await expect(durationInput).toHaveValue("60");
+    await expect(durationInput).toBeEnabled();
+    await durationInput.fill("7");
+    await expect(durationInput).toHaveValue("7");
+    const fifteenSecondDuration = preferencePopover.getByRole("button", { name: "输入视频时长 15 秒" });
+    await fifteenSecondDuration.click();
+    await expect(fifteenSecondDuration).toHaveAttribute("aria-pressed", "true");
     await preferencePopover.getByRole("tab", { name: "画面" }).click();
     const firstLastOption = preferencePopover.getByRole("button", { name: "选择视频参考方式 首尾帧" });
     await expect(firstLastOption).toBeVisible();
@@ -1022,7 +1119,7 @@ test("creative workspaces remain usable without horizontal overflow in light and
     expect(dialogBox?.width || 0).toBeLessThanOrEqual(Math.min(522, (page.viewportSize()?.width || 0) - 22));
     await expect
         .poll(async () => {
-            const [ratioLabelBox, ratioControlBox] = await Promise.all([createDialog.getByText("生成尺寸", { exact: true }).boundingBox(), createDialog.getByRole("radiogroup", { name: "segmented control" }).boundingBox()]);
+            const [ratioLabelBox, ratioControlBox] = await Promise.all([createDialog.getByText("生成尺寸", { exact: true }).boundingBox(), createDialog.getByRole("group", { name: "生成尺寸" }).boundingBox()]);
             return (ratioLabelBox?.y || 0) + (ratioLabelBox?.height || 0) <= (ratioControlBox?.y || 0) + 1;
         })
         .toBe(true);

@@ -67,28 +67,40 @@ export type CreditWalletBalanceInput = {
 
 export async function adjustWalletBalanceInPostgresTransaction(
     client: import("@/lib/server/database").QueryExecutor,
-    input: { userId: string; amount: DecimalInput; description: string; idempotencyKey: string; type: "credit" | "admin-adjust"; now?: Date },
+    input: { userId: string; operatorUserId?: string; amount: DecimalInput; description: string; idempotencyKey: string; type: "credit" | "admin-adjust"; now?: Date },
 ) {
     const amount = decimal(input.amount);
+    const description = requiredText(input.description, "钱包调整缺少说明");
     const repos = createPostgresRepositories(client);
-    const existing = await repos.points.getRecordByIdempotencyKey(input.idempotencyKey);
-    if (existing) return { record: existing };
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`vozeb-pro:point-record:${input.idempotencyKey}`]);
     const user = await repos.users.getById(input.userId, true);
     if (!user) throw new AuthInputError("用户不存在");
+    const existing = await repos.points.getRecordByIdempotencyKey(input.idempotencyKey);
+    if (existing) {
+        if (
+            existing.userId !== input.userId ||
+            existing.type !== input.type ||
+            decimal(existing.amount).toString() !== amount.toString() ||
+            (input.operatorUserId !== undefined && (existing.operatorUserId !== input.operatorUserId || existing.description !== description))
+        )
+            throw new WalletConflictError("钱包调整业务 ID 对应的请求参数不一致");
+        return { record: existing, settledBalance: user.settledBalance, applied: false };
+    }
     const next = decimal(user.settledBalance).plus(amount);
     if (next.isNegative()) throw new QuotaExceededError("钱包余额不足");
     await repos.users.update(user.id, { settledBalance: next.toString() });
     const record = await repos.points.addRecord({
         id: randomUUID(),
         userId: user.id,
+        operatorUserId: input.operatorUserId,
         type: input.type,
         amount: amount.toString(),
         balanceAfter: next.toString(),
-        description: requiredText(input.description, "钱包调整缺少说明"),
+        description,
         idempotencyKey: requiredText(input.idempotencyKey, "钱包调整缺少业务 ID"),
         createdAt: (input.now || new Date()).toISOString(),
     });
-    return { record };
+    return { record, settledBalance: next.toString(), applied: true };
 }
 
 export type ReleaseWalletHoldInput = { holdId: string; businessId: string; requestFingerprint: string; reason: string; now?: Date };

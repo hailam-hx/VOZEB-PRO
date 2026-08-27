@@ -34,6 +34,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const tasks = run.tasks.map((item) => {
         if (!requestedTaskIdSet.has(item.id)) return item;
         const completedChildren = item.childTasks?.filter((child) => child.status === "completed") || [];
+        const completedChildIds = new Set(completedChildren.map((child) => child.id));
+        const completedSlots = item.childSlots?.filter((slot) => slot.taskId && completedChildIds.has(slot.taskId)) || [];
         return prepareFailedAgentTaskRetry(
             run,
             {
@@ -43,6 +45,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
                 taskId: completedChildren.at(-1)?.id,
                 taskIds: completedChildren.length ? completedChildren.map((child) => child.id) : undefined,
                 childTasks: completedChildren.length ? completedChildren : undefined,
+                childSlots: completedSlots.length ? completedSlots : undefined,
                 result: undefined,
                 error: undefined,
             },

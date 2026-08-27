@@ -41,6 +41,25 @@ describe("PostgreSQL auth read paths", () => {
         });
     });
 
+    it("round-trips nested binding generation parameters from PostgreSQL JSONB", () => {
+        const settings = mapPostgresSettings(
+            {
+                logical_models: [
+                    {
+                        id: "image",
+                        name: "图片",
+                        capability: "image",
+                        enabled: true,
+                        bindings: [{ id: "image:one", channelId: "one", upstreamModel: "image", enabled: true, priority: 1, generationParameters: { aspectRatios: ["16 : 9", "16:9"], pixelSizes: ["1024 × 768"], qualities: ["ultra"], maxBatchSize: 2 } }],
+                    },
+                ],
+            },
+            [{ id: "one", name: "渠道", base_url: "https://api.example.com/v1", api_key_ciphertext: "", api_format: "openai", models: ["image"], enabled: true }],
+        );
+
+        expect(settings.logicalModels[0]?.bindings[0]?.generationParameters).toMatchObject({ aspectRatios: ["16:9"], pixelSizes: ["1024x768"], qualities: ["ultra"], maxBatchSize: 2 });
+    });
+
     it("normalizes persisted generation cost controls", () => {
         const settings = mapPostgresSettings({ generation_cost_control: { maxPointsPerTask: 1.7, dailyUserPointSpend: 20, dailyTotalPointSpend: 100 } }, []);
 

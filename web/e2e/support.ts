@@ -11,6 +11,7 @@ export const E2E_PROTOCOL_ORIGIN = `http://127.0.0.1:${Number(process.env.VOZEB_
 export const E2E_PAYMENT_WEBHOOK_SECRET = "vozeb-pro-e2e-payply-webhook-secret";
 
 const models = ["e2e-text", "e2e-text-fallback", "e2e-text-fail", "e2e-image", "e2e-image-fallback", "e2e-video", "e2e-video-fallback", "e2e-video-slow", "e2e-audio", "e2e-audio-fallback"];
+const zeroRateCard = { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "0" }] } as const;
 
 const operations = {
     text: {
@@ -64,11 +65,90 @@ export function e2eSettingsPatch() {
     const modelConfigs = Object.fromEntries(models.map((model) => [model, operations[modelCapabilities[model] as keyof typeof operations]]));
     return {
         systemChannels: [channel("e2e-primary", "E2E 主渠道", "e2e-primary-secret", modelCapabilities, modelConfigs), channel("e2e-backup", "E2E 备用渠道", "e2e-backup-secret", modelCapabilities, modelConfigs)],
-        logicalModels: [],
+        logicalModels: models.map((model) => logicalModel(model, modelCapabilities[model])),
         defaultModels: { textModel: "e2e-text", imageModel: "e2e-image", videoModel: "e2e-video", audioModel: "e2e-audio" },
         modelPointCosts: Object.fromEntries(models.map((model) => [model, 0])),
         generationConcurrency: { agent: 2, image: 2, video: 2, audio: 2, text: 2, render: 1 },
     };
+}
+
+export function e2eModelPricingPatches() {
+    return models.map((model) => ({
+        modelId: model,
+        saleRateCard: zeroRateCard,
+        bindings: ["e2e-primary", "e2e-backup"].map((channelId) => ({
+            bindingId: `${model}:${channelId}`,
+            costRateCard: zeroRateCard,
+            providerCostUnit: { kind: "fiat", currency: "USD" },
+        })),
+    }));
+}
+
+function logicalModel(model: string, capability: string) {
+    return {
+        id: model,
+        name: model,
+        capability,
+        enabled: true,
+        bindings: ["e2e-primary", "e2e-backup"].map((channelId, index) => ({
+            id: `${model}:${channelId}`,
+            channelId,
+            upstreamModel: model,
+            enabled: true,
+            priority: index + 1,
+            ...(capability === "text" ? { capabilityProfile: { maxOutputTokens: 1_024 } } : {}),
+            ...(capability === "text" ? {} : { generationParameters: generationParameters(capability) }),
+        })),
+    };
+}
+
+function generationParameters(capability: string) {
+    const shared = {
+        referenceInputs: [] as string[],
+        aspectRatios: [] as string[],
+        pixelSizes: [] as string[],
+        supportsCustomSize: false,
+        qualities: [] as string[],
+        resolutions: [] as string[],
+        durationSeconds: [] as number[],
+        videoReferenceModes: [] as string[],
+        voices: [] as string[],
+        formats: [] as string[],
+    };
+    if (capability === "image") {
+        return {
+            ...shared,
+            referenceInputs: ["image"],
+            maxReferenceImages: 10,
+            aspectRatios: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+            pixelSizes: ["64x64", "1024x1024", "1280x720", "720x1280"],
+            supportsCustomSize: true,
+            qualities: ["low", "medium", "high", "standard"],
+            maxBatchSize: 20,
+            supportsCustomBatchSize: true,
+            customBatchSizeRange: { min: 5, max: 20 },
+        };
+    }
+    if (capability === "video") {
+        return {
+            ...shared,
+            referenceInputs: ["image", "video", "audio"],
+            maxReferenceImages: 10,
+            aspectRatios: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+            pixelSizes: ["1280x720", "720x1280"],
+            supportsCustomSize: true,
+            resolutions: ["720", "1080", "2k", "4k", "1440"],
+            durationMode: "discrete",
+            durationSeconds: [5, 15],
+            supportsCustomDuration: true,
+            customDurationRange: { min: 4, max: 15 },
+            maxBatchSize: 4,
+            supportsCustomBatchSize: true,
+            customBatchSizeRange: { min: 1, max: 30 },
+            videoReferenceModes: ["reference", "first_frame", "first_last"],
+        };
+    }
+    return { ...shared, referenceInputs: ["audio"], maxBatchSize: 1, voices: ["alloy"], formats: ["mp3", "wav"], speedRange: { min: 0.5, max: 2 } };
 }
 
 function channel(id: string, name: string, apiKey: string, modelCapabilities: Record<string, string>, modelConfigs: Record<string, unknown>) {

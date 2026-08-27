@@ -3,9 +3,9 @@ import { imageReferenceToFile } from "@/app/api/image-tasks/image-task-support";
 type OpenAiVideoFormInput = {
     model: string;
     prompt: string;
-    seconds: number;
-    width: number;
-    height: number;
+    seconds?: number;
+    width?: number;
+    height?: number;
     imageUrls: string[];
     origin: string;
     cookie: string;
@@ -16,8 +16,8 @@ export async function buildOpenAiVideoFormData(input: OpenAiVideoFormInput) {
     const formData = new FormData();
     formData.set("model", input.model);
     formData.set("prompt", input.prompt);
-    formData.set("seconds", String(input.seconds));
-    formData.set("size", `${input.width}x${input.height}`);
+    if (input.seconds !== undefined) formData.set("seconds", String(input.seconds));
+    if (input.width !== undefined && input.height !== undefined) formData.set("size", `${input.width}x${input.height}`);
     if (input.imageUrls[0]) {
         const file = await imageReferenceToFile({ dataUrl: input.imageUrls[0], url: input.imageUrls[0] }, "input-reference.png", input.origin, input.cookie);
         formData.set("input_reference", file);

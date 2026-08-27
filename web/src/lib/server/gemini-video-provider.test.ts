@@ -11,11 +11,19 @@ describe("Gemini Veo provider", () => {
 
         expect(request).toEqual({
             instances: [{ prompt: "A quiet lake" }],
-            parameters: { durationSeconds: 6, aspectRatio: "16:9", resolution: "720p", generateAudio: true },
+            parameters: { durationSeconds: 5, aspectRatio: "16:9", resolution: "720p", generateAudio: true },
         });
-        expect(normalizeGeminiVideoDuration(7)).toBe(8);
-        expect(normalizeGeminiVideoDuration(10)).toBe(8);
+        expect(normalizeGeminiVideoDuration(7)).toBe(7);
+        expect(normalizeGeminiVideoDuration(10)).toBe(10);
         expect(geminiVideoCreatePath("models/veo-3.1-generate-preview")).toBe("/models/veo-3.1-generate-preview:predictLongRunning");
+    });
+
+    it("omits unresolved Auto values and rejects unsupported concrete resolution", async () => {
+        await expect(buildGeminiVideoRequest({ prompt: "A quiet lake", durationSeconds: undefined, aspectRatio: undefined, resolution: undefined, generateAudio: undefined, references: [], origin: "http://localhost", cookie: "" })).resolves.toEqual({
+            instances: [{ prompt: "A quiet lake" }],
+            parameters: {},
+        });
+        await expect(buildGeminiVideoRequest({ prompt: "A quiet lake", durationSeconds: 5, aspectRatio: "16:9", resolution: "480", generateAudio: false, references: [], origin: "http://localhost", cookie: "" })).rejects.toThrow("480");
     });
 
     it("encodes ordinary references as referenceImages", async () => {

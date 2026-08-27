@@ -63,7 +63,28 @@ describe("resolveLogicalModel", () => {
 
         const candidates = resolveLogicalModelCandidates(settings, "video", "video");
         expect(candidates.map((item) => item.channelId)).toEqual(["high", "low"]);
-        expect(candidates[0].capabilityProfile).toMatchObject({ supportsReferenceImage: true, maxReferenceImages: 2, maxDurationSeconds: 10, timeoutMs: 12 * 60_000 });
+        expect(candidates[0].capabilityProfile).toMatchObject({ timeoutMs: 12 * 60_000 });
+    });
+
+    it("carries only normalized binding generation parameters into each resolved candidate", () => {
+        const settings = {
+            systemChannels: [{ ...channel("one", ["image-one"]), advancedConfig: { supportsReferenceImage: true } }, channel("two", ["image-two"])],
+            logicalModels: [
+                {
+                    id: "image",
+                    name: "Image",
+                    capability: "image" as const,
+                    enabled: true,
+                    bindings: [
+                        { id: "one", channelId: "one", upstreamModel: "image-one", enabled: true, priority: 1, generationParameters: { aspectRatios: [" 16:9 ", "16:9"] } },
+                        { id: "two", channelId: "two", upstreamModel: "image-two", enabled: true, priority: 2 },
+                    ],
+                },
+            ],
+        };
+        const candidates = resolveLogicalModelCandidates(settings as never, "image", "image");
+        expect(candidates[0].generationParameters).toMatchObject({ aspectRatios: ["16:9"] });
+        expect(candidates[1].generationParameters).toBeUndefined();
     });
 
     it("does not route a logical model through a binding missing from the channel model list", () => {

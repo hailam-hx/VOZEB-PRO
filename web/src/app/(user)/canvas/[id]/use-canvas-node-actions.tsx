@@ -8,7 +8,7 @@ import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
 import { resizeImageNodeToNaturalRatio } from "../utils/canvas-node-size";
 
 import { createCanvasNode } from "./canvas-page-elements";
-import { getGenerationCount } from "./canvas-page-utils";
+import { getGenerationCountPreference } from "./canvas-page-utils";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 
@@ -55,7 +55,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
                     ? {
                           model: effectiveConfig.imageModel || effectiveConfig.model,
                           size: effectiveConfig.size,
-                          count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count),
+                          count: getGenerationCountPreference(effectiveConfig.canvasImageCount || effectiveConfig.count),
                       }
                     : undefined;
             const newNode = createCanvasNode(type, targetPosition, configMetadata, t(type));

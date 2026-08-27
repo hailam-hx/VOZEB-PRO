@@ -1,10 +1,10 @@
 type VozebRecommendedVideoInput = {
     model: string;
     prompt: string;
-    duration: number;
-    aspectRatio: string;
-    resolution: string;
-    generateAudio: boolean;
+    duration?: number;
+    aspectRatio?: string;
+    resolution?: string;
+    generateAudio?: boolean;
     images: string[];
     videos: string[];
     audios: string[];
@@ -20,19 +20,24 @@ export function assertVozebRecommendedVideoReferences(model: string, references:
 
 export function buildVozebRecommendedVideoRequest(input: VozebRecommendedVideoInput) {
     const seedanceFast720p = normalizeModel(input.model) === SEEDANCE_FAST_720P;
-    const resolution = seedanceFast720p ? "720p" : input.resolution;
+    if (input.duration !== undefined && (!Number.isFinite(input.duration) || input.duration <= 0)) throw new Error("当前视频渠道不支持无效时长");
+    if (seedanceFast720p && input.duration !== undefined && (input.duration < 5 || input.duration > 15)) throw new Error(`Seedance 2.0-fast-720p 不支持 ${input.duration} 秒时长`);
+    if (seedanceFast720p && input.resolution !== undefined && input.resolution !== "720p") throw new Error(`Seedance 2.0-fast-720p 不支持 ${input.resolution} 清晰度`);
+    if (seedanceFast720p && input.generateAudio === true) throw new Error("Seedance 2.0-fast-720p 不支持生成音频");
+    if (input.images.length > 9) throw new Error("当前视频渠道最多支持 9 张参考图");
+    if (input.videos.length > 3) throw new Error("当前视频渠道最多支持 3 个参考视频");
+    if (input.audios.length > 3) throw new Error("当前视频渠道最多支持 3 个参考音频");
     const payload: Record<string, unknown> = {
         model: input.model,
         prompt: input.prompt,
-        duration: Math.min(15, Math.max(5, Math.trunc(input.duration) || 5)),
-        resolution,
-        metadata: { resolution },
-        generate_audio: seedanceFast720p ? false : input.generateAudio,
-        aspect_ratio: input.aspectRatio,
+        ...(input.duration !== undefined ? { duration: input.duration } : {}),
+        ...(input.resolution ? { resolution: input.resolution, metadata: { resolution: input.resolution } } : {}),
+        ...(input.generateAudio !== undefined ? { generate_audio: input.generateAudio } : {}),
+        ...(input.aspectRatio ? { aspect_ratio: input.aspectRatio } : {}),
     };
-    if (input.images.length) payload.images = input.images.slice(0, 9);
-    if (input.videos.length) payload.videos = input.videos.slice(0, 3);
-    if (input.audios.length) payload.audios = input.audios.slice(0, 3);
+    if (input.images.length) payload.images = input.images;
+    if (input.videos.length) payload.videos = input.videos;
+    if (input.audios.length) payload.audios = input.audios;
     return payload;
 }
 

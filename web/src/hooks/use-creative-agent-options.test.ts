@@ -22,6 +22,40 @@ describe("creative Agent public model catalog", () => {
         expect(config.videoModels).toEqual(["video-one"]);
         expect(creativeAgentModelsFromConfig(config, ["video"])).toEqual([{ id: "video-one", name: "video-one", capability: "video" }]);
     });
+
+    it("adds the effective union of enabled binding generation profiles to logical media models", () => {
+        const settings = publicSettings();
+        const image = settings.logicalModels?.find((item) => item.id === "image-one");
+        if (!image) throw new Error("missing image fixture");
+        image.bindings[0].generationParameters = generationParameters({ aspectRatios: ["1:1"], qualities: ["studio"] });
+        image.bindings.push({
+            id: "image-one-binding-two",
+            channelId: "media-channel",
+            upstreamModel: "image-one-hd",
+            enabled: true,
+            priority: 2,
+            generationParameters: generationParameters({ aspectRatios: ["16:9"], qualities: ["high"] }),
+        });
+        image.bindings.push({
+            id: "image-one-binding-disabled",
+            channelId: "media-channel",
+            upstreamModel: "image-one-disabled",
+            enabled: false,
+            priority: 3,
+            generationParameters: generationParameters({ aspectRatios: ["9:16"] }),
+        });
+
+        const config = applyPublicSystemSettings(defaultConfig, settings);
+
+        expect(creativeAgentModelsFromConfig(config, ["image"])).toEqual([
+            {
+                id: "image-one",
+                name: "图片模型",
+                capability: "image",
+                generationParameters: generationParameters({ aspectRatios: ["1:1", "16:9"], qualities: ["studio", "high"] }),
+            },
+        ]);
+    });
 });
 
 function publicSettings(): PublicSystemSettings {
@@ -44,4 +78,20 @@ function publicSettings(): PublicSystemSettings {
 
 function logicalModel(id: string, name: string, capability: "image" | "video" | "audio") {
     return { id, name, capability, enabled: true, bindings: [{ id: `${id}-binding`, channelId: "media-channel", upstreamModel: id, enabled: true, priority: 1 }] };
+}
+
+function generationParameters(overrides: Record<string, unknown>) {
+    return {
+        referenceInputs: [],
+        aspectRatios: [],
+        pixelSizes: [],
+        supportsCustomSize: false,
+        qualities: [],
+        resolutions: [],
+        durationSeconds: [],
+        videoReferenceModes: [],
+        voices: [],
+        formats: [],
+        ...overrides,
+    };
 }

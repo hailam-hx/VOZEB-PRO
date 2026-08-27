@@ -25,6 +25,10 @@ describe("provider task config", () => {
         expect(buildProviderRequest('{"model":"{{model}}","duration":"{{duration}}","images":"{{images}}"}', {}, { model: "video-v1", duration: 10, images: ["a", "b"] })).toEqual({ model: "video-v1", duration: 10, images: ["a", "b"] });
     });
 
+    it("omits unresolved exact template fields instead of forwarding placeholder or Auto values", () => {
+        expect(buildProviderRequest('{"model":"{{model}}","quality":"{{quality}}","resolution":"{{resolution}}"}', {}, { model: "image-v1" })).toEqual({ model: "image-v1" });
+    });
+
     it("removes empty optional reference placeholders and containers", () => {
         const template = '{"model":"{{model}}","image":"{{image}}","images":"{{images}}","reference_images":["{{image}}"],"referenceVideos":["https://..."],"ref_assets":[{"type":"image","url":"{{image}}"}],"metadata":{"label":""}}';
 
