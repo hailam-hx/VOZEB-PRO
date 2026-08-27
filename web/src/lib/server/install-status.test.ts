@@ -44,6 +44,18 @@ describe("install status cache", () => {
 
     afterEach(() => {
         vi.unstubAllEnvs();
+        vi.restoreAllMocks();
+    });
+
+    it("returns an unhealthy install status without emitting a render error when PostgreSQL is unavailable", async () => {
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        mocks.postgresQuery.mockRejectedValueOnce(new AggregateError([new Error("connect ECONNREFUSED")]));
+
+        await expect(getInstallStatus()).resolves.toMatchObject({
+            ready: false,
+            database: { configured: true, healthy: false, schemaReady: false },
+        });
+        expect(consoleError).not.toHaveBeenCalled();
     });
 
     it("reuses a completed healthy installation check", async () => {

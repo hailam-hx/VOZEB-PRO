@@ -119,7 +119,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
     try {
         await postgresQuery("SELECT 1");
     } catch (error) {
-        console.error("PostgreSQL install connection check failed", error);
+        console.warn("PostgreSQL install connection check failed", error);
         return buildStatus({
             provider,
             userCount: 0,
