@@ -53,6 +53,28 @@ test("admin remains Chinese without changing the user language cookie", async ({
     await expect.poll(async () => (await page.context().cookies()).find((cookie) => cookie.name === localeCookie)?.value).toBe("en");
 });
 
+test("prepaid points summary resolves its wallet messages", async ({ page }, testInfo) => {
+    const pageErrors: string[] = [];
+    const missingMessages: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("console", (message) => {
+        if (message.type() === "error" && message.text().includes("MISSING_MESSAGE")) missingMessages.push(message.text());
+    });
+
+    await page.context().addCookies([{ name: localeCookie, value: "zh-CN", url: String(testInfo.project.use.baseURL) }]);
+    await page.goto("/create");
+    await page.getByTitle("积分余额").click();
+
+    const popover = page.locator(".user-points-popover");
+    await expect(popover).toBeVisible();
+    await expect(popover.getByText("已结算积分", { exact: true })).toBeVisible();
+    await expect(popover.getByText("预留积分", { exact: true })).toBeVisible();
+    await expect(popover.getByRole("button", { name: /充\s*值\s*积\s*分/ })).toBeVisible();
+    await expect(popover.getByText("使用详情", { exact: true })).toBeVisible();
+    expect(pageErrors).toEqual([]);
+    expect(missingMessages).toEqual([]);
+});
+
 test("language menu remains inside a 390px viewport", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Dedicated mobile projects cover both target widths");
     await page.setViewportSize({ width: 390, height: 844 });
