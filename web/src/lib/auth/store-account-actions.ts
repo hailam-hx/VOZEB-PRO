@@ -1,13 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
-import { decimal } from "@/lib/billing/decimal";
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
-import { adjustWalletBalanceInPostgresTransaction } from "@/lib/server/points-wallet-service";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
 import { hashPassword, verifyPassword } from "./password";
 import { AuthInputError, SESSION_MAX_AGE_SECONDS } from "./store-foundation";
-import { addPointRecord, consumeEmailCode, countActiveAdmins, countActiveFullAdmins, hashToken, normalizeDisplayName, normalizeEmail, normalizeUserBio, parseSessionCookie, validateEmail, validatePassword } from "./store-normalizers";
+import { consumeEmailCode, countActiveAdmins, countActiveFullAdmins, hashToken, normalizeDisplayName, normalizeEmail, normalizeUserBio, parseSessionCookie, validateEmail, validatePassword } from "./store-normalizers";
 import { mutateAuthDb, readAuthDb } from "./store-repository";
 import type { PublicUser, StoredUser, UserRole, UserStatus } from "./store-types";
 import { publicUserFromAuthenticatedRecord, toPublicUser } from "./store-user-projection";
@@ -219,7 +217,7 @@ export async function deleteSession(cookieValue: string | undefined) {
     });
 }
 
-type AdminUserPatch = Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status" | "settledBalance">> & { password?: string };
+type AdminUserPatch = Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status">> & { password?: string };
 
 export async function updateUserByAdmin(actorId: string, userId: string, patch: AdminUserPatch) {
     if (isPostgresDatabaseEnabled()) {
@@ -247,15 +245,11 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
                 if (!activeFullAdminIds.some((id) => id !== user.id)) throw new AuthInputError("至少需要保留一个可用的全权限管理员");
             }
 
-            const targetBalance = patch.settledBalance === undefined ? undefined : decimal(patch.settledBalance);
-            if (targetBalance?.isNegative()) throw new AuthInputError("结算余额不能为负数");
-            if (targetBalance && decimal(await repos.pointsWallet.getActiveHeldBalance(user.id)).greaterThan(targetBalance)) throw new AuthInputError("结算余额不能低于当前预留积分", 409);
-
             const userPatch: { displayName?: string; email?: string | null; role?: UserRole; adminPermissions?: AdminPermission[]; status?: UserStatus; passwordHash?: string } = {
                 displayName: patch.displayName === undefined ? undefined : normalizeDisplayName(patch.displayName || user.username),
                 role: nextRole,
                 adminPermissions: nextAdminPermissions,
-                status: patch.settledBalance !== undefined && nextStatus === "active" ? "active" : nextStatus,
+                status: nextStatus,
             };
             if (patch.email !== undefined) {
                 const email = normalizeEmail(patch.email);
@@ -273,18 +267,6 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
             }
             await repos.users.update(user.id, userPatch);
 
-            if (targetBalance) {
-                const delta = targetBalance.minus(decimal(user.settledBalance));
-                if (!delta.isZero())
-                    await adjustWalletBalanceInPostgresTransaction(client, {
-                        userId: user.id,
-                        amount: delta.toString(),
-                        description: "管理员后台调整",
-                        idempotencyKey: `admin-adjust:${user.id}:${randomUUID()}`,
-                        type: "admin-adjust",
-                        now: clock.now,
-                    });
-            }
             if (patch.password || nextStatus !== "active") await repos.sessions.deleteByUserId(user.id);
             const record = (await repos.users.getPublicDetails([user.id], { now: clock.now.toISOString(), date: clock.date }))[0];
             if (!record) throw new AuthInputError("用户不存在");
@@ -307,11 +289,6 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
             throw new AuthInputError("至少需要保留一个可用的全权限管理员");
         }
 
-        const targetBalance = patch.settledBalance === undefined ? undefined : decimal(patch.settledBalance);
-        if (targetBalance?.isNegative()) throw new AuthInputError("结算余额不能为负数");
-        const heldBalance = db.walletHolds.filter((hold) => hold.userId === user.id && hold.status === "active").reduce((total, hold) => total.plus(decimal(hold.amount)), decimal(0));
-        if (targetBalance && heldBalance.greaterThan(targetBalance)) throw new AuthInputError("结算余额不能低于当前预留积分", 409);
-
         if (patch.displayName !== undefined) user.displayName = normalizeDisplayName(patch.displayName || user.username);
         if (patch.email !== undefined) {
             const email = normalizeEmail(patch.email);
@@ -330,22 +307,6 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
         }
         user.role = nextRole;
         user.adminPermissions = nextAdminPermissions;
-        if (targetBalance) {
-            const delta = targetBalance.minus(decimal(user.settledBalance));
-            if (nextStatus === "active") user.status = "active";
-            if (!delta.isZero()) {
-                user.settledBalance = targetBalance.toString();
-                addPointRecord(db, {
-                    userId: user.id,
-                    amount: delta.toString(),
-                    balanceAfter: targetBalance.toString(),
-                    description: "管理员后台调整",
-                    idempotencyKey: `admin-adjust:${user.id}:${randomUUID()}`,
-                    type: "admin-adjust",
-                    createdAt: new Date().toISOString(),
-                });
-            }
-        }
         user.status = nextStatus;
         user.updatedAt = new Date().toISOString();
         if (user.status !== "active") db.sessions = db.sessions.filter((session) => session.userId !== user.id);
@@ -400,7 +361,6 @@ function assertCanUpdateManagedUser(actor: StoredUser | null | undefined, user: 
     const touchesAdministrator = user.role === "admin" || nextRole === "admin" || patch.adminPermissions !== undefined;
     assertAdminPermission(actor, touchesAdministrator ? "administrators.manage" : "users.manage");
     if (user.role === "admin" && !hasAllAdminPermissions(actor, user.adminPermissions)) throw new AuthInputError("不能管理职责范围高于当前账号的管理员", 403);
-    if (patch.settledBalance !== undefined) assertAdminPermission(actor, "billing.manage");
     if (nextRole === "admin") {
         const permissions = normalizeAdminPermissions(patch.adminPermissions ?? user.adminPermissions);
         if (!permissions.length) throw new AuthInputError("管理员至少需要一项职责权限");

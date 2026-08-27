@@ -23,10 +23,10 @@ describe("admin users envelope client", () => {
     it("uses the envelope message for a domain conflict", async () => {
         vi.stubGlobal(
             "fetch",
-            vi.fn(async () => response({ code: 409, data: null, msg: "结算余额不能低于当前预留积分" }, 409)),
+            vi.fn(async () => response({ code: 409, data: null, msg: "用户状态冲突" }, 409)),
         );
 
-        await expect(updateAdminUser("user-one", { settledBalance: "1" })).rejects.toThrow("结算余额不能低于当前预留积分");
+        await expect(updateAdminUser("user-one", { displayName: "更新后" })).rejects.toThrow("用户状态冲突");
     });
 });
 

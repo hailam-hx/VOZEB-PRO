@@ -7,6 +7,7 @@ import { CreativeGenerationPreferences, useGenerationPreferenceSummary, type Cre
 import type { CreativeGenerationPreferences as GenerationPreferences } from "@/lib/creative-runtime-contract";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useCreativeComposerPopoverPlacement, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
+import { resolveCanvasGenerationCapability } from "../utils/canvas-generation-capabilities";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
@@ -21,12 +22,13 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const t = useTranslations("canvas");
     const createT = useTranslations("create");
     const responsivePlacement = useCreativeComposerPopoverPlacement(placement);
+    const capabilityState = resolveCanvasGenerationCapability(config, "image", config.model);
     const preferences: GenerationPreferences = {
         mode: "image",
         image: {
-            size: config.size || "auto",
-            quality: imageQuality(config.quality),
-            count: positiveInteger(config.count),
+            ...(concreteText(config.size) ? { size: config.size } : {}),
+            ...(concreteText(config.quality) ? { quality: config.quality } : {}),
+            ...(positiveInteger(config.count) ? { count: positiveInteger(config.count) } : {}),
         },
     };
     const summary = canvasImagePreferenceSummary(preferences, fixedSizeLabel, {
@@ -49,6 +51,8 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
             placement={responsivePlacement}
             autoAdjustOverflow
             fixedSizeLabel={fixedSizeLabel}
+            generationParameters={capabilityState.parameters}
+            capabilityReason={capabilityState.reason}
             onOpenChange={onOpenChange}
             onChange={(patch) => applyImagePreferencePatch(patch, onConfigChange)}
         />
@@ -65,18 +69,18 @@ export function canvasImagePreferenceSummary(preferences: GenerationPreferences,
 }
 
 function applyImagePreferencePatch(patch: CreativeGenerationPreferencePatch, onChange: (key: keyof AiConfig, value: string) => void) {
-    if (patch.size !== undefined) onChange("size", patch.size);
-    if (patch.quality !== undefined) onChange("quality", patch.quality);
-    if (patch.count !== undefined) onChange("count", String(patch.count));
-}
-
-function imageQuality(value?: string): NonNullable<GenerationPreferences["image"]>["quality"] {
-    return value === "high" || value === "medium" || value === "low" ? value : "auto";
+    if ("size" in patch) onChange("size", patch.size || "auto");
+    if ("quality" in patch) onChange("quality", patch.quality || "auto");
+    if ("count" in patch) onChange("count", patch.count === undefined ? "auto" : String(patch.count));
 }
 
 function positiveInteger(value: unknown) {
     const parsed = Number(value);
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function concreteText(value: unknown): value is string {
+    return typeof value === "string" && Boolean(value.trim()) && value.trim().toLowerCase() !== "auto";
 }
 
 function compactSizeLabel(value: string | undefined, autoLabel: string) {

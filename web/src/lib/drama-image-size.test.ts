@@ -5,6 +5,8 @@ import { dramaOutputDimensions, normalizeDramaImageSize, resolveDramaGenerationS
 describe("drama image size", () => {
     it("accepts supported ratios and unrestricted exact dimensions", () => {
         expect(normalizeDramaImageSize("16:9")).toBe("16:9");
+        expect(normalizeDramaImageSize("1:1")).toBe("1:1");
+        expect(normalizeDramaImageSize("2:3")).toBe("2:3");
         expect(normalizeDramaImageSize("1080×1920")).toBe("1080x1920");
         expect(normalizeDramaImageSize("5000x5000")).toBe("5000x5000");
     });
@@ -15,6 +17,14 @@ describe("drama image size", () => {
         expect(resolveDramaGenerationSize(base)).toBe("1824x1024");
         expect(resolveDramaGenerationSize({ ...base, projectSize: "16:9" })).toBe("2:3");
         expect(resolveDramaGenerationSize({ projectSize: "16:9", prompt: "生成镜头" })).toBe("16:9");
+    });
+
+    it("keeps arbitrary-length positive prompt dimensions", () => {
+        expect(resolveDramaGenerationSize({ projectSize: "16:9", prompt: "生成 100000x100000 镜头" })).toBe("100000x100000");
+    });
+
+    it("derives the exact reduced ratio from real reference dimensions", () => {
+        expect(resolveDramaGenerationSize({ projectSize: "16:9", prompt: "生成镜头", references: [{ width: 1000, height: 800 }] })).toBe("5:4");
     });
 
     it("keeps exact project dimensions for rendering and export", () => {

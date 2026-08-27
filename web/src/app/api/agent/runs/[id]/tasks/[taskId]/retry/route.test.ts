@@ -116,6 +116,7 @@ describe("Agent child task retry concurrency", () => {
                     taskId: "child-failed",
                     taskIds: ["child-failed"],
                     childTasks: [{ id: "child-failed", status: "failed", attempt: 3, error: "上游超时" }],
+                    childSlots: [{ index: 0, taskId: "child-failed", status: "failed", model: "video-model", error: "上游超时" }],
                     error: "视频生成超时",
                 },
             ],
@@ -128,7 +129,7 @@ describe("Agent child task retry concurrency", () => {
 
         expect(response.status).toBe(200);
         const tasks = mocks.updateAgentRunById.mock.calls[0]?.[1]?.tasks;
-        expect(tasks).toEqual([expect.objectContaining({ id: "task", status: "ready", attempts: 3, taskId: undefined, taskIds: undefined, childTasks: undefined, result: undefined, error: undefined })]);
+        expect(tasks).toEqual([expect.objectContaining({ id: "task", status: "ready", attempts: 3, taskId: undefined, taskIds: undefined, childTasks: undefined, childSlots: undefined, result: undefined, error: undefined })]);
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "task_retry" }));
     });
 

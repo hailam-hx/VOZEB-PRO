@@ -5,7 +5,6 @@ import { regularVideoReferences, videoFrameReferences, type VideoGenerationRefer
 
 const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
 const INLINE_IMAGE_TIMEOUT_MS = 60_000;
-const GEMINI_VIDEO_DURATIONS = [4, 6, 8] as const;
 
 export type GeminiVideoInlineImage = { inlineData: { mimeType: string; data: string } };
 
@@ -19,10 +18,10 @@ export type GeminiVideoRequest = {
         },
     ];
     parameters: {
-        durationSeconds: number;
-        aspectRatio: "16:9" | "9:16";
-        resolution: "720p" | "1080p";
-        generateAudio: boolean;
+        durationSeconds?: number;
+        aspectRatio?: "16:9" | "9:16";
+        resolution?: "720p" | "1080p";
+        generateAudio?: boolean;
     };
 };
 
@@ -37,8 +36,10 @@ export function geminiVideoQueryPath(model: string, operationId: string) {
 }
 
 export function normalizeGeminiVideoDuration(value: unknown) {
-    const requested = Math.max(1, Math.floor(Number(value) || 5));
-    return GEMINI_VIDEO_DURATIONS.find((seconds) => seconds >= requested) || GEMINI_VIDEO_DURATIONS.at(-1)!;
+    if (value === undefined || value === null || value === "" || value === "auto" || value === -1 || value === "-1") return undefined;
+    const requested = Number(value);
+    if (!Number.isFinite(requested) || requested <= 0) throw new Error(`Gemini Veo 不支持 ${String(value)} 秒时长`);
+    return requested;
 }
 
 export function assertGeminiVideoReferences(references: readonly VideoGenerationReference[]) {
@@ -53,7 +54,7 @@ export async function buildGeminiVideoRequest(input: {
     durationSeconds: unknown;
     aspectRatio: unknown;
     resolution: unknown;
-    generateAudio: boolean;
+    generateAudio?: boolean;
     references: readonly VideoGenerationReference[];
     origin: string;
     cookie: string;
@@ -74,12 +75,12 @@ export async function buildGeminiVideoRequest(input: {
     };
     return {
         instances: [instance],
-        parameters: {
+        parameters: compact({
             durationSeconds: normalizeGeminiVideoDuration(input.durationSeconds),
             aspectRatio: geminiAspectRatio(input.aspectRatio),
             resolution: geminiResolution(input.resolution),
             generateAudio: input.generateAudio,
-        },
+        }),
     };
 }
 
@@ -191,15 +192,22 @@ function geminiOperationError(value: Record<string, unknown>) {
     return text(record.message) || text(record.status);
 }
 
-function geminiAspectRatio(value: unknown): "16:9" | "9:16" {
-    const ratio = text(value) || "16:9";
+function geminiAspectRatio(value: unknown): "16:9" | "9:16" | undefined {
+    const ratio = text(value);
+    if (!ratio || ratio.toLowerCase() === "auto") return undefined;
     if (ratio === "16:9" || ratio === "9:16") return ratio;
     throw new Error("Gemini Veo 仅支持 16:9 或 9:16 画幅");
 }
 
-function geminiResolution(value: unknown): "720p" | "1080p" {
+function geminiResolution(value: unknown): "720p" | "1080p" | undefined {
     const resolution = text(value).toLowerCase().replace(/p$/, "");
-    return resolution === "1080" ? "1080p" : "720p";
+    if (!resolution || resolution === "auto") return undefined;
+    if (resolution === "720" || resolution === "1080") return `${resolution}p`;
+    throw new Error(`Gemini Veo 不支持 ${text(value)} 清晰度`);
+}
+
+function compact<T extends Record<string, unknown>>(value: T) {
+    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T;
 }
 
 function geminiModelName(value: string) {

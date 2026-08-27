@@ -21,9 +21,14 @@ import { summarizeDramaGeneration } from "./drama-generation-readiness";
 import { DramaMediaPreviewModal, DramaMediaThumbnail, type DramaPreviewMedia } from "./drama-media-preview";
 import { DramaJianyingModal, DramaSubtitleModal } from "./drama-project-modals";
 import type { DramaProjectStage } from "./drama-project-sections";
-import { estimateEpisodePoints } from "./drama-shot-generation-utils";
+import { dramaShotQueuePreflight, estimateEpisodePoints } from "./drama-shot-generation-utils";
+import { queueDramaShotsAfterPreflight } from "../drama-generation-capabilities";
 
 const actionButtonClass = "!h-9 !px-3 [&>span:last-child]:whitespace-nowrap";
+
+function compatibleFailure(result: ReturnType<typeof dramaShotQueuePreflight>) {
+    return result.compatible ? undefined : result;
+}
 
 export function DramaGenerationPanel({ project, episode, onStageChange, onOpenAssets }: { project: DramaProject; episode: DramaEpisode; onStageChange: (stage: DramaProjectStage) => void; onOpenAssets: () => void }) {
     const t = useTranslations("drama.generation");
@@ -48,6 +53,16 @@ export function DramaGenerationPanel({ project, episode, onStageChange, onOpenAs
     const audioReady = Boolean(config.audioModel.trim());
     const assetCount = project.characters.length + project.scenes.length + project.props.length + project.clues.length;
     const audioCandidateShotIds = episode.shots.filter((shot) => shot.videoUrl && (shot.subtitle || shot.dialogue).trim() && shot.audioStatus !== "success").map((shot) => shot.id);
+    const queueCompatibleShots = (shotIds: string[]) => {
+        const result = queueDramaShotsAfterPreflight(
+            shotIds.flatMap((id) => {
+                const shot = episode.shots.find((item) => item.id === id);
+                return shot ? [{ id, failure: compatibleFailure(dramaShotQueuePreflight(config, project, episode, shot)) }] : [];
+            }),
+            () => queueShots(project.id, episode.id, shotIds),
+        );
+        if (!result.queued) message.warning(`${episode.shots.find((shot) => shot.id === result.shotId)?.title || result.shotId}：${result.failure.reason}`);
+    };
 
     useEffect(() => {
         let active = true;
@@ -194,7 +209,7 @@ export function DramaGenerationPanel({ project, episode, onStageChange, onOpenAs
         audioReady,
         renderTask,
         onStageChange,
-        onQueueShots: (shotIds) => queueShots(project.id, episode.id, shotIds),
+        onQueueShots: queueCompatibleShots,
         onQueueAudio: (shotIds) => queueAudio(project.id, episode.id, shotIds),
         onCreateRender: () => void createRender(),
         translate: (key, values) => t(key, values),
@@ -322,7 +337,7 @@ export function DramaGenerationPanel({ project, episode, onStageChange, onOpenAs
                 </section>
             ) : null}
 
-            {episode.visualReview ? <VisualReview project={project} episode={episode} /> : null}
+            {episode.visualReview ? <VisualReview episode={episode} onRetry={queueCompatibleShots} /> : null}
             {renderTask ? <RenderTaskCard task={renderTask} onCancel={() => void cancelRender()} /> : null}
 
             {episode.shots.length ? (
@@ -343,7 +358,17 @@ export function DramaGenerationPanel({ project, episode, onStageChange, onOpenAs
 
                     <div className="mt-2.5 overflow-hidden rounded-lg border border-border bg-card" data-drama-shot-task-list>
                         {episode.shots.map((shot) => (
-                            <ShotTaskRow key={shot.id} project={project} episode={episode} shot={shot} audioReady={audioReady} onPreview={setPreviewMedia} onCancel={() => void cancelShot(shot)} onSendToAgent={() => sendToAgent(shot)} />
+                            <ShotTaskRow
+                                key={shot.id}
+                                project={project}
+                                episode={episode}
+                                shot={shot}
+                                audioReady={audioReady}
+                                onPreview={setPreviewMedia}
+                                onCancel={() => void cancelShot(shot)}
+                                onQueue={() => queueCompatibleShots([shot.id])}
+                                onSendToAgent={() => sendToAgent(shot)}
+                            />
                         ))}
                     </div>
                 </section>
@@ -398,9 +423,8 @@ function ToolGroup({ title, description, children }: { title: string; descriptio
     );
 }
 
-function VisualReview({ project, episode }: { project: DramaProject; episode: DramaEpisode }) {
+function VisualReview({ episode, onRetry }: { episode: DramaEpisode; onRetry: (shotIds: string[]) => void }) {
     const t = useTranslations("drama.generation");
-    const queueShots = useDramaStore((state) => state.queueShots);
     const review = episode.visualReview!;
     return (
         <section className="mt-6 border-b border-border pb-5" aria-label={t("visualReview.title")}>
@@ -416,7 +440,7 @@ function VisualReview({ project, episode }: { project: DramaProject; episode: Dr
                     <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{review.summary}</p>
                 </div>
                 {review.retryTaskIds.length ? (
-                    <Button className="!h-9 shrink-0" icon={<RefreshCw className="size-4" />} onClick={() => queueShots(project.id, episode.id, review.retryTaskIds)}>
+                    <Button className="!h-9 shrink-0" icon={<RefreshCw className="size-4" />} onClick={() => onRetry(review.retryTaskIds)}>
                         {t("visualReview.retry", { count: review.retryTaskIds.length })}
                     </Button>
                 ) : null}
@@ -479,6 +503,7 @@ function ShotTaskRow({
     audioReady,
     onPreview,
     onCancel,
+    onQueue,
     onSendToAgent,
 }: {
     project: DramaProject;
@@ -487,11 +512,11 @@ function ShotTaskRow({
     audioReady: boolean;
     onPreview: (media: DramaPreviewMedia) => void;
     onCancel: () => void;
+    onQueue: () => void;
     onSendToAgent: () => void;
 }) {
     const t = useTranslations("drama.generation");
     const updateShot = useDramaStore((state) => state.updateShot);
-    const queueShots = useDramaStore((state) => state.queueShots);
     const queueAudio = useDramaStore((state) => state.queueAudio);
     const generating = [shot.storyboardStatus, shot.storyboardEndStatus, shot.generationStatus].some((status) => status === "queued" || status === "running");
     const failed = [shot.storyboardStatus, shot.storyboardEndStatus, shot.generationStatus].some((status) => status === "error");
@@ -555,7 +580,7 @@ function ShotTaskRow({
                         className={`${dialogue ? "" : "col-span-2 lg:col-span-1"} ${actionButtonClass}`}
                         disabled={episode.reviewStatus !== "visual_ready"}
                         icon={failed ? <RefreshCw className="size-4" /> : <Play className="size-4" />}
-                        onClick={() => queueShots(project.id, episode.id, [shot.id])}
+                        onClick={onQueue}
                     >
                         {failed ? t("shot.retryShot") : shot.videoUrl ? t("shot.regenerate") : t("shot.generateShot")}
                     </Button>
@@ -570,7 +595,12 @@ function ShotTaskRow({
 
 function ShotErrors({ shot }: { shot: DramaShot }) {
     const t = useTranslations("drama.generation");
-    const errors = [shot.storyboardError ? t("shot.errors.storyboard") : "", shot.storyboardEndError ? t("shot.errors.endFrame") : "", shot.generationError ? t("shot.errors.video") : "", shot.audioError ? t("shot.errors.voiceover") : ""].filter(Boolean);
+    const errors = [
+        shot.storyboardError ? `${t("shot.errors.storyboard")}：${shot.storyboardError}` : "",
+        shot.storyboardEndError ? `${t("shot.errors.endFrame")}：${shot.storyboardEndError}` : "",
+        shot.generationError ? `${t("shot.errors.video")}：${shot.generationError}` : "",
+        shot.audioError ? `${t("shot.errors.voiceover")}：${shot.audioError}` : "",
+    ].filter(Boolean);
     return errors.length ? (
         <div className="ml-11 mt-2 space-y-1 border-l-2 border-rose-300 pl-3 text-xs leading-5 text-rose-600 dark:border-rose-800 dark:text-rose-300">
             {errors.map((error) => (

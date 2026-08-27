@@ -10,6 +10,8 @@ import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-lo
 import { invalidatePublicSiteSettings } from "@/lib/server/site-metadata";
 import { channelProtocolValidationErrors } from "@/lib/channel-protocol-registry";
 import { hasAllAdminPermissions, hasAnyAdminPermission, type AdminPermission } from "@/lib/admin-permissions";
+import { generationDefaultsValidationError } from "@/lib/generation-defaults-validation";
+import { validateGenerationParametersInput } from "@/lib/generation-parameters-admin-validation";
 
 export const runtime = "nodejs";
 
@@ -43,7 +45,6 @@ export async function PATCH(request: Request) {
         if (body.generationCostControl && typeof body.generationCostControl === "object") patch.generationCostControl = body.generationCostControl;
         if (body.dataLifecycle && typeof body.dataLifecycle === "object") patch.dataLifecycle = body.dataLifecycle;
         if (body.generationConcurrency && typeof body.generationConcurrency === "object") patch.generationConcurrency = body.generationConcurrency;
-        if (body.generationDefaults && typeof body.generationDefaults === "object") patch.generationDefaults = body.generationDefaults;
         if (Array.isArray(body.systemChannels)) {
             patch.systemChannels = mergeSystemChannelSecrets(body.systemChannels, currentSettings.systemChannels);
             const webhookSecretError = patch.systemChannels.map(systemChannelWebhookSecretValidationError).find(Boolean);
@@ -54,6 +55,11 @@ export async function PATCH(request: Request) {
             const protocolErrors = channels.flatMap(channelProtocolValidationErrors);
             if (protocolErrors.length) throw new AuthInputError(protocolErrors[0]);
             const sourceLogicalModels = Array.isArray(body.logicalModels) ? body.logicalModels : currentSettings.logicalModels;
+            const generationParametersError = sourceLogicalModels
+                .flatMap((model) => model.bindings || [])
+                .map((binding) => validateGenerationParametersInput(binding.generationParameters))
+                .find(Boolean);
+            if (generationParametersError) throw new AuthInputError(generationParametersError);
             const logicalModels = synchronizeLogicalModelsWithChannels(sourceLogicalModels, channels);
             const defaultModels = { ...currentSettings.defaultModels, ...body.defaultModels };
             const normalizedDefaults = normalizeDefaultModelsConfig(defaultModels, logicalModels, channels);
@@ -61,6 +67,19 @@ export async function PATCH(request: Request) {
             if (errors.length) throw new AuthInputError(errors[0]);
             patch.logicalModels = logicalModels;
             patch.defaultModels = normalizedDefaults;
+        }
+        if (body.generationDefaults && typeof body.generationDefaults === "object") {
+            const generationDefaults = { ...currentSettings.generationDefaults, ...body.generationDefaults };
+            const generationDefaultsError = generationDefaultsValidationError(
+                {
+                    logicalModels: patch.logicalModels || currentSettings.logicalModels,
+                    defaultModels: patch.defaultModels || currentSettings.defaultModels,
+                    generationDefaults,
+                },
+                Object.keys(body.generationDefaults) as Array<keyof AuthSettings["generationDefaults"]>,
+            );
+            if (generationDefaultsError) throw new AuthInputError(generationDefaultsError);
+            patch.generationDefaults = body.generationDefaults;
         }
         if (Array.isArray(body.agentSkills)) patch.agentSkills = body.agentSkills;
         if (!Object.keys(patch).length) return NextResponse.json({ error: "没有可更新的设置" }, { status: 400 });

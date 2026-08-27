@@ -8,9 +8,35 @@ describe("generation default normalization", () => {
         expect(normalizeGenerationDefaults({ videoQuality: "2K", videoSeconds: -1 })).toMatchObject({ videoQuality: "2K", videoSeconds: -1 });
     });
 
-    it("falls back only when the configured video duration is invalid", () => {
+    it("falls back only when the configured video duration is nonpositive", () => {
         expect(normalizeGenerationDefaults({ videoSeconds: 0 }).videoSeconds).toBe(5);
-        expect(normalizeGenerationDefaults({ videoSeconds: 1.5 }).videoSeconds).toBe(5);
+        expect(normalizeGenerationDefaults({ videoSeconds: 1.5 }).videoSeconds).toBe(1.5);
+    });
+
+    it("preserves every generation-default Auto sentinel", () => {
+        expect(normalizeGenerationDefaults({ imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto" })).toMatchObject({
+            imageSize: "auto",
+            imageQuality: "auto",
+            videoQuality: "auto",
+            videoSeconds: -1,
+            audioVoice: "auto",
+            audioFormat: "auto",
+        });
+    });
+
+    it("preserves configured ratio and exact-size defaults without a platform allowlist", () => {
+        expect(normalizeGenerationDefaults({ imageSize: "5:4" }).imageSize).toBe("5:4");
+        expect(normalizeGenerationDefaults({ imageSize: " 1024 × 768 " }).imageSize).toBe("1024x768");
+    });
+
+    it("preserves arbitrary provider defaults and fractional duration", () => {
+        expect(normalizeGenerationDefaults({ imageQuality: "ultra", videoQuality: "2K", videoSeconds: 1.5, audioVoice: "narrator", audioFormat: "m4a" })).toMatchObject({
+            imageQuality: "ultra",
+            videoQuality: "2K",
+            videoSeconds: 1.5,
+            audioVoice: "narrator",
+            audioFormat: "m4a",
+        });
     });
 
     it("preserves administrator-defined positive concurrency without platform ceilings", () => {

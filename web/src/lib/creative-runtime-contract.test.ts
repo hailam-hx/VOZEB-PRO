@@ -45,8 +45,33 @@ describe("normalizeCreativeRunRequest", () => {
             preferences: {
                 mode: "video",
                 image: { size: "1024x1536", quality: "high", count: 12 },
-                video: { size: "9:16", quality: "2160", seconds: 10, count: 12, generateAudio: false, watermark: true },
+                video: { size: "9:16", quality: "2160P", seconds: 10, count: 12, generateAudio: false, watermark: true },
                 audio: { voice: "nova", format: "wav", speed: 1.25 },
+            },
+        });
+    });
+
+    it("keeps configured image quality and decimal video duration while omitting explicit Auto values", () => {
+        expect(
+            normalizeCreativeRunRequest({
+                clientRequestId: "req-configured-media-values",
+                surface: "chat",
+                prompt: "生成媒体",
+                assetIds: [],
+                skillIds: [],
+                modelIds: [],
+                preferences: {
+                    mode: "video",
+                    image: { size: "auto", quality: "studio-pro" },
+                    video: { size: "auto", quality: "auto", seconds: 7.5 },
+                    audio: { voice: "auto", format: "auto" },
+                },
+            }),
+        ).toMatchObject({
+            preferences: {
+                mode: "video",
+                image: { quality: "studio-pro" },
+                video: { seconds: 7.5 },
             },
         });
     });

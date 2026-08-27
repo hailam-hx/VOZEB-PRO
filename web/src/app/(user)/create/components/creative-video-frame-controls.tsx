@@ -5,6 +5,8 @@ import { ArrowLeftRight, ImagePlus, Upload, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
+import { creativeReferenceAdditionAvailability, type CreativeGenerationCapabilityState, type CreativeReferenceAsset } from "@/lib/creative-generation-capabilities";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import type { CreativeVideoReferenceMode, VideoReferenceRole } from "@/lib/video-reference-contract";
@@ -20,6 +22,8 @@ export function CreativeVideoFrameControls({
     lastFrameAssetId,
     uploading,
     placement,
+    referenceCapabilityState = { reason: "unconfigured" },
+    selectedReferenceAssets = [],
     onSelect,
     onUpload,
     onRemove,
@@ -30,12 +34,22 @@ export function CreativeVideoFrameControls({
     lastFrameAssetId?: string;
     uploading: boolean;
     placement: "topLeft" | "bottomLeft";
+    referenceCapabilityState?: CreativeGenerationCapabilityState;
+    selectedReferenceAssets?: readonly CreativeReferenceAsset[];
     onSelect: (role: FrameRole, assetId: string) => void;
     onUpload: (role: FrameRole) => void;
     onRemove: (role: FrameRole) => void;
 }) {
     const t = useTranslations("create");
     if (mode === "reference") return null;
+    const selectionAvailability = creativeReferenceAdditionAvailability(
+        referenceCapabilityState,
+        selectedReferenceAssets.filter((asset) => asset.type !== "image"),
+        "image",
+    );
+    const additionAvailability = creativeReferenceAdditionAvailability(referenceCapabilityState, selectedReferenceAssets, "image");
+    const selectionDisabledReason = referenceAvailabilityMessage(t, selectionAvailability);
+    const additionDisabledReason = referenceAvailabilityMessage(t, additionAvailability);
     return (
         <div className="flex shrink-0 items-start gap-1" aria-label={mode === "first_last" ? t("videoFirstAndLastFrames") : t("videoFirstFrame")}>
             <FrameSlot
@@ -44,6 +58,8 @@ export function CreativeVideoFrameControls({
                 assetId={firstFrameAssetId}
                 images={images}
                 uploading={uploading}
+                selectionDisabledReason={selectionDisabledReason}
+                additionDisabledReason={additionDisabledReason}
                 placement={placement === "bottomLeft" ? "bottomLeft" : "topLeft"}
                 onSelect={onSelect}
                 onUpload={onUpload}
@@ -58,6 +74,8 @@ export function CreativeVideoFrameControls({
                         assetId={lastFrameAssetId}
                         images={images}
                         uploading={uploading}
+                        selectionDisabledReason={selectionDisabledReason}
+                        additionDisabledReason={additionDisabledReason}
                         placement={placement === "bottomLeft" ? "bottomRight" : "topRight"}
                         onSelect={onSelect}
                         onUpload={onUpload}
@@ -75,6 +93,8 @@ function FrameSlot({
     assetId,
     images,
     uploading,
+    selectionDisabledReason,
+    additionDisabledReason,
     placement,
     onSelect,
     onUpload,
@@ -85,6 +105,8 @@ function FrameSlot({
     assetId?: string;
     images: CreativeAsset[];
     uploading: boolean;
+    selectionDisabledReason?: string;
+    additionDisabledReason?: string;
     placement: FramePopoverPlacement;
     onSelect: (role: FrameRole, assetId: string) => void;
     onUpload: (role: FrameRole) => void;
@@ -96,75 +118,85 @@ function FrameSlot({
     const url = assetUrl(asset);
     return (
         <div className="relative h-16 w-14 shrink-0">
-            <Popover
-                trigger="click"
-                placement={placement}
-                arrow={false}
-                destroyOnHidden
-                open={open}
-                onOpenChange={setOpen}
-                content={
-                    <div className="w-64 max-w-[calc(100vw-40px)] py-0.5 sm:w-80">
-                        <p className="px-1 pb-2 text-xs font-semibold text-[#303943] dark:text-[#eef1f4]">{t("selectFrameImage", { frame: label })}</p>
-                        <div className="hide-scrollbar grid max-h-52 grid-cols-3 gap-1.5 overflow-y-auto">
-                            {images.map((item) => {
-                                const itemUrl = assetUrl(item);
-                                const selected = item.id === assetId;
-                                return (
-                                    <button
-                                        key={item.id}
-                                        type="button"
-                                        disabled={!itemUrl}
-                                        className={cn(
-                                            "relative aspect-square min-w-0 overflow-hidden rounded-lg border bg-[#f1f3f5] transition disabled:opacity-40 dark:bg-[#2a2f36]",
-                                            selected ? "border-[#4d7f99] ring-2 ring-[#4d7f99]/20 dark:border-[#82adc3]" : "border-[#e0e4e8] hover:border-[#aeb8c2] dark:border-[#3b424b] dark:hover:border-[#626d78]",
-                                        )}
-                                        onClick={() => {
-                                            onSelect(role, item.id);
-                                            setOpen(false);
-                                        }}
-                                        aria-label={t("setAsFrame", { frame: label, name: item.title })}
-                                    >
-                                        {itemUrl ? <img src={imagePreviewUrl(itemUrl, 320)} alt="" className="size-full object-cover" /> : <ImagePlus className="absolute inset-0 m-auto size-4 text-[#9aa3ad]" />}
-                                    </button>
-                                );
-                            })}
+            <CapabilityControlTooltip reason={selectionDisabledReason} className="w-full">
+                <Popover
+                    trigger="click"
+                    placement={placement}
+                    arrow={false}
+                    destroyOnHidden
+                    open={open}
+                    onOpenChange={setOpen}
+                    content={
+                        <div className="w-64 max-w-[calc(100vw-40px)] py-0.5 sm:w-80">
+                            <p className="px-1 pb-2 text-xs font-semibold text-[#303943] dark:text-[#eef1f4]">{t("selectFrameImage", { frame: label })}</p>
+                            <div className="hide-scrollbar grid max-h-52 grid-cols-3 gap-1.5 overflow-y-auto">
+                                {images.map((item) => {
+                                    const itemUrl = assetUrl(item);
+                                    const selected = item.id === assetId;
+                                    return (
+                                        <CapabilityControlTooltip key={item.id} reason={selectionDisabledReason} className="w-full">
+                                            <button
+                                                type="button"
+                                                disabled={!itemUrl || Boolean(selectionDisabledReason)}
+                                                aria-disabled={!itemUrl || Boolean(selectionDisabledReason)}
+                                                className={cn(
+                                                    "relative aspect-square min-w-0 overflow-hidden rounded-lg border bg-[#f1f3f5] transition disabled:cursor-not-allowed disabled:opacity-40 dark:bg-[#2a2f36]",
+                                                    selected ? "border-[#4d7f99] ring-2 ring-[#4d7f99]/20 dark:border-[#82adc3]" : "border-[#e0e4e8] hover:border-[#aeb8c2] dark:border-[#3b424b] dark:hover:border-[#626d78]",
+                                                )}
+                                                onClick={() => {
+                                                    onSelect(role, item.id);
+                                                    setOpen(false);
+                                                }}
+                                                aria-label={t("setAsFrame", { frame: label, name: item.title })}
+                                            >
+                                                {itemUrl ? <img src={imagePreviewUrl(itemUrl, 320)} alt="" className="size-full object-cover" /> : <ImagePlus className="absolute inset-0 m-auto size-4 text-[#9aa3ad]" />}
+                                            </button>
+                                        </CapabilityControlTooltip>
+                                    );
+                                })}
+                            </div>
+                            {!images.length ? <p className="py-4 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noImageMaterialThisRound")}</p> : null}
+                            <CapabilityControlTooltip reason={additionDisabledReason} className="w-full">
+                                <Button
+                                    type="text"
+                                    block
+                                    className="mt-2 !h-9 !justify-start !rounded-lg !text-xs"
+                                    icon={<Upload className="size-3.5" />}
+                                    loading={uploading}
+                                    disabled={Boolean(additionDisabledReason)}
+                                    aria-disabled={Boolean(additionDisabledReason)}
+                                    onClick={() => {
+                                        setOpen(false);
+                                        onUpload(role);
+                                    }}
+                                >
+                                    {t("uploadNewImage")}
+                                </Button>
+                            </CapabilityControlTooltip>
                         </div>
-                        {!images.length ? <p className="py-4 text-center text-xs text-[#8b949f] dark:text-[#7f8996]">{t("noImageMaterialThisRound")}</p> : null}
-                        <Button
-                            type="text"
-                            block
-                            className="mt-2 !h-9 !justify-start !rounded-lg !text-xs"
-                            icon={<Upload className="size-3.5" />}
-                            loading={uploading}
-                            onClick={() => {
-                                setOpen(false);
-                                onUpload(role);
-                            }}
-                        >
-                            {t("uploadNewImage")}
-                        </Button>
-                    </div>
-                }
-            >
-                <button
-                    type="button"
-                    className={cn(
-                        "relative grid size-14 place-items-center overflow-hidden rounded-lg border border-[#dfe4e8] bg-[#f1f3f5] text-[#84909c] shadow-[0_2px_8px_rgba(38,49,65,0.08)] transition hover:border-[#aeb8c2] hover:text-[#3f4a55] dark:border-[#3c444d] dark:bg-[#191c20] dark:text-[#9ea8b3] dark:hover:border-[#626d78] dark:hover:text-white",
-                        role === "first_frame" ? "rotate-[-3deg]" : "rotate-[3deg]",
-                    )}
-                    aria-label={asset ? t("replaceVideoFrame", { frame: label }) : t("addVideoFrame", { frame: label })}
+                    }
                 >
-                    {url ? (
-                        <img src={imagePreviewUrl(url, 320)} alt={asset?.title || label} className="size-full object-cover" />
-                    ) : (
-                        <span className="grid size-full place-items-center bg-[#f1f3f5] dark:bg-[#242930]">
-                            <ImagePlus className="size-5" />
-                        </span>
-                    )}
-                    <span className="absolute inset-x-0 bottom-0 bg-black/45 px-1 py-0.5 text-center text-[9px] font-medium text-white">{asset ? label : t("addFrame", { frame: label })}</span>
-                </button>
-            </Popover>
+                    <button
+                        type="button"
+                        disabled={Boolean(selectionDisabledReason)}
+                        aria-disabled={Boolean(selectionDisabledReason)}
+                        className={cn(
+                            "relative grid size-14 place-items-center overflow-hidden rounded-lg border border-[#dfe4e8] bg-[#f1f3f5] text-[#84909c] shadow-[0_2px_8px_rgba(38,49,65,0.08)] transition hover:border-[#aeb8c2] hover:text-[#3f4a55] disabled:cursor-not-allowed disabled:opacity-40 dark:border-[#3c444d] dark:bg-[#191c20] dark:text-[#9ea8b3] dark:hover:border-[#626d78] dark:hover:text-white",
+                            role === "first_frame" ? "rotate-[-3deg]" : "rotate-[3deg]",
+                        )}
+                        aria-label={asset ? t("replaceVideoFrame", { frame: label }) : t("addVideoFrame", { frame: label })}
+                    >
+                        {url ? (
+                            <img src={imagePreviewUrl(url, 320)} alt={asset?.title || label} className="size-full object-cover" />
+                        ) : (
+                            <span className="grid size-full place-items-center bg-[#f1f3f5] dark:bg-[#242930]">
+                                <ImagePlus className="size-5" />
+                            </span>
+                        )}
+                        <span className="absolute inset-x-0 bottom-0 bg-black/45 px-1 py-0.5 text-center text-[9px] font-medium text-white">{asset ? label : t("addFrame", { frame: label })}</span>
+                    </button>
+                </Popover>
+            </CapabilityControlTooltip>
             {asset ? (
                 <button
                     type="button"
@@ -177,6 +209,20 @@ function FrameSlot({
             ) : null}
         </div>
     );
+}
+
+const capabilityReasonMessageKeys = {
+    unconfigured: "generationCapabilityUnconfigured",
+    unsupported: "generationCapabilityUnsupported",
+    intersection: "generationCapabilityIntersection",
+} as const;
+
+function referenceAvailabilityMessage(t: ReturnType<typeof useTranslations<"create">>, availability: ReturnType<typeof creativeReferenceAdditionAvailability>) {
+    if (availability.supported) return undefined;
+    if ("maxReferenceImages" in availability && availability.maxReferenceImages) {
+        return t(availability.reason === "intersection" ? "generationReferenceImageIntersectionLimit" : "generationReferenceImageLimit", { count: availability.maxReferenceImages });
+    }
+    return t(capabilityReasonMessageKeys[availability.reason]);
 }
 
 function assetUrl(asset: CreativeAsset | undefined) {

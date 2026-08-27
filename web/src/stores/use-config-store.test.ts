@@ -119,6 +119,16 @@ describe("applyPublicSystemSettings", () => {
         expect(config.canvasImageCount).toBe("11");
         expect(config.count).toBe("12");
     });
+
+    it("keeps Auto image counts through public settings hydration", () => {
+        const config = applyPublicSystemSettings(defaultConfig, {
+            ...audioSettings,
+            generationDefaults: { canvasImageCount: "auto", imageCount: "auto", imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto" },
+        });
+
+        expect(config.canvasImageCount).toBe("auto");
+        expect(config.count).toBe("auto");
+    });
 });
 
 function rawModelSettings(): PublicSystemSettings {

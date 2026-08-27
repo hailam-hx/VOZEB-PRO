@@ -33,7 +33,7 @@ export function creativeRunPresentation(run: CreativeAgentRun | undefined, model
     const quality = firstText(tasks.map((task) => task.quality)) || (preferences && "quality" in preferences ? preferences.quality : undefined);
     if (quality) items.push({ key: "quality", label: mode === "video" ? copy.labels.definition : copy.labels.quality, value: copy.qualities[quality.toLowerCase()] || quality });
 
-    const seconds = firstNumber(tasks.map((task) => task.seconds)) || (preferences && "seconds" in preferences ? preferences.seconds : undefined);
+    const seconds = firstNumber(tasks.map((task) => task.seconds)) || (preferences && "seconds" in preferences && typeof preferences.seconds === "number" ? preferences.seconds : undefined);
     if (seconds) items.push({ key: "seconds", label: copy.labels.duration, value: copy.seconds(seconds) });
 
     const voice = firstText(tasks.map((task) => task.voice)) || (preferences && "voice" in preferences ? preferences.voice : undefined);

@@ -4,7 +4,6 @@ import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings, isAuthInputError } from "@/lib/auth/store";
 import { mediaTaskSource } from "@/lib/media-management-contract";
-import { resolveAudioTaskOptions } from "@/lib/server/audio-task-config";
 import { createAudioTask, type AudioTask, type AudioTaskConfig } from "@/lib/server/audio-task-store";
 import { generationModelId, toSystemGenerationChannel } from "@/lib/server/generation-channel";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
@@ -13,6 +12,7 @@ import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerat
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { resolveAudioGenerationCandidates } from "@/lib/server/capability-constraints";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +36,9 @@ export async function POST(request: Request) {
         const prompt = String(body.prompt || "").trim();
         const supportedChannels = channels.filter((channel) => channel.apiFormat !== "gemini");
         if (!supportedChannels.length || !prompt) return NextResponse.json({ error: "音频任务参数不完整或渠道不支持" }, { status: 400 });
-        const configs: AudioTaskConfig[] = supportedChannels.map((channel) => ({ ...channel, ...resolveAudioTaskOptions(body.config, settings.generationDefaults), instructions: clean(body.config?.instructions, 2_000) }));
+        const capability = resolveAudioGenerationCandidates(supportedChannels, (body.config || {}) as Record<string, unknown>, settings.generationDefaults);
+        if (!capability.candidates.length) return NextResponse.json({ error: capability.error?.message || "当前模型不支持所选生成参数" }, { status: 400 });
+        const configs: AudioTaskConfig[] = capability.candidates.map((channel) => ({ ...channel, instructions: clean(body.config?.instructions, 2_000) }));
         const requestId = body.context?.clientRequestId?.trim();
         if (requestId) {
             const existing = await getStoredGenerationTaskByRequest<AudioTask>("audio", user.id, requestId, body.context?.attemptNo);

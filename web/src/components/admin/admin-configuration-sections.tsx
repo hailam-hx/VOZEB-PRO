@@ -249,7 +249,7 @@ export function AdminSettingsSection({ controller }: { controller: AdminDashboar
                             icon={<Sparkles className="size-4" />}
                             label="生成控制"
                             value={`${settings.generationConcurrency.agent || 1} 个 Agent`}
-                            detail={`图片 ${settings.generationDefaults.imageCount || 1} 张 / ${settings.generationDefaults.videoSeconds === -1 ? "视频智能时长" : `视频 ${settings.generationDefaults.videoSeconds || 5}s`}`}
+                            detail={`${settings.generationDefaults.imageCount === "auto" ? "图片智能张数" : `图片 ${settings.generationDefaults.imageCount} 张`} / ${settings.generationDefaults.videoSeconds === -1 ? "视频智能时长" : `视频 ${settings.generationDefaults.videoSeconds}s`}`}
                             tone="blue"
                         />
                     ) : null}

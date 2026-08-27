@@ -280,24 +280,39 @@ export function normalizeAgentSkills(skills: AgentSkill[] | undefined) {
 
 export function normalizeGenerationDefaults(settings: Partial<GenerationDefaultSettings> | undefined): GenerationDefaultSettings {
     return {
-        canvasImageCount: normalizePositiveSafeInteger(settings?.canvasImageCount, DEFAULT_SETTINGS.generationDefaults.canvasImageCount),
-        imageSize: allowedText(settings?.imageSize, ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"], DEFAULT_SETTINGS.generationDefaults.imageSize),
-        imageQuality: allowedText(settings?.imageQuality, ["auto", "low", "medium", "high"], DEFAULT_SETTINGS.generationDefaults.imageQuality),
-        imageCount: normalizePositiveSafeInteger(settings?.imageCount, DEFAULT_SETTINGS.generationDefaults.imageCount),
-        videoQuality: normalizeText(settings?.videoQuality, DEFAULT_SETTINGS.generationDefaults.videoQuality, 40),
+        canvasImageCount: normalizeGenerationDefaultCount(settings?.canvasImageCount),
+        imageSize: normalizeGenerationDefaultImageSize(settings?.imageSize),
+        imageQuality: normalizeText(settings?.imageQuality, DEFAULT_SETTINGS.generationDefaults.imageQuality, 80),
+        imageCount: normalizeGenerationDefaultCount(settings?.imageCount),
+        videoQuality: normalizeText(settings?.videoQuality, DEFAULT_SETTINGS.generationDefaults.videoQuality, 80),
         videoSeconds: normalizeDefaultVideoSeconds(settings?.videoSeconds),
         audioVoice: normalizeText(settings?.audioVoice, DEFAULT_SETTINGS.generationDefaults.audioVoice, 80),
-        audioFormat: allowedText(settings?.audioFormat, ["mp3", "wav", "opus", "aac", "flac"], DEFAULT_SETTINGS.generationDefaults.audioFormat),
+        audioFormat: normalizeText(settings?.audioFormat, DEFAULT_SETTINGS.generationDefaults.audioFormat, 80),
     };
 }
 
 function normalizeDefaultVideoSeconds(value: unknown) {
     const seconds = Number(value);
     if (seconds === -1) return -1;
-    return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : DEFAULT_SETTINGS.generationDefaults.videoSeconds;
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_SETTINGS.generationDefaults.videoSeconds;
 }
 
-function normalizePositiveSafeInteger(value: unknown, fallback: number) {
+function normalizeGenerationDefaultCount(value: unknown) {
+    if (value === "auto") return value;
+    return normalizePositiveSafeInteger(value, "auto");
+}
+
+function normalizeGenerationDefaultImageSize(value: unknown) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (text === "auto") return text;
+    const ratio = text.match(/^(\d+)\s*:\s*(\d+)$/);
+    if (ratio && Number(ratio[1]) > 0 && Number(ratio[2]) > 0) return `${Number(ratio[1])}:${Number(ratio[2])}`;
+    const size = text.match(/^(\d+)\s*[xX×]\s*(\d+)$/);
+    if (size && Number(size[1]) > 0 && Number(size[2]) > 0) return `${Number(size[1])}x${Number(size[2])}`;
+    return DEFAULT_SETTINGS.generationDefaults.imageSize;
+}
+
+function normalizePositiveSafeInteger<T extends number | "auto">(value: unknown, fallback: T) {
     const number = Number(value);
     return Number.isSafeInteger(number) && number > 0 ? number : fallback;
 }
@@ -731,6 +746,7 @@ export function normalizePointRecord(value: Partial<StoredPointRecord>): StoredP
         balanceAfter,
         description: normalizeText(value.description, type === "consume" ? "积分消耗" : "积分增加", 120),
         model: typeof value.model === "string" ? value.model.slice(0, 160) : undefined,
+        operatorUserId: normalizeOptionalText(value.operatorUserId, 120),
         idempotencyKey: normalizeOptionalText(value.idempotencyKey, 200),
         requestFingerprint: typeof value.requestFingerprint === "string" && /^[a-f0-9]{64}$/i.test(value.requestFingerprint.trim()) ? value.requestFingerprint.trim().toLowerCase() : undefined,
         sourceRecordId: normalizeOptionalText(value.sourceRecordId, 120),

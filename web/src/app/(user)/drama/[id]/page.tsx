@@ -15,6 +15,7 @@ import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useDramaStore } from "../stores/use-drama-store";
 import type { DramaContentAnalysis, DramaProject, DramaProjectVersion, DramaVisualAnalysis } from "../types";
+import { startDramaTaskAfterPreflight } from "../drama-generation-capabilities";
 import { useDramaAudioQueue } from "./use-drama-audio-queue";
 import { DramaAgentPanel } from "./drama-agent-panel";
 import { DramaAssetsPanel } from "./drama-assets-panel";
@@ -23,7 +24,7 @@ import { DramaGenerationPanel } from "./drama-generation-panel";
 import { DramaReviewPanel } from "./drama-review-panel";
 import { DramaStoryboardShotCard } from "./drama-storyboard-shot-card";
 import { DramaVersionModal } from "./drama-project-modals";
-import { dramaGenerationSize, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
+import { dramaGenerationSize, dramaImageGenerationPreflight, dramaVideoGenerationPreflight, dramaVideoRequestConfig, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
 import { useGenerationCapacityRetry } from "./use-generation-capacity-retry";
 import { DramaEpisodeSidebar, DramaScriptPanel, DramaWorkspaceHeader, type DramaProjectStage } from "./drama-project-sections";
 
@@ -225,22 +226,30 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         if (nextEnd && !storyboardTaskRef.current) {
             const retryKey = `storyboard-end:${nextEnd.id}`;
             if (isCapacityWaiting(retryKey)) return;
-            storyboardTaskRef.current = `${episode.id}:${nextEnd.id}:creating-end`;
             const prompt = compileDramaShotPrompts(project, episode, nextEnd).endFramePrompt;
             const references = [referenceImage(`storyboard-start-${nextEnd.id}`, t("startFrameFile", { title: nextEnd.title }), nextEnd.storyboardImageUrl!, "image/png", nextEnd.storyboardImageWidth, nextEnd.storyboardImageHeight)];
+            const compatibility = dramaImageGenerationPreflight(config, project, prompt, references);
             const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: dramaGenerationSize(project, prompt, references), count: "1" };
-            void createImageGenerationTask(imageConfig, prompt, references, undefined, {
-                logSource: "drama",
-                logTitle: t("endFrameLog", { project: project.title, shot: nextEnd.title }),
-                conversationId: project.creativeConversationId,
-                surface: "drama",
-                projectId: project.id,
-                episodeId: episode.id,
-                shotId: nextEnd.id,
-                estimatedPoints: estimateTaskPoints(config, "image"),
-                attemptNo: nextEnd.storyboardEndAttempt || 1,
-                clientRequestId: `drama-storyboard-end:${project.id}:${episode.id}:${nextEnd.id}:attempt-${nextEnd.storyboardEndAttempt || 1}`,
-            })
+            const creation = startDramaTaskAfterPreflight(compatibility, () =>
+                createImageGenerationTask(imageConfig, prompt, references, undefined, {
+                    logSource: "drama",
+                    logTitle: t("endFrameLog", { project: project.title, shot: nextEnd.title }),
+                    conversationId: project.creativeConversationId,
+                    surface: "drama",
+                    projectId: project.id,
+                    episodeId: episode.id,
+                    shotId: nextEnd.id,
+                    estimatedPoints: estimateTaskPoints(config, "image"),
+                    attemptNo: nextEnd.storyboardEndAttempt || 1,
+                    clientRequestId: `drama-storyboard-end:${project.id}:${episode.id}:${nextEnd.id}:attempt-${nextEnd.storyboardEndAttempt || 1}`,
+                }),
+            );
+            if (!creation.started) {
+                updateShot(project.id, episode.id, nextEnd.id, { storyboardEndStatus: "error", storyboardEndError: creation.failure.reason });
+                return;
+            }
+            storyboardTaskRef.current = `${episode.id}:${nextEnd.id}:creating-end`;
+            void creation.task
                 .then((task) => updateShot(project.id, episode.id, nextEnd.id, { storyboardEndStatus: "running", storyboardEndTaskId: task.id, storyboardEndError: undefined }))
                 .catch((error) =>
                     scheduleCapacityRetry(retryKey, error)
@@ -256,22 +265,30 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         if (!next || storyboardTaskRef.current) return;
         const retryKey = `storyboard:${next.id}`;
         if (isCapacityWaiting(retryKey)) return;
-        storyboardTaskRef.current = `${episode.id}:${next.id}:creating`;
         const prompts = compileDramaShotPrompts(project, episode, next);
         const references = shotReferenceImages(project, next);
+        const compatibility = dramaImageGenerationPreflight(config, project, prompts.imagePrompt, references);
         const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: dramaGenerationSize(project, prompts.imagePrompt, references), count: "1" };
-        void createImageGenerationTask(imageConfig, prompts.imagePrompt, references, undefined, {
-            logSource: "drama",
-            logTitle: `${project.title} · ${next.title}`,
-            conversationId: project.creativeConversationId,
-            surface: "drama",
-            projectId: project.id,
-            episodeId: episode.id,
-            shotId: next.id,
-            estimatedPoints: estimateTaskPoints(config, "image"),
-            attemptNo: next.storyboardAttempt || 1,
-            clientRequestId: `drama-storyboard:${project.id}:${episode.id}:${next.id}:attempt-${next.storyboardAttempt || 1}`,
-        })
+        const creation = startDramaTaskAfterPreflight(compatibility, () =>
+            createImageGenerationTask(imageConfig, prompts.imagePrompt, references, undefined, {
+                logSource: "drama",
+                logTitle: `${project.title} · ${next.title}`,
+                conversationId: project.creativeConversationId,
+                surface: "drama",
+                projectId: project.id,
+                episodeId: episode.id,
+                shotId: next.id,
+                estimatedPoints: estimateTaskPoints(config, "image"),
+                attemptNo: next.storyboardAttempt || 1,
+                clientRequestId: `drama-storyboard:${project.id}:${episode.id}:${next.id}:attempt-${next.storyboardAttempt || 1}`,
+            }),
+        );
+        if (!creation.started) {
+            updateShot(project.id, episode.id, next.id, { storyboardStatus: "error", storyboardError: creation.failure.reason });
+            return;
+        }
+        storyboardTaskRef.current = `${episode.id}:${next.id}:creating`;
+        void creation.task
             .then((task) => updateShot(project.id, episode.id, next.id, { storyboardStatus: "running", storyboardTaskId: task.id, storyboardError: undefined }))
             .catch((error) =>
                 scheduleCapacityRetry(retryKey, error)
@@ -309,7 +326,6 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         if (!next || startingShotRef.current === next.id) return;
         const retryKey = `video:${next.id}`;
         if (isCapacityWaiting(retryKey)) return;
-        startingShotRef.current = next.id;
         const mode = next.videoMode || project.defaultVideoMode;
         const references = mode === "reference" ? shotReferenceImages(project, next) : storyboardReferenceImages(next);
         const prompts = compileDramaShotPrompts(project, episode, next);
@@ -328,13 +344,15 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             startingShotRef.current = "";
             return;
         }
-        void createServerVideoGenerationTask(
-            { ...config, model: config.videoModel || config.model, size: dramaGenerationSize(project, prompts.videoPrompt, references), videoSeconds: String(next.duration), videoGenerateAudio: String((next.audioMode || "source") === "source") },
-            prompts.videoPrompt,
-            references,
-            [],
-            [],
-            {
+        const videoConfig = {
+            ...dramaVideoRequestConfig(config, next),
+            model: config.videoModel || config.model,
+            size: dramaGenerationSize(project, prompts.videoPrompt, references),
+            videoSeconds: String(next.duration),
+        };
+        const compatibility = dramaVideoGenerationPreflight(videoConfig, project, next, prompts.videoPrompt, references);
+        const creation = startDramaTaskAfterPreflight(compatibility, () =>
+            createServerVideoGenerationTask(videoConfig, prompts.videoPrompt, references, [], [], {
                 conversationId: project.creativeConversationId,
                 surface: "drama",
                 projectId: project.id,
@@ -344,8 +362,14 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 parentTaskId: next.storyboardTaskId,
                 attemptNo: next.generationAttempt || 1,
                 clientRequestId: `drama-video:${project.id}:${episode.id}:${next.id}:attempt-${next.generationAttempt || 1}`,
-            },
-        )
+            }),
+        );
+        if (!creation.started) {
+            updateShot(project.id, episode.id, next.id, { generationStatus: "error", generationError: creation.failure.reason });
+            return;
+        }
+        startingShotRef.current = next.id;
+        void creation.task
             .then((task) => updateShot(project.id, episode.id, next.id, { generationStatus: "running", generationTaskId: task.serverTaskId || task.id, generationError: undefined }))
             .catch((error) =>
                 scheduleCapacityRetry(retryKey, error)

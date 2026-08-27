@@ -295,11 +295,12 @@ export async function createSeedanceTask(config: AiConfig, model: string, prompt
     assertSeedanceAudioReferences(audioReferences);
     const content = await buildSeedanceContent(prompt, references, videoReferences, audioReferences);
     if (!content.length) throw new Error("请输入视频提示词，或连接参考图片/视频/音频");
+    const resolution = normalizeSeedanceResolution(config.vquality, modelOptionName(model));
     const payload = {
         model: modelOptionName(model),
         content,
         ratio: normalizeSeedanceRatio(config.size),
-        resolution: normalizeSeedanceResolution(config.vquality, modelOptionName(model)),
+        ...(resolution ? { resolution } : {}),
         duration: normalizeSeedanceDuration(config.videoSeconds),
         generate_audio: boolConfig(config.videoGenerateAudio, true),
         watermark: boolConfig(config.videoWatermark, false),
@@ -484,8 +485,10 @@ export async function buildCompatibleVideoPayloadVariants(config: AiConfig, mode
 }
 
 function normalizeYumengVideoDuration(value: string) {
-    const seconds = Math.floor(Number(value) || 4);
-    return Math.max(4, Math.min(15, seconds));
+    if (String(value).trim() === "-1") return -1;
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds <= 0) throw new Error("Yumeng 视频时长无效");
+    return seconds;
 }
 
 function globalAiOpcVideoPreset(config: AiConfig, model: string) {

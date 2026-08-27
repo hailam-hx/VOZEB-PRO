@@ -1,20 +1,25 @@
 "use client";
 
-import { Button, Input, InputNumber, Modal } from "antd";
+import { Button, Input, Modal } from "antd";
 import { ArrowLeft, Check, ChevronDown, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useEffectiveConfig } from "@/stores/use-config-store";
 
 import type { DramaEpisode, DramaProject } from "@/lib/drama-project-contract";
 import { useDramaStore } from "../stores/use-drama-store";
 import { DramaStageHeader } from "./drama-editor-elements";
 import type { DramaProjectStage } from "./drama-project-sections";
 import { DramaShotDialogueEditor } from "./drama-shot-dialogue-editor";
+import { DramaDurationField } from "./drama-duration-field";
+import { resolveDramaGenerationCapabilities } from "../drama-generation-capabilities";
 
 export function DramaReviewPanel({ project, episode, onDesignVisuals, designing, onStageChange }: { project: DramaProject; episode: DramaEpisode; onDesignVisuals: () => void; designing: boolean; onStageChange: (stage: DramaProjectStage) => void }) {
     const t = useTranslations("drama.editor.review");
     const updateEpisode = useDramaStore((state) => state.updateEpisode);
     const updateShot = useDramaStore((state) => state.updateShot);
+    const config = useEffectiveConfig();
+    const videoParameters = resolveDramaGenerationCapabilities(config).videoParameters;
     const [episodeInfoOpen, setEpisodeInfoOpen] = useState(false);
     const [expandedShotIds, setExpandedShotIds] = useState<Set<string>>(() => new Set(episode.shots.slice(0, 1).map((shot) => shot.id)));
     useEffect(() => {
@@ -129,7 +134,7 @@ export function DramaReviewPanel({ project, episode, onDesignVisuals, designing,
                                         </div>
                                         <div className="mt-3 grid grid-cols-[auto_72px_auto] items-center gap-2 text-sm text-muted-foreground sm:grid-cols-[auto_88px_auto_minmax(0,1fr)]">
                                             <span className="whitespace-nowrap">{t("shotDuration")}</span>
-                                            <InputNumber className="!h-9 !w-[72px] sm:!w-[88px]" min={1} max={20} value={shot.duration} onChange={(value) => updateContentShot(shot.id, { duration: Number(value) || 5 })} />
+                                            <DramaDurationField className="w-[72px] sm:w-[88px]" ariaLabel={t("shotDuration")} value={shot.duration} parameters={videoParameters} onChange={(duration) => updateContentShot(shot.id, { duration })} />
                                             <span>{t("secondUnit")}</span>
                                             <span className="hidden min-w-0 text-right text-xs sm:block">{t("visualPromptNotice")}</span>
                                         </div>

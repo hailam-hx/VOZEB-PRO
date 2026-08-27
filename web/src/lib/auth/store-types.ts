@@ -85,15 +85,29 @@ export type SystemModelChannel = {
 
 export type LogicalModelCapability = "text" | "image" | "video" | "audio";
 
-export type LogicalModelCapabilityProfile = {
-    supportsReferenceImage?: boolean;
-    supportsReferenceVideo?: boolean;
-    supportsReferenceAudio?: boolean;
+export type LogicalModelGenerationParameters = {
+    referenceInputs: Array<"image" | "video" | "audio">;
     maxReferenceImages?: number;
-    aspectRatios?: string[];
-    minDurationSeconds?: number;
-    maxDurationSeconds?: number;
+    aspectRatios: string[];
+    pixelSizes: string[];
+    supportsCustomSize: boolean;
+    qualities: string[];
+    resolutions: string[];
+    durationMode?: "discrete" | "range";
+    durationSeconds: number[];
+    durationRange?: { min: number; max: number };
+    supportsCustomDuration?: boolean;
+    customDurationRange?: { min: number; max: number };
     maxBatchSize?: number;
+    supportsCustomBatchSize?: boolean;
+    customBatchSizeRange?: { min: number; max: number };
+    videoReferenceModes: Array<"reference" | "first_frame" | "first_last">;
+    voices: string[];
+    formats: string[];
+    speedRange?: { min: number; max: number };
+};
+
+export type LogicalModelCapabilityProfile = {
     supportsAsync?: boolean;
     supportsCancel?: boolean;
     supportsWebhook?: boolean;
@@ -114,6 +128,7 @@ export type LogicalModelBinding = {
     priority: number;
     weight?: number;
     capabilityProfile?: LogicalModelCapabilityProfile;
+    generationParameters?: LogicalModelGenerationParameters;
     costRateCard?: PricingRateCardV1;
     providerCostUnit?: ProviderCostUnit;
 };
@@ -167,10 +182,10 @@ export type GenerationConcurrencySettings = {
 };
 
 export type GenerationDefaultSettings = {
-    canvasImageCount: number;
+    canvasImageCount: number | "auto";
     imageSize: string;
     imageQuality: string;
-    imageCount: number;
+    imageCount: number | "auto";
     videoQuality: string;
     videoSeconds: number;
     audioVoice: string;
@@ -378,6 +393,7 @@ export type PublicPointRecord = {
 };
 
 export type StoredPointRecord = PublicPointRecord & {
+    operatorUserId?: string;
     requestFingerprint?: string;
 };
 

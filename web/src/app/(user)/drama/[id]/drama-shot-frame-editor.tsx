@@ -1,14 +1,17 @@
 "use client";
 
-import { App, Button, Image, Segmented } from "antd";
+import { App, Button, Image } from "antd";
 import { ImagePlus, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { CapabilityControlTooltip } from "@/components/creative-generation-preference-fields";
+import { useEffectiveConfig } from "@/stores/use-config-store";
 
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { uploadImage } from "@/services/image-storage";
 import { useDramaStore } from "../stores/use-drama-store";
 import type { DramaShot } from "../types";
+import { checkDramaVideoReferenceMode, resolveDramaGenerationCapabilities } from "../drama-generation-capabilities";
 
 type FrameKind = "start" | "end";
 
@@ -16,11 +19,14 @@ export function DramaShotFrameEditor({ projectId, episodeId, shot }: { projectId
     const t = useTranslations("drama.editor.frames");
     const { message } = App.useApp();
     const updateShot = useDramaStore((state) => state.updateShot);
+    const generationCapabilities = resolveDramaGenerationCapabilities(useEffectiveConfig());
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [uploadTarget, setUploadTarget] = useState<FrameKind>("start");
     const [uploading, setUploading] = useState<FrameKind | "">("");
     const frameMode = shot.storyboardFrameMode || "single";
     const generationActive = [shot.storyboardStatus, shot.storyboardEndStatus, shot.generationStatus].some((status) => status === "queued" || status === "running");
+    const firstLastCapability = checkDramaVideoReferenceMode(generationCapabilities, "first_last");
+    const frameControlsDisabled = generationActive || (frameMode === "first_last" && !firstLastCapability.compatible);
 
     const chooseFile = (kind: FrameKind) => {
         setUploadTarget(kind);
@@ -70,20 +76,33 @@ export function DramaShotFrameEditor({ projectId, episodeId, shot }: { projectId
                     <div className="shrink-0 text-sm font-semibold">{t("title")}</div>
                     <p className="min-w-0 truncate text-xs leading-5 text-muted-foreground">{t("description")}</p>
                 </div>
-                <Segmented
-                    className="!w-fit !shrink-0"
-                    disabled={generationActive}
-                    value={frameMode}
-                    options={[
-                        { label: t("single"), value: "single" },
-                        { label: t("firstLast"), value: "first_last" },
-                    ]}
-                    onChange={(value) => updateShot(projectId, episodeId, shot.id, { storyboardFrameMode: value as "single" | "first_last", ...clearedGeneratedMedia })}
-                />
+                <div className="grid shrink-0 grid-cols-2 gap-1 rounded-lg bg-muted/50 p-1" role="group" aria-label={t("title")}>
+                    <button
+                        type="button"
+                        className={`h-7 rounded-md px-2 text-xs ${frameMode === "single" ? "bg-background font-medium" : "hover:bg-background/60"}`}
+                        disabled={generationActive}
+                        aria-pressed={frameMode === "single"}
+                        onClick={() => updateShot(projectId, episodeId, shot.id, { storyboardFrameMode: "single", ...clearedGeneratedMedia })}
+                    >
+                        {t("single")}
+                    </button>
+                    <CapabilityControlTooltip reason={!firstLastCapability.compatible ? firstLastCapability.reason : undefined}>
+                        <button
+                            type="button"
+                            className={`h-7 rounded-md px-2 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${frameMode === "first_last" ? "bg-background font-medium" : "hover:bg-background/60"}`}
+                            disabled={generationActive || !firstLastCapability.compatible}
+                            aria-disabled={generationActive || !firstLastCapability.compatible}
+                            aria-pressed={frameMode === "first_last"}
+                            onClick={() => updateShot(projectId, episodeId, shot.id, { storyboardFrameMode: "first_last", ...clearedGeneratedMedia })}
+                        >
+                            {t("firstLast")}
+                        </button>
+                    </CapabilityControlTooltip>
+                </div>
             </div>
             <div className="mt-3 grid min-w-0 gap-2.5 sm:grid-cols-2">
-                <FrameSlot title={t("start")} url={shot.storyboardImageUrl} loading={uploading === "start"} disabled={generationActive} onUpload={() => chooseFile("start")} onRemove={() => removeFrame("start")} />
-                {frameMode === "first_last" ? <FrameSlot title={t("end")} url={shot.storyboardEndImageUrl} loading={uploading === "end"} disabled={generationActive} onUpload={() => chooseFile("end")} onRemove={() => removeFrame("end")} /> : null}
+                <FrameSlot title={t("start")} url={shot.storyboardImageUrl} loading={uploading === "start"} disabled={frameControlsDisabled} onUpload={() => chooseFile("start")} onRemove={() => removeFrame("start")} />
+                {frameMode === "first_last" ? <FrameSlot title={t("end")} url={shot.storyboardEndImageUrl} loading={uploading === "end"} disabled={frameControlsDisabled} onUpload={() => chooseFile("end")} onRemove={() => removeFrame("end")} /> : null}
             </div>
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => void uploadFrame(event.target.files?.[0])} />
         </div>

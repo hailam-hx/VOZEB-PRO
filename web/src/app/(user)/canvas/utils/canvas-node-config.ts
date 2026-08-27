@@ -6,17 +6,17 @@ export function buildCanvasNodeConfig(globalConfig: AiConfig, node: CanvasNodeDa
     return {
         ...globalConfig,
         model,
-        quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
-        size: node.metadata?.size || globalConfig.size || defaultConfig.size,
-        videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
-        videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
-        videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
-        audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
-        audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
-        audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
+        quality: node.metadata?.quality ?? globalConfig.quality ?? defaultConfig.quality,
+        size: node.metadata?.size ?? globalConfig.size ?? defaultConfig.size,
+        videoSeconds: node.metadata?.seconds ?? globalConfig.videoSeconds ?? defaultConfig.videoSeconds,
+        vquality: node.metadata?.vquality ?? globalConfig.vquality ?? defaultConfig.vquality,
+        videoGenerateAudio: node.metadata?.generateAudio ?? globalConfig.videoGenerateAudio ?? defaultConfig.videoGenerateAudio,
+        videoWatermark: node.metadata?.watermark ?? globalConfig.videoWatermark ?? defaultConfig.videoWatermark,
+        audioVoice: node.metadata?.audioVoice ?? globalConfig.audioVoice ?? defaultConfig.audioVoice,
+        audioFormat: node.metadata?.audioFormat ?? globalConfig.audioFormat ?? defaultConfig.audioFormat,
+        audioSpeed: node.metadata?.audioSpeed ?? globalConfig.audioSpeed ?? defaultConfig.audioSpeed,
         audioInstructions: node.metadata?.audioInstructions || defaultConfig.audioInstructions,
-        count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
+        count: String(node.metadata?.count ?? (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) ?? defaultConfig.count),
     };
 }
 

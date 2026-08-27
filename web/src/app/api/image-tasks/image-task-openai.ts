@@ -19,7 +19,6 @@ import { resolveImageTaskOptions } from "@/lib/server/image-task-config";
 import { linkStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
-import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { GenerationSubmissionSafeFailure } from "@/lib/server/generation-submission-error";
 
 import {
@@ -162,7 +161,7 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
             body: JSON.stringify({
                 model: config.model,
                 prompt: withSystemPrompt(config, task.prompt),
-                n: 1,
+                ...(config.count ? { n: config.count } : {}),
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(allowProtocolFallback ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
@@ -306,7 +305,7 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
         body: JSON.stringify({
             model: config.model,
             prompt: withSystemPrompt(config, task.prompt),
-            n: 1,
+            ...(config.count ? { n: config.count } : {}),
             ...(quality ? { quality } : {}),
             ...(requestSize ? { size: requestSize } : {}),
             response_format: "b64_json",
@@ -393,7 +392,7 @@ export async function buildJsonImageEditBodies(
     const base = {
         model: task.config.model,
         prompt: withSystemPrompt(task.config, prompt),
-        n: 1,
+        ...(task.config.count ? { n: task.config.count } : {}),
         ...(quality ? { quality } : {}),
         ...(requestSize ? { size: requestSize } : {}),
         ...(includeCompatibilityFields ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
@@ -408,7 +407,7 @@ export async function buildJsonImageEditBodies(
             {
                 model: task.config.model,
                 prompt: withSystemPrompt(task.config, prompt),
-                n: 1,
+                ...(task.config.count ? { n: task.config.count } : {}),
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(mask ? { mask } : {}),

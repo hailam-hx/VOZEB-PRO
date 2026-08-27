@@ -62,6 +62,17 @@ describe("PostgreSQL account-config auth restore", () => {
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:01:00.000Z",
         });
+        db.pointRecords.push({
+            id: "adjustment-a",
+            userId: "user-a",
+            operatorUserId: "user-a",
+            type: "admin-adjust",
+            amount: "1.25",
+            balanceAfter: "10",
+            description: "账务修正",
+            idempotencyKey: "admin-adjust:backup-a",
+            createdAt: "2026-08-01T00:00:00.000Z",
+        });
         db.providerUsageAttempts.push({
             id: "attempt-a",
             holdId: "hold-a",
@@ -84,6 +95,7 @@ describe("PostgreSQL account-config auth restore", () => {
         await restorePostgresAuthSnapshot(client, db);
 
         expect(mocks.insertPostgresUsers).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "user-a", accountId: "0001" })]);
+        expect(mocks.insertPostgresPointRecords).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "adjustment-a", operatorUserId: "user-a" })]);
         expect(mocks.insertPostgresWalletHolds).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "hold-a", amount: "1.25", status: "active", releaseBusinessId: undefined, closedAt: undefined })]);
         expect(mocks.insertPostgresProviderUsageAttempts).toHaveBeenCalledWith(client, [expect.objectContaining({ id: "attempt-a", nativeCostAmount: "0.1" })]);
         expect(query.mock.calls.some(([, values]) => Array.isArray(values) && values.includes("release:a") && values.includes("c".repeat(64)))).toBe(true);

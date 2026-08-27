@@ -1,7 +1,7 @@
 import type { AdminPermission } from "@/lib/admin-permissions";
 import type { PublicUser, PublicUserSummary, UserRole, UserStatus } from "@/lib/auth/store";
 
-type AdminUserPatch = Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status" | "settledBalance">> & { password?: string };
+type AdminUserPatch = Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status">> & { password?: string };
 type AdminUserCreate = AdminUserPatch & { username: string; password: string; role?: UserRole; status?: UserStatus; adminPermissions?: AdminPermission[] };
 
 export function listAdminUsers(input: { page?: number; pageSize?: number; keyword?: string; role?: UserRole; status?: UserStatus } = {}) {

@@ -37,7 +37,7 @@ export const ADMIN_SECTION_PERMISSIONS: Record<AdminSectionKey, readonly AdminPe
     "top-ups": ["commerce.manage", "billing.manage"],
     referrals: ["commerce.manage"],
     orders: ["billing.read", "billing.manage"],
-    points: ["billing.manage"],
+    points: ["billing.read", "billing.manage"],
     payments: ["billing.manage"],
     cdk: ["billing.manage"],
     wallet: ["billing.read", "billing.manage"],

@@ -11,6 +11,7 @@ import {
     normalizeDefaultModelsConfig,
     normalizeLogicalModelsConfig,
     resolveLogicalModelConfig,
+    resolveLogicalModelCapabilityProfile,
     synchronizeLogicalModelsWithChannels,
 } from "./model-routing-config";
 
@@ -230,7 +231,7 @@ describe("model routing config", () => {
         expect(resolveLogicalModelConfig(models, channels, "text", "writer")).toMatchObject({ channel: { id: "backup" }, binding: { upstreamModel: "writer-v2" } });
     });
 
-    it("normalizes binding weight and capability profile limits", () => {
+    it("normalizes binding weight and retains only operational capability profile fields", () => {
         const channels = [channel("one", ["video-model"])];
         const models = normalizeLogicalModelsConfig(
             [
@@ -248,11 +249,6 @@ describe("model routing config", () => {
                             priority: 1,
                             weight: 250,
                             capabilityProfile: {
-                                supportsReferenceImage: true,
-                                maxReferenceImages: 4,
-                                aspectRatios: ["16:9", "16:9", "9:16"],
-                                maxDurationSeconds: 10,
-                                maxBatchSize: 2,
                                 timeoutMs: 600000,
                                 concurrencyLimit: 3,
                                 unitCost: 0.25,
@@ -267,8 +263,41 @@ describe("model routing config", () => {
 
         expect(models[0].bindings[0]).toMatchObject({
             weight: 250,
-            capabilityProfile: { supportsReferenceImage: true, maxReferenceImages: 4, aspectRatios: ["16:9", "9:16"], maxDurationSeconds: 10, maxBatchSize: 2, timeoutMs: 600000, concurrencyLimit: 3, unitCost: 0.25, unitCostCurrency: "USD" },
+            capabilityProfile: { timeoutMs: 600000, concurrencyLimit: 3, unitCost: 0.25, unitCostCurrency: "USD" },
         });
+    });
+
+    it("round-trips binding generation parameters without deriving them from the channel", () => {
+        const channels = [channel("one", ["image-model"])];
+        channels[0].advancedConfig = { supportsReferenceImage: true } as never;
+        const generationParameters = {
+            referenceInputs: ["image"] as Array<"image">,
+            aspectRatios: ["16:9"],
+            pixelSizes: ["1024X768"],
+            supportsCustomSize: true,
+            qualities: [],
+            resolutions: [],
+            durationMode: "discrete" as const,
+            durationSeconds: [5, 10],
+            videoReferenceModes: [],
+            voices: [],
+            formats: [],
+        };
+
+        const models = normalizeLogicalModelsConfig(
+            [{ id: "image", name: "Image", capability: "image", enabled: true, bindings: [{ id: "one", channelId: "one", upstreamModel: "image-model", enabled: true, priority: 1, generationParameters }] }],
+            channels,
+        );
+
+        expect(models[0].bindings[0]?.generationParameters).toMatchObject({ referenceInputs: ["image"], aspectRatios: ["16:9"], pixelSizes: ["1024x768"], supportsCustomSize: true, durationMode: "discrete", durationSeconds: [5, 10] });
+        expect(
+            normalizeLogicalModelsConfig([{ id: "image", name: "Image", capability: "image", enabled: true, bindings: [{ id: "one", channelId: "one", upstreamModel: "image-model", enabled: true, priority: 1 }] }], channels)[0].bindings[0]
+                ?.generationParameters,
+        ).toBeUndefined();
+    });
+
+    it("retains operational capability defaults without recreating media-generation fields", () => {
+        expect(resolveLogicalModelCapabilityProfile({}, "image", { advancedConfig: {} as never })).toEqual({ supportsAsync: true });
     });
 
     it("reports duplicate bindings and invalid defaults", () => {

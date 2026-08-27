@@ -161,8 +161,30 @@ describe("setAgentRunStatus", () => {
         });
 
         await Promise.all([
-            updateAgentRunTaskById("run", "image", { taskIds: ["child-one"], childTasks: [{ id: "child-one", status: "completed", attempt: 1, result: { url: "one" } }], assetIds: ["asset-one"] }, "task.child.completed", "execution"),
-            updateAgentRunTaskById("run", "image", { taskIds: ["child-two"], childTasks: [{ id: "child-two", status: "completed", attempt: 1, result: { url: "two" } }], assetIds: ["asset-two"] }, "task.child.completed", "execution"),
+            updateAgentRunTaskById(
+                "run",
+                "image",
+                {
+                    taskIds: ["child-one"],
+                    childTasks: [{ id: "child-one", status: "completed", attempt: 1, result: { url: "one" } }],
+                    childSlots: [{ index: 0, taskId: "child-one", status: "resolved", model: "image-low", quality: "low" }],
+                    assetIds: ["asset-one"],
+                },
+                "task.child.completed",
+                "execution",
+            ),
+            updateAgentRunTaskById(
+                "run",
+                "image",
+                {
+                    taskIds: ["child-two"],
+                    childTasks: [{ id: "child-two", status: "completed", attempt: 1, result: { url: "two" } }],
+                    childSlots: [{ index: 1, taskId: "child-two", status: "resolved", model: "image-high", quality: "low" }],
+                    assetIds: ["asset-two"],
+                },
+                "task.child.completed",
+                "execution",
+            ),
         ]);
 
         expect(current.assetIds).toEqual(["asset-one", "asset-two"]);
@@ -173,6 +195,10 @@ describe("setAgentRunStatus", () => {
             childTasks: [
                 { id: "child-one", status: "completed", result: { url: "one" } },
                 { id: "child-two", status: "completed", result: { url: "two" } },
+            ],
+            childSlots: [
+                { index: 0, taskId: "child-one", status: "resolved", model: "image-low", quality: "low" },
+                { index: 1, taskId: "child-two", status: "resolved", model: "image-high", quality: "low" },
             ],
         });
         expect(events).toEqual([

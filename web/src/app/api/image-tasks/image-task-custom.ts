@@ -40,16 +40,17 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
             task.references.map((reference, index) => (inlineReferences ? imageReferenceToDataUrl(reference, reference.name || `reference-${index + 1}.png`, origin, cookie) : publicImageReferenceRequestUrl(reference, origin, publicOrigin, context))),
         )
     ).filter(Boolean);
+    const quality = config.quality?.trim().toLowerCase() === "auto" ? undefined : config.quality;
     const values = {
         model: config.model,
         prompt: withSystemPrompt(config, task.prompt),
         size,
         aspect_ratio: imageRequestAspectRatio(config.size || "auto"),
-        resolution: advanced.protocol === "yumeng" ? resolveYumengImageResolution(config.model, config.quality) : config.quality || "auto",
+        resolution: advanced.protocol === "yumeng" && quality ? resolveYumengImageResolution(config.model, quality) : quality,
         width,
         height,
-        quality: config.quality || "auto",
-        n: 1,
+        quality,
+        ...(config.count ? { n: config.count } : {}),
         image: images[0] || "",
         images,
     };

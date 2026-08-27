@@ -255,7 +255,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         }
     };
 
-    const updateUser = async (userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status" | "settledBalance">> & { password?: string }) => {
+    const updateUser = async (userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status">> & { password?: string }) => {
         setUpdatingUserId(userId);
         try {
             const user = await updateAdminUser(userId, patch);

@@ -2,17 +2,22 @@
 
 import { Button, Popover } from "antd";
 import { Check, Orbit } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import type { CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
+import type { LogicalModelGenerationParameters } from "@/lib/auth/store-types";
+import { resolveCreativeGenerationCapability, sanitizeCreativeGenerationPreferences } from "@/lib/creative-generation-capabilities";
+import { VOZEB_VIDEO_RESOLUTIONS } from "@/lib/generation-parameters";
 import { cn } from "@/lib/utils";
 
 import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
-import { CreativeGenerationPreferences as GenerationPreferencesControl, type MediaCapability } from "@/components/creative-generation-preferences";
+import { CreativeGenerationPreferences as GenerationPreferencesControl, type CreativeGenerationPreferencePatch, type MediaCapability } from "@/components/creative-generation-preferences";
 
-export type CreativeModelOption = { id: string; name: string; capability: MediaCapability };
+export type CreativeModelOption = { id: string; name: string; capability: MediaCapability; generationParameters?: LogicalModelGenerationParameters };
+
+const createVideoResolutionValues = new Set<string>(VOZEB_VIDEO_RESOLUTIONS);
 
 export function CreativeGenerationControls({
     models,
@@ -26,6 +31,7 @@ export function CreativeGenerationControls({
     onToggleSmartPlanning,
     onCapabilityChange,
     onChangeGenerationPreference,
+    onReplaceGenerationPreferences,
 }: {
     models: CreativeModelOption[];
     selectedModels: CreativeModelOption[];
@@ -37,7 +43,8 @@ export function CreativeGenerationControls({
     onClearModels: () => void;
     onToggleSmartPlanning: () => void;
     onCapabilityChange: (capability: MediaCapability) => void;
-    onChangeGenerationPreference: (capability: MediaCapability, patch: Record<string, string | number | boolean>) => void;
+    onChangeGenerationPreference: (capability: MediaCapability, patch: CreativeGenerationPreferencePatch) => void;
+    onReplaceGenerationPreferences: (preferences: CreativeGenerationPreferences) => void;
 }) {
     const t = useTranslations("create");
     const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -45,8 +52,29 @@ export function CreativeGenerationControls({
     const modelCapabilities = creationMode === "agent" ? (["image", "video", "audio"] as const).filter((capability) => models.some((model) => model.capability === capability)) : [creationMode];
     const activeCapability = creationMode === "agent" ? (modelCapabilities.includes(preferredCapability) ? preferredCapability : selectedModels[0]?.capability || modelCapabilities[0] || "image") : creationMode;
     const preferenceCapabilities = creationMode === "agent" ? (modelCapabilities.length ? modelCapabilities : [activeCapability]) : [creationMode];
+    const capabilitySignature = JSON.stringify({ smartPlanning, models: models.map((model) => [model.id, model.capability, model.generationParameters]), selected: selectedModels.map((model) => model.id) });
+    const capabilityStates = useMemo(
+        () =>
+            Object.fromEntries((["image", "video", "audio"] as const).map((capability) => [capability, resolveCreativeGenerationCapability({ models, selectedModels, capability, smartPlanning })])) as Record<
+                MediaCapability,
+                ReturnType<typeof resolveCreativeGenerationCapability>
+            >,
+        // The signature makes capability/profile changes explicit even when callers rebuild option arrays.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [capabilitySignature],
+    );
+    const activeCapabilityState = capabilityStates[activeCapability];
     const capabilityLabel = (capability: MediaCapability) => t(capability === "image" ? "imageCapability" : capability === "video" ? "videoCapability" : "audioCapability");
     const modelSummary = selectedModels.length === 0 ? (smartPlanning ? t("smartModel") : t("selectModel")) : selectedModels.length === 1 ? selectedModels[0].name : `${selectedModels[0].name} +${selectedModels.length - 1}`;
+
+    useEffect(() => {
+        const sanitized = (["image", "video", "audio"] as const).reduce((current, capability) => {
+            const parameters = capabilityStates[capability].parameters;
+            const selectableParameters = capability === "video" && parameters ? { ...parameters, resolutions: parameters.resolutions.filter((value) => createVideoResolutionValues.has(value)) } : parameters;
+            return sanitizeCreativeGenerationPreferences(current, capability, selectableParameters);
+        }, generationPreferences);
+        if (JSON.stringify(sanitized) !== JSON.stringify(generationPreferences)) onReplaceGenerationPreferences(sanitized);
+    }, [capabilityStates, generationPreferences, onReplaceGenerationPreferences]);
 
     return (
         <>
@@ -125,7 +153,11 @@ export function CreativeGenerationControls({
                                                 "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition",
                                                 selected ? "bg-[#eef1f4] text-[#20242a] dark:bg-[#292f37] dark:text-white" : "text-[#4d5662] hover:bg-[#f4f6f8] dark:text-[#c2c9d1] dark:hover:bg-[#242930]",
                                             )}
-                                            onClick={() => onToggleModel(model)}
+                                            onClick={() => {
+                                                setPreferredCapability(model.capability);
+                                                onCapabilityChange(model.capability);
+                                                onToggleModel(model);
+                                            }}
                                         >
                                             <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-white text-[#465365] shadow-sm dark:bg-[#343b44] dark:text-[#e6eaf0]">
                                                 <ModelPlatformIcon model={model} />
@@ -166,13 +198,16 @@ export function CreativeGenerationControls({
                 capability={activeCapability}
                 capabilities={preferenceCapabilities}
                 preferences={generationPreferences}
+                generationParameters={activeCapabilityState.parameters}
+                capabilityReason={activeCapabilityState.reason}
+                showCustomVideoResolution={false}
                 triggerLabel={creationMode === "agent" ? t("generationParameters") : undefined}
                 placement={placement}
                 onCapabilityChange={(capability) => {
                     setPreferredCapability(capability);
                     onCapabilityChange(capability);
                 }}
-                onChange={(patch) => onChangeGenerationPreference(creationMode === "agent" ? preferredCapability : activeCapability, patch as Record<string, string | number | boolean>)}
+                onChange={(patch) => onChangeGenerationPreference(activeCapability, patch)}
             />
         </>
     );

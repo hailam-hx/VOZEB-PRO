@@ -51,7 +51,7 @@ export async function createAudioTaskUpstreamStep(task: AudioTask, origin: strin
                 voice: config.voice,
                 response_format: config.format,
                 format: config.format,
-                speed: Number(config.speed) || 1,
+                ...(config.speed !== undefined && config.speed !== "" ? { speed: Number(config.speed) } : {}),
                 ...(config.instructions ? { instructions: config.instructions } : {}),
             };
             let payload: Record<string, unknown>;

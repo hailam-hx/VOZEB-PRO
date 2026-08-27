@@ -30,10 +30,14 @@ export function formatCreditAmount(value: number | string) {
     }
 }
 
-export function requestCreditCost(options: { apiSource?: "system" | "custom"; logicalModels?: LogicalModel[]; model: string; count?: string | number } & CreditCostOptions) {
+export function requestCreditCost(options: CreditCostRequest) {
+    return tryRequestCreditCost(options) ?? "0";
+}
+
+export function tryRequestCreditCost(options: CreditCostRequest) {
     if (options.apiSource !== "system") return "0";
     const model = resolveLogicalModel(options.logicalModels, options.model);
-    if (!model?.saleRateCard) return "0";
+    if (!model?.saleRateCard) return undefined;
     try {
         const count = positiveInteger(options.count) || "1";
         const resolution = options.resolution || (options.kind === "video" ? options.videoQuality : undefined);
@@ -57,11 +61,11 @@ export function requestCreditCost(options: { apiSource?: "system" | "custom"; lo
         });
         return calculatePricingReserve({ rateCard: model.saleRateCard, usage }).credits;
     } catch {
-        return "0";
+        return undefined;
     }
 }
 
-type CreditCostOptions = {
+type CreditCostRequest = { apiSource?: "system" | "custom"; logicalModels?: LogicalModel[]; model: string; count?: string | number } & {
     kind?: "image" | "video" | "text" | "audio" | "api";
     quality?: string;
     videoQuality?: string;

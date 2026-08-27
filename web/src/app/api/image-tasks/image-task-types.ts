@@ -18,7 +18,6 @@ import { resolveImageTaskOptions } from "@/lib/server/image-task-config";
 import { linkStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
-import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 
 export type CreateImageTaskBody = {
     kind?: "generation" | "edit";

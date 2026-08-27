@@ -130,6 +130,7 @@ export type SystemModelChannelRecord = {
 export type PointRecord = {
     id: string;
     userId: string;
+    operatorUserId?: string;
     type: "consume" | "refund" | "credit" | "admin-adjust";
     amount: string;
     balanceAfter: string;

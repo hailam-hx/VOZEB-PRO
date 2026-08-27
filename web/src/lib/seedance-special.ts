@@ -24,8 +24,8 @@ type SeedanceSpecialReferences = {
 export function buildSeedanceSpecialRequest(input: {
     model: string;
     prompt: string;
-    ratio: string;
-    duration: number;
+    ratio?: string;
+    duration?: number;
     generateAudio?: boolean;
     returnLastFrame?: boolean;
     seed?: number;
@@ -36,9 +36,9 @@ export function buildSeedanceSpecialRequest(input: {
 
     const prompt = input.prompt.trim();
     assertSeedanceSpecialPrompt(prompt);
-    const ratio = input.ratio.trim();
-    if (!SEEDANCE_SPECIAL_RATIOS.includes(ratio as (typeof SEEDANCE_SPECIAL_RATIOS)[number])) throw new Error(`Seedance 2.0 特价版不支持画幅 ${ratio || "空"}`);
-    if (!Number.isInteger(input.duration) || input.duration < 4 || input.duration > 15) throw new Error("Seedance 2.0 特价版时长必须是 4-15 秒整数");
+    const ratio = input.ratio?.trim();
+    if (ratio && !SEEDANCE_SPECIAL_RATIOS.includes(ratio as (typeof SEEDANCE_SPECIAL_RATIOS)[number])) throw new Error(`Seedance 2.0 特价版不支持画幅 ${ratio}`);
+    if (input.duration !== undefined && (!Number.isInteger(input.duration) || input.duration < 4 || input.duration > 15)) throw new Error("Seedance 2.0 特价版时长必须是 4-15 秒整数");
 
     const normalizedReferences = normalizeSeedanceReferences(input.references);
     const regularReferences = regularVideoReferences(normalizedReferences);
@@ -72,10 +72,10 @@ export function buildSeedanceSpecialRequest(input: {
 
     return {
         model,
-        ratio,
-        duration: input.duration,
-        generate_audio: input.generateAudio ?? true,
-        return_last_frame: input.returnLastFrame ?? false,
+        ...(ratio ? { ratio } : {}),
+        ...(input.duration !== undefined ? { duration: input.duration } : {}),
+        ...(input.generateAudio !== undefined ? { generate_audio: input.generateAudio } : {}),
+        ...(input.returnLastFrame !== undefined ? { return_last_frame: input.returnLastFrame } : {}),
         seed: Number.isInteger(input.seed) ? input.seed : -1,
         content: [
             { type: "text", text: prompt },

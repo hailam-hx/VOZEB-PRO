@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
-import { isSeedanceFastModel, isSeedanceVideoConfig, seedanceVideoReferenceIssue } from "./seedance-video";
+import { isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceResolution, seedanceVideoReferenceIssue } from "./seedance-video";
 
 describe("Seedance video configuration", () => {
     it("recognizes SD2.0 aliases without confusing Stable Diffusion", () => {
@@ -25,6 +25,15 @@ describe("Seedance video configuration", () => {
     it("returns diagnostic reference issue codes instead of display-language errors", () => {
         expect(seedanceVideoReferenceIssue([{ id: "large", name: "large.mp4", type: "video/mp4", url: "blob:large", bytes: 51 * 1024 * 1024 }])).toEqual({ code: "file-too-large", index: 1 });
         expect(seedanceVideoReferenceIssue([{ id: "long", name: "long.mp4", type: "video/mp4", url: "blob:long", durationMs: 16_000 }])).toEqual({ code: "duration-out-of-range", index: 1 });
+    });
+
+    it("keeps supported fractional duration exact and rejects values outside provider constraints", () => {
+        expect(normalizeSeedanceDuration("5.5")).toBe(5.5);
+        expect(() => normalizeSeedanceDuration("20")).toThrow("不支持 20 秒");
+    });
+
+    it("rejects a fast-model 1080p request instead of lowering it to 720p", () => {
+        expect(() => normalizeSeedanceResolution("1080p", "Seedance 2.0-fast-720p")).toThrow("不支持 1080p");
     });
 });
 

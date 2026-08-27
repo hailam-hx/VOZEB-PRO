@@ -15,6 +15,7 @@ import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { CREATIVE_RUN_MODEL_LIMIT, type CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
+import { sanitizeCreativeGenerationPreferences } from "@/lib/creative-generation-capabilities";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import { useAgentMessageFormatter } from "@/components/agent/agent-message-format";
 import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
@@ -30,6 +31,7 @@ import { CanvasNodeType, isCanvasImageNodeType, type CanvasAssistantMessage, typ
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
 import { canvasAgentReferenceAliases, collectCanvasAgentMentionAssets, remapCanvasAgentReferences } from "./canvas-agent-mention";
 import { CanvasAgentGenerationSettings } from "./canvas-agent-generation-settings";
+import { resolveCanvasAgentGenerationCapability } from "../utils/canvas-generation-capabilities";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 const DEFAULT_PANEL_WIDTH = 404;
@@ -130,13 +132,22 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
     const messageScrollKey = messages.map((item) => `${item.id}:${item.text.length}`).join("|") + `:${isRunning}:${runStage.key}`;
     const { scrollRef, showLatestButton, requestLatest, scrollToLatest, handleScroll } = useCanvasAgentMessageScroll(view === "chat", messageScrollKey, messages.length ? "latest" : "top");
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
-    const selectedModels = models.filter((model) => selectedModelIds.includes(model.id));
+    const selectedModels = useMemo(() => models.filter((model) => selectedModelIds.includes(model.id)), [models, selectedModelIds]);
+    const generationCapability = generationPreferences.mode === "video" ? "video" : "image";
+    const generationCapabilityState = useMemo(() => resolveCanvasAgentGenerationCapability(models, selectedModels, generationCapability, smartPlanning), [generationCapability, models, selectedModels, smartPlanning]);
     const iconButtonStyle = { color: theme.node.muted };
     const controlTheme = { panel: theme.toolbar.panel, border: theme.node.stroke, text: theme.node.text, muted: theme.node.muted, activeBackground: theme.toolbar.activeBg, activeText: theme.toolbar.activeText };
 
     useEffect(() => {
         setRemovedReferenceIds(new Set());
     }, [selectedNodeKey]);
+
+    useEffect(() => {
+        setGenerationPreferences((current) => {
+            const next = sanitizeCreativeGenerationPreferences(current, generationCapability, generationCapabilityState.parameters);
+            return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+        });
+    }, [generationCapability, generationCapabilityState.parameters]);
 
     useEffect(() => {
         const previousIds = previousMediaReferenceIdsRef.current;
@@ -708,7 +719,9 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
                                 models={models}
                                 selectedModels={selectedModels}
                                 smartPlanning={smartPlanning}
-                                middle={<CanvasAgentGenerationSettings preferences={generationPreferences} onChange={setGenerationPreferences} />}
+                                middle={
+                                    <CanvasAgentGenerationSettings preferences={generationPreferences} onChange={setGenerationPreferences} generationParameters={generationCapabilityState.parameters} capabilityReason={generationCapabilityState.reason} />
+                                }
                                 onSelectSkill={(skill) => setSelectedSkillId(skill.id)}
                                 onToggleModel={toggleModel}
                                 onClearModels={enableSmartPlanning}

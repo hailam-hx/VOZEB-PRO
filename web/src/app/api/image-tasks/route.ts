@@ -16,11 +16,10 @@ import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
 import { createImageTask, getImageTask, touchImageTask, transitionImageTask, type ImageTask, type ImageTaskConfig, type ImageTaskReference, updateImageTask } from "@/lib/server/image-task-store";
 import { isGenerationSource, recordGenerationLog } from "@/lib/server/generation-log-store";
 import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
-import { resolveImageTaskOptions } from "@/lib/server/image-task-config";
 import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
-import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
+import { resolveImageGenerationCandidates } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 
 export const runtime = "nodejs";
@@ -61,7 +60,6 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import {
     publicTask,
-    sanitizeConfigs,
     sanitizeAdvancedConfig,
     textOrEmpty,
     preferredImageResponseFormat,
@@ -153,20 +151,23 @@ export async function POST(request: Request) {
     if (requestId) resolvedBody.context = { ...(resolvedBody.context || {}), clientRequestId: requestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
     const settings = await getAuthSettings();
     const response = await withGenerationConcurrencyLimit(currentUser.id, "image", 10 * 60 * 1000, settings.generationConcurrency.image, async () => {
-        const configs = sanitizeConfigs(resolvedBody.config, settings);
+        const configs = resolveLogicalModelCandidates(settings, "image", resolvedBody.config?.model || settings.defaultModels.imageModel).map((resolved) => {
+            const channel = toSystemGenerationChannel(resolved);
+            return { ...channel, channelId: resolved.channelId, systemPrompt: "", advancedConfig: sanitizeAdvancedConfig(channel.advancedConfig) };
+        });
         const prompt = (resolvedBody.prompt || "").trim();
         const kind = resolvedBody.kind === "edit" ? "edit" : "generation";
         if (!configs.length || !prompt) return NextResponse.json({ error: "任务参数不完整" }, { status: 400 });
         const references = Array.isArray(resolvedBody.references) ? resolvedBody.references.filter((item) => Boolean(item?.dataUrl || item?.url || item?.remoteUrl || item?.serverUrl)) : [];
-        const constrainedConfigs = configs.filter((config) => {
-            try {
-                assertCapabilityConstraints(config.capabilityProfile, { capability: "image", referenceCount: references.length });
-                return true;
-            } catch {
-                return false;
-            }
-        });
-        const compatibleConfigs = constrainedConfigs.filter((config) => {
+        const capability = resolveImageGenerationCandidates(
+            configs,
+            (resolvedBody.config || {}) as Record<string, unknown>,
+            settings.generationDefaults,
+            references.length,
+            Boolean(resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl),
+        );
+        if (!capability.candidates.length) return NextResponse.json({ error: capability.error?.message || "当前模型不支持所选生成参数" }, { status: 400 });
+        const compatibleConfigs = capability.candidates.filter((config) => {
             try {
                 assertReferenceCapabilities(config.advancedConfig, [...references.map(() => ({ type: "image" })), ...(resolvedBody.mask ? [{ type: "image" }] : [])]);
                 return true;

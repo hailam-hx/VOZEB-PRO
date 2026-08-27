@@ -131,10 +131,10 @@ export const DEFAULT_SETTINGS: AuthSettings = {
     dataLifecycle: DEFAULT_DATA_LIFECYCLE,
     generationConcurrency: { agent: 2, image: 4, video: 1, audio: 2, text: 4, render: 1 },
     generationDefaults: {
-        canvasImageCount: 1,
+        canvasImageCount: "auto",
         imageSize: "1:1",
         imageQuality: "auto",
-        imageCount: 1,
+        imageCount: "auto",
         videoQuality: "720",
         videoSeconds: 5,
         audioVoice: "alloy",

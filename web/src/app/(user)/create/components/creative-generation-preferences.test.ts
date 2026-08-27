@@ -25,7 +25,8 @@ describe("generationPreferenceSummary", () => {
         expect(generationPreferenceSummary("video", { video: { size: "16:9", quality: "2160", seconds: 60, count: 3, generateAudio: false, watermark: true } }, zhCopy)).toBe("16:9 · 2160P · 60秒 · 无声 · 带水印 · 3条");
         expect(generationPreferenceSummary("image", { image: { size: "1024x1536", quality: "high", count: 2 } }, zhCopy)).toBe("1024×1536 · 高画质 · 2张");
         expect(generationPreferenceSummary("audio", { audio: { voice: "nova", format: "wav", speed: 1.25 } }, zhCopy)).toBe("Nova · WAV · 1.25x");
-        expect(generationPreferenceSummary("video", {}, zhCopy)).toBe("智能参数 · 5秒 · 有声 · 无水印");
+        expect(generationPreferenceSummary("audio", { audio: { voice: "narrator-pro", format: "m4a" } }, zhCopy)).toBe("narrator-pro · m4a");
+        expect(generationPreferenceSummary("video", {}, zhCopy)).toBe("智能参数");
     });
 
     it("accepts custom generation counts within the server contract", () => {

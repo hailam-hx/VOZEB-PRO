@@ -5,13 +5,17 @@ import { AudioLines, ChevronDown, ImageIcon, Lightbulb, Maximize2, Sparkles, Vid
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { audioFormatLabel, audioFormatOptions, audioVoiceLabel, audioVoiceOptions } from "@/lib/audio-generation";
+import { audioFormatOptions, audioVoiceOptions } from "@/lib/audio-generation";
+import type { LogicalModelGenerationParameters } from "@/lib/auth/store-types";
+import { configuredCreativeGenerationOptions, creativeGenerationValueSupported, type CreativeGenerationCapabilityReason } from "@/lib/creative-generation-capabilities";
 import type { CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
+import { VOZEB_GENERATION_BATCH_OPTIONS, VOZEB_IMAGE_ASPECT_RATIOS, VOZEB_IMAGE_QUALITIES, VOZEB_VIDEO_ASPECT_RATIOS, VOZEB_VIDEO_DURATION_OPTIONS, VOZEB_VIDEO_REFERENCE_MODES, VOZEB_VIDEO_RESOLUTIONS } from "@/lib/generation-parameters";
 import { cn } from "@/lib/utils";
+import { useConfigStore } from "@/stores/use-config-store";
 
 import { creativeComposerPopoverOverflow, creativeComposerPopoverPanelMaxHeight, type CreativeComposerPopoverPlacement } from "./creative-composer-popover";
 import { creativeComposerToolButtonClass } from "./creative-composer-styles";
-import { PositiveNumberField, SuggestedPositiveIntegerField, SwitchPreference, VideoQualityField } from "./creative-generation-preference-fields";
+import { CapabilityControlTooltip, PositiveNumberField, SuggestedPositiveIntegerField, SwitchPreference, VideoQualityField } from "./creative-generation-preference-fields";
 
 export type MediaCapability = "image" | "video" | "audio";
 
@@ -30,45 +34,24 @@ export type CreativeGenerationPreferencePatch = {
     speed?: number;
 };
 
-const imageRatios = [
-    { value: "auto", label: "auto", width: 18, height: 18 },
-    { value: "1:1", label: "1:1", width: 18, height: 18 },
-    { value: "16:9", label: "16:9", width: 24, height: 14 },
-    { value: "4:3", label: "4:3", width: 21, height: 16 },
-    { value: "3:2", label: "3:2", width: 23, height: 15 },
-    { value: "2:3", label: "2:3", width: 15, height: 23 },
-    { value: "3:4", label: "3:4", width: 16, height: 21 },
-    { value: "9:16", label: "9:16", width: 14, height: 24 },
-] as const;
-
-const videoRatios = [
-    { value: "auto", label: "auto", width: 18, height: 18 },
-    { value: "21:9", label: "21:9", width: 26, height: 11 },
-    { value: "16:9", label: "16:9", width: 24, height: 14 },
-    { value: "4:3", label: "4:3", width: 21, height: 16 },
-    { value: "1:1", label: "1:1", width: 18, height: 18 },
-    { value: "3:4", label: "3:4", width: 16, height: 21 },
-    { value: "9:16", label: "9:16", width: 14, height: 24 },
-] as const;
-
-const imageQualityOptions = [
-    { value: "auto", label: "auto", shortLabel: "auto" },
-    { value: "high", label: "high", shortLabel: "high" },
-    { value: "medium", label: "medium", shortLabel: "medium" },
-    { value: "low", label: "low", shortLabel: "low" },
-] as const;
-
-const videoQualityOptions = [
-    { value: "auto", label: "auto", shortLabel: "auto" },
-    { value: "480", label: "480P", shortLabel: "480P" },
-    { value: "720", label: "720P", shortLabel: "720P" },
-    { value: "1080", label: "1080P", shortLabel: "1080P" },
-] as const;
-
-const generationOptionValues = [1, 2, 3, 4] as const;
-const videoDurationValues = [5, 10] as const;
-
-const videoReferenceModeValues = ["reference", "first_frame", "first_last"] as const;
+const ratioDimensions = {
+    "21:9": { width: 26, height: 11 },
+    "16:9": { width: 24, height: 14 },
+    "4:3": { width: 21, height: 16 },
+    "3:2": { width: 23, height: 15 },
+    "2:3": { width: 15, height: 23 },
+    "1:1": { width: 18, height: 18 },
+    "3:4": { width: 16, height: 21 },
+    "9:16": { width: 14, height: 24 },
+} as const;
+const imageRatios = [{ value: "auto", label: "auto", width: 18, height: 18 }, ...VOZEB_IMAGE_ASPECT_RATIOS.map((value) => ({ value, label: value, ...ratioDimensions[value] }))] as const;
+const videoRatios = [{ value: "auto", label: "auto", width: 18, height: 18 }, ...VOZEB_VIDEO_ASPECT_RATIOS.map((value) => ({ value, label: value, ...ratioDimensions[value] }))] as const;
+const imageQualityOptions = [{ value: "auto", label: "auto", shortLabel: "auto" }, ...VOZEB_IMAGE_QUALITIES.map((value) => ({ value, label: value, shortLabel: value }))] as const;
+const videoResolutionLabels = { "480": "480P", "720": "720P", "1080": "1080P", "2k": "2K", "4k": "4K" } as const;
+const videoQualityOptions = [{ value: "auto", label: "auto", shortLabel: "auto" }, ...VOZEB_VIDEO_RESOLUTIONS.map((value) => ({ value, label: videoResolutionLabels[value], shortLabel: videoResolutionLabels[value] }))] as const;
+const generationOptionValues = VOZEB_GENERATION_BATCH_OPTIONS;
+const videoDurationValues = VOZEB_VIDEO_DURATION_OPTIONS;
+const videoReferenceModeValues = VOZEB_VIDEO_REFERENCE_MODES;
 
 export function CreativeGenerationPreferences({
     capability,
@@ -86,6 +69,10 @@ export function CreativeGenerationPreferences({
     compact = false,
     showCount = true,
     videoReferenceContent,
+    extraContent,
+    generationParameters,
+    capabilityReason = "unconfigured",
+    showCustomVideoResolution = true,
     onOpenChange,
     onCapabilityChange,
     onChange,
@@ -105,6 +92,10 @@ export function CreativeGenerationPreferences({
     compact?: boolean;
     showCount?: boolean;
     videoReferenceContent?: ReactNode;
+    extraContent?: ReactNode;
+    generationParameters?: LogicalModelGenerationParameters;
+    capabilityReason?: CreativeGenerationCapabilityReason;
+    showCustomVideoResolution?: boolean;
     onOpenChange?: (open: boolean) => void;
     onCapabilityChange?: (capability: MediaCapability) => void;
     onChange: (patch: CreativeGenerationPreferencePatch) => void;
@@ -191,7 +182,19 @@ export function CreativeGenerationPreferences({
                             ))}
                         </div>
                     ) : null}
-                    <PreferencePanel capability={activeCapability} preferences={preferences} fixedSizeLabel={fixedSizeLabel} compact={compact} showCount={showCount} videoReferenceContent={videoReferenceContent} onChange={onChange} />
+                    <PreferencePanel
+                        capability={activeCapability}
+                        preferences={preferences}
+                        fixedSizeLabel={fixedSizeLabel}
+                        compact={compact}
+                        showCount={showCount}
+                        videoReferenceContent={videoReferenceContent}
+                        extraContent={extraContent}
+                        generationParameters={generationParameters}
+                        capabilityReason={capabilityReason}
+                        showCustomVideoResolution={showCustomVideoResolution}
+                        onChange={onChange}
+                    />
                 </div>
             }
         >
@@ -218,6 +221,10 @@ function PreferencePanel({
     compact,
     showCount,
     videoReferenceContent,
+    extraContent,
+    generationParameters,
+    capabilityReason,
+    showCustomVideoResolution,
     onChange,
 }: {
     capability: MediaCapability;
@@ -226,39 +233,114 @@ function PreferencePanel({
     compact: boolean;
     showCount: boolean;
     videoReferenceContent?: ReactNode;
+    extraContent?: ReactNode;
+    generationParameters?: LogicalModelGenerationParameters;
+    capabilityReason: CreativeGenerationCapabilityReason;
+    showCustomVideoResolution: boolean;
     onChange: (patch: CreativeGenerationPreferencePatch) => void;
 }) {
     const t = useTranslations("create");
+    const configuredVideoSeconds = useConfigStore((state) => Number(state.config.videoSeconds));
+    const disabledReason = t(capabilityReasonMessageKeys[capabilityReason]);
     const ratios = capability === "image" ? imageRatios : videoRatios;
-    const localizedRatios = ratios.map((ratio) => ({ ...ratio, label: ratio.value === "auto" ? t("smart") : ratio.label }));
-    const localizedImageQualityOptions = imageQualityOptions.map((option) => ({
-        ...option,
-        label: t(imageQualityMessageKeys[option.value].label),
-        shortLabel: t(imageQualityMessageKeys[option.value].shortLabel),
-    }));
-    const localizedVideoQualityOptions = videoQualityOptions.map((option) => ({ ...option, label: option.value === "auto" ? t("smartClarity") : option.label, shortLabel: option.value === "auto" ? t("smart") : option.shortLabel }));
+    const sizeValues = configuredCreativeGenerationOptions(
+        ratios.map((ratio) => ratio.value),
+        [...(generationParameters?.aspectRatios || []), ...(generationParameters?.pixelSizes || [])],
+    );
+    const localizedRatios = sizeValues.map((value) => {
+        const known = ratios.find((ratio) => ratio.value === value);
+        const dimensions = parseSizeShape(value);
+        return { value, label: value === "auto" ? t("smart") : formatSizeLabel(value), width: known?.width || dimensions.width, height: known?.height || dimensions.height };
+    });
+    const imageQualityValues = configuredCreativeGenerationOptions(
+        imageQualityOptions.map((option) => option.value),
+        generationParameters?.qualities,
+    );
+    const localizedImageQualityOptions = imageQualityValues.map((value) => {
+        const known = imageQualityOptions.find((option) => option.value === value);
+        return {
+            value,
+            label: known ? t(imageQualityMessageKeys[known.value].label) : value,
+            shortLabel: known ? t(imageQualityMessageKeys[known.value].shortLabel) : value,
+            supported: creativeGenerationValueSupported(generationParameters, "imageQuality", value),
+        };
+    });
+    const videoQualityValues = configuredCreativeGenerationOptions(
+        videoQualityOptions.map((option) => option.value),
+        generationParameters?.resolutions,
+    );
+    const localizedVideoQualityOptions = videoQualityValues.map((value) => {
+        const known = videoQualityOptions.find((option) => option.value === value);
+        return {
+            value,
+            label: value === "auto" ? t("smartClarity") : known?.label || (/^\d+$/.test(value) ? `${value}P` : value),
+            shortLabel: value === "auto" ? t("smart") : known?.shortLabel || value,
+            supported: creativeGenerationValueSupported(generationParameters, "videoResolution", value),
+        };
+    });
+    const presetVideoQualityOptions = localizedVideoQualityOptions.filter((option) => videoQualityOptions.some((preset) => preset.value === option.value));
+    const customVideoQualityValues = localizedVideoQualityOptions.filter((option) => !videoQualityOptions.some((preset) => preset.value === option.value)).map((option) => option.value);
     const videoReferenceModeOptions = videoReferenceModeValues.map((value) => ({ value, label: t(videoReferenceModeMessageKeys[value]) }));
-    const videoDurationOptions = videoDurationValues.map((value) => ({ value, label: t("secondsValue", { value }) }));
+    const durationValues = configuredCreativeGenerationOptions(videoDurationValues.map(String), generationParameters?.durationMode === "discrete" ? generationParameters.durationSeconds.map(String) : undefined).map(Number);
+    const videoDurationOptions = durationValues.map((value) => ({ value, label: t("secondsValue", { value }), supported: creativeGenerationValueSupported(generationParameters, "videoDuration", value) }));
     const selectedSize = capability === "image" ? preferences.image?.size || "auto" : preferences.video?.size || "auto";
     const selectedQuality = capability === "image" ? preferences.image?.quality || "auto" : preferences.video?.quality || "auto";
-    const selectedCount = capability === "image" ? preferences.image?.count || 1 : preferences.video?.count || 1;
-    const [customEditorOpen, setCustomEditorOpen] = useState(Boolean(parseCustomDimensions(selectedSize)));
+    const selectedCount = capability === "image" ? preferences.image?.count : preferences.video?.count;
+    const defaultVideoSeconds = configuredVideoSeconds > 0 && creativeGenerationValueSupported(generationParameters, "videoDuration", configuredVideoSeconds) ? configuredVideoSeconds : undefined;
+    const isCustomSizeSelected = Boolean(generationParameters?.supportsCustomSize && parseCustomDimensions(selectedSize) && !generationParameters.pixelSizes.includes(selectedSize));
+    const [customEditorOpen, setCustomEditorOpen] = useState(isCustomSizeSelected);
     const [section, setSection] = useState<"canvas" | "output">("canvas");
 
     useEffect(() => {
-        setCustomEditorOpen(Boolean(parseCustomDimensions(selectedSize)));
-    }, [capability, selectedSize]);
+        setCustomEditorOpen(isCustomSizeSelected);
+    }, [capability, isCustomSizeSelected]);
 
     useEffect(() => {
         setSection("canvas");
     }, [capability]);
 
     if (capability === "audio") {
+        const voiceValues = configuredCreativeGenerationOptions(["auto", ...audioVoiceOptions.map((option) => option.value)], generationParameters?.voices);
+        const formatValues = configuredCreativeGenerationOptions(["auto", ...audioFormatOptions.map((option) => option.value)], generationParameters?.formats);
         return (
             <div className="grid grid-cols-2 gap-1.5">
-                <PreferenceSelect label={t("voice")} ariaLabel={t("selectVoice")} value={preferences.audio?.voice || "alloy"} options={audioVoiceOptions} onChange={(voice) => onChange({ voice })} />
-                <PreferenceSelect label={t("format")} ariaLabel={t("selectAudioFormat")} value={preferences.audio?.format || "mp3"} options={audioFormatOptions} onChange={(format) => onChange({ format })} />
-                <PositiveNumberField className="col-span-2" label={t("speechSpeed")} ariaLabel={t("enterSpeechSpeed")} value={preferences.audio?.speed || 1} suffix="x" onChange={(speed) => onChange({ speed })} />
+                <PreferenceSelect
+                    label={t("voice")}
+                    ariaLabel={t("selectVoice")}
+                    value={preferences.audio?.voice || "auto"}
+                    options={voiceValues.map((value) => ({
+                        value,
+                        label: value === "auto" ? t("smart") : audioVoiceOptions.find((option) => option.value === value)?.label || value,
+                        supported: creativeGenerationValueSupported(generationParameters, "audioVoice", value),
+                    }))}
+                    disabledReason={disabledReason}
+                    onChange={(voice) => onChange({ voice: voice === "auto" ? undefined : voice })}
+                />
+                <PreferenceSelect
+                    label={t("format")}
+                    ariaLabel={t("selectAudioFormat")}
+                    value={preferences.audio?.format || "auto"}
+                    options={formatValues.map((value) => ({
+                        value,
+                        label: value === "auto" ? t("smart") : audioFormatOptions.find((option) => option.value === value)?.label || value,
+                        supported: creativeGenerationValueSupported(generationParameters, "audioFormat", value),
+                    }))}
+                    disabledReason={disabledReason}
+                    onChange={(format) => onChange({ format: format === "auto" ? undefined : format })}
+                />
+                <PositiveNumberField
+                    className="col-span-2"
+                    label={t("speechSpeed")}
+                    ariaLabel={t("enterSpeechSpeed")}
+                    value={preferences.audio?.speed}
+                    suffix="x"
+                    min={generationParameters?.speedRange?.min}
+                    max={generationParameters?.speedRange?.max}
+                    enabled={Boolean(generationParameters?.speedRange)}
+                    disabledReason={disabledReason}
+                    onChange={(speed) => onChange({ speed })}
+                />
+                {extraContent}
             </div>
         );
     }
@@ -300,9 +382,11 @@ function PreferencePanel({
                         <CompactOptionGroup
                             label={t("referenceMethod")}
                             ariaLabel={t("selectVideoReferenceMethod")}
-                            value={preferences.video?.referenceMode || "reference"}
+                            value={preferences.video?.referenceMode || videoReferenceModeValues[0]}
                             options={videoReferenceModeOptions}
                             columns={3}
+                            isSupported={(referenceMode) => creativeGenerationValueSupported(generationParameters, "videoReferenceMode", referenceMode)}
+                            disabledReason={disabledReason}
                             onChange={(referenceMode) => onChange({ referenceMode })}
                         />
                     ) : null}
@@ -319,42 +403,53 @@ function PreferencePanel({
                             </div>
                             <div className="grid min-w-0 grid-cols-4 gap-1">
                                 {localizedRatios.map((ratio) => (
-                                    <button
+                                    <CapabilityControlTooltip
                                         key={ratio.value}
-                                        type="button"
-                                        className={cn(
-                                            "inline-flex min-w-0 items-center justify-center gap-1 rounded-lg px-1 text-[11px] transition",
-                                            compact ? "h-8" : "h-9",
-                                            selectedSize === ratio.value
-                                                ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
-                                                : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
-                                        )}
-                                        onClick={() => onChange({ size: ratio.value })}
-                                        aria-label={t("selectMediaRatio", { media: t(capabilityMessageKeys[capability]), ratio: ratio.label })}
-                                        aria-pressed={selectedSize === ratio.value}
+                                        reason={ratio.value !== "auto" && !creativeGenerationValueSupported(generationParameters, capability === "image" ? "imageSize" : "videoSize", ratio.value) ? disabledReason : undefined}
+                                        className="w-full"
                                     >
-                                        <span className="grid h-4 w-5 shrink-0 place-items-center">
-                                            {ratio.value === "auto" ? <Sparkles className="size-3.5" /> : <span className="rounded-[2px] border-[1.5px] border-current" style={{ width: ratio.width * 0.64, height: ratio.height * 0.64 }} />}
-                                        </span>
-                                        <span>{ratio.label}</span>
-                                    </button>
+                                        <button
+                                            type="button"
+                                            className={cn(
+                                                "inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40",
+                                                compact ? "h-8" : "h-9",
+                                                selectedSize === ratio.value
+                                                    ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
+                                                    : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
+                                            )}
+                                            disabled={ratio.value !== "auto" && !creativeGenerationValueSupported(generationParameters, capability === "image" ? "imageSize" : "videoSize", ratio.value)}
+                                            aria-disabled={ratio.value !== "auto" && !creativeGenerationValueSupported(generationParameters, capability === "image" ? "imageSize" : "videoSize", ratio.value)}
+                                            onClick={() => onChange({ size: ratio.value === "auto" ? undefined : ratio.value })}
+                                            aria-label={t("selectMediaRatio", { media: t(capabilityMessageKeys[capability]), ratio: ratio.label })}
+                                            aria-pressed={selectedSize === ratio.value}
+                                        >
+                                            <span className="grid h-4 w-5 shrink-0 place-items-center">
+                                                {ratio.value === "auto" ? <Sparkles className="size-3.5" /> : <span className="rounded-[2px] border-[1.5px] border-current" style={{ width: ratio.width * 0.64, height: ratio.height * 0.64 }} />}
+                                            </span>
+                                            <span className="truncate">{ratio.label}</span>
+                                        </button>
+                                    </CapabilityControlTooltip>
                                 ))}
                             </div>
-                            <button
-                                type="button"
-                                className={cn(
-                                    "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-dashed px-2 text-[11px] transition",
-                                    customEditorOpen || parseCustomDimensions(selectedSize)
-                                        ? "border-[#9bbdce] bg-[#f2f8fb] font-medium text-[#315d78] dark:border-[#557f96] dark:bg-[#20333d] dark:text-[#a8c8dc]"
-                                        : "border-[#d8dde2] text-[#687481] hover:border-[#b8c3cc] hover:bg-[#f7f8f9] hover:text-[#20242a] dark:border-[#414953] dark:text-[#a6afb9] dark:hover:bg-[#24282e] dark:hover:text-white",
-                                )}
-                                onClick={() => setCustomEditorOpen(true)}
-                                aria-label={t("openCustomPixelSize", { media: t(capabilityMessageKeys[capability]) })}
-                                aria-pressed={customEditorOpen || Boolean(parseCustomDimensions(selectedSize))}
-                            >
-                                <Maximize2 className="size-3.5" />
-                                {t("customPixelSize")}
-                            </button>
+                            <CapabilityControlTooltip reason={generationParameters?.supportsCustomSize ? undefined : disabledReason} className="w-full">
+                                <button
+                                    type="button"
+                                    className={cn(
+                                        "inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-dashed px-2 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40",
+                                        customEditorOpen || isCustomSizeSelected
+                                            ? "border-[#9bbdce] bg-[#f2f8fb] font-medium text-[#315d78] dark:border-[#557f96] dark:bg-[#20333d] dark:text-[#a8c8dc]"
+                                            : "border-[#d8dde2] text-[#687481] hover:border-[#b8c3cc] hover:bg-[#f7f8f9] hover:text-[#20242a] dark:border-[#414953] dark:text-[#a6afb9] dark:hover:bg-[#24282e] dark:hover:text-white",
+                                    )}
+                                    disabled={!generationParameters?.supportsCustomSize}
+                                    aria-disabled={!generationParameters?.supportsCustomSize}
+                                    onClick={() => setCustomEditorOpen(true)}
+                                    aria-label={t("openCustomPixelSize", { media: t(capabilityMessageKeys[capability]) })}
+                                    aria-pressed={customEditorOpen || isCustomSizeSelected}
+                                >
+                                    <Maximize2 className="size-3.5" />
+                                    {t("customPixelSize")}
+                                </button>
+                            </CapabilityControlTooltip>
                             {customEditorOpen ? <CustomMediaSizeEditor capability={capability} size={selectedSize} onChange={onChange} /> : null}
                         </div>
                     )}
@@ -362,19 +457,49 @@ function PreferencePanel({
             ) : (
                 <div className="grid gap-2.5">
                     {capability === "video" ? (
-                        <VideoQualityField value={selectedQuality} options={localizedVideoQualityOptions} onChange={(quality) => onChange({ quality })} />
+                        <VideoQualityField
+                            value={preferences.video?.quality}
+                            options={presetVideoQualityOptions}
+                            customOptions={customVideoQualityValues}
+                            showCustom={showCustomVideoResolution}
+                            disabledReason={disabledReason}
+                            onChange={(quality) => onChange({ quality })}
+                        />
                     ) : (
-                        <CompactOptionGroup label={t("imageQuality")} ariaLabel={t("selectImageQuality")} value={selectedQuality} options={localizedImageQualityOptions} onChange={(quality) => onChange({ quality })} />
+                        <CompactOptionGroup
+                            label={t("imageQuality")}
+                            ariaLabel={t("selectImageQuality")}
+                            value={selectedQuality}
+                            options={localizedImageQualityOptions}
+                            isSupported={(quality) => quality === "auto" || creativeGenerationValueSupported(generationParameters, "imageQuality", quality)}
+                            disabledReason={disabledReason}
+                            onChange={(quality) => onChange({ quality: quality === "auto" ? undefined : quality })}
+                        />
                     )}
-                    {showCount ? <GenerationCountGroup key={capability} capability={capability} value={selectedCount} onChange={(count) => onChange({ count })} /> : null}
+                    {showCount ? (
+                        <GenerationCountGroup
+                            key={capability}
+                            capability={capability}
+                            value={selectedCount}
+                            maxBatchSize={generationParameters?.maxBatchSize}
+                            supportsCustomBatchSize={generationParameters?.supportsCustomBatchSize === true}
+                            customBatchSizeRange={generationParameters?.customBatchSizeRange}
+                            disabledReason={disabledReason}
+                            onChange={(count) => onChange({ count })}
+                        />
+                    ) : null}
                     {capability === "video" ? (
                         <>
                             <SuggestedPositiveIntegerField
                                 label={t("duration")}
                                 ariaLabel={t("enterVideoDuration")}
-                                value={preferences.video?.seconds || 5}
+                                value={preferences.video?.seconds ?? defaultVideoSeconds}
                                 suffix={t("secondsUnit")}
                                 options={videoDurationOptions}
+                                min={generationParameters?.supportsCustomDuration ? generationParameters.customDurationRange?.min : generationParameters?.durationMode === "range" ? generationParameters.durationRange?.min : undefined}
+                                max={generationParameters?.supportsCustomDuration ? generationParameters.customDurationRange?.max : generationParameters?.durationMode === "range" ? generationParameters.durationRange?.max : undefined}
+                                customEnabled={generationParameters?.supportsCustomDuration === true || generationParameters?.durationMode === "range"}
+                                disabledReason={disabledReason}
                                 onChange={(seconds) => onChange({ seconds })}
                             />
                             <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-[#e3e8ec] bg-[#fafbfc] p-2 dark:border-[#343b44] dark:bg-[#1f242a]">
@@ -429,16 +554,33 @@ function CustomMediaSizeEditor({ capability, size, onChange }: { capability: Ext
     );
 }
 
-function GenerationCountGroup({ capability, value, onChange }: { capability: Extract<MediaCapability, "image" | "video">; value: number; onChange: (value: number) => void }) {
+function GenerationCountGroup({
+    capability,
+    value,
+    maxBatchSize,
+    supportsCustomBatchSize,
+    customBatchSizeRange,
+    disabledReason,
+    onChange,
+}: {
+    capability: Extract<MediaCapability, "image" | "video">;
+    value?: number;
+    maxBatchSize?: number;
+    supportsCustomBatchSize: boolean;
+    customBatchSizeRange?: { min: number; max: number };
+    disabledReason: string;
+    onChange: (value?: number) => void;
+}) {
     const t = useTranslations("create");
     const generationCountOptions = generationOptionValues.map((optionValue) => ({ value: optionValue, label: t("itemCount", { count: optionValue }) }));
-    const customSelected = value > generationOptionValues.length;
+    const customSelected = value !== undefined && !generationOptionValues.includes(value as (typeof generationOptionValues)[number]);
+    const customEnabled = supportsCustomBatchSize && Boolean(customBatchSizeRange);
     const [draft, setDraft] = useState(customSelected ? String(value) : "");
     const [error, setError] = useState("");
     const lastEmittedValueRef = useRef(value);
 
     useEffect(() => {
-        if (value !== lastEmittedValueRef.current) setDraft(value > generationOptionValues.length ? String(value) : "");
+        if (value !== lastEmittedValueRef.current) setDraft(value !== undefined && value > generationOptionValues.length ? String(value) : "");
         setError("");
         lastEmittedValueRef.current = value;
     }, [value]);
@@ -446,9 +588,11 @@ function GenerationCountGroup({ capability, value, onChange }: { capability: Ext
     const changeDraft = (next: string) => {
         const normalized = next.replace(/[^0-9]/g, "");
         const count = normalizeGenerationCount(normalized);
-        setDraft(count && count <= generationOptionValues.length ? "" : normalized);
-        setError(normalized && !count ? t("positiveIntegerRequired") : "");
-        if (count) {
+        setDraft(normalized);
+        const fixedAllowed = Boolean(count && generationOptionValues.includes(count as (typeof generationOptionValues)[number]) && maxBatchSize && count <= maxBatchSize);
+        const customAllowed = Boolean(count && customBatchSizeRange && count >= customBatchSizeRange.min && count <= customBatchSizeRange.max);
+        setError(normalized && !fixedAllowed && !customAllowed ? (customBatchSizeRange ? t("generationCountRange", customBatchSizeRange) : disabledReason) : "");
+        if (count && (fixedAllowed || customAllowed)) {
             lastEmittedValueRef.current = count;
             onChange(count);
         }
@@ -457,49 +601,69 @@ function GenerationCountGroup({ capability, value, onChange }: { capability: Ext
     return (
         <div className="grid gap-1.5">
             <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{t("quantity")}</p>
-            <div className="grid grid-cols-5 gap-1" role="group" aria-label={t("selectGenerationCount", { media: t(capabilityMessageKeys[capability]) })}>
-                {generationCountOptions.map((option) => (
-                    <button
-                        key={option.value}
-                        type="button"
-                        className={cn(
-                            "h-8 min-w-0 rounded-lg px-1 text-[11px] transition",
-                            value === option.value
-                                ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
-                                : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
-                        )}
-                        onClick={() => {
-                            setDraft("");
-                            setError("");
-                            lastEmittedValueRef.current = option.value;
-                            onChange(option.value);
-                        }}
-                        aria-label={t("selectGenerationCountValue", { media: t(capabilityMessageKeys[capability]), count: option.value })}
-                        aria-pressed={value === option.value}
-                    >
-                        {option.label}
-                    </button>
-                ))}
-                <label
+            <div className="grid grid-cols-6 gap-1" role="group" aria-label={t("selectGenerationCount", { media: t(capabilityMessageKeys[capability]) })}>
+                <button
+                    type="button"
                     className={cn(
-                        "relative h-8 min-w-0 rounded-lg text-[11px] transition",
-                        customSelected
+                        "h-8 min-w-0 rounded-lg px-1 text-[11px] transition",
+                        value === undefined
                             ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
-                            : "bg-[#f5f6f7] text-[#687481] focus-within:bg-[#f5f8fa] focus-within:text-[#315d78] focus-within:ring-1 focus-within:ring-[#9bbdce] focus-within:ring-inset hover:bg-[#edf0f2] dark:bg-[#24282e] dark:text-[#a6afb9] dark:focus-within:bg-[#222d34] dark:focus-within:text-[#a8c8dc] dark:focus-within:ring-[#557f96] dark:hover:bg-[#30363e]",
+                            : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
                     )}
-                    title={t("customCountHint")}
+                    onClick={() => onChange(undefined)}
+                    aria-pressed={value === undefined}
                 >
-                    <input
-                        aria-label={t("customGenerationCount")}
-                        inputMode="numeric"
-                        type="text"
-                        value={draft}
-                        onChange={(event) => changeDraft(event.target.value)}
-                        placeholder={t("custom")}
-                        className="size-full min-w-0 bg-transparent px-1 text-center text-[11px] font-medium outline-none placeholder:font-normal placeholder:text-current"
-                    />
-                    {draft ? <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[9px] opacity-70">{t("itemUnit")}</span> : null}
-                </label>
+                    {t("smart")}
+                </button>
+                {generationCountOptions.map((option) => (
+                    <CapabilityControlTooltip key={option.value} reason={maxBatchSize && option.value <= maxBatchSize ? undefined : disabledReason} className="w-full">
+                        <button
+                            type="button"
+                            className={cn(
+                                "h-8 min-w-0 flex-1 rounded-lg px-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40",
+                                value === option.value
+                                    ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
+                                    : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
+                            )}
+                            disabled={!maxBatchSize || option.value > maxBatchSize}
+                            aria-disabled={!maxBatchSize || option.value > maxBatchSize}
+                            onClick={() => {
+                                setDraft("");
+                                setError("");
+                                lastEmittedValueRef.current = option.value;
+                                onChange(option.value);
+                            }}
+                            aria-label={t("selectGenerationCountValue", { media: t(capabilityMessageKeys[capability]), count: option.value })}
+                            aria-pressed={value === option.value}
+                        >
+                            {option.label}
+                        </button>
+                    </CapabilityControlTooltip>
+                ))}
+                <CapabilityControlTooltip reason={customEnabled ? undefined : disabledReason} className="w-full">
+                    <label
+                        className={cn(
+                            "relative h-8 min-w-0 flex-1 rounded-lg text-sm transition",
+                            customSelected
+                                ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
+                                : "bg-[#f5f6f7] text-[#687481] focus-within:bg-[#f5f8fa] focus-within:text-[#315d78] focus-within:ring-1 focus-within:ring-[#9bbdce] focus-within:ring-inset hover:bg-[#edf0f2] dark:bg-[#24282e] dark:text-[#a6afb9] dark:focus-within:bg-[#222d34] dark:focus-within:text-[#a8c8dc] dark:focus-within:ring-[#557f96] dark:hover:bg-[#30363e]",
+                        )}
+                        title={t("customCountHint")}
+                    >
+                        <input
+                            aria-label={t("customGenerationCount")}
+                            aria-disabled={!customEnabled}
+                            disabled={!customEnabled}
+                            inputMode="numeric"
+                            type="text"
+                            value={draft}
+                            onChange={(event) => changeDraft(event.target.value)}
+                            placeholder={t("custom")}
+                            className="size-full min-w-0 bg-transparent px-1 text-center font-medium outline-none placeholder:font-normal placeholder:text-current disabled:cursor-not-allowed disabled:opacity-40"
+                        />
+                        {draft ? <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[9px] opacity-70">{t("itemUnit")}</span> : null}
+                    </label>
+                </CapabilityControlTooltip>
             </div>
             {error ? <p className="text-[10px] text-[#b85c5c] dark:text-[#e39a9a]">{error}</p> : null}
         </div>
@@ -533,6 +697,8 @@ function CompactOptionGroup<T extends string | number>({
     value,
     options,
     columns = 4,
+    isSupported,
+    disabledReason,
     onChange,
 }: {
     label: string;
@@ -540,6 +706,8 @@ function CompactOptionGroup<T extends string | number>({
     value: T;
     options: readonly { value: T; label: string; shortLabel?: string }[];
     columns?: 2 | 3 | 4;
+    isSupported?: (value: T) => boolean;
+    disabledReason?: string;
     onChange: (value: T) => void;
 }) {
     return (
@@ -547,32 +715,72 @@ function CompactOptionGroup<T extends string | number>({
             <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{label}</p>
             <div className={cn("grid gap-1", columns === 2 ? "grid-cols-2" : columns === 3 ? "grid-cols-3" : "grid-cols-4")} role="group" aria-label={ariaLabel}>
                 {options.map((option) => (
-                    <button
-                        key={option.value}
-                        type="button"
-                        className={cn(
-                            "h-8 min-w-0 rounded-lg px-1 text-[11px] transition",
-                            value === option.value
-                                ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
-                                : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
-                        )}
-                        onClick={() => onChange(option.value)}
-                        aria-label={`${ariaLabel} ${option.label}`}
-                        aria-pressed={value === option.value}
-                    >
-                        {option.shortLabel || option.label}
-                    </button>
+                    <CapabilityControlTooltip key={option.value} reason={isSupported && !isSupported(option.value) ? disabledReason : undefined} className="w-full">
+                        <button
+                            type="button"
+                            className={cn(
+                                "h-8 min-w-0 flex-1 rounded-lg px-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40",
+                                value === option.value
+                                    ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
+                                    : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
+                            )}
+                            disabled={isSupported ? !isSupported(option.value) : false}
+                            aria-disabled={isSupported ? !isSupported(option.value) : false}
+                            onClick={() => onChange(option.value)}
+                            aria-label={`${ariaLabel} ${option.label}`}
+                            aria-pressed={value === option.value}
+                        >
+                            {option.shortLabel || option.label}
+                        </button>
+                    </CapabilityControlTooltip>
                 ))}
             </div>
         </div>
     );
 }
 
-function PreferenceSelect<T extends string | number>({ label, ariaLabel, value, options, onChange }: { label: string; ariaLabel: string; value: T; options: readonly { value: T; label: string }[]; onChange: (value: T) => void }) {
+function PreferenceSelect<T extends string | number>({
+    label,
+    ariaLabel,
+    value,
+    options,
+    disabledReason,
+    onChange,
+}: {
+    label: string;
+    ariaLabel: string;
+    value: T;
+    options: readonly { value: T; label: string; supported?: boolean }[];
+    disabledReason?: string;
+    onChange: (value: T) => void;
+}) {
     return (
         <label className="grid min-w-0 gap-0.5 rounded-lg bg-[#f5f6f7] px-2 py-1 text-[10px] text-[#8b949f] dark:bg-[#24282e] dark:text-[#7f8996]">
             {label}
-            <Select size="small" variant="borderless" className="w-full" value={value} options={[...options]} onChange={onChange} aria-label={ariaLabel} />
+            <Select
+                size="small"
+                variant="borderless"
+                virtual={false}
+                className="w-full"
+                value={value}
+                options={options.map((option) => {
+                    const disabled = option.value !== "auto" && option.supported === false;
+                    return {
+                        ...option,
+                        disabled,
+                        title: disabled ? disabledReason : undefined,
+                        label: disabled ? (
+                            <CapabilityControlTooltip reason={disabledReason} className="w-full">
+                                <span aria-disabled="true">{option.label}</span>
+                            </CapabilityControlTooltip>
+                        ) : (
+                            option.label
+                        ),
+                    };
+                })}
+                onChange={onChange}
+                aria-label={ariaLabel}
+            />
         </label>
     );
 }
@@ -598,20 +806,34 @@ function PreferenceSummaryIcon({ capability, preferences }: { capability: MediaC
 }
 
 export function generationPreferenceSummary(capability: MediaCapability, preferences: CreativeGenerationPreferences, copy: GenerationPreferenceSummaryCopy) {
-    if (capability === "audio") return `${audioVoiceLabel(preferences.audio?.voice || "alloy")} · ${audioFormatLabel(preferences.audio?.format || "mp3")} · ${preferences.audio?.speed || 1}x`;
+    if (capability === "audio") {
+        const voice = preferences.audio?.voice;
+        const format = preferences.audio?.format;
+        const audioParts = [
+            voice ? audioVoiceOptions.find((option) => option.value === voice)?.label || voice : undefined,
+            format ? audioFormatOptions.find((option) => option.value === format)?.label || format : undefined,
+            preferences.audio?.speed ? `${preferences.audio.speed}x` : undefined,
+        ].filter(Boolean);
+        return audioParts.length ? audioParts.join(" · ") : copy.smartParameters;
+    }
     const size = capability === "image" ? preferences.image?.size || "auto" : preferences.video?.size || "auto";
     const quality = capability === "image" ? preferences.image?.quality || "auto" : preferences.video?.quality || "auto";
-    const count = capability === "image" ? preferences.image?.count || 1 : preferences.video?.count || 1;
-    const countLabel = count > 1 ? ` · ${copy.count(count, capability)}` : "";
+    const count = capability === "image" ? preferences.image?.count : preferences.video?.count;
+    const countLabel = count ? ` · ${copy.count(count, capability)}` : "";
     const sizeLabel = size === "auto" ? copy.smartRatio : formatSizeLabel(size);
     const qualityLabel = capability === "image" ? copy.imageQuality[quality] || quality : videoQualityLabel(quality, copy);
-    const referenceMode = preferences.video?.referenceMode || "reference";
-    const referenceLabel = capability === "video" ? copy.referenceMode[referenceMode] : undefined;
+    const referenceMode = preferences.video?.referenceMode;
+    const referenceLabel = capability === "video" && referenceMode ? copy.referenceMode[referenceMode] : undefined;
     if (capability === "image") return size === "auto" && quality === "auto" ? `${copy.smartParameters}${countLabel}` : `${sizeLabel} · ${qualityLabel}${countLabel}`;
-    const parameterLabel = size === "auto" && quality === "auto" ? copy.smartParameters : `${sizeLabel} · ${qualityLabel}`;
-    const audioLabel = (preferences.video?.generateAudio ?? true) ? copy.withAudio : copy.withoutAudio;
-    const watermarkLabel = (preferences.video?.watermark ?? false) ? copy.withWatermark : copy.withoutWatermark;
-    return `${parameterLabel} · ${copy.seconds(preferences.video?.seconds || 5)} · ${audioLabel} · ${watermarkLabel}${referenceMode !== "reference" && referenceLabel ? ` · ${referenceLabel}` : ""}${countLabel}`;
+    const videoParts = [
+        size !== "auto" ? sizeLabel : undefined,
+        quality !== "auto" ? qualityLabel : undefined,
+        preferences.video?.seconds ? copy.seconds(preferences.video.seconds) : undefined,
+        preferences.video?.generateAudio === true ? copy.withAudio : preferences.video?.generateAudio === false ? copy.withoutAudio : undefined,
+        preferences.video?.watermark === true ? copy.withWatermark : preferences.video?.watermark === false ? copy.withoutWatermark : undefined,
+        referenceLabel,
+    ].filter(Boolean);
+    return `${videoParts.length ? videoParts.join(" · ") : copy.smartParameters}${countLabel}`;
 }
 
 function videoQualityLabel(value: string, copy: GenerationPreferenceSummaryCopy) {
@@ -624,6 +846,18 @@ function parseCustomDimensions(value?: string) {
     const match = typeof value === "string" ? value.trim().match(/^(\d+)x(\d+)$/i) : null;
     if (!match || !normalizeDimension(match[1]) || !normalizeDimension(match[2])) return null;
     return [match[1], match[2]] as const;
+}
+
+function parseSizeShape(value: string) {
+    const dimensions = parseCustomDimensions(value);
+    if (dimensions) return scaledShape(Number(dimensions[0]), Number(dimensions[1]));
+    const ratio = value.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+    return ratio ? scaledShape(Number(ratio[1]), Number(ratio[2])) : { width: 18, height: 18 };
+}
+
+function scaledShape(width: number, height: number) {
+    const ratio = width / height;
+    return ratio >= 1 ? { width: 24, height: Math.max(10, 24 / ratio) } : { width: Math.max(10, 24 * ratio), height: 24 };
 }
 
 function normalizeDimension(value: string) {
@@ -664,6 +898,12 @@ const videoReferenceModeMessageKeys = {
     reference: "smartReference",
     first_frame: "firstFrame",
     first_last: "firstAndLastFrames",
+} as const;
+
+const capabilityReasonMessageKeys = {
+    unconfigured: "generationCapabilityUnconfigured",
+    unsupported: "generationCapabilityUnsupported",
+    intersection: "generationCapabilityIntersection",
 } as const;
 
 export type GenerationPreferenceSummaryCopy = {

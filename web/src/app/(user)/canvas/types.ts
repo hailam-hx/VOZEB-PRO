@@ -115,7 +115,7 @@ export type CanvasNodeMetadata = {
     model?: string;
     size?: string;
     quality?: string;
-    count?: number;
+    count?: number | "auto";
     seconds?: string;
     vquality?: string;
     generateAudio?: string;

@@ -39,7 +39,7 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             status: "running",
             createdAt: 1,
             updatedAt: 1,
-            config: { baseUrl: origin, apiKey: "fixture-key", apiFormat: "openai", model: "mock-image", channelId: "fixture-image" },
+            config: { baseUrl: origin, apiKey: "fixture-key", apiFormat: "openai", model: "mock-image", channelId: "fixture-image", count: 2 },
             candidateConfigs: [],
             prompt: "create a blue protocol test image",
             references: [],
@@ -50,7 +50,7 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             expect(fixture.requests).toHaveLength(1);
             expect(fixture.requests[0]).toMatchObject({ method: "POST", path: "/v1/images/generations" });
             expect(fixture.requests[0]?.headers.authorization).toBe("Bearer fixture-key");
-            expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toMatchObject({ model: "mock-image", response_format: "url" });
+            expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toMatchObject({ model: "mock-image", n: 2, response_format: "url" });
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }

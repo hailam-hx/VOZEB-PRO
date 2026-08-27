@@ -43,7 +43,6 @@ export type UserEditorValue = {
     adminPermissions: PublicUser["adminPermissions"];
     permissionPreset?: string;
     status: UserStatus;
-    settledBalance: string;
 };
 
 export const PROMPT_PAGE_SIZE = 20;

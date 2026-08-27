@@ -1,9 +1,141 @@
 import { describe, expect, it } from "vitest";
 
-import { directAgentPlan, normalizeTasks, planToOps, readFunctionCallResult, taskResultOps } from "./agent-run-execution";
+import {
+    agentGenerationRequest,
+    agentModelOptions,
+    agentTaskGenerationRequest,
+    directAgentPlan,
+    filterAgentGenerationModels,
+    normalizeTasks,
+    planToOps,
+    readFunctionCallResult,
+    resolveCompatiblePlannedModel,
+    resolveAgentTaskBinding,
+    resolveAgentTaskWithFallback,
+    taskResultOps,
+    validateManualAgentModels,
+} from "./agent-run-execution";
 import { agentSurfaceImageSize, normalizeCanvasPlanForSelection, resolveAgentTaskRatio } from "./agent-run-task-input";
 
 describe("directAgentPlan", () => {
+    it("exposes effective logical-model parameters and filters Smart options for explicit preferences", () => {
+        const nextSettings = generationSettings() as never;
+        const models = agentModelOptions(nextSettings);
+        const request = agentGenerationRequest({ mode: "image", image: { size: "16:9", quality: "high", count: 2 } }, ["image"]);
+
+        expect(models.find((model) => model.id === "image-pro")?.generationParameters).toMatchObject({ aspectRatios: ["16:9"], qualities: ["high"] });
+        expect(
+            filterAgentGenerationModels(models, request)
+                .filter((model) => model.capability === "image")
+                .map((model) => model.id),
+        ).toEqual(["image-pro"]);
+    });
+
+    it("rejects an incompatible manual model without substituting a compatible default", () => {
+        const models = [
+            { id: "manual-low", name: "Low", capability: "image" as const, generationParameters: generationParameters({ qualities: ["low"] }) },
+            { id: "default-high", name: "High", capability: "image" as const, generationParameters: generationParameters({ qualities: ["high"] }) },
+        ];
+        const request = agentGenerationRequest({ mode: "image", image: { quality: "high" } }, []);
+
+        expect(() => validateManualAgentModels(models, ["manual-low"], request)).toThrow("画质 high");
+        expect(resolveCompatiblePlannedModel(models, "image", "missing", "default-high", request)).toBe("default-high");
+    });
+
+    it("rejects a parameter combination that exists only across different bindings", () => {
+        const models = [
+            {
+                id: "split-profile",
+                name: "Split",
+                capability: "image" as const,
+                generationParameters: generationParameters({ aspectRatios: ["1:1", "16:9"], qualities: ["low", "high"] }),
+                generationParameterCandidates: [generationParameters({ aspectRatios: ["1:1"], qualities: ["low"] }), generationParameters({ aspectRatios: ["16:9"], qualities: ["high"] })],
+            },
+        ];
+        const request = agentGenerationRequest({ mode: "image", image: { size: "1:1", quality: "high" } }, []);
+
+        expect(filterAgentGenerationModels(models, request)).toEqual([]);
+        expect(() => validateManualAgentModels(models, ["split-profile"], request)).toThrow("画质 high");
+        expect(resolveCompatiblePlannedModel(models, "image", "split-profile", "split-profile", request)).toBeUndefined();
+    });
+
+    it("keeps a manual logical model and resolves its Auto fields from one binding", () => {
+        const models = [
+            {
+                id: "manual",
+                name: "Manual",
+                capability: "image" as const,
+                generationParameters: generationParameters({ aspectRatios: ["1:1", "16:9"], qualities: ["low", "high"], maxBatchSize: 4 }),
+                generationParameterCandidates: [generationParameters({ aspectRatios: ["1:1"], qualities: ["low"], maxBatchSize: 4 }), generationParameters({ aspectRatios: ["16:9"], qualities: ["high"], maxBatchSize: 4 })],
+            },
+        ];
+        const task = { id: "image", title: "Image", type: "image" as const, model: "manual", prompt: "test", count: 0, ratio: "auto", quality: undefined, dependencies: [], status: "ready" as const, attempts: 0 };
+
+        expect(resolveAgentTaskBinding(models, task, "manual", { imageSize: "1:1", imageQuality: "high", imageCount: 3, canvasImageCount: 1, videoQuality: "720", videoSeconds: 5, audioVoice: "alloy", audioFormat: "mp3" })).toMatchObject({
+            model: "manual",
+            ratio: "1:1",
+            quality: "low",
+            count: 3,
+        });
+    });
+
+    it("keeps the Smart planned model when its binding can resolve Auto differently from global defaults", () => {
+        const models = [
+            { id: "planned-low", capability: "image" as const, generationParameterCandidates: [generationParameters({ aspectRatios: ["1:1"], qualities: ["low"], maxBatchSize: 1 })] },
+            { id: "default-high", capability: "image" as const, generationParameterCandidates: [generationParameters({ aspectRatios: ["16:9"], qualities: ["high"], maxBatchSize: 1 })] },
+        ];
+        const task = { id: "image", title: "Image", type: "image" as const, model: "planned-low", prompt: "test", count: 0, ratio: "auto", dependencies: [], status: "ready" as const, attempts: 0 };
+
+        expect(resolveAgentTaskWithFallback(models, task, "default-high", { imageSize: "16:9", imageQuality: "high", imageCount: 1, canvasImageCount: 1, videoQuality: "720", videoSeconds: 5, audioVoice: "alloy", audioFormat: "mp3" })).toMatchObject({
+            model: "planned-low",
+            ratio: "1:1",
+            quality: "low",
+        });
+    });
+
+    it("retains ordered binding profiles separately from the planner-facing union", () => {
+        const nextSettings = generationSettings() as never;
+        const imageModel = (nextSettings as { logicalModels: Array<{ id: string; bindings: unknown[] }> }).logicalModels.find((model) => model.id === "image-pro")!;
+        imageModel.bindings = [
+            { id: "low", channelId: "image-channel", upstreamModel: "vendor/image-pro", enabled: true, priority: 1, generationParameters: generationParameters({ aspectRatios: ["1:1"], qualities: ["low"] }) },
+            { id: "high", channelId: "image-channel", upstreamModel: "vendor/image-pro", enabled: true, priority: 2, generationParameters: generationParameters({ aspectRatios: ["16:9"], qualities: ["high"] }) },
+        ];
+
+        const model = agentModelOptions(nextSettings).find((item) => item.id === "image-pro");
+
+        expect(model?.generationParameters).toMatchObject({ aspectRatios: ["1:1", "16:9"], qualities: ["low", "high"] });
+        expect(model?.generationParameterCandidates).toEqual([expect.objectContaining({ aspectRatios: ["1:1"], qualities: ["low"] }), expect.objectContaining({ aspectRatios: ["16:9"], qualities: ["high"] })]);
+    });
+
+    it("keeps reference capability requirements even when no generation mode was selected", () => {
+        expect(agentGenerationRequest(undefined, ["image", "video"])).toEqual({ referenceInputs: ["image", "video"], referenceCount: 1 });
+    });
+
+    it("maps only capability-constrained video fields while keeping output switches on the task", () => {
+        expect(
+            agentTaskGenerationRequest({
+                id: "video",
+                title: "Video",
+                type: "video",
+                model: "video-model",
+                prompt: "test",
+                count: 2,
+                ratio: "9:16",
+                quality: "1080",
+                seconds: 5.5,
+                generateAudio: false,
+                watermark: true,
+                references: [
+                    { type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" },
+                    { type: "image", url: "https://cdn.example.com/last.png", role: "last_frame" },
+                ],
+                dependencies: [],
+                status: "ready",
+                attempts: 0,
+            }),
+        ).toEqual({ referenceInputs: ["image"], referenceCount: 2, aspectRatio: "9:16", resolution: "1080", durationSeconds: 5.5, batchSize: 2, videoReferenceMode: "first_last" });
+    });
+
     it("使用用户指定的媒体模型创建单任务计划", () => {
         const plan = directAgentPlan([{ id: "image-pro", name: "专业图片模型", capability: "image", capabilityProfile: undefined }], "生成商品主图", ["asset-one"]);
 
@@ -316,11 +448,42 @@ function generationSettings() {
             { id: "audio-channel", name: "音频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", models: ["vendor/audio-pro"] },
         ],
         logicalModels: [
-            { id: "image-pro", name: "专业图片模型", capability: "image", enabled: true, bindings: [{ id: "binding-image", channelId: "image-channel", upstreamModel: "vendor/image-pro", enabled: true, priority: 1 }] },
+            {
+                id: "image-pro",
+                name: "专业图片模型",
+                capability: "image",
+                enabled: true,
+                bindings: [
+                    {
+                        id: "binding-image",
+                        channelId: "image-channel",
+                        upstreamModel: "vendor/image-pro",
+                        enabled: true,
+                        priority: 1,
+                        generationParameters: generationParameters({ referenceInputs: ["image"], maxReferenceImages: 4, aspectRatios: ["16:9"], qualities: ["high"], maxBatchSize: 4 }),
+                    },
+                ],
+            },
             { id: "text-pro", name: "文本模型", capability: "text", enabled: true, bindings: [{ id: "binding-text", channelId: "text-channel", upstreamModel: "vendor/text-pro", enabled: true, priority: 1 }] },
             { id: "video-pro", name: "专业视频模型", capability: "video", enabled: true, bindings: [{ id: "binding-video", channelId: "video-channel", upstreamModel: "vendor/video-pro", enabled: true, priority: 1 }] },
             { id: "audio-pro", name: "专业音频模型", capability: "audio", enabled: true, bindings: [{ id: "binding-audio", channelId: "audio-channel", upstreamModel: "vendor/audio-pro", enabled: true, priority: 1 }] },
         ],
         generationDefaults: { canvasImageCount: 1, imageSize: "1:1", imageQuality: "high", videoSeconds: 5, videoQuality: "720p", audioVoice: "alloy", audioFormat: "mp3" },
+    };
+}
+
+function generationParameters(patch: Record<string, unknown> = {}) {
+    return {
+        referenceInputs: [],
+        aspectRatios: [],
+        pixelSizes: [],
+        supportsCustomSize: false,
+        qualities: [],
+        resolutions: [],
+        durationSeconds: [],
+        videoReferenceModes: [],
+        voices: [],
+        formats: [],
+        ...patch,
     };
 }

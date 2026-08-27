@@ -20,7 +20,11 @@ import { refundImageTask } from "@/lib/server/image-task-refund";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
-import { getAuthSettings } from "@/lib/auth/store";
+import { getAuthSettings, getFreshAuthSettings } from "@/lib/auth/store";
+import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
+import { toSystemGenerationChannel } from "@/lib/server/generation-channel";
+import { resolveAudioGenerationCandidates, resolveImageGenerationCandidates } from "@/lib/server/capability-constraints";
+import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
@@ -420,7 +424,19 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
     }
     if (needsPersistence(lease)) return persistImageLease(task, lease, workerId, origin, cookie);
     try {
-        const step = task.upstream?.id ? await queryImageTaskUpstreamStep(task, origin, cookie, cookie ? "" : task.userId) : await createImageTaskUpstreamStep(task, origin, publicOrigin, cookie, cookie ? "" : task.userId);
+        let currentTask = task;
+        if (!task.upstream?.id) {
+            const refreshed = await refreshImageTaskCandidates(task);
+            if ("error" in refreshed) {
+                await markImageTaskFailed(task, refreshed.error);
+                await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: "capability_incompatible" });
+                return "failed";
+            }
+            currentTask = refreshed.task;
+        }
+        const step = currentTask.upstream?.id
+            ? await queryImageTaskUpstreamStep(currentTask, origin, cookie, cookie ? "" : currentTask.userId)
+            : await createImageTaskUpstreamStep(currentTask, origin, publicOrigin, cookie, cookie ? "" : currentTask.userId);
         const now = Date.now();
         if (step.state === "failed") {
             await markImageTaskFailed(task, step.error);
@@ -536,7 +552,17 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
     }
     if (needsPersistence(lease)) return persistAudioLease(task, lease, workerId, origin, cookie);
     try {
-        const step = task.upstream?.id ? await queryAudioTaskUpstreamStep(task, origin, cookie, cookie ? "" : task.userId) : await createAudioTaskUpstreamStep(task, origin, cookie, cookie ? "" : task.userId);
+        let currentTask = task;
+        if (!task.upstream?.id) {
+            const refreshed = await refreshAudioTaskCandidates(task);
+            if ("error" in refreshed) {
+                await markAudioTaskFailed(task, refreshed.error);
+                await releaseGenerationTaskLease("audio", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: "capability_incompatible" });
+                return "failed";
+            }
+            currentTask = refreshed.task;
+        }
+        const step = currentTask.upstream?.id ? await queryAudioTaskUpstreamStep(currentTask, origin, cookie, cookie ? "" : currentTask.userId) : await createAudioTaskUpstreamStep(currentTask, origin, cookie, cookie ? "" : currentTask.userId);
         const now = Date.now();
         if (step.state === "failed") {
             await markAudioTaskFailed(task, step.error);
@@ -581,6 +607,41 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
         });
         return upstreamTaskId ? "deferred" : "needs_review";
     }
+}
+
+async function refreshImageTaskCandidates(task: ImageTask): Promise<{ task: ImageTask } | { error: string }> {
+    const logicalModel = task.config.logicalModel?.trim();
+    if (!logicalModel) return { error: "没有兼容当前生成参数的图片渠道：任务缺少稳定逻辑模型" };
+    const settings = await getFreshAuthSettings();
+    const routed = resolveLogicalModelCandidates(settings, "image", logicalModel).map((candidate) => toSystemGenerationChannel(candidate));
+    const resolved = resolveImageGenerationCandidates(routed, task.config as Record<string, unknown>, settings.generationDefaults, task.references.length, Boolean(task.mask));
+    const candidates = resolved.candidates.filter((config) => {
+        try {
+            assertReferenceCapabilities(config.advancedConfig, [...task.references.map(() => ({ type: "image" })), ...(task.mask ? [{ type: "image" }] : [])]);
+            return true;
+        } catch {
+            return false;
+        }
+    });
+    if (!candidates.length) return { error: `没有兼容当前生成参数的图片渠道${resolved.error ? `：${resolved.error.message}` : ""}` };
+    const config = { ...candidates[0], systemPrompt: "" };
+    const candidateConfigs = candidates.slice(1).map((candidate) => ({ ...candidate, systemPrompt: "" }));
+    await updateImageTask(task.id, { config, candidateConfigs });
+    return { task: { ...task, config, candidateConfigs } };
+}
+
+async function refreshAudioTaskCandidates(task: AudioTask): Promise<{ task: AudioTask } | { error: string }> {
+    const logicalModel = task.config.logicalModel?.trim();
+    if (!logicalModel) return { error: "没有兼容当前生成参数的音频渠道：任务缺少稳定逻辑模型" };
+    const settings = await getFreshAuthSettings();
+    const routed = resolveLogicalModelCandidates(settings, "audio", logicalModel)
+        .map((candidate) => toSystemGenerationChannel(candidate))
+        .filter((candidate) => candidate.apiFormat !== "gemini");
+    const resolved = resolveAudioGenerationCandidates(routed, task.config as Record<string, unknown>, settings.generationDefaults);
+    if (!resolved.candidates.length) return { error: `没有兼容当前生成参数的音频渠道${resolved.error ? `：${resolved.error.message}` : ""}` };
+    const configs = resolved.candidates.map((candidate) => ({ ...candidate, ...(task.config.instructions ? { instructions: task.config.instructions } : {}) }));
+    await updateAudioTask(task.id, { config: configs[0], candidateConfigs: configs.slice(1) });
+    return { task: { ...task, config: configs[0], candidateConfigs: configs.slice(1) } };
 }
 
 async function persistAudioLease(task: AudioTask, lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {

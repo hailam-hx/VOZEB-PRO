@@ -7,13 +7,12 @@ import { CreativeGenerationPreferences, useGenerationPreferenceSummary, type Cre
 import { useCreativeComposerPopoverPlacement, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CreativeGenerationPreferences as GenerationPreferences } from "@/lib/creative-runtime-contract";
-import { boolConfig } from "@/lib/seedance-video";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 import type { CanvasNodeMetadata } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
-import { normalizeCanvasVideoReferenceMode } from "../utils/canvas-video-references";
+import { resolveCanvasGenerationCapability } from "../utils/canvas-generation-capabilities";
 import { CanvasVideoReferenceSettings } from "./canvas-video-reference-settings";
 
 type CanvasVideoSettingsPopoverProps = {
@@ -31,20 +30,22 @@ export function CanvasVideoSettingsPopover({ config, metadata, references, onCon
     const createT = useTranslations("create");
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const responsivePlacement = useCreativeComposerPopoverPlacement(placement);
+    const capabilityState = resolveCanvasGenerationCapability(config, "video", config.model);
+    const referenceMode = concreteReferenceMode(metadata?.videoReferenceMode);
     const preferences: GenerationPreferences = {
         mode: "video",
         video: {
-            size: config.size || "auto",
-            quality: config.vquality || "auto",
-            seconds: positiveInteger(config.videoSeconds, 5),
-            generateAudio: boolConfig(config.videoGenerateAudio, true),
-            watermark: boolConfig(config.videoWatermark, false),
-            referenceMode: normalizeCanvasVideoReferenceMode(metadata?.videoReferenceMode),
+            ...(concreteText(config.size) ? { size: config.size } : {}),
+            ...(concreteText(config.vquality) ? { quality: config.vquality } : {}),
+            ...(positiveNumber(config.videoSeconds) ? { seconds: positiveNumber(config.videoSeconds) } : {}),
+            ...(concreteBoolean(config.videoGenerateAudio) !== undefined ? { generateAudio: concreteBoolean(config.videoGenerateAudio) } : {}),
+            ...(concreteBoolean(config.videoWatermark) !== undefined ? { watermark: concreteBoolean(config.videoWatermark) } : {}),
+            ...(referenceMode ? { referenceMode } : {}),
         },
     };
     const summary = canvasVideoPreferenceSummary(preferences, { autoSize: createT("smartRatio"), autoQuality: createT("smartClarity") });
     const fullSummary = useGenerationPreferenceSummary("video", preferences);
-    const referenceLabel = t(`videoReferences.modes.${normalizeCanvasVideoReferenceMode(metadata?.videoReferenceMode)}.label`);
+    const referenceLabel = referenceMode ? t(`videoReferences.modes.${referenceMode}.label`) : createT("smart");
 
     return (
         <CreativeGenerationPreferences
@@ -58,7 +59,9 @@ export function CanvasVideoSettingsPopover({ config, metadata, references, onCon
             placement={responsivePlacement}
             autoAdjustOverflow
             showCount={false}
-            videoReferenceContent={<CanvasVideoReferenceSettings metadata={metadata} references={references} theme={theme} compact onChange={onMetadataChange} />}
+            generationParameters={capabilityState.parameters}
+            capabilityReason={capabilityState.reason}
+            videoReferenceContent={<CanvasVideoReferenceSettings metadata={metadata} references={references} generationParameters={capabilityState.parameters} capabilityReason={capabilityState.reason} theme={theme} compact onChange={onMetadataChange} />}
             onChange={(patch) => applyVideoPreferencePatch(patch, onConfigChange)}
         />
     );
@@ -73,14 +76,28 @@ export function canvasVideoPreferenceSummary(preferences: GenerationPreferences,
 }
 
 function applyVideoPreferencePatch(patch: CreativeGenerationPreferencePatch, onChange: (key: keyof AiConfig, value: string) => void) {
-    if (patch.size !== undefined) onChange("size", patch.size);
-    if (patch.quality !== undefined) onChange("vquality", patch.quality);
-    if (patch.seconds !== undefined) onChange("videoSeconds", String(patch.seconds));
-    if (patch.generateAudio !== undefined) onChange("videoGenerateAudio", String(patch.generateAudio));
-    if (patch.watermark !== undefined) onChange("videoWatermark", String(patch.watermark));
+    if ("size" in patch) onChange("size", patch.size || "auto");
+    if ("quality" in patch) onChange("vquality", patch.quality || "auto");
+    if ("seconds" in patch) onChange("videoSeconds", patch.seconds === undefined ? "auto" : String(patch.seconds));
+    if ("generateAudio" in patch) onChange("videoGenerateAudio", patch.generateAudio === undefined ? "auto" : String(patch.generateAudio));
+    if ("watermark" in patch) onChange("videoWatermark", patch.watermark === undefined ? "auto" : String(patch.watermark));
 }
 
-function positiveInteger(value: unknown, fallback: number) {
+function positiveNumber(value: unknown) {
     const parsed = Number(value);
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function concreteText(value: unknown): value is string {
+    return typeof value === "string" && Boolean(value.trim()) && value.trim().toLowerCase() !== "auto";
+}
+
+function concreteBoolean(value: unknown) {
+    if (value === true || value === "true") return true;
+    if (value === false || value === "false") return false;
+    return undefined;
+}
+
+function concreteReferenceMode(value: unknown) {
+    return value === "reference" || value === "first_frame" || value === "first_last" ? value : undefined;
 }

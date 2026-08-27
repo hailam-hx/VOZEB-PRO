@@ -414,13 +414,13 @@ export function buildGlobalAiOpcImageRequest(preset: GlobalAiOpcPreset, input: G
 export type GlobalAiOpcVideoRequest = {
     model: string;
     prompt: string;
-    duration: number;
-    ratio: string;
-    resolution: string;
+    duration?: number;
+    ratio?: string;
+    resolution?: string;
     images: string[];
     videos: string[];
     audios: string[];
-    generateAudio: boolean;
+    generateAudio?: boolean;
     firstFrame?: string;
     lastFrame?: string;
 };
@@ -453,7 +453,7 @@ export function buildGlobalAiOpcVideoRequest(preset: GlobalAiOpcPreset, input: G
         case "vidu":
             return { ...base, duration: input.duration, aspect_ratio: input.ratio, resolution: input.resolution };
         case "omni":
-            return { ...base, seconds: String(input.duration), aspect_ratio: input.ratio, resolution: input.resolution };
+            return { ...base, ...(input.duration !== undefined ? { seconds: String(input.duration) } : {}), aspect_ratio: input.ratio, resolution: input.resolution };
         case "sd2-manxue":
         case "starvideos":
             return { ...base, duration: input.duration, ratio: input.ratio };
@@ -506,8 +506,8 @@ function globalAiOpcFirstFrameContent(input: GlobalAiOpcVideoRequest) {
     return [{ type: "text", text: input.prompt }, ...(firstFrame ? [{ type: "image_url", role: "first_frame", image_url: { url: firstFrame } }] : [])];
 }
 
-function upperResolution(value: string) {
-    return value.toUpperCase();
+function upperResolution(value?: string) {
+    return value?.toUpperCase();
 }
 
 function normalizeGlobalAiOpcPath(value: unknown) {

@@ -13,9 +13,10 @@ import { createImageGenerationTask, waitForImageGenerationTask } from "@/service
 import { uploadImage } from "@/services/image-storage";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useDramaStore } from "../stores/use-drama-store";
+import { startDramaTaskAfterPreflight } from "../drama-generation-capabilities";
 import type { DramaAssetKind } from "./drama-asset-definitions";
 import { dramaAssetReferences, imageResultsToReferences } from "./drama-asset-reference-utils";
-import { dramaGenerationSize } from "./drama-shot-generation-utils";
+import { dramaGenerationSize, dramaImageGenerationPreflight } from "./drama-shot-generation-utils";
 
 type AssetDraft = {
     name: string;
@@ -181,18 +182,23 @@ export function DramaAssetEditorDrawer({ project, kind, assetId, open, onClose }
 
     const generateReference = async () => {
         if (!asset || kind === "clues") return;
-        setGenerating(true);
-        try {
-            const prompt = compileDramaAssetReferencePrompt(project, asset, kind === "characters" ? "角色" : kind === "scenes" ? "场景" : "道具");
-            const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: dramaGenerationSize(project, prompt), count: "1" };
-            const task = await createImageGenerationTask(imageConfig, prompt, [], undefined, {
+        const prompt = compileDramaAssetReferencePrompt(project, asset, kind === "characters" ? "角色" : kind === "scenes" ? "场景" : "道具");
+        const compatibility = dramaImageGenerationPreflight(config, project, prompt);
+        const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: dramaGenerationSize(project, prompt), count: "1" };
+        const creation = startDramaTaskAfterPreflight(compatibility, () =>
+            createImageGenerationTask(imageConfig, prompt, [], undefined, {
                 logSource: "drama",
                 logTitle: t("referenceLogTitle", { project: project.title, asset: asset.name }),
                 conversationId: project.creativeConversationId,
                 surface: "drama",
                 projectId: project.id,
                 clientRequestId: `drama-reference:${project.id}:${asset.id}:${nanoid()}`,
-            });
+            }),
+        );
+        if (!creation.started) return message.warning(creation.failure.reason);
+        setGenerating(true);
+        try {
+            const task = await creation.task;
             const nextReferences = imageResultsToReferences(await waitForImageGenerationTask(imageConfig, task), (index, total) => t("generatedCandidate", { index, total }));
             if (!nextReferences.length) throw new Error("missing-reference-url");
             appendReferences(asset, nextReferences);

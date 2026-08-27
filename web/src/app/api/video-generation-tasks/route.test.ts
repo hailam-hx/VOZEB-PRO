@@ -55,6 +55,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
 }));
 
 import { POST } from "./route";
+import { createUpstream } from "./video-generation-route";
 import { resetChannelRuntimeHealth } from "@/lib/server/channel-runtime-health";
 
 const channels = [
@@ -71,8 +72,8 @@ const settings = {
             capability: "video",
             enabled: true,
             bindings: [
-                { id: "one", channelId: "one", upstreamModel: "video-one", enabled: true, priority: 1 },
-                { id: "two", channelId: "two", upstreamModel: "video-two", enabled: true, priority: 2 },
+                { id: "one", channelId: "one", upstreamModel: "video-one", enabled: true, priority: 1, generationParameters: videoGenerationParameters() },
+                { id: "two", channelId: "two", upstreamModel: "video-two", enabled: true, priority: 2, generationParameters: videoGenerationParameters() },
             ],
         },
     ],
@@ -98,6 +99,25 @@ describe("video generation candidate failover", () => {
         mocks.getVideoTask.mockImplementation(async () => storedTask);
         mocks.claimVideoTaskPoll.mockImplementation(async () => storedTask);
         mocks.after.mockImplementation(() => undefined);
+    });
+
+    it("omits unresolved Auto video fields instead of injecting provider values", async () => {
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "auto-provider-task", status: "queued" }));
+        const config = {
+            apiSource: "system" as const,
+            baseUrl: "/api/ai/system/one",
+            apiKey: "system" as const,
+            apiFormat: "openai" as const,
+            model: "video-one",
+            logicalModel: "video",
+            channelId: "one",
+            advancedConfig: { protocol: "openai" as const, createPath: "/videos" },
+        };
+
+        await createUpstream("user", "http://localhost", "", config as never, "A test video", { size: "auto", vquality: "auto", videoSeconds: -1 }, [], { imageQuality: {}, ...settings.generationPointMultipliers }, "auto-provider-request");
+
+        const body = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit | undefined)?.body));
+        expect(body).toEqual({ model: "video-one", prompt: "A test video" });
     });
 
     it("tries the next binding after explicit route failures", async () => {
@@ -190,6 +210,100 @@ describe("video generation candidate failover", () => {
         expect((await response.json()).task.model).toBe("video");
     });
 
+    it("filters incompatible bindings before creating a local task or upstream attempt", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: [
+                        { ...settings.logicalModels[0].bindings[0], generationParameters: videoGenerationParameters({ resolutions: ["720"] }) },
+                        { ...settings.logicalModels[0].bindings[1], generationParameters: videoGenerationParameters({ resolutions: ["1080"] }) },
+                    ],
+                },
+            ],
+        });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "compatible-upstream", status: "queued" }));
+
+        const response = await POST(request({ model: "video", vquality: "1080" }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ channelId: "two", logicalModel: "video", generationParameters: expect.objectContaining({ resolutions: ["1080"] }) }) }));
+        expect(mocks.fetchInternalApi).toHaveBeenCalledOnce();
+        expect(String(mocks.fetchInternalApi.mock.calls[0][0])).toContain("/api/ai/system/two/");
+    });
+
+    it("rejects unsupported concrete duration before local task creation or upstream work", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: settings.logicalModels[0].bindings.map((binding) => ({ ...binding, generationParameters: videoGenerationParameters({ durationMode: "discrete", durationSeconds: [5, 8, 10] }) })),
+                },
+            ],
+        });
+
+        const response = await POST(request({ model: "video", videoSeconds: 7 }));
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("7 秒");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.scheduleGenerationTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("resolves Auto duration from the selected binding after capability filtering", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: [{ ...settings.logicalModels[0].bindings[0], generationParameters: videoGenerationParameters({ durationMode: "discrete", durationSeconds: [8, 10], durationRange: undefined }) }],
+                },
+            ],
+        });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "auto-duration", status: "queued" }));
+
+        const response = await POST(request({ model: "video", videoSeconds: -1 }));
+        const upstreamBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls[0]?.[1]?.body));
+
+        expect(response.status).toBe(200);
+        expect(upstreamBody.duration).toBe(8);
+        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ requestedDurationSeconds: 8 }));
+    });
+
+    it("resolves Auto size, resolution, and duration against the selected binding before submission", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: [
+                        {
+                            ...settings.logicalModels[0].bindings[0],
+                            generationParameters: videoGenerationParameters({
+                                aspectRatios: ["4:3"],
+                                resolutions: ["480"],
+                                durationMode: "discrete",
+                                durationSeconds: [8, 10],
+                                durationRange: undefined,
+                            }),
+                        },
+                    ],
+                },
+            ],
+        });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "auto-video", status: "queued" }));
+
+        const response = await POST(request({ model: "video", size: "auto", vquality: "auto", videoSeconds: -1 }));
+        const upstreamBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls[0]?.[1]?.body));
+
+        expect(response.status).toBe(200);
+        expect(upstreamBody).toMatchObject({ duration: 8, ratio: "4:3", resolution: "480p" });
+        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ size: "4:3", vquality: "480", videoSeconds: 8 }) }));
+    });
+
     it("creates a Gemini Veo long-running operation with the native request contract", async () => {
         mocks.getAuthSettings.mockResolvedValue(geminiSettings());
         mocks.fetchInternalApi.mockResolvedValue(json({ name: "models/veo-3.1-generate-preview/operations/gemini-operation-one", done: false }));
@@ -202,7 +316,7 @@ describe("video generation candidate failover", () => {
         expect(url).toContain("/api/ai/system/gemini/models/veo-3.1-generate-preview:predictLongRunning");
         expect(payload).toEqual({
             instances: [{ prompt: "A test video" }],
-            parameters: { durationSeconds: 6, aspectRatio: "16:9", resolution: "720p", generateAudio: true },
+            parameters: { durationSeconds: 5, aspectRatio: "16:9", resolution: "720p" },
         });
         expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith(
             "video",
@@ -213,7 +327,7 @@ describe("video generation candidate failover", () => {
                 queryPath: "/models/veo-3.1-generate-preview/operations/gemini-operation-one",
             }),
         );
-        expect((await response.json()).task.durationSeconds).toBe(6);
+        expect((await response.json()).task.durationSeconds).toBe(5);
     });
 
     it("rejects Gemini reference video and audio before creating an operation", async () => {
@@ -364,6 +478,74 @@ describe("video generation candidate failover", () => {
         expect(body.get("input_reference")).toBeInstanceOf(File);
     });
 
+    it("omits unresolved Auto seconds and size from OpenAI multipart FormData", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [
+                {
+                    ...channels[0],
+                    advancedConfig: {
+                        protocol: "openai",
+                        modelConfigs: {
+                            "video-one": {
+                                capability: "video",
+                                protocol: "openai",
+                                createPath: "/videos",
+                                requestTemplate: "multipart/form-data: model、prompt、seconds、size",
+                                resultField: "id",
+                            },
+                        },
+                    },
+                },
+            ],
+            logicalModels: [{ ...settings.logicalModels[0], bindings: [{ ...settings.logicalModels[0].bindings[0], generationParameters: undefined }] }],
+        });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-openai-auto", status: "queued" }));
+
+        const response = await POST(request({ model: "video", size: "auto", vquality: "auto", videoSeconds: "auto" }));
+        const body = (mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).body as FormData;
+
+        expect(response.status).toBe(200);
+        expect(body.get("seconds")).toBeNull();
+        expect(body.get("size")).toBeNull();
+        expect(Array.from(body.values())).not.toContain("undefined");
+    });
+
+    it("rejects multipart explicit ratio when Auto resolution cannot resolve", async () => {
+        mocks.getAuthSettings.mockResolvedValue(multipartSettings(videoGenerationParameters({ aspectRatios: ["16:9"], resolutions: [] })));
+
+        const response = await POST(request({ model: "video", size: "16:9", vquality: "auto", videoSeconds: "auto" }));
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("清晰度");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.scheduleGenerationTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("rejects multipart explicit resolution when Auto ratio cannot resolve", async () => {
+        mocks.getAuthSettings.mockResolvedValue(multipartSettings(videoGenerationParameters({ aspectRatios: [], resolutions: ["1080"] })));
+
+        const response = await POST(request({ model: "video", size: "auto", vquality: "1080", videoSeconds: "auto" }));
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("比例或精确尺寸");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.scheduleGenerationTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("maps an exact multipart pixel size without requiring a separate resolution", async () => {
+        mocks.getAuthSettings.mockResolvedValue(multipartSettings(videoGenerationParameters({ pixelSizes: ["1024x1536"], supportsCustomSize: true, aspectRatios: [], resolutions: [] })));
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-exact-size", status: "queued" }));
+
+        const response = await POST(request({ model: "video", size: "1024x1536", vquality: "auto", videoSeconds: "auto" }));
+        const body = (mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).body as FormData;
+
+        expect(response.status).toBe(200);
+        expect(body.get("size")).toBe("1024x1536");
+    });
+
     it("persists the Drama project, episode and shot task context", async () => {
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-drama", status: "queued" }));
         const context = { surface: "drama", projectId: "drama-one", episodeId: "episode-one", shotId: "shot-one", estimatedPoints: 8, attemptNo: 2, clientRequestId: "drama-video:one" };
@@ -447,7 +629,7 @@ describe("video generation candidate failover", () => {
         expect(JSON.parse(String(init.body))).toMatchObject({ ratio: "16:9" });
     });
 
-    it("rounds a requested duration up to the next duration supported by the selected upstream", async () => {
+    it("preserves a concrete duration even when provider metadata lists other values", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             ...settings,
             systemChannels: [
@@ -477,9 +659,9 @@ describe("video generation candidate failover", () => {
         const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
 
         expect(response.status).toBe(200);
-        expect(JSON.parse(String(init.body))).toMatchObject({ duration: 8 });
-        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ requestedDurationSeconds: 8 }));
-        expect((await response.json()).task.durationSeconds).toBe(8);
+        expect(JSON.parse(String(init.body))).toMatchObject({ duration: 7 });
+        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ requestedDurationSeconds: 7 }));
+        expect((await response.json()).task.durationSeconds).toBe(7);
     });
 
     it("uses the selected GlobalAiOpc preset path and Seedance content request body", async () => {
@@ -555,6 +737,53 @@ describe("video generation candidate failover", () => {
 
         expect(response.status).toBe(400);
         expect((await response.json()).error).toContain("不支持尾帧输入");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("rejects a VOZEB provider resolution narrower than the binding before creating an attempt", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [{ ...channels[0], models: ["Seedance 2.0-fast-720p"], advancedConfig: { protocol: "vozeb-recommended", createPath: "/v1/videos/generations" } }],
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: [
+                        {
+                            ...settings.logicalModels[0].bindings[0],
+                            upstreamModel: "Seedance 2.0-fast-720p",
+                            generationParameters: videoGenerationParameters({ resolutions: ["1080"] }),
+                        },
+                    ],
+                },
+            ],
+        });
+
+        const response = await POST(request({ model: "video", videoSeconds: 5, size: "16:9", vquality: "1080", videoGenerateAudio: false }));
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("1080p");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("rejects a fractional Seedance Special provider duration before creating an attempt", async () => {
+        const seedanceModel = "sd_2.0_fast_special_720p";
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [{ ...channels[0], models: [seedanceModel], advancedConfig: { protocol: "seedance-special", createPath: "/seedance-special/videos" } }],
+            logicalModels: [
+                {
+                    ...settings.logicalModels[0],
+                    bindings: [{ ...settings.logicalModels[0].bindings[0], upstreamModel: seedanceModel, generationParameters: videoGenerationParameters({ resolutions: ["720"], durationRange: { min: 4, max: 15 } }) }],
+                },
+            ],
+        });
+
+        const response = await POST(request({ model: "video", videoSeconds: 5.5, size: "16:9", vquality: "720" }));
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("整数");
         expect(mocks.createVideoTask).not.toHaveBeenCalled();
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
@@ -676,15 +905,13 @@ describe("video generation candidate failover", () => {
         expect(url).toBe("http://localhost/api/ai/system/yumeng/kyyReactApiServer/v2/model-center/tasks");
         expect(body).toMatchObject({
             model: "sd_2.0_fast_special",
-            duration: 15,
+            duration: 60,
             aspect_ratio: "16:9",
             resolution: "720p",
             reference_images: ["https://cdn.example.com/reference.png"],
             reference_videos: ["https://cdn.example.com/reference.mp4"],
             reference_audios: ["https://cdn.example.com/reference.mp3"],
-            generate_audio: "true",
             tools: [],
-            watermark: "false",
         });
         expect(body).not.toHaveProperty("first_image");
         expect(body).not.toHaveProperty("last_image");
@@ -732,6 +959,50 @@ function request(config: Record<string, unknown> = { model: "video" }, reference
         },
         body: JSON.stringify({ config, prompt: "A test video", references, context }),
     });
+}
+
+function videoGenerationParameters(patch: Record<string, unknown> = {}) {
+    return {
+        referenceInputs: ["image", "video", "audio"],
+        maxReferenceImages: 10,
+        aspectRatios: ["16:9", "9:16", "1:1"],
+        pixelSizes: [],
+        supportsCustomSize: true,
+        qualities: [],
+        resolutions: ["480", "720", "1080"],
+        durationMode: "range" as const,
+        durationSeconds: [],
+        durationRange: { min: 1, max: 3600 },
+        maxBatchSize: 20,
+        videoReferenceModes: ["reference", "first_frame", "first_last"],
+        voices: [],
+        formats: [],
+        ...patch,
+    };
+}
+
+function multipartSettings(generationParameters: Record<string, unknown>) {
+    return {
+        ...settings,
+        systemChannels: [
+            {
+                ...channels[0],
+                advancedConfig: {
+                    protocol: "openai" as const,
+                    modelConfigs: {
+                        "video-one": {
+                            capability: "video" as const,
+                            protocol: "openai" as const,
+                            createPath: "/videos",
+                            requestTemplate: "multipart/form-data: model、prompt、seconds、size",
+                            resultField: "id",
+                        },
+                    },
+                },
+            },
+        ],
+        logicalModels: [{ ...settings.logicalModels[0], bindings: [{ ...settings.logicalModels[0].bindings[0], generationParameters }] }],
+    };
 }
 
 function seedanceFrameSettings() {
@@ -814,7 +1085,7 @@ function yumengSettings() {
                 name: model,
                 capability: "video" as const,
                 enabled: true,
-                bindings: [{ id: "yumeng-seedance", channelId: "yumeng", upstreamModel: model, enabled: true, priority: 1 }],
+                bindings: [{ id: "yumeng-seedance", channelId: "yumeng", upstreamModel: model, enabled: true, priority: 1, generationParameters: videoGenerationParameters() }],
             },
         ],
     };
@@ -858,7 +1129,7 @@ function geminiSettings() {
                 name: "Gemini 视频",
                 capability: "video" as const,
                 enabled: true,
-                bindings: [{ id: "gemini-binding", channelId: "gemini", upstreamModel: model, enabled: true, priority: 1 }],
+                bindings: [{ id: "gemini-binding", channelId: "gemini", upstreamModel: model, enabled: true, priority: 1, generationParameters: videoGenerationParameters() }],
             },
         ],
         defaultModels: { ...settings.defaultModels, videoModel: "gemini-video" },

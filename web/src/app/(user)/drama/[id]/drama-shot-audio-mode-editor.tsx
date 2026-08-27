@@ -29,18 +29,21 @@ export function DramaShotAudioModeEditor({ projectId, episodeId, shot }: { proje
                 <span className="text-sm font-medium">{t("title")}</span>
                 <span className="text-xs text-muted-foreground">{t("description")}</span>
             </div>
-            <Segmented
-                block
-                disabled={audioActive}
-                className="!mt-2 !min-w-0 !w-full [&_.ant-segmented-item]:!min-w-0 [&_.ant-segmented-item-label]:!truncate [&_.ant-segmented-item-label]:!px-1.5 sm:[&_.ant-segmented-item-label]:!px-3"
-                value={audioMode}
-                options={[
-                    { label: t("source"), value: "source" },
-                    { label: t("voiceover"), value: "voiceover" },
-                    { label: t("mute"), value: "mute" },
-                ]}
-                onChange={changeMode}
-            />
+            <div className="mt-2">
+                <Segmented
+                    block
+                    disabled={audioActive}
+                    aria-disabled={audioActive}
+                    className="!min-w-0 !w-full [&_.ant-segmented-item]:!min-w-0 [&_.ant-segmented-item-label]:!truncate [&_.ant-segmented-item-label]:!px-1.5 sm:[&_.ant-segmented-item-label]:!px-3"
+                    value={audioMode}
+                    options={[
+                        { label: t("source"), value: "source" },
+                        { label: t("voiceover"), value: "voiceover" },
+                        { label: t("mute"), value: "mute" },
+                    ]}
+                    onChange={changeMode}
+                />
+            </div>
             <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{t(`descriptions.${audioMode}`)}</p>
         </div>
     );

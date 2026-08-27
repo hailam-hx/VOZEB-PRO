@@ -557,6 +557,7 @@ CREATE INDEX IF NOT EXISTS quota_usage_date_idx ON quota_usage (date);
 CREATE TABLE IF NOT EXISTS point_records (
     id text PRIMARY KEY,
     user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    operator_user_id text REFERENCES users(id) ON DELETE SET NULL,
     type text NOT NULL,
     amount numeric(30, 8) NOT NULL,
     balance_after numeric(30, 8) NOT NULL,
@@ -569,6 +570,7 @@ CREATE TABLE IF NOT EXISTS point_records (
     CONSTRAINT point_records_type CHECK (type IN ('consume', 'refund', 'credit', 'admin-adjust')),
     CONSTRAINT point_records_non_zero CHECK (amount <> 0)
 );
+ALTER TABLE point_records ADD COLUMN IF NOT EXISTS operator_user_id text REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS point_records_user_created_idx ON point_records (user_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS point_records_idempotency_idx ON point_records (idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS point_records_refund_source_idx ON point_records (source_record_id) WHERE type = 'refund' AND source_record_id IS NOT NULL AND source_record_id <> '';

@@ -22,6 +22,7 @@ import { applyCameraPrompt } from "../utils/canvas-camera";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { buildPanoramaPrompt } from "../utils/canvas-panorama";
 import { canvasVideoReferenceMetadata, resolveCanvasVideoGenerationReferences, restoreCanvasVideoGenerationReferences } from "../utils/canvas-video-references";
+import { canvasGenerationPreflight, resolveCanvasGenerationCapability, type CanvasGenerationCapabilityIssue } from "../utils/canvas-generation-capabilities";
 
 import { NODE_STATUS_ERROR, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_NEEDS_REVIEW, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
 import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
@@ -33,6 +34,7 @@ import {
     canvasNodeReferenceImage,
     findRetrySourceNode,
     getGenerationCount,
+    getGenerationCountPreference,
     imageMetadata,
     isGenerationCanceled,
     resolveMetadataReferences,
@@ -47,6 +49,7 @@ import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
 export function useCanvasGenerationActions({ state, tasks, interactions }: { state: CanvasPageState; tasks: CanvasTaskRuntime; interactions: CanvasInteractions }) {
     const t = useTranslations("canvas.generationActions");
     const runT = useTranslations("canvas.agentRun");
+    const capabilityT = useTranslations("create");
     const {
         message,
         projectId,
@@ -102,8 +105,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 return;
             }
 
-            setRunningNodeId(nodeId);
-            const runController = startGenerationRequest(nodeId, nodeId, nodeId);
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
             const generationContext = await hydrateNodeGenerationContext(
@@ -121,18 +122,63 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                       })
                     : sourcePrompt;
             const effectivePrompt = applyCameraPrompt(panoramaPrompt, sourceNode?.type === CanvasNodeType.Panorama ? undefined : sourceNode?.metadata?.cameraControl);
-            if (runController.signal.aborted) {
-                finishGenerationRequest(nodeId, runController);
-                setRunningNodeId(null);
-                return;
-            }
             const markSourceStatus = !isCanvasImageNodeType(sourceNode?.type) && !editingTextNode;
             const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
-                finishGenerationRequest(nodeId, runController);
-                setRunningNodeId(null);
                 return;
             }
+            let imageGenerationConfig = generationConfig;
+            let imageReferenceImages = generationContext.referenceImages;
+            let imageGenerationCount = 1;
+            let videoReferences: ReturnType<typeof resolveCanvasVideoGenerationReferences> | undefined;
+            try {
+                if (mode === "image") {
+                    const isPanoramaNode = sourceNode?.type === CanvasNodeType.Panorama;
+                    const isImageNode = isCanvasImageNodeType(sourceNode?.type);
+                    const sourceReference = isImageNode && sourceNode?.metadata?.content ? [canvasNodeReferenceImage(sourceNode)] : [];
+                    imageReferenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
+                    imageGenerationCount = isPanoramaNode ? 1 : getGenerationCount(generationConfig.count);
+                    imageGenerationConfig = {
+                        ...generationConfig,
+                        size: resolveImageRequestSize({
+                            prompt,
+                            configuredSize: generationConfig.size,
+                            referenceWidth: imageReferenceImages[0]?.width,
+                            referenceHeight: imageReferenceImages[0]?.height,
+                            defaultSize: effectiveConfig.size,
+                        }),
+                    };
+                } else if (mode === "video") {
+                    videoReferences = resolveCanvasVideoGenerationReferences({
+                        metadata: sourceNode?.metadata,
+                        context: generationContext,
+                        availableInputs: buildNodeGenerationInputs(nodeId, nodesRef.current, connectionsRef.current),
+                    });
+                }
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : t("errors.generationFailed"));
+                return;
+            }
+            const capabilityState = resolveCanvasGenerationCapability(generationConfig, mode, generationConfig.model);
+            const preflight = canvasGenerationPreflight({
+                mode,
+                config: mode === "image" ? imageGenerationConfig : generationConfig,
+                capability: capabilityState,
+                references:
+                    mode === "image"
+                        ? imageReferenceImages.map(() => ({ type: "image" as const }))
+                        : mode === "video" && videoReferences
+                          ? [...videoReferences.images.map(() => ({ type: "image" as const })), ...videoReferences.videos.map(() => ({ type: "video" as const })), ...videoReferences.audios.map(() => ({ type: "audio" as const }))]
+                          : [],
+                videoReferenceMode: sourceNode?.metadata?.videoReferenceMode ? videoReferences?.mode : undefined,
+            });
+            if (!preflight.compatible) {
+                message.error(canvasCapabilityIssueMessage(preflight.issue, capabilityT));
+                return;
+            }
+
+            setRunningNodeId(nodeId);
+            const runController = startGenerationRequest(nodeId, nodeId, nodeId);
             let pendingChildIds: string[] = [];
             if (markSourceStatus) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt: statusPrompt, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
 
@@ -140,21 +186,10 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 if (mode === "image") {
                     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                     const isPanoramaNode = sourceNode?.type === CanvasNodeType.Panorama;
-                    const count = isPanoramaNode ? 1 : getGenerationCount(generationConfig.count);
+                    const count = imageGenerationCount;
                     const isImageNode = isCanvasImageNodeType(sourceNode?.type);
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
-                    const sourceReference = isImageNode && sourceNode?.metadata?.content ? [canvasNodeReferenceImage(sourceNode)] : [];
-                    const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
-                    const imageGenerationConfig = {
-                        ...generationConfig,
-                        size: resolveImageRequestSize({
-                            prompt,
-                            configuredSize: generationConfig.size,
-                            referenceWidth: referenceImages[0]?.width,
-                            referenceHeight: referenceImages[0]?.height,
-                            defaultSize: effectiveConfig.size,
-                        }),
-                    };
+                    const referenceImages = imageReferenceImages;
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, imageGenerationConfig, count, referenceImages);
                     const resultType = isPanoramaNode ? CanvasNodeType.Panorama : CanvasNodeType.Image;
@@ -313,11 +348,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 }
 
                 if (mode === "video") {
-                    const videoReferences = resolveCanvasVideoGenerationReferences({
-                        metadata: sourceNode?.metadata,
-                        context: generationContext,
-                        availableInputs: buildNodeGenerationInputs(nodeId, nodesRef.current, connectionsRef.current),
-                    });
+                    const resolvedVideoReferences = videoReferences!;
                     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
                     const videoId = isEmptyVideoNode ? nodeId : nanoid();
@@ -338,7 +369,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             vquality: generationConfig.vquality,
                             generateAudio: generationConfig.videoGenerateAudio,
                             watermark: generationConfig.videoWatermark,
-                            ...canvasVideoReferenceMetadata(videoReferences),
+                            ...canvasVideoReferenceMetadata(resolvedVideoReferences),
                         },
                     };
                     pendingChildIds = [videoId];
@@ -350,7 +381,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        const task = await createServerVideoGenerationTask(generationConfig, effectivePrompt, videoReferences.images, videoReferences.videos, videoReferences.audios, {
+                        const task = await createServerVideoGenerationTask(generationConfig, effectivePrompt, resolvedVideoReferences.images, resolvedVideoReferences.videos, resolvedVideoReferences.audios, {
                             signal: controller.signal,
                             conversationId: currentProject?.creativeConversationId,
                             surface: "canvas",
@@ -504,6 +535,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             completeTextTask,
             completeVideoTask,
             currentProject?.creativeConversationId,
+            capabilityT,
             deferVideoTask,
             effectiveConfig,
             finishGenerationRequest,
@@ -596,6 +628,40 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 return;
             }
             const retryImages = retryReferenceImages || [];
+            const retryMode: CanvasNodeGenerationMode = node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image";
+            let retryVideoReferences: ReturnType<typeof resolveCanvasVideoGenerationReferences> | undefined;
+            try {
+                if (retryMode === "video") {
+                    if (!context) throw new Error("video generation context unavailable");
+                    retryVideoReferences =
+                        restoreCanvasVideoGenerationReferences(node.metadata) ||
+                        resolveCanvasVideoGenerationReferences({
+                            metadata: sourceNode.metadata,
+                            context,
+                            availableInputs: buildNodeGenerationInputs(sourceNode.id, nodesRef.current, connectionsRef.current),
+                        });
+                }
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : t("errors.generationFailed"));
+                return;
+            }
+            const retryCapability = resolveCanvasGenerationCapability(generationConfig, retryMode, generationConfig.model);
+            const retryPreflight = canvasGenerationPreflight({
+                mode: retryMode,
+                config: generationConfig,
+                capability: retryCapability,
+                references:
+                    retryMode === "image"
+                        ? retryImages.map(() => ({ type: "image" as const }))
+                        : retryMode === "video" && retryVideoReferences
+                          ? [...retryVideoReferences.images.map(() => ({ type: "image" as const })), ...retryVideoReferences.videos.map(() => ({ type: "video" as const })), ...retryVideoReferences.audios.map(() => ({ type: "audio" as const }))]
+                          : [],
+                videoReferenceMode: node.metadata?.videoReferenceMode || sourceNode.metadata?.videoReferenceMode ? retryVideoReferences?.mode : undefined,
+            });
+            if (!retryPreflight.compatible) {
+                message.error(canvasCapabilityIssueMessage(retryPreflight.issue, capabilityT));
+                return;
+            }
 
             setRunningNodeId(node.id);
             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
@@ -612,14 +678,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    if (!context) throw new Error("video generation context unavailable");
-                    const videoReferences =
-                        restoreCanvasVideoGenerationReferences(node.metadata) ||
-                        resolveCanvasVideoGenerationReferences({
-                            metadata: sourceNode.metadata,
-                            context,
-                            availableInputs: buildNodeGenerationInputs(sourceNode.id, nodesRef.current, connectionsRef.current),
-                        });
+                    const videoReferences = retryVideoReferences!;
                     const task = await createServerVideoGenerationTask(generationConfig, prompt, videoReferences.images, videoReferences.videos, videoReferences.audios, {
                         signal: controller.signal,
                         conversationId: currentProject?.creativeConversationId,
@@ -678,6 +737,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         },
         [
             applyAgentOps,
+            capabilityT,
             completeAudioTask,
             completeTextTask,
             completeVideoTask,
@@ -719,7 +779,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     prompt: "",
                     model: effectiveConfig.imageModel || effectiveConfig.model,
                     size: effectiveConfig.size,
-                    count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count),
+                    count: getGenerationCountPreference(effectiveConfig.canvasImageCount || effectiveConfig.count),
                 },
                 t("titles.config"),
             );
@@ -864,6 +924,14 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         openAgent,
         closeAgent,
     };
+}
+
+function canvasCapabilityIssueMessage(issue: CanvasGenerationCapabilityIssue, translate: (key: "generationCapabilityUnconfigured" | "generationCapabilityUnsupported" | "generationCapabilityIntersection") => string) {
+    const reasonKey = issue.reason === "intersection" ? "generationCapabilityIntersection" : issue.reason === "unsupported" ? "generationCapabilityUnsupported" : "generationCapabilityUnconfigured";
+    const reason = translate(reasonKey);
+    if (issue.value === undefined) return reason;
+    const value = Array.isArray(issue.value) ? issue.value.join(", ") : String(issue.value);
+    return `${reason}（${String(issue.field)}：${value}）`;
 }
 
 export type CanvasGenerationActions = ReturnType<typeof useCanvasGenerationActions>;

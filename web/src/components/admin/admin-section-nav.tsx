@@ -173,7 +173,7 @@ export function AdminSectionNav({
 
 export const adminSections: AdminSection[] = [
     { key: "overview", label: "经营看板", description: "查看用户增长、调用趋势、收入概览和模型请求分布。", shortDescription: "数据总览", icon: <Database className="size-4" /> },
-    { key: "users", label: "用户运营", description: "管理用户角色、账号状态和统一积分余额。", shortDescription: "账户与余额", icon: <UsersRound className="size-4" /> },
+    { key: "users", label: "用户运营", description: "管理用户资料、角色和账号状态。", shortDescription: "账户与权限", icon: <UsersRound className="size-4" /> },
     { key: "logs", label: "调用记录", description: "追踪用户生成任务、模型调用、入口来源和失败原因。", shortDescription: "生成与模型", icon: <Film className="size-4" /> },
     { key: "generationOperations", label: "生成运维", description: "统一排查生成任务、会话、项目、渠道健康、失败原因和积分成本。", shortDescription: "任务排障", icon: <Activity className="size-4" /> },
     { key: "top-ups", label: "充值与定价", description: "管理充值预设、客户汇率、逻辑模型售价、绑定成本和供应商单位换算。", shortDescription: "预设与价格", icon: <CreditCard className="size-4" /> },

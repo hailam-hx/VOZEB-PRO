@@ -9,11 +9,11 @@ type YumengReference = { type: "image" | "video" | "audio"; url: string; role?: 
 type YumengVideoRequestInput = {
     model: string;
     prompt: string;
-    duration: number;
-    aspectRatio: string;
-    resolution: string;
-    generateAudio: boolean;
-    watermark: boolean;
+    duration?: number;
+    aspectRatio?: string;
+    resolution?: string;
+    generateAudio?: boolean;
+    watermark?: boolean;
     images: string[];
     videos: string[];
     audios: string[];
@@ -25,8 +25,8 @@ type YumengImageRequestInput = {
     model: string;
     prompt: string;
     images: string[];
-    aspectRatio: string;
-    resolution: string;
+    aspectRatio?: string;
+    resolution?: string;
     size?: string;
 };
 
@@ -250,8 +250,8 @@ export function buildYumengVideoRequest(input: YumengVideoRequestInput) {
                 seed: "-1",
                 first_image: input.firstFrame,
                 last_image: input.lastFrame,
-                generate_audio: String(input.generateAudio),
-                watermark: String(input.watermark),
+                generate_audio: input.generateAudio === undefined ? undefined : String(input.generateAudio),
+                watermark: input.watermark === undefined ? undefined : String(input.watermark),
             }),
             tools: [],
         };
@@ -336,11 +336,21 @@ function isReferenceToVideo(model: string) {
     return (isHappyHorse(model) && model.includes("-r2v")) || model === "wan2.7-r2v";
 }
 
-function normalizeVideoResolution(model: string, value: string) {
-    const lower = value.trim().toLowerCase() || "720p";
-    if (model === "sd_2.0_fast_special") return "720p";
-    if (model === "sd_2.0_fast_discount" || model === "seedance-2.5-c1" || model === "videos_fast_933_c1") return lower === "480p" ? "480p" : "720p";
-    if (isHappyHorse(model) || model.startsWith("wan2.7-")) return lower === "720p" ? "720P" : "1080P";
+function normalizeVideoResolution(model: string, value?: string) {
+    const lower = value?.trim().toLowerCase() || "";
+    if (!lower || lower === "auto") return "";
+    if (model === "sd_2.0_fast_special") {
+        if (lower !== "720p") throw new Error(`${model} 不支持 ${value} 清晰度`);
+        return "720p";
+    }
+    if (model === "sd_2.0_fast_discount" || model === "seedance-2.5-c1" || model === "videos_fast_933_c1") {
+        if (lower !== "480p" && lower !== "720p") throw new Error(`${model} 不支持 ${value} 清晰度`);
+        return lower;
+    }
+    if (isHappyHorse(model) || model.startsWith("wan2.7-")) {
+        if (lower !== "720p" && lower !== "1080p") throw new Error(`${model} 不支持 ${value} 清晰度`);
+        return lower.toUpperCase();
+    }
     return lower;
 }
 

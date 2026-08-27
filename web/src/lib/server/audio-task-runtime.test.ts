@@ -85,6 +85,17 @@ describe("audio task runtime submission safety", () => {
         expect(mocks.schedule).toHaveBeenLastCalledWith("audio", "audio-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "audio-upstream-one", channelId: "channel-one", lastUpstreamStatus: "submitted" }));
     });
 
+    it("omits unresolved Auto audio fields instead of injecting provider values", async () => {
+        state = { ...state, config: { ...state.config, voice: undefined, format: undefined, speed: undefined }, candidateConfigs: [] };
+        const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ audio_url: "https://cdn.example/result.mp3" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createAudioTaskUpstreamStep(state, "http://internal");
+
+        const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body));
+        expect(body).toEqual({ model: "audio-one", input: "test", prompt: "test", text: "test" });
+    });
+
     it("does not persist an HTML fallback page as generated audio", async () => {
         const fetchMock = vi
             .fn()
