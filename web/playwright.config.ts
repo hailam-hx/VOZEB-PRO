@@ -82,6 +82,7 @@ export default defineConfig({
                 VOZEB_PRO_PAYPLY_REFUND_URL: `http://127.0.0.1:${paymentFixturePort}/payply/refund`,
                 VOZEB_PRO_PAYPLY_REFUND_QUERY_URL: `http://127.0.0.1:${paymentFixturePort}/payply/refund-query?refundId={{providerRefundId}}`,
                 VOZEB_PRO_PAYPLY_WEBHOOK_SECRET: "vozeb-pro-e2e-payply-webhook-secret",
+                VOZEB_PRO_PAYPLY_WEBHOOK_SIGNATURE_HEADER: "x-vozeb-pro-signature",
             },
         },
     ],

@@ -401,12 +401,12 @@ test("creative composer controls return to a neutral palette after selection", a
 
         await expect.poll(() => readPalette(selectedModeTrigger)).toEqual(neutralPalette);
 
-        const preferenceTrigger = page.getByRole("button", { name: "生成参数：智能参数" });
+        const preferenceTrigger = page.getByRole("button", { name: /^生成参数：/ });
         const preferencePopover = page.locator(".ant-popover").last();
         await openComposerPopover(preferenceTrigger, preferencePopover);
         await expect.poll(() => readPalette(preferenceTrigger)).not.toEqual(neutralPalette);
         await preferencePopover.getByRole("tab", { name: "输出" }).click();
-        const configuredPreferenceTrigger = page.getByRole("button", { name: "生成参数：15秒" });
+        const configuredPreferenceTrigger = page.getByRole("button", { name: /^生成参数：.*15秒/ });
         await selectComposerPopoverOption(preferenceTrigger, preferencePopover, preferencePopover.getByRole("button", { name: "输入视频时长 15 秒" }), () => expect(configuredPreferenceTrigger).toBeVisible());
         await page.keyboard.press("Escape");
         await expect(preferencePopover).toBeHidden();

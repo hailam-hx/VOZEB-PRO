@@ -82,7 +82,7 @@ export default function CreatePage() {
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
     const modelOptions = useCreativeAgentModels();
     const selectedModels = modelOptions.filter((model) => selectedModelIds.includes(model.id));
-    const activeGenerationCapability = creationMode === "agent" ? generationPreferences.mode || selectedModels.at(-1)?.capability || "image" : creationMode;
+    const activeGenerationCapability = creationMode === "agent" ? generationPreferences.mode || selectedModels.at(-1)?.capability : creationMode;
     const referenceCapabilityState = resolveCreativeGenerationCapability({ models: modelOptions, selectedModels, capability: activeGenerationCapability, smartPlanning });
     const referenceUploadAccept = CREATIVE_UPLOAD_MIME_TYPES.filter((mimeType) => {
         const type = creativeReferenceInputFromMimeType(mimeType);

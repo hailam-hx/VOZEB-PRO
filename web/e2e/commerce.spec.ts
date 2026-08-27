@@ -354,7 +354,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
     await page.goto("/admin/billing?tab=pricing", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "客户汇率与模型计价" })).toBeVisible();
     await expect(page.getByText("商业图片模型", { exact: true })).toBeVisible();
-    await expect(page.getByText(/fal:render × 0.03 USD \(provider-fx-v2\)/)).toBeVisible();
+    await expect(page.getByText("单位换算：fal · 1 render = 0.03 USD · provider-fx-v2", { exact: true })).toBeVisible();
     await page.getByLabel("客户汇率版本").fill("fx-v8");
     await page.getByLabel("1 VND 对应 USD").fill("0.000041");
     await page.getByRole("button", { name: "保存汇率" }).click();
@@ -384,7 +384,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
                 },
             ],
         });
-    await expect(page.getByText(/fal-next:render-unit × 0.031 USD \(provider-fx-v3\)/)).toBeVisible();
+    await expect(page.getByText("单位换算：fal-next · 1 render-unit = 0.031 USD · provider-fx-v3", { exact: true })).toBeVisible();
 
     await page.getByRole("radiogroup").getByText("用量毛利", { exact: true }).click();
     await expect(page.getByRole("heading", { name: "用量、成本与毛利" })).toBeVisible();

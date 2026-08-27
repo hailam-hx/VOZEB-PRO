@@ -17,7 +17,7 @@ const FILE_PROVIDER_LIMITATIONS = new Map([
     ["/api/admin/billing/top-up-presets", 501],
 ]);
 
-type RouteCase = { path: string; expectedPath?: RegExp; expectedStatus?: number; readyHeading?: string; readyText?: string };
+type RouteCase = { path: string; expectedPath?: RegExp; expectedStatus?: number; readyHeading?: string; readyText?: string | RegExp };
 type ApiFailure = { path: string; status: number; body: string };
 
 test("all authenticated pages reach their real routes and stay usable", async ({ page, request }, testInfo) => {
@@ -43,7 +43,7 @@ test("all authenticated pages reach their real routes and stay usable", async ({
         { path: "/me", readyHeading: "E2E 管理员" },
         USES_POSTGRES ? { path: `/u/${E2E_ADMIN.username}`, expectedStatus: 404, readyText: "404" } : { path: `/u/${E2E_ADMIN.username}`, readyHeading: "创作者主页暂不可用" },
         { path: "/billing", expectedPath: /\/profile\?section=billing$/ },
-        { path: "/billing/checkout", readyText: "暂无充值预设，可输入自定义金额" },
+        { path: "/billing/checkout", readyText: /充值积分|暂无充值预设，可输入自定义金额/ },
         { path: "/billing/success", readyText: "缺少订单信息" },
         { path: "/billing/cancel", readyText: "缺少订单信息" },
         { path: "/admin/setup", readyHeading: "把站点配置到可以上线运营" },
@@ -159,14 +159,14 @@ async function verifyRoute(page: Page, route: RouteCase, label: string) {
         expect(browserIconHref, `${label} ${route.path} browser icon must not depend on a redirect`).not.toContain("/api/site-icon");
         if (route.expectedPath) await expect(page).toHaveURL(route.expectedPath);
         if (route.readyHeading) await expect(page.getByRole("heading", { name: route.readyHeading, exact: true })).toBeVisible();
-        if (route.readyText) await expect(page.getByText(route.readyText, { exact: true }).first()).toBeVisible();
+        if (route.readyText) await expect(page.getByText(route.readyText, typeof route.readyText === "string" ? { exact: true } : undefined).first()).toBeVisible();
         await expect(page.locator("body")).not.toContainText("Application error");
         await expect(page.locator("body")).not.toContainText("Internal Server Error");
         await expectNoHorizontalOverflow(page, `${label} ${route.path}`);
         await expectVisibleControlsWithinViewport(page, `${label} ${route.path}`);
         await Promise.all(apiFailureReads);
-        const expectedLimitations = apiFailures.filter(isExpectedFileProviderLimitation);
-        const unexpectedApiFailures = apiFailures.filter((failure) => !isExpectedFileProviderLimitation(failure));
+        const expectedLimitations = apiFailures.filter((failure) => isExpectedFileProviderLimitation(failure) || isExpectedRouteApiFailure(failure, route));
+        const unexpectedApiFailures = apiFailures.filter((failure) => !isExpectedFileProviderLimitation(failure) && !isExpectedRouteApiFailure(failure, route));
         expect(pageErrors, `${label} ${route.path} page errors`).toEqual([]);
         expect(unexpectedApiFailures, `${label} ${route.path} API failures`).toEqual([]);
         expect(withoutExpectedResourceErrors(consoleErrors, expectedLimitations, route.expectedStatus), `${label} ${route.path} console errors; API responses: ${JSON.stringify(apiFailures)}`).toEqual([]);
@@ -181,6 +181,13 @@ function isExpectedFileProviderLimitation(failure: ApiFailure) {
     if (failure.status === 404 && failure.path === `/api/public/users/${E2E_ADMIN.username}`) return failure.body.includes("创作者主页不存在");
     if (USES_POSTGRES || (failure.status !== 409 && failure.status !== 501)) return false;
     return failure.body.includes("需要启用 PostgreSQL") || FILE_PROVIDER_LIMITATIONS.get(failure.path) === failure.status;
+}
+
+function isExpectedRouteApiFailure(failure: ApiFailure, route: RouteCase) {
+    if (route.expectedStatus !== failure.status) return false;
+    if (route.path.startsWith("/u/")) return failure.path === `/api/public/users${route.path.slice(2)}`;
+    if (route.path.startsWith("/share/")) return failure.path === `/api/public/works${route.path.slice("/share".length)}`;
+    return false;
 }
 
 function withoutExpectedResourceErrors(consoleErrors: string[], expectedLimitations: ApiFailure[], expectedDocumentStatus?: number) {

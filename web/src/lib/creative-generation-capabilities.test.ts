@@ -48,6 +48,17 @@ describe("creative generation capabilities", () => {
         });
     });
 
+    it("unions reference inputs across media models when Smart Agent has no fixed capability", () => {
+        const image = model("image", "image", { referenceInputs: ["image"], maxReferenceImages: 4 });
+        const video = model("video", "video", { referenceInputs: ["image", "video"] });
+        const audio = model("audio", "audio", { referenceInputs: ["audio"] });
+
+        expect(resolveCreativeGenerationCapability({ models: [image, video, audio], selectedModels: [], smartPlanning: true })).toMatchObject({
+            reason: "unsupported",
+            parameters: { referenceInputs: ["image", "video", "audio"], maxReferenceImages: 4 },
+        });
+    });
+
     it("distinguishes unconfigured, configured unsupported, and selected-model intersection misses", () => {
         const unconfigured = model("unconfigured", "image");
         const empty = model("empty", "image", {});

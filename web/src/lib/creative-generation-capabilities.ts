@@ -34,10 +34,10 @@ export function resolveCreativeGenerationCapability({
 }: {
     models: readonly CreativeGenerationCapabilityModel[];
     selectedModels: readonly CreativeGenerationCapabilityModel[];
-    capability: CreativeGenerationCapabilityModel["capability"];
+    capability?: CreativeGenerationCapabilityModel["capability"];
     smartPlanning: boolean;
 }): CreativeGenerationCapabilityState {
-    const candidates = (smartPlanning ? models : selectedModels).filter((model) => model.capability === capability);
+    const candidates = (smartPlanning ? models : selectedModels).filter((model) => !capability || model.capability === capability);
     const sources = candidates.map(profileSource);
     const configured = candidates.filter((model) => model.generationParameters !== undefined);
     if (!candidates.length || !configured.length || (!smartPlanning && configured.length !== candidates.length)) return { reason: "unconfigured" };
