@@ -25,6 +25,7 @@ describe("i18n message catalogs", () => {
         for (const catalog of catalogs) {
             expect(requiredNamespaces.every((namespace) => namespace in catalog)).toBe(true);
             expect(catalog.common).toMatchObject({ availableBalance: expect.any(String), settledBalance: expect.any(String), topUpCredits: expect.any(String) });
+            expect(catalog.billing).toMatchObject({ settledBalance: expect.any(String), heldBalance: expect.any(String), topUpCredits: expect.any(String), usageDetails: expect.any(String) });
             const values = leafKeys(catalog).map((key) => key.split(".").reduce<unknown>((value, part) => (value as Record<string, unknown>)[part], catalog));
             expect(values.every((value) => typeof value === "string" && value.trim().length > 0)).toBe(true);
         }

@@ -24,8 +24,9 @@ import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
 import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
-import { createStreamingUsageAccumulator, deriveProxyBillableUsage, normalizeProxyBillableRequest } from "@/lib/server/usage-billing-adapter";
-import { attachUsageProviderEvidence, finishUsageProviderAttempt, recordUsageProviderAttempt, releaseUsageBilling, reserveUsageBilling, reuseExistingUsageBilling, settleCancelledUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
+import { meteredTextResponseBody } from "@/lib/server/system-ai-metered-text-stream";
+import { deriveProxyBillableUsage, normalizeProxyBillableRequest } from "@/lib/server/usage-billing-adapter";
+import { attachUsageProviderEvidence, finishUsageProviderAttempt, recordUsageProviderAttempt, reserveUsageBilling, reuseExistingUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
 import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
 import { usageRecoveryIdentity } from "@/lib/server/generation-usage-context";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
@@ -295,52 +296,6 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         status: upstream.status,
         statusText: upstream.statusText,
         headers: responseHeaders(upstream.headers, target, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined),
-    });
-}
-
-export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billing: UsageBilling, attemptNumber: number) {
-    const reader = body.getReader();
-    const accumulator = createStreamingUsageAccumulator("text", billing.snapshot.requestUsage);
-    let finalized = false;
-    const finalize = async (status: "succeeded" | "failed" | "canceled") => {
-        if (finalized) return;
-        finalized = true;
-        const usage = accumulator.finish();
-        try {
-            if (status === "succeeded") {
-                if (usage) await attachUsageProviderEvidence({ billing, attemptNumber, usage });
-            } else {
-                await finishUsageProviderAttempt({ billing, attemptNumber, status, normalizedUsage: usage });
-                if (status === "canceled") await settleCancelledUsageBilling({ billing, description: "用户取消已由上游接受的文本生成", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
-                else await releaseUsageBilling({ billing, reason: "上游文本流读取失败" });
-            }
-        } catch (error) {
-            console.error("System API text usage settlement failed", error instanceof Error ? error.message : error);
-        }
-    };
-    return new ReadableStream<Uint8Array>({
-        async pull(controller) {
-            try {
-                const next = await reader.read();
-                if (next.done) {
-                    await finalize("succeeded");
-                    controller.close();
-                    return;
-                }
-                accumulator.push(next.value);
-                controller.enqueue(next.value);
-            } catch (error) {
-                await finalize("failed");
-                controller.error(error);
-            }
-        },
-        async cancel(reason) {
-            try {
-                await reader.cancel(reason);
-            } finally {
-                await finalize("canceled");
-            }
-        },
     });
 }
 
