@@ -388,7 +388,7 @@ describe("usage billing runtime", () => {
         await expect(recordUsageProviderAttempt({ ...pending, status: "succeeded", costRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "99" }] }, nativeCostAmount: "99" })).rejects.toThrow("参数不一致");
     });
 
-    it("retains and marks an ambiguous pending system text attempt for review", async () => {
+    it("releases an ambiguous pending system text attempt without creating consumption", async () => {
         const billing = await reservation("system-text-pending");
         await recordUsageProviderAttempt({
             billing,
@@ -407,9 +407,9 @@ describe("usage billing runtime", () => {
         const resolution = await resolveSystemAiTextFailure({ userId: "user-one", businessId: billing.businessId, reason: "transport acceptance unknown", final: true });
         const db = await readAuthDb();
 
-        expect(resolution).toEqual({ state: "needs_review" });
-        expect(db.walletHolds[0]).toMatchObject({ status: "active", reviewReason: "transport acceptance unknown" });
-        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ status: "pending" })]);
+        expect(resolution).toEqual({ state: "released" });
+        expect(db.walletHolds[0]).toMatchObject({ status: "released", releaseReason: "transport acceptance unknown" });
+        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ status: "failed" })]);
         expect(db.usageCharges).toEqual([]);
     });
 
@@ -437,9 +437,9 @@ describe("usage billing runtime", () => {
         expect(db.providerUsageAttempts[0]).toMatchObject({ status: "failed", nativeCostAmount: "0.25", costUsd: "0.25" });
     });
 
-    it("distinguishes a proven non-receipt from an ambiguous transport with no persisted hold", async () => {
+    it("does not retry an ambiguous transport when no persisted hold exists", async () => {
         await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: "runtime:not-received", reason: "proxy rejected before provider", final: false, requestNotReceived: true })).resolves.toEqual({ state: "safe_to_failover" });
-        await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: "runtime:unknown-transport", reason: "transport unknown", final: false })).resolves.toEqual({ state: "needs_review" });
+        await expect(resolveSystemAiTextFailure({ userId: "user-one", businessId: "runtime:unknown-transport", reason: "transport unknown", final: false })).resolves.toEqual({ state: "closed" });
         await expect(
             resolveSystemAiTextFailure({
                 userId: "user-one",
@@ -449,22 +449,23 @@ describe("usage billing runtime", () => {
                 requestNotReceived: true,
                 currentAttempt: { attemptNumber: 2, acceptance: "unknown" },
             }),
-        ).resolves.toEqual({ state: "needs_review" });
+        ).resolves.toEqual({ state: "closed" });
     });
 });
 
 describe("orphan usage recovery", () => {
-    it("retains unknown holds and marks them for review", async () => {
+    it("releases unknown holds without creating consumption", async () => {
         await reservation("unknown", new Date("2026-08-23T00:00:00.000Z"));
 
         const result = await recoverOrphanUsageHolds({ limit: 5, now: new Date("2026-08-23T01:00:00.000Z"), inspect: vi.fn(async () => ({ state: "unknown" as const, reason: "供应商状态未知" })) });
         const hold = (await readAuthDb()).walletHolds[0];
 
-        expect(result).toMatchObject({ inspected: 1, needsReview: 1, settled: 0, released: 0 });
-        expect(hold).toMatchObject({ status: "active", reviewReason: "供应商状态未知" });
+        expect(result).toEqual({ inspected: 1, retained: 0, settled: 0, released: 1 });
+        expect(hold).toMatchObject({ status: "released", releaseReason: "供应商状态未知" });
+        expect((await readAuthDb()).usageCharges).toEqual([]);
     });
 
-    it("advances bounded recovery past an already reviewed unknown hold", async () => {
+    it("advances bounded recovery after releasing an unknown hold", async () => {
         await reservation("reviewed-first", new Date("2026-08-23T00:00:00.000Z"));
         await reservation("later", new Date("2026-08-23T00:01:00.000Z"));
         const now = new Date("2026-08-23T01:00:00.000Z");
@@ -498,7 +499,7 @@ describe("orphan usage recovery", () => {
         const result = await recoverOrphanUsageHolds({ limit: 5, now: new Date("2026-08-23T01:00:00.000Z"), inspect });
         const db = await readAuthDb();
 
-        expect(result).toMatchObject({ inspected: 2, released: 1, settled: 1, needsReview: 0 });
+        expect(result).toEqual({ inspected: 2, retained: 0, released: 1, settled: 1 });
         expect(db.walletHolds.map((hold) => hold.status)).toEqual(["released", "settled"]);
         expect(db.usageCharges).toEqual([expect.objectContaining({ settledCredits: "1.5", estimated: false })]);
     });

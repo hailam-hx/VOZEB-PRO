@@ -19,7 +19,7 @@ describe("admin usage recovery route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 50 } });
-        mocks.recoverOrphanUsageHolds.mockResolvedValue({ inspected: 2, retained: 0, settled: 1, released: 1, needsReview: 0 });
+        mocks.recoverOrphanUsageHolds.mockResolvedValue({ inspected: 2, retained: 0, settled: 1, released: 1 });
     });
 
     it("requires billing management permission", async () => {
@@ -39,7 +39,7 @@ describe("admin usage recovery route", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.recoverOrphanUsageHolds).toHaveBeenCalledWith({ limit: 50, inspect: mocks.inspectPersistedUsageHold });
-        expect(payload).toEqual({ code: 0, data: { inspected: 2, retained: 0, settled: 1, released: 1, needsReview: 0 }, msg: "已检查 2 个用量预留" });
+        expect(payload).toEqual({ code: 0, data: { inspected: 2, retained: 0, settled: 1, released: 1 }, msg: "已检查 2 个用量预留" });
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.usage_hold.recover", metadata: payload.data }));
     });
 });

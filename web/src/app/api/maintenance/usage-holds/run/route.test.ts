@@ -14,7 +14,7 @@ describe("POST /api/maintenance/usage-holds/run", () => {
         mocks.configured.mockReturnValue(true);
         mocks.authorized.mockReturnValue(true);
         mocks.settings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 37 } });
-        mocks.recover.mockResolvedValue({ inspected: 0, retained: 0, settled: 0, released: 0, needsReview: 0 });
+        mocks.recover.mockResolvedValue({ inspected: 0, retained: 0, settled: 0, released: 0 });
     });
 
     it("requires a separately configured worker token", async () => {
@@ -32,11 +32,11 @@ describe("POST /api/maintenance/usage-holds/run", () => {
     });
 
     it("uses the configured bounded batch and the persisted-state inspector", async () => {
-        mocks.recover.mockResolvedValue({ inspected: 2, retained: 1, settled: 1, released: 0, needsReview: 0 });
+        mocks.recover.mockResolvedValue({ inspected: 2, retained: 1, settled: 1, released: 0 });
         const response = await POST(request());
 
         expect(mocks.recover).toHaveBeenCalledWith({ limit: 37, inspect: mocks.inspect });
-        expect(await response.json()).toEqual({ code: 0, data: { inspected: 2, retained: 1, settled: 1, released: 0, needsReview: 0 }, msg: "已检查 2 个用量预留" });
+        expect(await response.json()).toEqual({ code: 0, data: { inspected: 2, retained: 1, settled: 1, released: 0 }, msg: "已检查 2 个用量预留" });
     });
 });
 

@@ -14,7 +14,6 @@ import {
     getWalletHoldByBusinessId,
     getWalletHoldById,
     listProviderUsageAttemptsForHold,
-    markWalletHoldNeedsReview,
     recordProviderUsageAttempt,
     releaseWalletHold,
     reserveWalletCredits,
@@ -219,42 +218,25 @@ export async function finishSystemAiTextAttempt(headers: Headers, input: { statu
 
 export async function releaseUsageBillingForBusiness(userId: string, businessId: string, reason: string) {
     const hold = await getWalletHoldByBusinessId(businessId);
-    if (!hold || hold.userId !== userId || hold.status !== "active" || !hold.runtimeSnapshot) return;
-    const billing = billingFromHold(hold);
-    await finishPendingAttempts(billing, "failed", new Date());
-    return releaseUsageBilling({ billing, reason });
+    if (!hold || hold.userId !== userId || hold.status !== "active") return;
+    return closeUsageHoldAsFailed(hold, reason, new Date());
 }
 
 export async function resolveSystemAiTextFailure(input: { userId: string; businessId: string; reason: string; final: boolean; requestNotReceived?: boolean; currentAttempt?: { attemptNumber: number; acceptance: "response" | "unknown" } }) {
     const hold = await getWalletHoldByBusinessId(input.businessId);
-    if (input.currentAttempt?.acceptance === "unknown") {
-        if (hold?.userId === input.userId && hold.status === "active") await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
-        return { state: "needs_review" } as const;
-    }
-    if (!hold) return { state: input.requestNotReceived ? "safe_to_failover" : "needs_review" } as const;
-    if (hold.userId !== input.userId) return { state: "needs_review" } as const;
+    if (!hold) return { state: input.requestNotReceived && input.currentAttempt?.acceptance !== "unknown" ? "safe_to_failover" : "closed" } as const;
+    if (hold.userId !== input.userId) return { state: "closed" } as const;
     if (hold.status !== "active") return { state: "closed" } as const;
-    if (!hold.runtimeSnapshot) {
-        await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
-        return { state: "needs_review" } as const;
-    }
     const attempts = await listProviderUsageAttemptsForHold(hold.id);
     const currentAttemptNumber = input.currentAttempt?.attemptNumber;
     const currentAttempt = currentAttemptNumber === undefined ? undefined : attempts.find((attempt) => attempt.attemptNumber === currentAttemptNumber);
-    if (input.currentAttempt && currentAttempt?.status !== "failed") {
-        await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
-        return { state: "needs_review" } as const;
-    }
-    if (attempts.some((attempt) => attempt.status === "pending")) {
-        await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
-        return { state: "needs_review" } as const;
-    }
-    if (attempts.length && !attempts.every((attempt) => attempt.status === "failed")) {
-        await markWalletHoldNeedsReview({ holdId: hold.id, reason: input.reason });
-        return { state: "needs_review" } as const;
+    const ambiguous = input.currentAttempt?.acceptance === "unknown" || !hold.runtimeSnapshot || (input.currentAttempt && currentAttempt?.status !== "failed") || attempts.some((attempt) => attempt.status === "pending") || (attempts.length > 0 && !attempts.every((attempt) => attempt.status === "failed"));
+    if (ambiguous) {
+        await closeUsageHoldAsFailed(hold, input.reason, new Date());
+        return { state: "released" } as const;
     }
     if (!input.final) return { state: "safe_to_failover" } as const;
-    await releaseUsageBilling({ billing: billingFromHold(hold), reason: input.reason });
+    await closeUsageHoldAsFailed(hold, input.reason, new Date());
     return { state: "released" } as const;
 }
 
@@ -316,7 +298,7 @@ export async function finalizeUsageBillingForBusiness(input: { userId: string; b
 export async function recoverOrphanUsageHolds(input: { limit: number; now?: Date; inspect: (hold: WalletHold) => Promise<OrphanUsageEvidence> }) {
     const now = input.now || new Date();
     const holds = await listExpiredActiveWalletHolds({ now, limit: input.limit });
-    const result = { inspected: 0, retained: 0, settled: 0, released: 0, needsReview: 0 };
+    const result = { inspected: 0, retained: 0, settled: 0, released: 0 };
     for (const hold of holds) {
         result.inspected += 1;
         const evidence = hold.runtimeSnapshot ? await input.inspect(hold) : ({ state: "unknown", reason: "预留缺少运行时计费快照" } as const);
@@ -324,7 +306,6 @@ export async function recoverOrphanUsageHolds(input: { limit: number; now?: Date
         if (finalization.state === "retained") result.retained += 1;
         else if (finalization.state === "settled") result.settled += 1;
         else if (finalization.state === "released") result.released += 1;
-        else if (finalization.state === "needs_review") result.needsReview += 1;
     }
     return result;
 }
@@ -357,8 +338,8 @@ function billingFromHold(hold: WalletHold): UsageBilling {
 
 async function finalizeUsageHold(hold: WalletHold, evidence: OrphanUsageEvidence, now: Date) {
     if (evidence.state === "unknown") {
-        await markWalletHoldNeedsReview({ holdId: hold.id, reason: evidence.reason, now });
-        return { state: "needs_review" as const };
+        await closeUsageHoldAsFailed(hold, evidence.reason, now);
+        return { state: "released" as const };
     }
     if (evidence.state === "pending") return { state: "retained" as const };
     const billing = billingFromHold(hold);
@@ -372,6 +353,21 @@ async function finalizeUsageHold(hold: WalletHold, evidence: OrphanUsageEvidence
     if (evidence.state === "canceled") await settleCancelledUsageBilling(settlement);
     else await settleUsageBilling(settlement);
     return { state: "settled" as const };
+}
+
+async function closeUsageHoldAsFailed(hold: WalletHold, reason: string, now: Date) {
+    if (hold.runtimeSnapshot) {
+        const billing = billingFromHold(hold);
+        await finishPendingAttempts(billing, "failed", now);
+        return releaseUsageBilling({ billing, reason, now });
+    }
+    return releaseWalletHold({
+        holdId: hold.id,
+        businessId: stableId("usage-release", hold.businessId),
+        requestFingerprint: stableFingerprint(hold.requestFingerprint, "release"),
+        reason,
+        now,
+    });
 }
 
 async function finishPendingAttempts(billing: UsageBilling, status: "succeeded" | "failed" | "canceled", now: Date, usage?: NormalizedUsage) {

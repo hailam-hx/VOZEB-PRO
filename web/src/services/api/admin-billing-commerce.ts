@@ -87,7 +87,7 @@ export function getAdminUsageAttempts(chargeId: string, input: { page?: number; 
 }
 
 export function recoverAdminUsageHolds() {
-    return requestCommerce<{ inspected: number; retained: number; settled: number; released: number; needsReview: number }>("/api/admin/billing/usage/recovery", { method: "POST" });
+    return requestCommerce<{ inspected: number; retained: number; settled: number; released: number }>("/api/admin/billing/usage/recovery", { method: "POST" });
 }
 
 function query(input: Record<string, unknown>) {

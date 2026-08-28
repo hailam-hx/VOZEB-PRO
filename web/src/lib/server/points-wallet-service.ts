@@ -167,24 +167,6 @@ export async function listProviderUsageAttemptsForHold(holdId: string) {
     return mutateAuthDb((db) => db.providerUsageAttempts.filter((attempt) => attempt.holdId === holdId).sort((left, right) => left.attemptNumber - right.attemptNumber));
 }
 
-export async function markWalletHoldNeedsReview(input: { holdId: string; reason: string; now?: Date }) {
-    const reason = requiredText(input.reason, "人工复核原因不能为空").slice(0, 500);
-    const now = input.now || new Date();
-    if (isPostgresDatabaseEnabled()) {
-        await ensurePostgresSchema();
-        const hold = await createPostgresRepositories().pointsWallet.markHoldNeedsReview(input.holdId, reason, now.toISOString());
-        if (!hold) throw new AuthInputError("钱包预留不存在或已经关闭");
-        return hold;
-    }
-    return mutateAuthDb((db) => {
-        const hold = db.walletHolds.find((item) => item.id === input.holdId && item.status === "active");
-        if (!hold) throw new AuthInputError("钱包预留不存在或已经关闭");
-        hold.reviewReason = reason;
-        hold.updatedAt = now.toISOString();
-        return hold;
-    });
-}
-
 export async function creditWalletBalance(input: CreditWalletBalanceInput) {
     const amount = creditAmount(input.amount, "入账积分");
     if (amount.isZero()) throw new AuthInputError("入账积分必须大于零");
