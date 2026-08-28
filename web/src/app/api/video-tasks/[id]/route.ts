@@ -30,10 +30,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const shouldRefund = Boolean(task.upstream.pointsRecordId && !task.upstream.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundVideoTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : user;
-    return NextResponse.json(
-        { task: { ...publicTask(settledTask), executionPhase } },
-        { headers: pointsResponseHeaders(refreshedUser) },
-    );
+    return NextResponse.json({ task: { ...publicTask(settledTask), executionPhase } }, { headers: pointsResponseHeaders(refreshedUser) });
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {

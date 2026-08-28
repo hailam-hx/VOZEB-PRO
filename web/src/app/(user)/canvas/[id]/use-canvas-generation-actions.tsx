@@ -312,18 +312,18 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         prev.map((node) =>
                             node.id === nodeId && isConfigNode
                                 ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : allImagesFailed } }
-                                  : node.id === nodeId && isEmptyImageNode
-                                    ? {
-                                          ...node,
-                                          metadata: {
-                                              ...node.metadata,
-                                              status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
-                                              errorDetails: hasSuccess ? undefined : node.metadata?.errorDetails || allImagesFailed,
-                                          },
-                                      }
-                                    : node.id === rootId && !hasSuccess
-                                      ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: allImagesFailed } }
-                                      : node,
+                                : node.id === nodeId && isEmptyImageNode
+                                  ? {
+                                        ...node,
+                                        metadata: {
+                                            ...node.metadata,
+                                            status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
+                                            errorDetails: hasSuccess ? undefined : node.metadata?.errorDetails || allImagesFailed,
+                                        },
+                                    }
+                                  : node.id === rootId && !hasSuccess
+                                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: allImagesFailed } }
+                                    : node,
                         ),
                     );
                     return;

@@ -360,7 +360,9 @@ describe("generation task recovery service", () => {
     it("fails interrupted audio and video submissions instead of waiting for review", async () => {
         const audio = { id: "audio-interrupted", userId: "user-one", status: "running", config: { channelId: "audio-channel", apiFormat: "openai", advancedConfig: { protocol: "custom" } } };
         const video = { id: "video-interrupted", userId: "user-one", status: "running", upstream: { id: "" }, config: { channelId: "video-channel", apiFormat: "openai", advancedConfig: { protocol: "openai" } } };
-        mocks.claim.mockResolvedValueOnce([{ ...lease(), id: audio.id, type: "audio", status: "running", executionPhase: "submitting" }]).mockResolvedValueOnce([{ ...lease(), id: video.id, type: "video", status: "running", executionPhase: "submitting" }]);
+        mocks.claim
+            .mockResolvedValueOnce([{ ...lease(), id: audio.id, type: "audio", status: "running", executionPhase: "submitting" }])
+            .mockResolvedValueOnce([{ ...lease(), id: video.id, type: "video", status: "running", executionPhase: "submitting" }]);
         mocks.getAudioTask.mockResolvedValue(audio);
         mocks.getVideoTask.mockResolvedValue(video);
 

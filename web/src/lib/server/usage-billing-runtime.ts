@@ -9,16 +9,7 @@ import { getTextTask } from "./text-task-store";
 import { getImageTask } from "./image-task-store";
 import { getVideoTask } from "./video-task-store";
 import { getAudioTask } from "./audio-task-store";
-import {
-    listExpiredActiveWalletHolds,
-    getWalletHoldByBusinessId,
-    getWalletHoldById,
-    listProviderUsageAttemptsForHold,
-    recordProviderUsageAttempt,
-    releaseWalletHold,
-    reserveWalletCredits,
-    settleWalletHold,
-} from "./points-wallet-service";
+import { listExpiredActiveWalletHolds, getWalletHoldByBusinessId, getWalletHoldById, listProviderUsageAttemptsForHold, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold } from "./points-wallet-service";
 
 export type UsageBilling = {
     holdId: string;
@@ -230,7 +221,12 @@ export async function resolveSystemAiTextFailure(input: { userId: string; busine
     const attempts = await listProviderUsageAttemptsForHold(hold.id);
     const currentAttemptNumber = input.currentAttempt?.attemptNumber;
     const currentAttempt = currentAttemptNumber === undefined ? undefined : attempts.find((attempt) => attempt.attemptNumber === currentAttemptNumber);
-    const ambiguous = input.currentAttempt?.acceptance === "unknown" || !hold.runtimeSnapshot || (input.currentAttempt && currentAttempt?.status !== "failed") || attempts.some((attempt) => attempt.status === "pending") || (attempts.length > 0 && !attempts.every((attempt) => attempt.status === "failed"));
+    const ambiguous =
+        input.currentAttempt?.acceptance === "unknown" ||
+        !hold.runtimeSnapshot ||
+        (input.currentAttempt && currentAttempt?.status !== "failed") ||
+        attempts.some((attempt) => attempt.status === "pending") ||
+        (attempts.length > 0 && !attempts.every((attempt) => attempt.status === "failed"));
     if (ambiguous) {
         await closeUsageHoldAsFailed(hold, input.reason, new Date());
         return { state: "released" } as const;

@@ -153,129 +153,125 @@ export function GenerationOperationsClient() {
     const summary = data?.summary;
     return (
         <div className="space-y-3 sm:space-y-4">
+            <Panel>
+                <PanelHeader
+                    title="运行概览"
+                    description="快速查看任务吞吐、成功率、耗时与积分消耗。"
+                    actions={
+                        <Button aria-label="刷新生成运维数据" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void load()}>
+                            刷新
+                        </Button>
+                    }
+                />
+                <section className="grid grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800 sm:grid-cols-3 xl:grid-cols-6">
+                    <SummaryMetric icon={<Activity />} label="任务总数" value={summary?.total || 0} detail="全部生成记录" />
+                    <SummaryMetric icon={<Route />} label="执行中" value={summary?.active || 0} detail="排队与运行任务" />
+                    <SummaryMetric icon={<CircleCheckBig />} label="成功" value={summary?.success || 0} detail="已完成任务" />
+                    <SummaryMetric icon={<CircleStop />} label="失败" value={summary?.failed || 0} detail="需要关注" tone="danger" />
+                    <SummaryMetric icon={<Clock3 />} label="平均耗时" value={formatDuration(summary?.averageDurationMs || 0)} detail="全部任务平均" />
+                    <SummaryMetric icon={<Coins />} label="积分消耗" value={summary?.totalPointsCost || 0} detail="累计扣减" />
+                </section>
+            </Panel>
+
+            {data?.agentPerformance.sampleSize ? (
                 <Panel>
-                    <PanelHeader
-                        title="运行概览"
-                        description="快速查看任务吞吐、成功率、耗时与积分消耗。"
-                        actions={
-                            <Button aria-label="刷新生成运维数据" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void load()}>
-                                刷新
-                            </Button>
-                        }
-                    />
-                    <section className="grid grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800 sm:grid-cols-3 xl:grid-cols-6">
-                        <SummaryMetric icon={<Activity />} label="任务总数" value={summary?.total || 0} detail="全部生成记录" />
-                        <SummaryMetric icon={<Route />} label="执行中" value={summary?.active || 0} detail="排队与运行任务" />
-                        <SummaryMetric icon={<CircleCheckBig />} label="成功" value={summary?.success || 0} detail="已完成任务" />
-                        <SummaryMetric icon={<CircleStop />} label="失败" value={summary?.failed || 0} detail="需要关注" tone="danger" />
-                        <SummaryMetric icon={<Clock3 />} label="平均耗时" value={formatDuration(summary?.averageDurationMs || 0)} detail="全部任务平均" />
-                        <SummaryMetric icon={<Coins />} label="积分消耗" value={summary?.totalPointsCost || 0} detail="累计扣减" />
+                    <PanelHeader title="Agent 分阶段性能" description="拆分规划、首个结果、排队、上游保存与复盘耗时，定位实际瓶颈。" actions={<Tag className={generationOperationThemeClasses.neutralTag}>{data.agentPerformance.sampleSize} 次样本</Tag>} />
+                    <section className="grid grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800 sm:grid-cols-4 xl:grid-cols-7">
+                        <PerformanceValue label="规划 P50" value={data.agentPerformance.planningP50Ms} detail="典型规划耗时" />
+                        <PerformanceValue label="规划 P95" value={data.agentPerformance.planningP95Ms} detail="慢请求边界" />
+                        <PerformanceValue label="首结果 P50" value={data.agentPerformance.firstResultP50Ms} detail="典型首屏等待" />
+                        <PerformanceValue label="首结果 P95" value={data.agentPerformance.firstResultP95Ms} detail="长尾首屏等待" />
+                        <PerformanceValue label="排队平均" value={data.agentPerformance.queueAverageMs} detail="调度等待" />
+                        <PerformanceValue label="上游及保存" value={data.agentPerformance.upstreamAverageMs} detail="生成与落盘" />
+                        <PerformanceValue className="col-span-2 sm:col-span-1" label="复盘平均" value={data.agentPerformance.reviewAverageMs} detail="后台质量复盘" />
                     </section>
                 </Panel>
+            ) : null}
 
-                {data?.agentPerformance.sampleSize ? (
-                    <Panel>
-                        <PanelHeader
-                            title="Agent 分阶段性能"
-                            description="拆分规划、首个结果、排队、上游保存与复盘耗时，定位实际瓶颈。"
-                            actions={<Tag className={generationOperationThemeClasses.neutralTag}>{data.agentPerformance.sampleSize} 次样本</Tag>}
+            <Panel>
+                <PanelHeader title="任务队列" description={`共 ${data?.total || 0} 条记录，可按任务、用户、模型、状态和创作入口定位问题。`} />
+                <section className="border-b border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-4">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-[minmax(280px,1fr)_repeat(3,minmax(140px,180px))] xl:gap-3">
+                        <Input.Search
+                            className="col-span-2 sm:col-span-3 xl:col-span-1"
+                            value={search}
+                            allowClear
+                            aria-label="搜索生成任务"
+                            placeholder="任务、用户 ID、模型、会话或项目"
+                            enterButton="查询"
+                            onChange={(event) => setSearch(event.target.value)}
+                            onSearch={(value) => {
+                                setPage(1);
+                                setSubmittedSearch(value.trim());
+                            }}
                         />
-                        <section className="grid grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800 sm:grid-cols-4 xl:grid-cols-7">
-                            <PerformanceValue label="规划 P50" value={data.agentPerformance.planningP50Ms} detail="典型规划耗时" />
-                            <PerformanceValue label="规划 P95" value={data.agentPerformance.planningP95Ms} detail="慢请求边界" />
-                            <PerformanceValue label="首结果 P50" value={data.agentPerformance.firstResultP50Ms} detail="典型首屏等待" />
-                            <PerformanceValue label="首结果 P95" value={data.agentPerformance.firstResultP95Ms} detail="长尾首屏等待" />
-                            <PerformanceValue label="排队平均" value={data.agentPerformance.queueAverageMs} detail="调度等待" />
-                            <PerformanceValue label="上游及保存" value={data.agentPerformance.upstreamAverageMs} detail="生成与落盘" />
-                            <PerformanceValue className="col-span-2 sm:col-span-1" label="复盘平均" value={data.agentPerformance.reviewAverageMs} detail="后台质量复盘" />
-                        </section>
-                    </Panel>
-                ) : null}
-
-                <Panel>
-                    <PanelHeader title="任务队列" description={`共 ${data?.total || 0} 条记录，可按任务、用户、模型、状态和创作入口定位问题。`} />
-                    <section className="border-b border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-4">
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-[minmax(280px,1fr)_repeat(3,minmax(140px,180px))] xl:gap-3">
-                            <Input.Search
-                                className="col-span-2 sm:col-span-3 xl:col-span-1"
-                                value={search}
+                        <div className="min-w-0">
+                            <Select
+                                className="w-full"
+                                aria-label="按任务类型筛选"
+                                value={type || undefined}
                                 allowClear
-                                aria-label="搜索生成任务"
-                                placeholder="任务、用户 ID、模型、会话或项目"
-                                enterButton="查询"
-                                onChange={(event) => setSearch(event.target.value)}
-                                onSearch={(value) => {
+                                placeholder="任务类型"
+                                options={["agent", "text", "image", "video", "audio", "render"].map((value) => ({ value, label: taskTypeLabel(value) }))}
+                                onChange={(value) => {
                                     setPage(1);
-                                    setSubmittedSearch(value.trim());
+                                    setType(value || "");
                                 }}
                             />
-                            <div className="min-w-0">
-                                <Select
-                                    className="w-full"
-                                    aria-label="按任务类型筛选"
-                                    value={type || undefined}
-                                    allowClear
-                                    placeholder="任务类型"
-                                    options={["agent", "text", "image", "video", "audio", "render"].map((value) => ({ value, label: taskTypeLabel(value) }))}
-                                    onChange={(value) => {
-                                        setPage(1);
-                                        setType(value || "");
-                                    }}
-                                />
-                            </div>
-                            <div className="min-w-0">
-                                <Select
-                                    className="w-full"
-                                    aria-label="按任务状态筛选"
-                                    value={status || undefined}
-                                    allowClear
-                                    placeholder="任务状态"
-                                    options={["pending", "running", "paused", "success", "error", "cancelled"].map((value) => ({ value, label: statusLabel(value) }))}
-                                    onChange={(value) => {
-                                        setPage(1);
-                                        setStatus(value || "");
-                                    }}
-                                />
-                            </div>
-                            <div className="col-span-2 min-w-0 sm:col-span-1">
-                                <Select
-                                    className="w-full"
-                                    aria-label="按创作入口筛选"
-                                    value={surface || undefined}
-                                    allowClear
-                                    placeholder="创作入口"
-                                    options={[
-                                        { value: "chat", label: "创作对话" },
-                                        { value: "canvas", label: "Canvas" },
-                                        { value: "drama", label: "短剧" },
-                                    ]}
-                                    onChange={(value) => {
-                                        setPage(1);
-                                        setSurface(value || "");
-                                    }}
-                                />
-                            </div>
                         </div>
-                    </section>
+                        <div className="min-w-0">
+                            <Select
+                                className="w-full"
+                                aria-label="按任务状态筛选"
+                                value={status || undefined}
+                                allowClear
+                                placeholder="任务状态"
+                                options={["pending", "running", "paused", "success", "error", "cancelled"].map((value) => ({ value, label: statusLabel(value) }))}
+                                onChange={(value) => {
+                                    setPage(1);
+                                    setStatus(value || "");
+                                }}
+                            />
+                        </div>
+                        <div className="col-span-2 min-w-0 sm:col-span-1">
+                            <Select
+                                className="w-full"
+                                aria-label="按创作入口筛选"
+                                value={surface || undefined}
+                                allowClear
+                                placeholder="创作入口"
+                                options={[
+                                    { value: "chat", label: "创作对话" },
+                                    { value: "canvas", label: "Canvas" },
+                                    { value: "drama", label: "短剧" },
+                                ]}
+                                onChange={(value) => {
+                                    setPage(1);
+                                    setSurface(value || "");
+                                }}
+                            />
+                        </div>
+                    </div>
+                </section>
 
-                    <section className="min-w-0 p-3 sm:p-4">
-                        <div className="hidden overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800 md:block">
-                            <Table rowKey="id" size="middle" loading={loading} columns={columns} dataSource={data?.items || []} pagination={false} scroll={{ x: 1200 }} />
-                        </div>
-                        <div className="space-y-3 md:hidden">
-                            {(data?.items || []).map((task) => (
-                                <TaskCard key={task.id} task={task} actingId={actingId} onAction={runAction} />
-                            ))}
-                            {loading ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">正在加载任务…</div> : null}
-                            {!loading && !data?.items.length ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">没有匹配任务</div> : null}
-                        </div>
-                        <div className="mt-4 flex justify-end border-t border-zinc-100 pt-4 dark:border-zinc-900">
-                            <Pagination current={page} pageSize={PAGE_SIZE} total={data?.total || 0} showSizeChanger={false} responsive onChange={setPage} />
-                        </div>
-                    </section>
-                </Panel>
+                <section className="min-w-0 p-3 sm:p-4">
+                    <div className="hidden overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800 md:block">
+                        <Table rowKey="id" size="middle" loading={loading} columns={columns} dataSource={data?.items || []} pagination={false} scroll={{ x: 1200 }} />
+                    </div>
+                    <div className="space-y-3 md:hidden">
+                        {(data?.items || []).map((task) => (
+                            <TaskCard key={task.id} task={task} actingId={actingId} onAction={runAction} />
+                        ))}
+                        {loading ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">正在加载任务…</div> : null}
+                        {!loading && !data?.items.length ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">没有匹配任务</div> : null}
+                    </div>
+                    <div className="mt-4 flex justify-end border-t border-zinc-100 pt-4 dark:border-zinc-900">
+                        <Pagination current={page} pageSize={PAGE_SIZE} total={data?.total || 0} showSizeChanger={false} responsive onChange={setPage} />
+                    </div>
+                </section>
+            </Panel>
 
-                <GenerationChannelStatus channels={data?.channels || []} loading={loading} />
+            <GenerationChannelStatus channels={data?.channels || []} loading={loading} />
         </div>
     );
 }

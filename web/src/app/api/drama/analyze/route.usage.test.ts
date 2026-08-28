@@ -109,7 +109,7 @@ describe("drama analysis persisted usage attempt state", () => {
         expect(response.headers.get("x-vozeb-pro-balance-available")).toBe("9");
     });
 
-    it("retains an ambiguous pending primary attempt for review and does not call a backup", async () => {
+    it("fails an ambiguous primary attempt, releases the hold and does not call a backup", async () => {
         mocks.requestStructuredText.mockImplementation(async (input: StructuredRequest) => {
             await persistProxyAttempt(input);
             throw new TextPlanningRequestError("transport acceptance unknown", 504, true, "unknown");
@@ -120,13 +120,13 @@ describe("drama analysis persisted usage attempt state", () => {
 
         expect(response.status).toBe(502);
         expect(mocks.requestStructuredText).toHaveBeenCalledOnce();
-        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "pending" })]);
-        expect(db.walletHolds).toEqual([expect.objectContaining({ status: "active", reviewReason: "transport acceptance unknown" })]);
+        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "failed", costUsd: "0.1" })]);
+        expect(db.walletHolds).toEqual([expect.objectContaining({ status: "released", releaseReason: "transport acceptance unknown" })]);
         expect(db.usageCharges).toEqual([]);
-        expect(await getWalletSnapshot("user-one")).toEqual({ settledBalance: "10", heldBalance: "1", availableBalance: "9" });
+        expect(await getWalletSnapshot("user-one")).toEqual({ settledBalance: "10", heldBalance: "0", availableBalance: "10" });
         expect(response.headers.get("x-vozeb-pro-balance-settled")).toBe("10");
-        expect(response.headers.get("x-vozeb-pro-balance-held")).toBe("1");
-        expect(response.headers.get("x-vozeb-pro-balance-available")).toBe("9");
+        expect(response.headers.get("x-vozeb-pro-balance-held")).toBe("0");
+        expect(response.headers.get("x-vozeb-pro-balance-available")).toBe("10");
     });
 
     it("stops after the current attempt has unknown acceptance even when only an earlier failed attempt is visible", async () => {
@@ -147,11 +147,11 @@ describe("drama analysis persisted usage attempt state", () => {
         expect(response.status).toBe(502);
         expect(mocks.requestStructuredText).toHaveBeenCalledTimes(2);
         expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "failed", costUsd: "0.1" })]);
-        expect(db.walletHolds).toEqual([expect.objectContaining({ status: "active", reviewReason: "backup acceptance unknown" })]);
+        expect(db.walletHolds).toEqual([expect.objectContaining({ status: "released", releaseReason: "backup acceptance unknown" })]);
         expect(db.usageCharges).toEqual([]);
         expect(response.headers.get("x-vozeb-pro-balance-settled")).toBe("10");
-        expect(response.headers.get("x-vozeb-pro-balance-held")).toBe("1");
-        expect(response.headers.get("x-vozeb-pro-balance-available")).toBe("9");
+        expect(response.headers.get("x-vozeb-pro-balance-held")).toBe("0");
+        expect(response.headers.get("x-vozeb-pro-balance-available")).toBe("10");
     });
 
     it("does not borrow an earlier terminal row when the current response attempt has no persisted row", async () => {
@@ -172,7 +172,7 @@ describe("drama analysis persisted usage attempt state", () => {
         expect(response.status).toBe(502);
         expect(mocks.requestStructuredText).toHaveBeenCalledTimes(2);
         expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "failed", costUsd: "0.1" })]);
-        expect(db.walletHolds).toEqual([expect.objectContaining({ status: "active", reviewReason: "backup row unavailable" })]);
+        expect(db.walletHolds).toEqual([expect.objectContaining({ status: "released", releaseReason: "backup row unavailable" })]);
         expect(db.usageCharges).toEqual([]);
     });
 

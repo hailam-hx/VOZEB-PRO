@@ -63,10 +63,10 @@ export async function cleanupExpiredStoredGenerationTasks(input: { limit: number
 export async function getStoredGenerationTask<T>(type: GenerationTaskType, id: string): Promise<(T & GenerationTaskExecutionState) | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown }>(
-            "SELECT payload, execution_phase, last_upstream_status FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()",
-            [id, type],
-        );
+        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown }>("SELECT payload, execution_phase, last_upstream_status FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()", [
+            id,
+            type,
+        ]);
         const row = result.rows[0];
         return row?.payload ? withExecutionState(row.payload, row.execution_phase, row.last_upstream_status) : null;
     }

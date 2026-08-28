@@ -18,10 +18,7 @@ import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import { releaseUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
 
 export type ImageUpstreamStep =
-    | { state: "pending"; upstream: NonNullable<ImageTask["upstream"]>; status: string }
-    | { state: "result_ready"; resultUrl: string; status: string }
-    | { state: "completed" }
-    | { state: "failed"; error: string; status: string };
+    { state: "pending"; upstream: NonNullable<ImageTask["upstream"]>; status: string } | { state: "result_ready"; resultUrl: string; status: string } | { state: "completed" } | { state: "failed"; error: string; status: string };
 
 const INLINE_IMAGE_RESULT_REFERENCE = "inline://image-task-result";
 
