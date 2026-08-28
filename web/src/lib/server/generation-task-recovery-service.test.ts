@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     updateImageTask: vi.fn(),
     createImageTaskUpstreamStep: vi.fn(),
     markImageTaskFailed: vi.fn(),
+    failVideoTask: vi.fn(),
     getVideoTask: vi.fn(),
     queryVideoTaskUpstream: vi.fn(),
     getAudioTask: vi.fn(),
@@ -46,7 +47,7 @@ vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.execu
 vi.mock("@/lib/server/agent-run-execution", () => ({ processAgentRunReview: mocks.processAgentRunReview }));
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun }));
 vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn((userId: string) => `worker-context:${userId}`) }));
-vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: vi.fn(), persistVideoTaskResult: vi.fn(), queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
+vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: mocks.failVideoTask, persistVideoTaskResult: vi.fn(), queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
 vi.mock("@/lib/server/video-task-store", () => ({ getVideoTask: mocks.getVideoTask }));
 vi.mock("@/lib/server/audio-task-runtime", () => ({
     createAudioTaskUpstreamStep: mocks.createAudioTaskUpstreamStep,
@@ -93,7 +94,7 @@ describe("generation task recovery service", () => {
     it("returns without starting a heartbeat when no task is due", async () => {
         mocks.claim.mockResolvedValue([]);
 
-        await expect(runGenerationTaskRecoveryBatch({ origin: "http://internal" })).resolves.toEqual({ claimed: 0, pending: 0, resultReady: 0, completed: 0, failed: 0, needsReview: 0, deferred: 0 });
+        await expect(runGenerationTaskRecoveryBatch({ origin: "http://internal" })).resolves.toEqual({ claimed: 0, pending: 0, resultReady: 0, completed: 0, failed: 0, deferred: 0 });
         expect(mocks.release).not.toHaveBeenCalled();
     });
 
@@ -250,10 +251,10 @@ describe("generation task recovery service", () => {
                 lastUpstreamStatus: "recovered_submitted",
             }),
         );
-        expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
+        expect(result).toMatchObject({ claimed: 1, pending: 1 });
     });
 
-    it("moves an image with an invalid OpenAI query contract to manual review", async () => {
+    it("fails an image with an invalid OpenAI query contract", async () => {
         const task = {
             id: "image-one",
             userId: "user-one",
@@ -263,7 +264,7 @@ describe("generation task recovery service", () => {
         };
         mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "running", executionPhase: "polling", upstreamTaskId: task.upstream.id }]);
         mocks.getImageTask.mockResolvedValue(task);
-        mocks.queryImageTaskUpstreamStep.mockResolvedValue({ state: "needs_review", status: "query_contract_invalid", reason: "图片任务查询路径返回了网页内容" });
+        mocks.queryImageTaskUpstreamStep.mockResolvedValue({ state: "failed", status: "query_contract_invalid", error: "图片任务查询路径返回了网页内容" });
 
         const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
 
@@ -272,14 +273,13 @@ describe("generation task recovery service", () => {
             task.id,
             "worker-one",
             expect.objectContaining({
-                executionPhase: "needs_review",
-                upstreamTaskId: "upstream-one",
+                executionPhase: "completed",
                 nextPollAt: undefined,
-                lastUpstreamStatus: expect.stringContaining("query_contract_invalid"),
-                resultPayload: { reviewReason: "图片任务查询路径返回了网页内容" },
+                lastUpstreamStatus: "query_contract_invalid",
             }),
         );
-        expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
+        expect(mocks.markImageTaskFailed).toHaveBeenCalledWith(task, "图片任务查询路径返回了网页内容");
+        expect(result).toMatchObject({ claimed: 1, failed: 1 });
         expect(mocks.getAuthSettings).not.toHaveBeenCalled();
         expect(mocks.getFreshAuthSettings).not.toHaveBeenCalled();
         expect(mocks.refundImageTask).not.toHaveBeenCalled();
@@ -305,10 +305,10 @@ describe("generation task recovery service", () => {
             "worker-one",
             expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-one", channelId: "channel-one", queryPath: "/images/upstream-one", lastUpstreamStatus: "recovered_submitted" }),
         );
-        expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
+        expect(result).toMatchObject({ claimed: 1, pending: 1 });
     });
 
-    it("records why an interrupted image submission requires review", async () => {
+    it("fails an interrupted image submission and completes its lease", async () => {
         const task = {
             id: "image-interrupted",
             userId: "user-one",
@@ -325,11 +325,13 @@ describe("generation task recovery service", () => {
             task.id,
             "worker-one",
             expect.objectContaining({
-                executionPhase: "needs_review",
-                resultPayload: { trace: "kept", reviewReason: "图片任务在提交阶段中断，未取得上游任务 ID" },
+                executionPhase: "completed",
+                nextPollAt: undefined,
+                lastUpstreamStatus: "submission_outcome_unknown",
             }),
         );
-        expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
+        expect(mocks.markImageTaskFailed).toHaveBeenCalledWith(task, "图片任务在提交阶段中断，未取得上游任务 ID");
+        expect(result).toMatchObject({ claimed: 1, failed: 1 });
     });
 
     it("recovers an audio upstream identity already saved in the task payload", async () => {
@@ -352,7 +354,23 @@ describe("generation task recovery service", () => {
             "worker-one",
             expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-audio-one", channelId: "channel-audio", queryPath: "/audio/:task_id", lastUpstreamStatus: "recovered_submitted" }),
         );
-        expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
+        expect(result).toMatchObject({ claimed: 1, pending: 1 });
+    });
+
+    it("fails interrupted audio and video submissions instead of waiting for review", async () => {
+        const audio = { id: "audio-interrupted", userId: "user-one", status: "running", config: { channelId: "audio-channel", apiFormat: "openai", advancedConfig: { protocol: "custom" } } };
+        const video = { id: "video-interrupted", userId: "user-one", status: "running", upstream: { id: "" }, config: { channelId: "video-channel", apiFormat: "openai", advancedConfig: { protocol: "openai" } } };
+        mocks.claim.mockResolvedValueOnce([{ ...lease(), id: audio.id, type: "audio", status: "running", executionPhase: "submitting" }]).mockResolvedValueOnce([{ ...lease(), id: video.id, type: "video", status: "running", executionPhase: "submitting" }]);
+        mocks.getAudioTask.mockResolvedValue(audio);
+        mocks.getVideoTask.mockResolvedValue(video);
+
+        await expect(runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" })).resolves.toMatchObject({ claimed: 1, failed: 1 });
+        await expect(runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" })).resolves.toMatchObject({ claimed: 1, failed: 1 });
+
+        expect(mocks.markAudioTaskFailed).toHaveBeenCalledWith(audio, "音频任务在提交阶段中断，未取得上游任务 ID");
+        expect(mocks.failVideoTask).toHaveBeenCalledWith(video, "视频任务在提交阶段中断，未取得上游任务 ID");
+        expect(mocks.release).toHaveBeenCalledWith("audio", audio.id, "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" }));
+        expect(mocks.release).toHaveBeenCalledWith("video", video.id, "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" }));
     });
 
     it("persists the selected text channel before the next upstream query", async () => {

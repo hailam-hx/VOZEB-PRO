@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     updateVideoTask: vi.fn(),
     writeVideoGenerationLog: vi.fn(),
     scheduleGenerationTask: vi.fn(),
+    finalizeUsageBillingForBusiness: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, _limit, handler) => handler()),
 }));
 
@@ -42,6 +43,7 @@ vi.mock("@/lib/server/security", () => ({
 }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: vi.fn() }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({ attachSystemAiUsageUpstreamTask: vi.fn(), finalizeUsageBillingForBusiness: mocks.finalizeUsageBillingForBusiness }));
 vi.mock("@/lib/server/video-task-log", () => ({ writeVideoGenerationLog: mocks.writeVideoGenerationLog }));
 vi.mock("@/lib/server/video-task-store", () => ({
     createVideoTask: mocks.createVideoTask,
@@ -182,10 +184,11 @@ describe("video generation candidate failover", () => {
 
         const response = await POST(request());
 
-        expect(response.status).toBe(202);
+        expect(response.status).toBe(502);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(false);
         expect(mocks.createVideoTask).toHaveBeenCalledOnce();
-        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith("video", "local-task", expect.objectContaining({ executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" }));
+        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith("video", "local-task", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" }));
+        expect(mocks.finalizeUsageBillingForBusiness).toHaveBeenCalledWith({ userId: "user", businessId: "video-task:local-task" });
     });
 
     it("does not retry another path or binding after an ambiguous server failure", async () => {
@@ -193,7 +196,7 @@ describe("video generation candidate failover", () => {
 
         const response = await POST(request());
 
-        expect(response.status).toBe(202);
+        expect(response.status).toBe(502);
         expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(false);
         expect(mocks.createVideoTask).toHaveBeenCalledOnce();

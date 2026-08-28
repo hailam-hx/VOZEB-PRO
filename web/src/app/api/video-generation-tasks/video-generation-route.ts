@@ -29,7 +29,7 @@ import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-co
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
 import { resolvePublicRequestOrigin } from "@/lib/server/public-request-origin";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
-import { attachSystemAiUsageUpstreamTask } from "@/lib/server/usage-billing-runtime";
+import { attachSystemAiUsageUpstreamTask, finalizeUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
 import { normalizeVideoGenerationReferences, regularVideoReferences, videoFrameReferences, type VideoGenerationReference } from "@/lib/video-reference-contract";
 import { assertYumengVideoReferences, buildYumengVideoRequest } from "@/lib/yumeng-model-center";
@@ -179,8 +179,11 @@ export async function POST(request: Request) {
                 if (error instanceof SafeCandidateFailure && index < channels.length - 1) continue;
                 const message = toSafeGenerationErrorMessage(error, "视频任务创建失败");
                 if (!(error instanceof SafeCandidateFailure)) {
-                    await scheduleGenerationTask("video", localTask.id, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
-                    return NextResponse.json({ task: { ...publicTask({ ...localTask, attempts }), needsReview: true }, warning: `${message}；上游创建结果待确认，系统不会自动重复创建。` }, { status: 202 });
+                    await writeVideoGenerationLog({ ...localTask, attempts }, "failed", message, false);
+                    await transitionVideoTask(localTask, { status: "error", error: message, retryable: false });
+                    await finalizeUsageBillingForBusiness({ userId: user.id, businessId: `video-task:${localTask.id}` });
+                    await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+                    return NextResponse.json({ error: message, canRetry: false }, { status: 502 });
                 }
                 break;
             }

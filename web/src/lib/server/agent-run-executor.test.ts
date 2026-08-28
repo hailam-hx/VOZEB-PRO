@@ -62,7 +62,7 @@ describe("executeAgentRun backend settings", () => {
         mocks.getCreativeConversationContext.mockResolvedValue({ summary: "", summaryThroughSequence: 0, recentMessages: [] });
         mocks.reviewCreativeOutputs.mockResolvedValue({ mode: "visual", status: "passed", summary: "检查通过", issues: [], retryTaskIds: [] });
         mocks.resolveSystemAiTextFailure.mockImplementation(async (input: { final: boolean; currentAttempt?: { acceptance: "response" | "unknown" } }) => {
-            if (input.currentAttempt?.acceptance === "unknown") return { state: "needs_review" };
+            if (input.currentAttempt?.acceptance === "unknown") return { state: "released" };
             return { state: input.final ? "released" : "safe_to_failover" };
         });
         mocks.registerCreativeAssets.mockImplementation(async (inputs: Array<Record<string, unknown>>) => inputs.map((input, index) => ({ ...input, id: `asset-${index}`, status: "ready", createdAt: 1, updatedAt: 1 })));
