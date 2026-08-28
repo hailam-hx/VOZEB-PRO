@@ -140,24 +140,25 @@ describe("generation operations aggregation", () => {
         });
     });
 
-    it("shows the persisted review reason when a task has no terminal error", async () => {
+    it("shows the persisted terminal error without exposing a review action", async () => {
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
-            items: [{ ...task(), type: "image", status: "running", executionPhase: "needs_review", payload: { config: { model: "image-model" } }, resultPayload: { reviewReason: "生成渠道暂时无法连接，请稍后重试或联系管理员。" } }],
+            items: [{ ...task(), type: "image", status: "error", executionPhase: "completed", payload: { config: { model: "image-model" }, error: "生成渠道暂时无法连接，请稍后重试或联系管理员。" } }],
             all: [],
             total: 1,
             page: 1,
             pageSize: 20,
-            summary: { total: 1, active: 1, success: 0, failed: 0, averageDurationMs: 0, totalPointsCost: 0, byType: { image: 1 }, byStatus: { running: 1 } },
+            summary: { total: 1, active: 0, success: 0, failed: 1, averageDurationMs: 0, totalPointsCost: 0, byType: { image: 1 }, byStatus: { error: 1 } },
         });
 
         const result = await listAdminGenerationOperations({ page: 1 });
 
-        expect(result.items[0]).toMatchObject({ canReview: true, error: "生成渠道暂时无法连接，请稍后重试或联系管理员。" });
+        expect(result.items[0]).toMatchObject({ status: "error", executionPhase: "completed", error: "生成渠道暂时无法连接，请稍后重试或联系管理员。" });
+        expect(result.items[0]).not.toHaveProperty("canReview");
     });
 
-    it("explains a legacy uncertain submission when no reason was persisted", async () => {
+    it("does not expose a manual review action", async () => {
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
-            items: [{ ...task(), type: "image", status: "running", executionPhase: "needs_review", lastUpstreamStatus: "submission_outcome_unknown", payload: { config: { model: "image-model" } } }],
+            items: [{ ...task(), type: "image", status: "running", executionPhase: "polling", payload: { config: { model: "image-model" } } }],
             all: [],
             total: 1,
             page: 1,
@@ -167,7 +168,7 @@ describe("generation operations aggregation", () => {
 
         const result = await listAdminGenerationOperations({ page: 1 });
 
-        expect(result.items[0]).toMatchObject({ canReview: true, error: expect.stringContaining("避免重复生成和扣费") });
+        expect(result.items[0]).not.toHaveProperty("canReview");
     });
 });
 

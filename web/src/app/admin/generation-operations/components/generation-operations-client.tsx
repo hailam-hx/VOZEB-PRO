@@ -1,15 +1,15 @@
 "use client";
 
-import { App, Button, Input, Modal, Pagination, Select, Table, Tag, Tooltip } from "antd";
+import { App, Button, Input, Pagination, Select, Table, Tag, Tooltip } from "antd";
 import type { TableColumnsType } from "antd";
-import { Activity, CircleCheckBig, CircleStop, Clock3, Coins, RefreshCw, RotateCcw, Route, ShieldAlert } from "lucide-react";
+import { Activity, CircleCheckBig, CircleStop, Clock3, Coins, RefreshCw, RotateCcw, Route } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import type { AdminGenerationOperationsPayload, AdminGenerationTask } from "@/lib/admin-generation-operations";
 import { GenerationChannelStatus } from "./generation-channel-status";
-import { AgentPlannerAuditSummary, executionPhaseLabel, GenerationTaskRuntimeSummary, generationTaskPointsLabel } from "./generation-operation-task-details";
+import { AgentPlannerAuditSummary, GenerationTaskRuntimeSummary, generationTaskPointsLabel } from "./generation-operation-task-details";
 import { generationOperationStatusTagClass, generationOperationThemeClasses } from "./generation-operations-theme";
 
 const PAGE_SIZE = 20;
@@ -25,10 +25,6 @@ export function GenerationOperationsClient() {
     const [search, setSearch] = useState("");
     const [submittedSearch, setSubmittedSearch] = useState("");
     const [actingId, setActingId] = useState("");
-    const [reviewingTask, setReviewingTask] = useState<AdminGenerationTask>();
-    const [reviewAction, setReviewAction] = useState<"resume_upstream" | "provide_result" | "confirm_failed">("resume_upstream");
-    const [reviewValue, setReviewValue] = useState("");
-    const [reviewing, setReviewing] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -76,39 +72,6 @@ export function GenerationOperationsClient() {
         }
     };
 
-    const openReview = (task: AdminGenerationTask) => {
-        setReviewingTask(task);
-        setReviewAction("resume_upstream");
-        setReviewValue(task.upstreamTaskId || "");
-    };
-
-    const submitReview = async () => {
-        if (!reviewingTask) return;
-        setReviewing(true);
-        try {
-            const body =
-                reviewAction === "resume_upstream"
-                    ? { action: reviewAction, upstreamTaskId: reviewValue.trim() }
-                    : reviewAction === "provide_result"
-                      ? { action: reviewAction, result: reviewValue.trim() }
-                      : { action: reviewAction, reason: reviewValue.trim() };
-            const response = await fetch(`/api/admin/generation-operations/${reviewingTask.type}/${encodeURIComponent(reviewingTask.id)}/review`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            });
-            const payload = (await response.json().catch(() => ({}))) as { msg?: string };
-            if (!response.ok) throw new Error(payload.msg || "任务接管失败");
-            message.success(reviewAction === "confirm_failed" ? "任务已确认失败并结束" : "任务已交给后台 Worker 继续处理");
-            setReviewingTask(undefined);
-            await load();
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "任务接管失败");
-        } finally {
-            setReviewing(false);
-        }
-    };
-
     const columns = useMemo<TableColumnsType<AdminGenerationTask>>(
         () => [
             {
@@ -119,7 +82,7 @@ export function GenerationOperationsClient() {
                     <div className="min-w-0">
                         <div className="flex items-center gap-2">
                             <TaskTypeTag type={task.type} />
-                            {task.canReview ? <ReviewTag /> : <StatusTag status={task.status} />}
+                            <StatusTag status={task.status} />
                         </div>
                         <Tooltip title={task.id}>
                             <div className="mt-2 truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">{task.id}</div>
@@ -180,11 +143,6 @@ export function GenerationOperationsClient() {
                                 <Button type="text" shape="circle" icon={<RotateCcw className="size-4" />} loading={actingId === `${task.id}:retry`} onClick={() => void runAction(task, "retry")} />
                             </Tooltip>
                         ) : null}
-                        {task.canReview ? (
-                            <Tooltip title="接管待确认任务">
-                                <Button aria-label="接管待确认任务" type="text" shape="circle" icon={<ShieldAlert className="size-4 text-amber-600 dark:text-amber-300" />} onClick={() => openReview(task)} />
-                            </Tooltip>
-                        ) : null}
                     </div>
                 ),
             },
@@ -194,8 +152,7 @@ export function GenerationOperationsClient() {
 
     const summary = data?.summary;
     return (
-        <>
-            <div className="space-y-3 sm:space-y-4">
+        <div className="space-y-3 sm:space-y-4">
                 <Panel>
                     <PanelHeader
                         title="运行概览"
@@ -307,7 +264,7 @@ export function GenerationOperationsClient() {
                         </div>
                         <div className="space-y-3 md:hidden">
                             {(data?.items || []).map((task) => (
-                                <TaskCard key={task.id} task={task} actingId={actingId} onAction={runAction} onReview={openReview} />
+                                <TaskCard key={task.id} task={task} actingId={actingId} onAction={runAction} />
                             ))}
                             {loading ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">正在加载任务…</div> : null}
                             {!loading && !data?.items.length ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">没有匹配任务</div> : null}
@@ -319,55 +276,7 @@ export function GenerationOperationsClient() {
                 </Panel>
 
                 <GenerationChannelStatus channels={data?.channels || []} loading={loading} />
-            </div>
-
-            <Modal
-                open={Boolean(reviewingTask)}
-                title="接管待确认任务"
-                centered
-                width="min(520px, calc(100vw - 24px))"
-                okText={reviewAction === "confirm_failed" ? "确认结束任务" : "确认并继续"}
-                okButtonProps={{ danger: reviewAction === "confirm_failed", disabled: reviewAction !== "confirm_failed" && !reviewValue.trim(), className: reviewAction === "confirm_failed" ? undefined : generationOperationThemeClasses.primaryButton }}
-                cancelButtonProps={{ className: generationOperationThemeClasses.secondaryButton }}
-                confirmLoading={reviewing}
-                destroyOnHidden
-                onOk={() => void submitReview()}
-                onCancel={() => !reviewing && setReviewingTask(undefined)}
-            >
-                <div className="space-y-4 pt-2">
-                    <div className={generationOperationThemeClasses.reviewPanel}>创建请求结果无法自动确认。系统已停止重复创建，接管操作只会继续查询、保存已有结果或明确结束任务。</div>
-                    <div className="grid grid-cols-3 gap-2">
-                        {[
-                            { value: "resume_upstream", label: "录入任务 ID" },
-                            { value: "provide_result", label: reviewingTask?.type === "text" ? "录入文本结果" : "录入结果地址" },
-                            { value: "confirm_failed", label: "确认未创建" },
-                        ].map((item) => (
-                            <button
-                                key={item.value}
-                                type="button"
-                                className={`min-h-10 rounded-lg border px-2 text-xs font-medium transition-colors sm:text-sm ${reviewAction === item.value ? generationOperationThemeClasses.selectedAction : generationOperationThemeClasses.idleAction}`}
-                                onClick={() => {
-                                    setReviewAction(item.value as typeof reviewAction);
-                                    setReviewValue(item.value === "resume_upstream" ? reviewingTask?.upstreamTaskId || "" : "");
-                                }}
-                            >
-                                {item.label}
-                            </button>
-                        ))}
-                    </div>
-                    <Input.TextArea
-                        className={generationOperationThemeClasses.textarea}
-                        value={reviewValue}
-                        autoSize={{ minRows: reviewAction === "provide_result" && reviewingTask?.type === "text" ? 4 : 2, maxRows: 8 }}
-                        placeholder={reviewAction === "resume_upstream" ? "粘贴上游任务 ID" : reviewAction === "provide_result" ? (reviewingTask?.type === "text" ? "粘贴上游返回的最终文本" : "粘贴上游成品 URL 或站内媒体地址") : "可选：填写确认失败原因"}
-                        onChange={(event) => setReviewValue(event.target.value)}
-                    />
-                    <div className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-                        任务 {reviewingTask?.id} · {taskTypeLabel(reviewingTask?.type || "")} · 当前阶段 {executionPhaseLabel(reviewingTask?.executionPhase)}
-                    </div>
-                </div>
-            </Modal>
-        </>
+        </div>
     );
 }
 
@@ -396,13 +305,13 @@ function PerformanceValue({ label, value, detail, className = "" }: { label: str
     );
 }
 
-function TaskCard({ task, actingId, onAction, onReview }: { task: AdminGenerationTask; actingId: string; onAction: (task: AdminGenerationTask, action: "cancel" | "retry") => Promise<void>; onReview: (task: AdminGenerationTask) => void }) {
+function TaskCard({ task, actingId, onAction }: { task: AdminGenerationTask; actingId: string; onAction: (task: AdminGenerationTask, action: "cancel" | "retry") => Promise<void> }) {
     return (
         <article className="min-w-0 rounded-lg border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-wrap gap-1.5">
                     <TaskTypeTag type={task.type} />
-                    {task.canReview ? <ReviewTag /> : <StatusTag status={task.status} />}
+                    <StatusTag status={task.status} />
                 </div>
                 <div className="flex shrink-0 gap-0.5">
                     {task.canCancel ? (
@@ -413,11 +322,6 @@ function TaskCard({ task, actingId, onAction, onReview }: { task: AdminGeneratio
                     {task.retryTaskId ? (
                         <Tooltip title="重试失败子任务">
                             <Button aria-label="重试失败子任务" type="text" shape="circle" icon={<RotateCcw className="size-4" />} loading={actingId === `${task.id}:retry`} onClick={() => void onAction(task, "retry")} />
-                        </Tooltip>
-                    ) : null}
-                    {task.canReview ? (
-                        <Tooltip title="接管待确认任务">
-                            <Button aria-label="接管待确认任务" type="text" shape="circle" icon={<ShieldAlert className="size-4 text-amber-600 dark:text-amber-300" />} onClick={() => onReview(task)} />
                         </Tooltip>
                     ) : null}
                 </div>
@@ -459,10 +363,6 @@ function StatusTag({ status }: { status: string }) {
 
 function TaskTypeTag({ type }: { type: string }) {
     return <Tag className={generationOperationThemeClasses.neutralTag}>{taskTypeLabel(type)}</Tag>;
-}
-
-function ReviewTag() {
-    return <Tag className={generationOperationThemeClasses.reviewTag}>待人工确认</Tag>;
 }
 
 function taskTypeLabel(value: string) {

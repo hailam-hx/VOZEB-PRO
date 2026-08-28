@@ -50,7 +50,6 @@ export type AdminGenerationTask = {
     updatedAt: number;
     canCancel: boolean;
     retryTaskId?: string;
-    canReview: boolean;
 };
 
 export type AdminGenerationChannelCluster = {

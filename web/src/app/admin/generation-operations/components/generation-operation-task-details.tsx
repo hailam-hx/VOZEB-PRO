@@ -62,7 +62,7 @@ export function planningProtocolLabel(protocol?: "responses" | "chat" | "gemini"
 }
 
 export function executionPhaseLabel(value?: AdminGenerationTask["executionPhase"]) {
-    return ({ created: "已创建", submitting: "提交中", submitted: "已提交", polling: "查询结果", result_ready: "结果待保存", persisting: "保存结果", needs_review: "待人工确认", completed: "已结束" } as Record<string, string>)[value || ""] || "未记录阶段";
+    return ({ created: "已创建", submitting: "提交中", submitted: "已提交", polling: "查询结果", result_ready: "结果待保存", persisting: "保存结果", completed: "已结束" } as Record<string, string>)[value || ""] || "未记录阶段";
 }
 
 function RuntimeFact({ label, value }: { label: string; value: string }) {

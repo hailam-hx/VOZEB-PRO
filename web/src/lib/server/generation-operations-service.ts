@@ -11,7 +11,6 @@ import {
     type StoredGenerationTaskRecord,
 } from "@/lib/server/generation-task-store";
 import { getTextPlanningRuntime } from "@/lib/server/text-planning-runtime";
-import { resolveGenerationReviewReason } from "@/lib/server/generation-task-review-reason";
 import { getDatabaseProvider } from "@/lib/server/database";
 
 export async function listAdminGenerationOperations(options: GenerationTaskRecordListOptions): Promise<AdminGenerationOperationsPayload> {
@@ -87,7 +86,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         lastUpstreamStatus: record.lastUpstreamStatus,
         attempts: generationAttempts(payload.attempts),
         prompt: firstText(payload.prompt, config.prompt, tasks.find((task) => text(task.prompt))?.prompt).slice(0, 500),
-        error: firstText(payload.error, tasks.find((task) => text(task.error))?.error, resolveGenerationReviewReason(record)).slice(0, 1000) || undefined,
+        error: firstText(payload.error, tasks.find((task) => text(task.error))?.error).slice(0, 1000) || undefined,
         durationMs: Math.max(0, record.updatedAt - record.createdAt),
         pointsCost,
         pointsBreakdown,
@@ -96,7 +95,6 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         updatedAt: record.updatedAt,
         canCancel: record.status === "pending" || record.status === "running" || record.status === "paused",
         retryTaskId: record.type === "agent" ? text(failedTask?.id) || undefined : undefined,
-        canReview: record.executionPhase === "needs_review" && (record.type === "text" || record.type === "image" || record.type === "video" || record.type === "audio"),
     };
 }
 
