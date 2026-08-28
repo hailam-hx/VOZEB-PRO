@@ -117,7 +117,7 @@ describe("GlobalAiOpc image task paths", () => {
         expect(imageTaskPollUrls(openAiConfig, "https://provider.example/v1/images/generations", "task-one")).toEqual([]);
     });
 
-    it("keeps an OpenAI response with only an id for manual review instead of guessing a task endpoint", async () => {
+    it("rejects an OpenAI response with only an id instead of guessing a task endpoint", async () => {
         const openAiConfig = {
             baseUrl: "/api/ai/system/openai-image",
             model: "gpt-image-2",
@@ -125,9 +125,7 @@ describe("GlobalAiOpc image task paths", () => {
             advancedConfig: { protocol: "openai", createPath: "/images/generations", queryPath: "" },
         } as never;
 
-        await expect(parseImagePayloadOrPoll(openAiConfig, { id: "upstream-one" }, "http://localhost/api/ai/system/openai-image", "", "http://localhost/api/ai/system/openai-image", true)).resolves.toMatchObject({
-            needsReview: { upstream: { id: "upstream-one" } },
-        });
+        await expect(parseImagePayloadOrPoll(openAiConfig, { id: "upstream-one" }, "http://localhost/api/ai/system/openai-image", "", "http://localhost/api/ai/system/openai-image", true)).rejects.toThrow(ImageQueryContractError);
     });
 
     it("keeps every image returned by one upstream response", () => {

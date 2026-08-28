@@ -15,10 +15,10 @@ import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { getImageTask, transitionImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
+import { releaseUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
 
 export type ImageUpstreamStep =
     | { state: "pending"; upstream: NonNullable<ImageTask["upstream"]>; status: string }
-    | { state: "needs_review"; reason: string; status: string }
     | { state: "result_ready"; resultUrl: string; status: string }
     | { state: "completed" }
     | { state: "failed"; error: string; status: string };
@@ -56,7 +56,11 @@ export async function createImageTaskUpstreamStep(task: ImageTask, origin: strin
                   : await runOpenAiImageTask(candidate, origin, publicOrigin, authContext, true);
             return await handleImageProviderResult(candidate, result, origin, authContext);
         } catch (error) {
-            if (!(error instanceof GenerationSubmissionSafeFailure)) throw generationSubmissionUncertainError(error, "图片任务创建结果未知");
+            if (error instanceof ImageQueryContractError) return failImageTaskTerminally(candidate, error.message, "query_contract_invalid");
+            if (!(error instanceof GenerationSubmissionSafeFailure)) {
+                const uncertain = generationSubmissionUncertainError(error, "图片任务创建结果未知");
+                return failImageTaskTerminally(candidate, `图片任务创建结果未知：${uncertain.message}`, "submission_outcome_unknown");
+            }
             latestError = error.message;
             attempts = finishGenerationAttempt(attempts, candidate.attemptNo, { status: "failed", error: latestError });
             await refundImageCandidate(candidate);
@@ -76,7 +80,7 @@ export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string
             : await pollOpenAiImageTask(task.config, upstream.id, upstream.mediaBaseUrl, upstream.pollBaseUrl, authContext, upstream.explicitPollUrl || "", true);
         return await handleImageProviderResult(task, { ...result, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
     } catch (error) {
-        if (error instanceof ImageQueryContractError) return { state: "needs_review", reason: error.message, status: "query_contract_invalid" };
+        if (error instanceof ImageQueryContractError) return failImageTaskTerminally(task, error.message, "query_contract_invalid");
         if (error instanceof ImageUpstreamTerminalError) return { state: "failed", error: error.message, status: "failed" };
         if (error instanceof GenerationSubmissionSafeFailure) return { state: "failed", error: error.message, status: "failed" };
         throw error;
@@ -132,29 +136,24 @@ export async function markImageTaskFailed(task: ImageTask, error: string) {
     });
     await updateImageTask(current.id, { attempts, candidateConfigs: [], attemptNo: attempts.at(-1)?.attemptNo });
     const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500), retryable: true });
+    await releaseUsageBillingForBusiness(current.userId, `image-task:${current.id}`, error);
     await writeImageGenerationLog({ ...current, retryable: true }, "failed", "", Date.now() - current.createdAt, error).catch((logError) => console.error("Image generation failure log write failed", logError));
     return failed;
+}
+
+async function failImageTaskTerminally(task: ImageTask, error: string, status: string): Promise<ImageUpstreamStep> {
+    await markImageTaskFailed(task, error);
+    await scheduleGenerationTask("image", task.id, {
+        executionPhase: "completed",
+        nextPollAt: undefined,
+        lastUpstreamStatus: status,
+    });
+    return { state: "failed", error, status };
 }
 
 async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunResult, origin: string, authContext: string): Promise<ImageUpstreamStep> {
     const billing = result.pointsRecordId ? { pointsCost: result.pointsCost ?? 0, pointsRecordId: result.pointsRecordId, refunded: false } : undefined;
     if (billing) await updateImageTask(task.id, { billing });
-    if (result.needsReview) {
-        const submittedAt = Date.now();
-        await updateImageTask(task.id, { upstream: result.needsReview.upstream, billing });
-        await scheduleGenerationTask("image", task.id, {
-            executionPhase: "needs_review",
-            upstreamTaskId: result.needsReview.upstream.id,
-            channelId: task.config.channelId,
-            provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
-            queryPath: result.needsReview.upstream.explicitPollUrl || task.config.advancedConfig?.queryPath,
-            submittedAt,
-            nextPollAt: undefined,
-            lastUpstreamStatus: "query_contract_missing",
-            resultPayload: { reviewReason: result.needsReview.reason.slice(0, 500) },
-        });
-        return { state: "needs_review", reason: result.needsReview.reason, status: "query_contract_missing" };
-    }
     if (result.pending) {
         const submittedAt = Date.now();
         await updateImageTask(task.id, { upstream: result.pending, billing });

@@ -327,7 +327,7 @@ export async function parseImagePayloadOrPoll(config: ImageTaskConfig, payload: 
     const explicitPollUrl = readImagePollUrl(config, payload, mediaBaseUrl, pollBaseUrl);
     const upstream = { id: taskId, mediaBaseUrl, pollBaseUrl, explicitPollUrl: explicitPollUrl || undefined };
     if (!imageTaskPollUrls(config, pollBaseUrl, taskId, explicitPollUrl).length) {
-        return { dataUrl: "", needsReview: { upstream, reason: "OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径" } };
+        throw new ImageQueryContractError("OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径");
     }
     if (singleStep) return { dataUrl: "", pending: upstream };
     return pollOpenAiImageTask(config, taskId, mediaBaseUrl, pollBaseUrl, cookie, explicitPollUrl);
@@ -774,7 +774,7 @@ export function readBilling(headers: Headers) {
 export async function parseChargedImageResponse(task: ImageTask, response: Response, parse: () => Promise<ImageTaskResult>) {
     try {
         const result = await parse();
-        const upstreamTaskId = result.pending?.id || result.needsReview?.upstream.id;
+        const upstreamTaskId = result.pending?.id;
         if (upstreamTaskId) await attachSystemAiUsageUpstreamTask(response.headers, upstreamTaskId);
         return { ...result, ...readBilling(response.headers) };
     } catch (error) {

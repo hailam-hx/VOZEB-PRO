@@ -54,10 +54,6 @@ export type ImageTaskMediaResult = {
 export type ImageTaskResult = ImageTaskMediaResult & {
     results?: ImageTaskMediaResult[];
     pending?: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
-    needsReview?: {
-        upstream: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
-        reason: string;
-    };
 };
 export type ImageTaskRunResult = ImageTaskResult & { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string };
 

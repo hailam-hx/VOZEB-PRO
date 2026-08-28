@@ -114,11 +114,12 @@ describe("text task runtime recovery", () => {
         const fetchMock = vi.fn().mockRejectedValueOnce(new Error("socket closed"));
         vi.stubGlobal("fetch", fetchMock);
 
-        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toMatchObject({ state: "needs_review" });
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toMatchObject({ state: "failed", error: expect.stringContaining("socket closed") });
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(state.config.channelId).toBe("channel-one");
-        expect(state.candidateConfigs).toHaveLength(1);
-        expect(state.attempts?.map(({ status }) => status)).toEqual(["running"]);
+        expect(state.candidateConfigs).toHaveLength(0);
+        expect(state.attempts?.map(({ status }) => status)).toEqual(["failed"]);
+        expect(state.status).toBe("error");
     });
 
     it("automatically switches to the next text model after a timeout", async () => {
@@ -225,12 +226,13 @@ describe("text task runtime recovery", () => {
         expect(state.result?.content).toBe("Chat 兼容返回");
     });
 
-    it("marks a 2xx invalid JSON response for manual review", async () => {
+    it("fails a 2xx invalid JSON response without trying another channel", async () => {
         state = textTask(openAiConfig("channel-one", "https://one.example"), [openAiConfig("channel-two", "https://two.example")]);
         vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("not-json", { status: 200, headers: { "content-type": "application/json" } })));
 
-        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toMatchObject({ state: "needs_review" });
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toMatchObject({ state: "failed", error: expect.stringContaining("响应不是有效 JSON") });
         expect(state.config.channelId).toBe("channel-one");
+        expect(state.status).toBe("error");
     });
 
     it("refunds a zero-point recorded charge when the upstream task fails", async () => {

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     getSettings: vi.fn(),
     register: vi.fn(),
     refund: vi.fn(),
+    releaseBilling: vi.fn(),
     QueryContractError: class extends Error {},
 }));
 
@@ -44,8 +45,9 @@ vi.mock("@/lib/server/image-task-store", () => ({
 }));
 vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn(() => "worker-context") }));
 vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: mocks.mediaHeaders }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({ releaseUsageBillingForBusiness: mocks.releaseBilling }));
 
-import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "./generation-submission-error";
+import { GenerationSubmissionSafeFailure } from "./generation-submission-error";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { createImageTaskUpstreamStep, persistImageTaskResult } from "./image-task-runtime";
 import type { ImageTask } from "./image-task-store";
@@ -69,6 +71,7 @@ describe("image task runtime submission safety", () => {
         mocks.getSettings.mockResolvedValue({ generationPointMultipliers: { imageQuality: {} } });
         mocks.inlineResult.mockImplementation(async (dataUrl: string) => ({ dataUrl }));
         mocks.register.mockResolvedValue(undefined);
+        mocks.writeLog.mockResolvedValue(undefined);
     });
 
     it("switches candidates only after an explicit safe rejection", async () => {
@@ -98,44 +101,33 @@ describe("image task runtime submission safety", () => {
         expect(mocks.runGemini).not.toHaveBeenCalled();
     });
 
-    it("does not switch candidates when the submission outcome is unknown", async () => {
+    it("fails without switching candidates when the submission outcome is unknown", async () => {
         mocks.runCustom.mockRejectedValueOnce(new Error("socket closed"));
 
-        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).rejects.toBeInstanceOf(GenerationSubmissionUncertainError);
+        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "failed", error: expect.stringContaining("图片任务创建结果未知") });
         expect(mocks.runGemini).not.toHaveBeenCalled();
         expect(state.config.channelId).toBe("channel-one");
-        expect(state.candidateConfigs).toHaveLength(1);
-        expect(state.attempts?.map(({ status }) => status)).toEqual(["running"]);
+        expect(state.candidateConfigs).toHaveLength(0);
+        expect(state.attempts?.map(({ status }) => status)).toEqual(["failed"]);
+        expect(state.status).toBe("error");
     });
 
-    it("keeps an OpenAI id-only response for manual review without trying another channel", async () => {
+    it("fails an OpenAI id-only response without trying another channel", async () => {
         state.config = { ...state.config, advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" } };
-        mocks.runOpenAi.mockResolvedValueOnce({
-            dataUrl: "",
-            needsReview: {
-                upstream: { id: "upstream-one", mediaBaseUrl: "http://internal", pollBaseUrl: "http://internal" },
-                reason: "OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径",
-            },
-            pointsCost: 1,
-            pointsRecordId: "record-one",
-        });
+        mocks.runOpenAi.mockRejectedValueOnce(new mocks.QueryContractError("OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径"));
 
-        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "needs_review", status: "query_contract_missing" });
+        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "failed", status: "query_contract_invalid" });
         expect(mocks.runGemini).not.toHaveBeenCalled();
-        expect(state.upstream?.id).toBe("upstream-one");
-        expect(state.billing).toMatchObject({ pointsRecordId: "record-one", refunded: false });
         expect(mocks.schedule).toHaveBeenLastCalledWith(
             "image",
             "image-one",
             expect.objectContaining({
-                executionPhase: "needs_review",
-                upstreamTaskId: "upstream-one",
-                channelId: "channel-one",
+                executionPhase: "completed",
                 nextPollAt: undefined,
-                resultPayload: { reviewReason: "OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径" },
+                lastUpstreamStatus: "query_contract_invalid",
             }),
         );
-        expect(mocks.refund).not.toHaveBeenCalled();
+        expect(state.status).toBe("error");
     });
 
     it("fails and refunds a corrupt synchronous image result without manual review", async () => {
