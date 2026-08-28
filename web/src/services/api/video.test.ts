@@ -91,14 +91,14 @@ describe("video API service", () => {
         expect(fetchMock.mock.calls[0][0]).toBe("/api/video-generation-tasks");
     });
 
-    it("returns a terminal failure when the upstream submission needs manual review", async () => {
-        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-review", status: "running", needsReview: true, reviewReason: "视频提交结果无法确认" } }));
+    it("returns a terminal failure when the upstream submission is uncertain", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-failed", status: "error", error: "视频提交结果无法确认", canRetry: false } }));
         vi.stubGlobal("fetch", fetchMock);
 
-        await expect(pollVideoGenerationTask(config, { id: "video-review", provider: "generation", model: "video-v1", pollPath: "server" })).resolves.toEqual({
+        await expect(pollVideoGenerationTask(config, { id: "video-failed", provider: "generation", model: "video-v1", pollPath: "server" })).resolves.toEqual({
             status: "failed",
             error: "视频提交结果无法确认",
-            needsReview: true,
+            canRetry: false,
         });
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });

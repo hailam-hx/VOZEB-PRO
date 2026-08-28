@@ -31,7 +31,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const settledTask = shouldRefund ? await refundVideoTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : user;
     return NextResponse.json(
-        { task: { ...publicTask(settledTask), needsReview: executionPhase === "needs_review", reviewReason: executionPhase === "needs_review" ? schedule?.resultPayload?.reviewReason || task.reviewReason : undefined, executionPhase } },
+        { task: { ...publicTask(settledTask), executionPhase } },
         { headers: pointsResponseHeaders(refreshedUser) },
     );
 }

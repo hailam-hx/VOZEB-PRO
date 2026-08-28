@@ -49,7 +49,6 @@ export const NODE_STATUS_IDLE = "idle" as const;
 export const NODE_STATUS_LOADING = "loading" as const;
 export const NODE_STATUS_SUCCESS = "success" as const;
 export const NODE_STATUS_ERROR = "error" as const;
-export const NODE_STATUS_NEEDS_REVIEW = "needs_review" as const;
 export function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata, title?: string): CanvasNodeData {
     const spec = getNodeSpec(type);
     const id = `${type}-${nanoid()}`;

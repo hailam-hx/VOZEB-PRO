@@ -8,9 +8,9 @@ import { createFreshGenerationTaskContext } from "@/lib/generation-request-conte
 import { resolveImageRequestSize } from "@/lib/image-size";
 import { readImageMeta } from "@/lib/image-utils";
 import { createAudioGenerationTask } from "@/services/api/audio";
-import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { createTextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask } from "@/services/api/video";
+import { VideoGenerationUpstreamError } from "@/services/api/video-types";
 import type { InsertAssetPayload } from "../components/canvas-asset-insert";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "../components/canvas-agent-panel-motion";
 import { retryCanvasAgentNode } from "../components/canvas-agent-node-retry";
@@ -24,9 +24,7 @@ import { buildPanoramaPrompt } from "../utils/canvas-panorama";
 import { canvasVideoReferenceMetadata, resolveCanvasVideoGenerationReferences, restoreCanvasVideoGenerationReferences } from "../utils/canvas-video-references";
 import { canvasGenerationPreflight, resolveCanvasGenerationCapability, type CanvasGenerationCapabilityIssue } from "../utils/canvas-generation-capabilities";
 
-import { NODE_STATUS_ERROR, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_NEEDS_REVIEW, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
-import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
-import { hasCanvasGenerationTask, pauseCanvasGenerationReview, resumeCanvasGenerationReview } from "./canvas-generation-review";
+import { NODE_STATUS_ERROR, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
 import {
     buildAudioGenerationMetadata,
     buildGenerationConfig,
@@ -89,13 +87,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         },
         [setNodes],
     );
-    const pauseReviewedTasks = useCallback(
-        (nodeIds: string[], errorDetails: string) => {
-            setNodes((prev) => pauseCanvasGenerationReview(prev, nodeIds, errorDetails));
-        },
-        [setNodes],
-    );
-
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
@@ -292,7 +283,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);
                     let hasSuccess = false;
                     let hasFailure = false;
-                    let hasReview = false;
                     await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
@@ -302,12 +292,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                                 return true;
                             } catch (error) {
                                 if (isGenerationCanceled(error)) return false;
-                                const errorDetails = isGenerationTaskNeedsReviewError(error) ? t("reviewPending") : t("errors.generationFailed");
-                                if (isGenerationTaskNeedsReviewError(error)) {
-                                    hasReview = true;
-                                    pauseReviewedTasks([targetId], errorDetails);
-                                    return false;
-                                }
+                                const errorDetails = t("errors.generationFailed");
                                 hasFailure = true;
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : node)));
                             } finally {
@@ -321,26 +306,23 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         setNodes((prev) => prev.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
                         return;
                     }
-                    if (hasReview) message.warning(t("reviewPending"));
                     if (hasFailure) message.error(t(hasSuccess ? "errors.partialImagesFailed" : "errors.allImagesFailed"));
                     const allImagesFailed = t("errors.allImagesFailed");
                     setNodes((prev) =>
                         prev.map((node) =>
-                            node.metadata?.status === NODE_STATUS_NEEDS_REVIEW
-                                ? node
-                                : node.id === nodeId && isConfigNode
-                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : hasReview ? NODE_STATUS_IDLE : NODE_STATUS_ERROR, errorDetails: hasSuccess || hasReview ? undefined : allImagesFailed } }
+                            node.id === nodeId && isConfigNode
+                                ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : allImagesFailed } }
                                   : node.id === nodeId && isEmptyImageNode
                                     ? {
                                           ...node,
                                           metadata: {
                                               ...node.metadata,
-                                              status: hasSuccess ? NODE_STATUS_SUCCESS : hasReview ? NODE_STATUS_NEEDS_REVIEW : NODE_STATUS_ERROR,
+                                              status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
                                               errorDetails: hasSuccess ? undefined : node.metadata?.errorDetails || allImagesFailed,
                                           },
                                       }
                                     : node.id === rootId && !hasSuccess
-                                      ? { ...node, metadata: { ...node.metadata, status: hasReview ? NODE_STATUS_IDLE : NODE_STATUS_ERROR, errorDetails: hasReview ? undefined : allImagesFailed } }
+                                      ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: allImagesFailed } }
                                       : node,
                         ),
                     );
@@ -501,15 +483,10 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 );
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
-                const errorDetails = isGenerationTaskNeedsReviewError(error) ? t("reviewPending") : t("errors.generationFailed");
-                if (isGenerationTaskNeedsReviewError(error) && pendingChildIds.length) {
-                    message.warning(errorDetails);
-                    pauseReviewedTasks(pendingChildIds, errorDetails);
-                    return;
-                }
+                const errorDetails = t("errors.generationFailed");
                 const videoTaskId = pendingChildIds.find((id) => nodesRef.current.find((item) => item.id === id)?.metadata?.videoTask);
-                const videoFailure = mode === "video" && videoTaskId ? classifyCanvasVideoTaskFailure(error) : undefined;
-                if (videoTaskId && videoFailure && videoFailure !== "upstream_failed") {
+                const videoFailure = mode === "video" && videoTaskId ? (error instanceof VideoGenerationUpstreamError ? "upstream_failed" : "query_pending") : undefined;
+                if (videoTaskId && videoFailure === "query_pending") {
                     message.info(t("videoContinuing"));
                     deferVideoTask(videoTaskId);
                     return;
@@ -542,7 +519,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             isAiConfigReady,
             message,
             openConfigDialog,
-            pauseReviewedTasks,
             projectId,
             startAndCompleteImageTask,
             startGenerationRequest,
@@ -555,11 +531,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
 
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData) => {
-            if (node.metadata?.status === NODE_STATUS_NEEDS_REVIEW && hasCanvasGenerationTask(node)) {
-                setNodes((prev) => resumeCanvasGenerationReview(prev, node.id));
-                message.info(t("checkingOriginal"));
-                return;
-            }
             if (node.metadata?.agentRunId && node.metadata.agentTaskId) {
                 setRunningNodeId(node.id);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: "" } } : item)));
@@ -721,12 +692,8 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 await startAndCompleteImageTask(node.id, generationConfig, prompt, retryImages, undefined, controller);
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
-                const errorDetails = isGenerationTaskNeedsReviewError(error) ? t("reviewPending") : t("errors.generationFailed");
+                const errorDetails = t("errors.generationFailed");
                 message.error(errorDetails);
-                if (isGenerationTaskNeedsReviewError(error)) {
-                    pauseReviewedTasks([node.id], errorDetails);
-                    return;
-                }
                 setNodes((prev) =>
                     prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined, textTask: undefined, videoTask: undefined, audioTask: undefined } } : item)),
                 );
@@ -748,7 +715,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             isAiConfigReady,
             message,
             openConfigDialog,
-            pauseReviewedTasks,
             projectId,
             runT,
             setNodes,

@@ -76,11 +76,11 @@ describe("audio API service", () => {
         expect(result.url).toBe("/api/reference-assets/resumed-audio");
     });
 
-    it("stops polling when the upstream submission needs manual review", async () => {
-        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "audio-review", status: "running", model: "voice", needsReview: true, reviewReason: "音频提交结果无法确认" } }));
+    it("stops polling when an uncertain upstream submission fails", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "audio-failed", status: "error", model: "voice", error: "音频提交结果无法确认" } }));
         vi.stubGlobal("fetch", fetchMock);
 
-        await expect(waitForAudioGenerationTask(config, { id: "audio-review", status: "running", model: "voice" })).rejects.toThrow("音频提交结果无法确认");
+        await expect(waitForAudioGenerationTask(config, { id: "audio-failed", status: "running", model: "voice" })).rejects.toThrow("音频提交结果无法确认");
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });

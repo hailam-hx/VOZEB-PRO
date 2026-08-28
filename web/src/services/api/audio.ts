@@ -1,5 +1,4 @@
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
-import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
@@ -19,7 +18,7 @@ type RequestOptions = {
 
 export type AudioGenerationTask = { id: string; status?: "pending" | "running" | "success" | "error" | "cancelled"; model: string };
 
-type AudioTaskPayload = { task?: AudioGenerationTask & GenerationTaskExecutionState & { result?: { url: string; mimeType: string }; error?: string }; error?: string };
+type AudioTaskPayload = { task?: AudioGenerationTask & { result?: { url: string; mimeType: string }; error?: string }; error?: string };
 
 const AUDIO_TASK_POLL_INTERVAL_MS = 1800;
 const AUDIO_TASK_TIMEOUT_MS = 30 * 60 * 1000;
@@ -77,7 +76,6 @@ export async function waitForAudioGenerationTask(config: AiConfig, task: AudioGe
             const taskPayload = (await taskResponse.json()) as AudioTaskPayload;
             const current = taskPayload.task;
             if (!current) throw new Error(taskPayload.error || "音频任务不存在");
-            if (current.needsReview) throw new GenerationTaskNeedsReviewError(current.reviewReason);
             if (current.status === "success") {
                 if (!current.result?.url) throw new Error("音频任务没有返回结果");
                 const audioResponse = await fetch(current.result.url, { signal: options?.signal });

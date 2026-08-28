@@ -27,7 +27,7 @@ export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
     return type === CanvasNodeType.Image || type === CanvasNodeType.Panorama;
 }
 
-type CanvasNodeStatus = "idle" | "success" | "loading" | "error" | "needs_review" | "cancelled";
+type CanvasNodeStatus = "idle" | "success" | "loading" | "error" | "cancelled";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 

@@ -54,14 +54,17 @@ describe("GET /api/image-tasks/[id]", () => {
         expect(after).not.toHaveBeenCalled();
     });
 
-    it("leaves an uncertain submission for manual review", async () => {
-        mocks.getImageTask.mockResolvedValue(imageTask({ reviewReason: "图片提交结果无法确认" }));
-        mocks.getSchedule.mockResolvedValue({ executionPhase: "needs_review" });
+    it("returns an uncertain submission as an ordinary terminal error", async () => {
+        mocks.getImageTask.mockResolvedValue(imageTask({ status: "error", error: "图片提交结果无法确认", retryable: false }));
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "completed" });
 
         const response = await GET(new Request("http://localhost/api/image-tasks/image-one"), context);
 
         expect(after).not.toHaveBeenCalled();
-        expect((await response.json()).task).toMatchObject({ needsReview: true, reviewReason: "图片提交结果无法确认" });
+        const payload = (await response.json()).task;
+        expect(payload).toMatchObject({ status: "error", error: "图片提交结果无法确认", canRetry: false, executionPhase: "completed" });
+        expect(payload).not.toHaveProperty("needsReview");
+        expect(payload).not.toHaveProperty("reviewReason");
     });
 });
 

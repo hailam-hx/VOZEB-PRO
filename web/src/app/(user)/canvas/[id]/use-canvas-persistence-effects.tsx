@@ -4,13 +4,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 
 import { CanvasProjectRequestError } from "@/services/api/canvas-projects";
-import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
+import { VideoGenerationUpstreamError } from "@/services/api/video-types";
 import { CanvasNodeType, isCanvasImageNodeType } from "../types";
-import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
 
 import { NODE_STATUS_ERROR, NODE_STATUS_LOADING } from "./canvas-page-elements";
 import { buildGenerationConfig, hydrateAssistantImages, hydrateCanvasImages, isGenerationCanceled, normalizeCanvasConfigNodeLayout } from "./canvas-page-utils";
-import { pauseCanvasGenerationReview } from "./canvas-generation-review";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
@@ -145,9 +143,6 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         resumingAudioTaskIdsRef,
     } = state;
     const { createHistoryEntry, startGenerationRequest, finishGenerationRequest, stopGenerationByRunningId, confirmStopGeneration, completeVideoTask, completeImageTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
-    const deferReviewedTask = (nodeId: string, errorDetails: string) => {
-        setNodes((prev) => pauseCanvasGenerationReview(prev, [nodeId], errorDetails));
-    };
     const deferVideoTask = useCallback(
         (nodeId: string) => {
             setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
@@ -219,12 +214,8 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             void completeImageTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
                 .catch((error) => {
                     if (isGenerationCanceled(error)) return;
-                    const errorDetails = isGenerationTaskNeedsReviewError(error) ? t("reviewPending") : t("imageFailed");
-                    message[isGenerationTaskNeedsReviewError(error) ? "warning" : "error"](errorDetails);
-                    if (isGenerationTaskNeedsReviewError(error)) {
-                        deferReviewedTask(node.id, errorDetails);
-                        return;
-                    }
+                    const errorDetails = t("imageFailed");
+                    message.error(errorDetails);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : item)));
                 })
                 .finally(() => {
@@ -248,14 +239,8 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             void completeVideoTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
                 .catch((error) => {
                     if (isGenerationCanceled(error)) return;
-                    const failureKind = classifyCanvasVideoTaskFailure(error);
-                    const errorDetails = failureKind === "needs_review" ? t("reviewPending") : t("videoFailed");
-                    if (failureKind === "needs_review") {
-                        message.warning(errorDetails);
-                        deferReviewedTask(node.id, errorDetails);
-                        return;
-                    }
-                    if (failureKind === "query_pending") {
+                    const errorDetails = t("videoFailed");
+                    if (!(error instanceof VideoGenerationUpstreamError)) {
                         message.info(t("videoContinuing"));
                         deferVideoTask(node.id);
                         return;
@@ -284,12 +269,8 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             void completeTextTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
                 .catch((error) => {
                     if (isGenerationCanceled(error)) return;
-                    const errorDetails = isGenerationTaskNeedsReviewError(error) ? t("reviewPending") : t("textFailed");
-                    message[isGenerationTaskNeedsReviewError(error) ? "warning" : "error"](errorDetails);
-                    if (isGenerationTaskNeedsReviewError(error)) {
-                        deferReviewedTask(node.id, errorDetails);
-                        return;
-                    }
+                    const errorDetails = t("textFailed");
+                    message.error(errorDetails);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, textTask: undefined } } : item)));
                 })
                 .finally(() => {
@@ -313,12 +294,8 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             void completeAudioTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
                 .catch((error) => {
                     if (isGenerationCanceled(error)) return;
-                    const errorDetails = isGenerationTaskNeedsReviewError(error) ? t("reviewPending") : t("audioFailed");
-                    message[isGenerationTaskNeedsReviewError(error) ? "warning" : "error"](errorDetails);
-                    if (isGenerationTaskNeedsReviewError(error)) {
-                        deferReviewedTask(node.id, errorDetails);
-                        return;
-                    }
+                    const errorDetails = t("audioFailed");
+                    message.error(errorDetails);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, audioTask: undefined } } : item)));
                 })
                 .finally(() => {

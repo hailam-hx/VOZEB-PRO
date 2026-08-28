@@ -189,13 +189,13 @@ describe("CanvasNode error content", () => {
         expect(markup).not.toContain("重试");
     });
 
-    it("pauses tasks that need review without offering a new generation retry", () => {
-        const reviewNode: CanvasNodeData = { ...imageNode, metadata: { status: "needs_review", errorDetails: "上游创建状态待确认" } };
+    it("renders an uncertain submission as a normal generation failure", () => {
+        const failedNode: CanvasNodeData = { ...imageNode, metadata: { status: "error", errorDetails: "上游创建状态无法确认" } };
 
-        const markup = renderImageNode({ data: reviewNode, onRetry: noop });
+        const markup = renderImageNode({ data: failedNode, onRetry: noop });
 
-        expect(markup).toContain("任务创建结果待管理员确认，系统未重复提交。");
-        expect(markup).toContain("检查状态");
-        expect(markup).not.toContain(">重试<");
+        expect(markup).toContain("生成失败，请稍后重试。");
+        expect(markup).toContain("重试");
+        expect(markup).not.toContain("待管理员确认");
     });
 });

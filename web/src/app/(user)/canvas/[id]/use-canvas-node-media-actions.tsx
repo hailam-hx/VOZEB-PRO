@@ -7,7 +7,6 @@ import { useTranslations } from "next-intl";
 import { getDataUrlByteSize } from "@/lib/image-utils";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalImageDownloadUrl, originalMediaDownloadUrl } from "@/lib/media-image-url";
-import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { type UploadedImage } from "@/services/image-storage";
 import { defaultConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
@@ -22,7 +21,6 @@ import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image
 import { fitNodeSize } from "../utils/canvas-node-size";
 
 import { NODE_STATUS_ERROR, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, createCanvasNode } from "./canvas-page-elements";
-import { pauseCanvasGenerationReview } from "./canvas-generation-review";
 import { applyNodeConfigPatch, buildGenerationConfig, buildImageGenerationMetadata, canvasNodeReferenceImage, imageMetadata, isGenerationCanceled, uploadCanvasImage } from "./canvas-page-utils";
 
 import type { CanvasInteractions } from "./use-canvas-interactions";
@@ -382,12 +380,7 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = t("mediaActions.maskFailed");
-                const needsReview = isGenerationTaskNeedsReviewError(error);
                 message.error(errorDetails);
-                if (needsReview) {
-                    setNodes((prev) => pauseCanvasGenerationReview(prev, [childId], errorDetails));
-                    return;
-                }
                 setNodes((prev) =>
                     prev.map((item) =>
                         item.id === childId
@@ -457,11 +450,6 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = t("node.generationFailed");
-                const needsReview = isGenerationTaskNeedsReviewError(error);
-                if (needsReview) {
-                    setNodes((prev) => pauseCanvasGenerationReview(prev, [childId], errorDetails));
-                    return;
-                }
                 message.error(errorDetails);
                 setNodes((prev) =>
                     prev.map((item) =>

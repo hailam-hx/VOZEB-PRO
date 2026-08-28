@@ -47,8 +47,6 @@ export async function GET(request: Request, context: RouteContext) {
                 result: settledTask.result,
                 error: settledTask.error,
                 canRetry: settledTask.retryable === true,
-                needsReview: executionPhase === "needs_review",
-                reviewReason: executionPhase === "needs_review" ? task.reviewReason : undefined,
                 executionPhase,
             },
         },
@@ -57,7 +55,7 @@ export async function GET(request: Request, context: RouteContext) {
 }
 
 function isRecoverableImageTask(task: NonNullable<Awaited<ReturnType<typeof getImageTask>>>, executionPhase: string) {
-    return ((task.status === "pending" || task.status === "running") && executionPhase !== "needs_review") || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"));
+    return task.status === "pending" || task.status === "running" || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"));
 }
 
 function settledExecutionPhase(status: string) {

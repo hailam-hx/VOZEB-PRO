@@ -80,13 +80,16 @@ describe("GET /api/video-tasks/[id]", () => {
         expect((await response.json()).task).toMatchObject({ status: "running" });
     });
 
-    it("returns the persisted manual review reason", async () => {
-        mocks.getVideoTask.mockResolvedValue(videoTask({ reviewReason: "视频提交结果无法确认" }));
-        mocks.getSchedule.mockResolvedValue({ executionPhase: "needs_review" });
+    it("returns an uncertain submission as an ordinary terminal error", async () => {
+        mocks.getVideoTask.mockResolvedValue(videoTask({ status: "error", error: "视频提交结果无法确认", retryable: false }));
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "completed" });
 
         const response = await GET(new Request("http://localhost/api/video-tasks/local-video"), context);
 
-        expect((await response.json()).task).toMatchObject({ needsReview: true, reviewReason: "视频提交结果无法确认" });
+        const payload = (await response.json()).task;
+        expect(payload).toMatchObject({ status: "error", error: "视频提交结果无法确认", executionPhase: "completed" });
+        expect(payload).not.toHaveProperty("needsReview");
+        expect(payload).not.toHaveProperty("reviewReason");
     });
 
     it("rejects browser attempts to submit a terminal status or result URL", async () => {

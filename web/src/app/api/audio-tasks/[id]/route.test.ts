@@ -46,13 +46,16 @@ describe("audio task cancellation refund", () => {
         expect(after).toHaveBeenCalledOnce();
     });
 
-    it("returns the manual review reason without waking the task", async () => {
-        mocks.getAudioTask.mockResolvedValue({ ...task, executionPhase: "needs_review", reviewReason: "音频提交结果无法确认" });
+    it("returns an uncertain submission as an ordinary terminal error", async () => {
+        mocks.getAudioTask.mockResolvedValue({ ...task, status: "error", executionPhase: "completed", error: "音频提交结果无法确认" });
 
         const response = await GET(new Request("http://localhost/api/audio-tasks/audio-one"), { params: Promise.resolve({ id: "audio-one" }) });
 
         expect(after).not.toHaveBeenCalled();
-        expect((await response.json()).task).toMatchObject({ needsReview: true, reviewReason: "音频提交结果无法确认" });
+        const payload = (await response.json()).task;
+        expect(payload).toMatchObject({ status: "error", error: "音频提交结果无法确认", executionPhase: "completed" });
+        expect(payload).not.toHaveProperty("needsReview");
+        expect(payload).not.toHaveProperty("reviewReason");
     });
 
     it("keeps billing refundable while cancellation awaits an upstream terminal state", async () => {

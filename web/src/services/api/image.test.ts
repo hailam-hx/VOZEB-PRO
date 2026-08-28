@@ -78,11 +78,11 @@ describe("图片任务轮询", () => {
         expect(body.references[0]?.dataUrl).toBe(inlineImage);
     });
 
-    it("stops polling when the upstream submission needs manual review", async () => {
-        const fetchMock = vi.fn(async () => Response.json({ task: { id: "review-task", kind: "generation", model: "image-model", status: "running", needsReview: true, reviewReason: "渠道未返回可查询任务 ID" } }));
+    it("stops polling when an uncertain upstream submission fails", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ task: { id: "failed-task", kind: "generation", model: "image-model", status: "error", error: "渠道未返回可查询任务 ID", canRetry: false } }));
         vi.stubGlobal("fetch", fetchMock);
 
-        await expect(waitForImageGenerationTask({ apiSource: "system" } as AiConfig, { id: "review-task", kind: "generation", model: "image-model" })).rejects.toThrow("渠道未返回可查询任务 ID");
+        await expect(waitForImageGenerationTask({ apiSource: "system" } as AiConfig, { id: "failed-task", kind: "generation", model: "image-model" })).rejects.toThrow("渠道未返回可查询任务 ID");
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 

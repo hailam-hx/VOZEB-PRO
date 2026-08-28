@@ -18,14 +18,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
     const task = await getAudioTask((await params).id);
     if (!task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
-    if (((task.status === "pending" || task.status === "running") && task.executionPhase !== "needs_review") || (task.status === "cancelled" && (task.executionPhase === "cancel_requested" || task.executionPhase === "cancel_polling"))) {
+    if (task.status === "pending" || task.status === "running" || (task.status === "cancelled" && (task.executionPhase === "cancel_requested" || task.executionPhase === "cancel_polling"))) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id] }));
     }
     const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundAudioTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : user;
-    return NextResponse.json({ task: { ...publicTask(settledTask), needsReview: task.executionPhase === "needs_review", reviewReason: task.reviewReason, executionPhase: task.executionPhase } }, { headers: pointsResponseHeaders(refreshedUser) });
+    return NextResponse.json({ task: { ...publicTask(settledTask), executionPhase: task.executionPhase } }, { headers: pointsResponseHeaders(refreshedUser) });
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
