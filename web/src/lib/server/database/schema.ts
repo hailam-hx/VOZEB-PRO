@@ -261,7 +261,7 @@ ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS worker_id text;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS lease_until timestamptz;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS last_heartbeat_at timestamptz;
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_execution_phase;
-ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHECK (execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting', 'cancel_requested', 'cancel_polling', 'needs_review', 'review_pending', 'reviewing', 'review_unavailable', 'completed'));
+ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHECK (execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting', 'cancel_requested', 'cancel_polling', 'review_pending', 'reviewing', 'review_unavailable', 'completed'));
 
 DROP INDEX IF EXISTS generation_tasks_user_client_request_idx;
 CREATE UNIQUE INDEX generation_tasks_user_client_request_idx ON generation_tasks (user_id, task_type, client_request_id, COALESCE(attempt_no, 0)) WHERE client_request_id IS NOT NULL AND client_request_id <> '';

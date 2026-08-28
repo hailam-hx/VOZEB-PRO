@@ -108,15 +108,15 @@ describe("mutateStoredGenerationTask", () => {
         expect(mocks.records).toHaveLength(1);
     });
 
-    it("does not let tasks awaiting manual review consume generation capacity", async () => {
+    it("does not let terminal tasks consume generation capacity", async () => {
         const now = Date.now();
         mocks.records = [
             {
-                id: "image-review",
+                id: "image-failed",
                 userId: "user",
                 type: "image",
-                status: "running",
-                executionPhase: "needs_review",
+                status: "error",
+                executionPhase: "completed",
                 payload: {},
                 createdAt: now,
                 updatedAt: now,
@@ -135,7 +135,7 @@ describe("mutateStoredGenerationTask", () => {
         await expect(withGenerationConcurrencyLimit("user", "agent", 60_000, 1, async () => "other-run")).resolves.toBeNull();
     });
 
-    it("restores a safe review reason for a legacy uncertain submission", async () => {
+    it("rejects the removed manual review phase when restoring execution state", async () => {
         const now = Date.now();
         mocks.records = [
             {
@@ -152,7 +152,10 @@ describe("mutateStoredGenerationTask", () => {
             },
         ];
 
-        await expect(getStoredGenerationTask<TestTask>("image", "image-review")).resolves.toMatchObject({ reviewReason: expect.stringContaining("避免重复生成和扣费") });
+        const task = await getStoredGenerationTask<TestTask>("image", "image-review");
+
+        expect(task?.executionPhase).toBeUndefined();
+        expect(task).not.toHaveProperty("reviewReason");
     });
 
     it("deduplicates the same request attempt but allows a later retry attempt", async () => {

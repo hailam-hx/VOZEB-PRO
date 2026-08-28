@@ -92,9 +92,9 @@ describe("统一创作 Agent 事件流", () => {
             onConnectionError: () => undefined,
         });
 
-        FakeEventSource.instance.emit("task.waiting", { data: { title: "西瓜海报", error: "上游创建状态待人工确认" } });
+        FakeEventSource.instance.emit("task.waiting", { data: { title: "西瓜海报", error: "上游仍在处理" } });
 
-        expect(progress).toEqual(["上游创建状态待人工确认"]);
+        expect(progress).toEqual(["上游仍在处理"]);
         expect(FakeEventSource.instance.url).toBe("/api/agent/runs/run-waiting/events");
     });
 

@@ -1,5 +1,4 @@
 import { getDatabaseProvider, ensurePostgresSchema, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
-import { resolveGenerationReviewReason } from "@/lib/server/generation-task-review-reason";
 import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
 import type {
     GenerationTaskContext,
@@ -64,16 +63,16 @@ export async function cleanupExpiredStoredGenerationTasks(input: { limit: number
 export async function getStoredGenerationTask<T>(type: GenerationTaskType, id: string): Promise<(T & GenerationTaskExecutionState) | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown; result_payload?: unknown }>(
-            "SELECT payload, execution_phase, last_upstream_status, result_payload FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()",
+        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown }>(
+            "SELECT payload, execution_phase, last_upstream_status FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()",
             [id, type],
         );
         const row = result.rows[0];
-        return row?.payload ? withExecutionState(row.payload, row.execution_phase, row.last_upstream_status, row.result_payload) : null;
+        return row?.payload ? withExecutionState(row.payload, row.execution_phase, row.last_upstream_status) : null;
     }
     const tasks = await readFileTasks();
     const record = tasks.find((task) => task.id === id && task.type === type && task.expiresAt > Date.now());
-    return record ? withExecutionState(record.payload as T, record.executionPhase, record.lastUpstreamStatus, record.resultPayload) : null;
+    return record ? withExecutionState(record.payload as T, record.executionPhase, record.lastUpstreamStatus) : null;
 }
 
 export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id: string): Promise<StoredGenerationTaskRecord | null> {
@@ -1030,7 +1029,6 @@ function isExecutionPhase(value: unknown): value is NonNullable<StoredGeneration
         value === "persisting" ||
         value === "cancel_requested" ||
         value === "cancel_polling" ||
-        value === "needs_review" ||
         value === "review_pending" ||
         value === "reviewing" ||
         value === "review_unavailable" ||
@@ -1087,14 +1085,13 @@ function optionalDatabaseTime(value: unknown) {
     return value ? databaseTime(value) || undefined : undefined;
 }
 
-function withExecutionState<T>(payload: T, phase: unknown, status: unknown, resultPayload: unknown): T & GenerationTaskExecutionState {
+function withExecutionState<T>(payload: T, phase: unknown, status: unknown): T & GenerationTaskExecutionState {
     const executionPhase = isExecutionPhase(phase) ? phase : undefined;
     const lastUpstreamStatus = cleanContextText(typeof status === "string" ? status : "");
     return {
         ...payload,
         executionPhase,
         lastUpstreamStatus,
-        reviewReason: resolveGenerationReviewReason({ executionPhase, lastUpstreamStatus, resultPayload }),
     };
 }
 
