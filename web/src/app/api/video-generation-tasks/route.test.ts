@@ -120,6 +120,29 @@ describe("video generation candidate failover", () => {
         expect(body).toEqual({ model: "video-one", prompt: "A test video" });
     });
 
+    it("keeps 2K resolution canonical in a custom provider request", async () => {
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "2k-provider-task", status: "queued" }));
+        const config = {
+            apiSource: "system" as const,
+            baseUrl: "/api/ai/system/one",
+            apiKey: "system" as const,
+            apiFormat: "openai" as const,
+            model: "video-one",
+            logicalModel: "video",
+            channelId: "one",
+            advancedConfig: {
+                protocol: "custom" as const,
+                createPath: "/videos",
+                requestTemplate: '{"model":"{{model}}","resolution":"{{resolution}}"}',
+            },
+        };
+
+        await createUpstream("user", "http://localhost", "", config as never, "A test video", { size: "16:9", vquality: "2k", videoSeconds: 5 }, [], { imageQuality: {}, ...settings.generationPointMultipliers }, "2k-provider-request");
+
+        const body = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit | undefined)?.body));
+        expect(body).toEqual({ model: "video-one", resolution: "2k" });
+    });
+
     it("tries the next binding after explicit route failures", async () => {
         const startedAt = Date.now();
         mocks.fetchInternalApi.mockImplementation(async (url: string) => (url.includes("/api/ai/system/one/") ? json({ error: "not found" }, 404) : json({ id: "upstream-two", status: "queued" })));

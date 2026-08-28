@@ -47,6 +47,7 @@ export function fullGenerationParametersPreset(capability: LogicalModelCapabilit
         return normalizeGenerationParameters({
             ...shared,
             referenceInputs: ["image"],
+            maxReferenceImages: 1,
             aspectRatios: VOZEB_IMAGE_ASPECT_RATIOS,
             supportsCustomSize: true,
             qualities: VOZEB_IMAGE_QUALITIES,
@@ -55,6 +56,8 @@ export function fullGenerationParametersPreset(capability: LogicalModelCapabilit
     if (capability === "video") {
         return normalizeGenerationParameters({
             ...shared,
+            referenceInputs: ["image"],
+            maxReferenceImages: 9,
             aspectRatios: VOZEB_VIDEO_ASPECT_RATIOS,
             supportsCustomSize: true,
             resolutions: VOZEB_VIDEO_RESOLUTIONS,

@@ -71,6 +71,7 @@ export function resetIncompatibleGenerationDefaults(context: GenerationDefaultsC
 }
 
 function profileComplete(capability: LogicalModelCapability, profile: LogicalModelGenerationParameters) {
+    if (profile.referenceInputs.includes("image") && !profile.maxReferenceImages) return false;
     if (profile.supportsCustomBatchSize && !profile.customBatchSizeRange) return false;
     if (profile.supportsCustomDuration && !profile.customDurationRange) return false;
     const supportsSize = profile.aspectRatios.length > 0 || profile.pixelSizes.length > 0 || profile.supportsCustomSize;

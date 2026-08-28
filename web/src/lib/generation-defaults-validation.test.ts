@@ -47,6 +47,11 @@ describe("generation-default capability validation", () => {
         expect(generationParametersStatus("image", { ...profiles.image, supportsCustomBatchSize: true })).toEqual({ state: "incomplete", label: "能力档案未完成" });
     });
 
+    it("requires a positive image-reference limit when image references are enabled", () => {
+        expect(generationParametersStatus("video", { ...profiles.video, referenceInputs: ["image"] })).toEqual({ state: "incomplete", label: "能力档案未完成" });
+        expect(generationParametersStatus("video", { ...profiles.video, referenceInputs: ["image"], maxReferenceImages: 1 })).toEqual({ state: "configured", label: "已配置" });
+    });
+
     it("accepts Auto defaults and validates image size across image and video defaults", () => {
         expect(generationDefaultsValidationError(settings())).toBeUndefined();
         expect(generationDefaultsValidationError(settings({ imageSize: "1:1", imageQuality: "high", videoQuality: "1080", videoSeconds: 5, audioVoice: "alloy", audioFormat: "mp3" }))).toBeUndefined();

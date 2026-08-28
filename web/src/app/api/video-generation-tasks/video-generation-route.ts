@@ -550,7 +550,7 @@ function resolution(value: unknown) {
 }
 function upstreamResolution(value: unknown) {
     const text = clean(value).replace(/p$/i, "");
-    return text && text.toLowerCase() !== "auto" ? `${text}p` : undefined;
+    return text && text.toLowerCase() !== "auto" ? (/^\d+k$/i.test(text) ? text.toLowerCase() : `${text}p`) : undefined;
 }
 function videoDimensions(size: unknown, quality: unknown) {
     const exact = parseImageDimensions(String(size || ""));

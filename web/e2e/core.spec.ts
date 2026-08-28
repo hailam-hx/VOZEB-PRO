@@ -152,6 +152,8 @@ test("admin saves and reloads logical model generation capability", async ({ pag
             id: string;
             bindings: Array<{
                 generationParameters?: {
+                    referenceInputs: string[];
+                    maxReferenceImages?: number;
                     aspectRatios: string[];
                     durationSeconds?: number[];
                     maxBatchSize?: number;
@@ -182,6 +184,8 @@ test("admin saves and reloads logical model generation capability", async ({ pag
         await expect(aspectRatios).toBeVisible();
         await drawer.getByRole("button", { name: "重新启用全部选项" }).first().click();
         await page.getByRole("button", { name: /覆\s*盖/ }).click();
+        await expect(drawer.getByRole("checkbox", { name: "参考图片" }).first()).toBeChecked();
+        await expect(drawer.getByRole("spinbutton", { name: "最大参考图片数" }).first()).toHaveValue("9");
         await expect(drawer.getByRole("spinbutton", { name: "最大批量数量" }).first()).toHaveValue("4");
         await expect(drawer.getByRole("checkbox", { name: "允许自定义数量" }).first()).toBeChecked();
         await expect(drawer.getByRole("spinbutton", { name: "自定义数量上限" }).first()).toHaveValue("30");
@@ -209,6 +213,8 @@ test("admin saves and reloads logical model generation capability", async ({ pag
         await page.getByPlaceholder("搜索模型昵称、ID 或上游模型").fill("e2e-video");
         await modelCard.getByRole("button", { name: "路由设置" }).click();
         await expect(drawer.getByRole("textbox", { name: "支持比例（逗号分隔）" }).first()).toHaveValue(/5:4/);
+        await expect(drawer.getByRole("checkbox", { name: "参考图片" }).first()).toBeChecked();
+        await expect(drawer.getByRole("spinbutton", { name: "最大参考图片数" }).first()).toHaveValue("9");
         await expect(drawer.getByRole("spinbutton", { name: "最大批量数量" }).first()).toHaveValue("4");
         await expect(drawer.getByRole("textbox", { name: "可选秒数（逗号分隔）" }).first()).toHaveValue("5, 15");
         await expect(drawer.getByRole("spinbutton", { name: "自定义时长上限（秒）" }).first()).toHaveValue(String(nextCustomDurationMax));
@@ -216,6 +222,8 @@ test("admin saves and reloads logical model generation capability", async ({ pag
         const persistedResponse = await request.get("/api/admin/settings");
         expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
         const persisted = ((await persistedResponse.json()) as { settings: SettingsSnapshot }).settings;
+        expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.referenceInputs).toContain("image");
+        expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.maxReferenceImages).toBe(9);
         expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.aspectRatios).toContain("5:4");
         expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.durationSeconds).toEqual([5, 15]);
         expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.maxBatchSize).toBe(4);

@@ -23,7 +23,7 @@ export function normalizeProxyBillableRequest(input: ProxyUsageInput): Normalize
     } else {
         const parameters = object(payload.parameters) || {};
         const count = positiveIntegerText(payload.n ?? payload.count ?? parameters.n ?? parameters.count) || "1";
-        const quality = firstText(payload.quality, payload.vquality, parameters.quality, parameters.vquality);
+        const explicitQuality = firstText(payload.quality, payload.vquality, parameters.quality, parameters.vquality);
         const resolution =
             firstText(
                 payload.resolution_name,
@@ -35,6 +35,7 @@ export function normalizeProxyBillableRequest(input: ProxyUsageInput): Normalize
                 payload.size,
                 parameters.size,
             ) || dimensions(payload);
+        const quality = input.capability === "video" ? normalizeVideoQuality(explicitQuality, resolution) : explicitQuality;
         usage = normalizeBillableUsage({
             capability: input.capability,
             source: "request",
@@ -200,6 +201,20 @@ function firstText(...values: unknown[]) {
         const normalized = text(value);
         if (normalized) return normalized;
     }
+    return undefined;
+}
+
+function normalizeVideoQuality(quality: string | undefined, resolution: string | undefined) {
+    if (quality) return videoClarity(quality) || quality;
+    return videoClarity(resolution);
+}
+
+function videoClarity(value: string | undefined) {
+    const normalized = value?.trim().toLowerCase();
+    if (!normalized) return undefined;
+    if (/^\d+$/.test(normalized)) return normalized;
+    if (/^\d+p$/.test(normalized)) return normalized.slice(0, -1);
+    if (/^\d+k(?:p)?$/.test(normalized)) return normalized.replace(/p$/, "");
     return undefined;
 }
 

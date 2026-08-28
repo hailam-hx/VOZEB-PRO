@@ -123,7 +123,8 @@ describe("admin generation controls", () => {
 
         const quickProfile = applied.mock.lastCall?.[0].logicalModels[0].bindings[0].generationParameters;
         expect(quickProfile).toMatchObject({
-            referenceInputs: [],
+            referenceInputs: ["image"],
+            maxReferenceImages: 9,
             aspectRatios: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
             resolutions: ["480", "720", "1080", "2k", "4k"],
             durationMode: "discrete",
@@ -136,7 +137,6 @@ describe("admin generation controls", () => {
             videoReferenceModes: ["reference", "first_frame", "first_last"],
             supportsCustomSize: true,
         });
-        expect(quickProfile).not.toHaveProperty("maxReferenceImages");
         expect(applied.mock.lastCall?.[0].logicalModels[0].bindings[1].generationParameters).toBeUndefined();
     });
 
