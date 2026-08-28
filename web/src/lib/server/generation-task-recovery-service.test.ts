@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
     refundVideoTask: vi.fn(),
     refundAudioTask: vi.fn(),
     refundTextTask: vi.fn(),
+    finalizeBilling: vi.fn(),
     getAuthSettings: vi.fn(),
     getFreshAuthSettings: vi.fn(),
 }));
@@ -69,6 +70,7 @@ vi.mock("@/lib/server/image-task-refund", () => ({ refundImageTask: mocks.refund
 vi.mock("@/lib/server/video-task-refund", () => ({ refundVideoTask: mocks.refundVideoTask }));
 vi.mock("@/lib/server/audio-task-refund", () => ({ refundAudioTask: mocks.refundAudioTask }));
 vi.mock("@/lib/server/text-task-refund", () => ({ refundTextTask: mocks.refundTextTask }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({ finalizeUsageBillingForBusiness: mocks.finalizeBilling }));
 vi.mock("@/lib/server/generation-task-cancellation-service", () => ({
     hasCancellableUpstreamTaskId: vi.fn((value: string) => Boolean(value)),
     isCancellationExecutionPhase: vi.fn((value: string) => value === "cancel_requested" || value === "cancel_polling"),
@@ -85,6 +87,7 @@ describe("generation task recovery service", () => {
         mocks.renew.mockResolvedValue(1);
         mocks.getAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });
         mocks.getFreshAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });
+        mocks.finalizeBilling.mockResolvedValue({ state: "settled" });
     });
 
     it("returns without starting a heartbeat when no task is due", async () => {
@@ -386,6 +389,36 @@ describe("generation task recovery service", () => {
 
         expect(mocks.release).toHaveBeenCalledWith("image", task.id, "worker-one", expect.objectContaining({ executionPhase: "cancel_polling", lastUpstreamStatus: "cancel_accepted_polling" }), { cancellation: true });
         expect(result).toMatchObject({ claimed: 1, pending: 1, completed: 0 });
+    });
+
+    it("finalizes billing when a cancelled video is already terminal upstream", async () => {
+        const task = {
+            id: "video-cancelled",
+            userId: "user-one",
+            status: "cancelled",
+            upstream: { id: "upstream-video" },
+            config: { baseUrl: "https://provider.example", apiKey: "key", apiFormat: "openai", model: "video-model" },
+        };
+        mocks.claim.mockResolvedValue([
+            {
+                ...lease(),
+                id: task.id,
+                userId: task.userId,
+                type: "video",
+                status: "cancelled",
+                executionPhase: "cancel_polling",
+                upstreamTaskId: task.upstream.id,
+                resultPayload: { cancellationRequestedAt: Date.now() },
+            },
+        ]);
+        mocks.getVideoTask.mockResolvedValue(task);
+        mocks.queryVideoTaskUpstream.mockResolvedValue({ state: "result_ready", status: "succeeded", resultUrl: "https://cdn.example.com/video.mp4" });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.finalizeBilling).toHaveBeenCalledWith({ userId: task.userId, businessId: `video-task:${task.id}` });
+        expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "cancelled_upstream_succeeded" }), { cancellation: true });
+        expect(result).toMatchObject({ claimed: 1, completed: 1 });
     });
 });
 

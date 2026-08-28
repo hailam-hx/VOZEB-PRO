@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     complete: vi.fn(),
     fail: vi.fn(),
     fetchInternalApi: vi.fn(),
+    finalizeBilling: vi.fn(),
     get: vi.fn(),
     normalize: vi.fn(),
     refund: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
     updateVideoTask: mocks.update,
 }));
 vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: vi.fn(() => ({ "x-media-auth": "signed" })) }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({ finalizeUsageBillingForBusiness: mocks.finalizeBilling }));
 
 import { queryVideoTaskUpstream, refreshVideoTaskFromUpstream } from "./video-task-runtime";
 import type { VideoTask } from "./video-task-store";
@@ -39,6 +41,7 @@ describe("video task upstream reconciliation", () => {
         vi.clearAllMocks();
         mocks.normalize.mockResolvedValue({ url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 });
         mocks.register.mockResolvedValue(undefined);
+        mocks.finalizeBilling.mockResolvedValue({ state: "settled" });
         mocks.update.mockResolvedValue(undefined);
         mocks.writeLog.mockResolvedValue({});
     });
@@ -75,6 +78,7 @@ describe("video task upstream reconciliation", () => {
         expect(result).toEqual(completed);
         expect(mocks.normalize).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining("/_media?url="), requestedDurationSeconds: 5 }));
         expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/result.mp4" }));
+        expect(mocks.finalizeBilling).toHaveBeenCalledWith({ userId: task.userId, businessId: `video-task:${task.id}` });
         expect(mocks.register).toHaveBeenCalledOnce();
         expect(mocks.refund).not.toHaveBeenCalled();
     });
@@ -172,6 +176,7 @@ describe("video task upstream reconciliation", () => {
 
         expect(result).toEqual(failed);
         expect(mocks.fail).toHaveBeenCalledWith(task.id, failed.error, true);
+        expect(mocks.finalizeBilling).toHaveBeenCalledWith({ userId: task.userId, businessId: `video-task:${task.id}` });
         expect(mocks.refund).toHaveBeenCalledOnce();
         expect(mocks.normalize).not.toHaveBeenCalled();
     });

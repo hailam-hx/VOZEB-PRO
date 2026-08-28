@@ -14,6 +14,7 @@ import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
 import { geminiVideoQueryPath, parseGeminiVideoOperation } from "@/lib/server/gemini-video-provider";
+import { finalizeUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
 
 export type VideoUpstreamStep = { state: "pending"; status: string } | { state: "result_ready"; status: string; resultUrl: string } | { state: "failed"; status: string; error: string };
 
@@ -115,6 +116,7 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
         if (latest?.status === "cancelled") await refundVideoTask(latest);
         return latest;
     }
+    await finalizeUsageBillingForBusiness({ userId: completed.userId, businessId: `video-task:${completed.id}` });
     await writeVideoGenerationLog(completed, "success");
     await registerVideoAsset(completed);
     return completed;
@@ -125,6 +127,7 @@ async function failVideoTask(task: VideoTask, error: string, retryable = true) {
     await updateVideoTask(task.id, { attempts });
     const failed = await failReconciledVideoTask(task.id, error, retryable);
     if (failed) {
+        await finalizeUsageBillingForBusiness({ userId: failed.userId, businessId: `video-task:${failed.id}` });
         await writeVideoGenerationLog({ ...failed, attempts }, "failed", error, retryable);
         if (task.status === "running") await refundVideoTask(failed);
     }

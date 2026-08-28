@@ -29,6 +29,11 @@ describe("generation worker startup", () => {
         });
         const calls = JSON.parse(output.slice(output.indexOf("[")));
 
-        expect(calls).toEqual(["http://worker.test/api/maintenance/generation-tasks/heartbeat", "http://worker.test/api/maintenance/generation-tasks/run", "http://worker.test/api/maintenance/generation-tasks/run"]);
+        expect(calls).toEqual([
+            "http://worker.test/api/maintenance/generation-tasks/heartbeat",
+            "http://worker.test/api/maintenance/usage-holds/run",
+            "http://worker.test/api/maintenance/generation-tasks/run",
+            "http://worker.test/api/maintenance/generation-tasks/run",
+        ]);
     });
 });

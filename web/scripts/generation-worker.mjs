@@ -12,6 +12,7 @@ const lanes = boundedNumber(process.env.VOZEB_PRO_GENERATION_WORKER_LANES, 2, 1,
 const heartbeatIntervalMs = boundedNumber(process.env.VOZEB_PRO_GENERATION_WORKER_HEARTBEAT_MS, 15_000, 5_000, 60_000);
 let stopping = false;
 let heartbeatPending = false;
+let usageRecoveryPending = false;
 
 if (token.length < 32) throw new Error("VOZEB_PRO_WORKER_TOKEN must contain at least 32 characters");
 
@@ -20,9 +21,12 @@ process.once("SIGINT", stop);
 
 console.log(`Generation worker started: ${workerId}`);
 void sendHeartbeat();
+void recoverUsageHolds();
 const heartbeatTimer = setInterval(() => void sendHeartbeat(), heartbeatIntervalMs);
+const usageRecoveryTimer = setInterval(() => void recoverUsageHolds(), heartbeatIntervalMs);
 await Promise.all(Array.from({ length: lanes }, (_, index) => runLane(index + 1)));
 clearInterval(heartbeatTimer);
+clearInterval(usageRecoveryTimer);
 console.log("Generation worker stopped");
 
 async function runLane(index) {
@@ -76,6 +80,26 @@ async function sendHeartbeat() {
         if (!stopping) console.error("Generation worker heartbeat failed", error instanceof Error ? error.message : error);
     } finally {
         heartbeatPending = false;
+    }
+}
+
+async function recoverUsageHolds() {
+    if (stopping || usageRecoveryPending) return;
+    usageRecoveryPending = true;
+    try {
+        const response = await fetch(`${origin}/api/maintenance/usage-holds/run`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(heartbeatIntervalMs),
+        });
+        if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            throw new Error(payload?.msg || `Usage hold recovery endpoint returned HTTP ${response.status}`);
+        }
+    } catch (error) {
+        if (!stopping) console.error("Usage hold recovery failed", error instanceof Error ? error.message : error);
+    } finally {
+        usageRecoveryPending = false;
     }
 }
 

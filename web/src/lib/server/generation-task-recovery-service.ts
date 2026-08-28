@@ -25,6 +25,7 @@ import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router
 import { toSystemGenerationChannel } from "@/lib/server/generation-channel";
 import { resolveAudioGenerationCandidates, resolveImageGenerationCandidates } from "@/lib/server/capability-constraints";
 import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
+import { finalizeUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
@@ -195,6 +196,7 @@ async function queryCancelledUpstream(target: GenerationCancellationTarget, orig
 
 async function finishCancelledLease(target: GenerationCancellationTarget, lease: GenerationTaskLease, workerId: string, status: string) {
     if (status !== "cancel_unconfirmed" && status !== "cancelled_task_missing") await refundCancelledTask(target);
+    await finalizeUsageBillingForBusiness({ userId: target.userId, businessId: `${target.type}-task:${target.taskId}` });
     await releaseGenerationTaskLease(lease.type, lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: status }, { cancellation: true });
     await redactCancelledTaskSecret(target).catch((error) => console.warn("Cancelled generation task secret cleanup failed", { taskId: target.taskId, type: target.type, error: safeError(error) }));
 }

@@ -11,6 +11,7 @@ import { readAuthDb, writeAuthDb } from "@/lib/auth/store-repository";
 
 import {
     attachUsageProviderUpstreamTaskId,
+    finalizeUsageBillingForBusiness,
     recoverOrphanUsageHolds,
     finishUsageProviderAttempt,
     loadUsageBilling,
@@ -68,6 +69,82 @@ afterAll(() => {
 });
 
 describe("usage billing runtime", () => {
+    it("settles an active business hold immediately when its persisted task succeeds", async () => {
+        const billing = await reservation("terminal-success");
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "vendor",
+            bindingId: "binding",
+            upstreamTaskId: "upstream-one",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "0.375" }] },
+            normalizedUsage: imageRequest,
+        });
+        await finalizeUsageBillingForBusiness({
+            userId: billing.userId,
+            businessId: billing.businessId,
+            inspect: async () => ({ state: "succeeded", actualUsage: normalizeBillableUsage({ capability: "image", source: "actual", count: 1 }) }),
+        });
+        const db = await readAuthDb();
+
+        expect(db.walletHolds[0]).toMatchObject({ status: "settled" });
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "succeeded", nativeCostAmount: "0.375" });
+        expect(db.usageCharges).toEqual([expect.objectContaining({ settledCredits: "1.5", estimated: false })]);
+    });
+
+    it("releases an active business hold without a usage charge when its persisted task fails", async () => {
+        const billing = await reservation("terminal-failure");
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "vendor",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            normalizedUsage: imageRequest,
+        });
+        await finalizeUsageBillingForBusiness({
+            userId: billing.userId,
+            businessId: billing.businessId,
+            inspect: async () => ({ state: "failed", reason: "供应商确认失败" }),
+        });
+        const db = await readAuthDb();
+
+        expect(db.walletHolds[0]).toMatchObject({ status: "released", releaseReason: "供应商确认失败" });
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "failed" });
+        expect(db.usageCharges).toEqual([]);
+        expect(db.pointRecords).toEqual([expect.objectContaining({ id: "opening-credit" })]);
+    });
+
+    it("settles an accepted provider attempt when the persisted task is later cancelled", async () => {
+        const billing = await reservation("terminal-cancelled");
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "vendor",
+            bindingId: "binding",
+            upstreamTaskId: "upstream-one",
+            nativeCostAmount: "0.4",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            normalizedUsage: imageRequest,
+        });
+        await finalizeUsageBillingForBusiness({
+            userId: billing.userId,
+            businessId: billing.businessId,
+            inspect: async () => ({ state: "canceled", description: "用户取消已被上游接受的任务" }),
+        });
+        const db = await readAuthDb();
+
+        expect(db.walletHolds[0]).toMatchObject({ status: "settled" });
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "canceled", upstreamTaskId: "upstream-one" });
+        expect(db.usageCharges).toEqual([expect.objectContaining({ settledCredits: "1.5", estimated: true, totalProviderCostUsd: "0.4" })]);
+    });
+
     it("sums failed and successful provider costs while charging once from the frozen sale snapshot", async () => {
         const billing = await reservation("failover");
         await recordUsageProviderAttempt({
