@@ -1281,7 +1281,6 @@
         },
         "persistence": {
             "loadFailed": "Failed to load this Canvas",
-            "reviewPending": "This task needs administrator review. It was not submitted again.",
             "imageFailed": "Image generation failed. Please try again later.",
             "videoFailed": "Video generation failed. Please try again later.",
             "textFailed": "Text generation failed. Please try again later.",
@@ -1552,8 +1551,6 @@
             "generating": "Generating",
             "generationFailed": "Generation failed. Please try again later.",
             "retry": "Retry",
-            "reviewRequired": "The task creation result needs administrator review. It was not submitted again.",
-            "checkStatus": "Check status",
             "cancelled": "Task cancelled",
             "unknown": "Unknown node",
             "generateFromText": "Generate image from text",
@@ -1809,9 +1806,7 @@
                 "withoutReferences": "Build a continuous environment around the viewer from the text description.",
                 "constraints": "Output exactly one 2:1 equirectangular panorama covering 360 degrees horizontally and 180 degrees vertically, with the viewer at the center. Keep the horizon near the vertical center, join the left and right edges seamlessly, and fully render the sky or ceiling and the ground or floor. Do not create a regular banner, circular fisheye border, multi-image collage, text, watermark, interface elements, or visible seams."
             },
-            "reviewPending": "Some tasks need administrator review. They were not submitted again.",
             "videoContinuing": "The video is still generating in the background. The original task will continue to be checked.",
-            "checkingOriginal": "Checking the original task status without submitting it again.",
             "agentRetrySuccess": "The Agent task was regenerated",
             "titles": { "panorama": "Generated panorama", "image": "Generated image", "video": "Generated video", "audio": "Generated audio", "text": "Generated text", "prompt": "Prompt", "assistantText": "Assistant text", "config": "Generation config" },
             "errors": {

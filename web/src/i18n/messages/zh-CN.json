@@ -1253,7 +1253,6 @@
         },
         "persistence": {
             "loadFailed": "画布项目加载失败",
-            "reviewPending": "任务待管理员确认，系统未重复提交。",
             "imageFailed": "图片生成失败，请稍后重试。",
             "videoFailed": "视频生成失败，请稍后重试。",
             "textFailed": "文本生成失败，请稍后重试。",
@@ -1524,8 +1523,6 @@
             "generating": "生成中",
             "generationFailed": "生成失败，请稍后重试。",
             "retry": "重试",
-            "reviewRequired": "任务创建结果待管理员确认，系统未重复提交。",
-            "checkStatus": "检查状态",
             "cancelled": "任务已取消",
             "unknown": "未知节点",
             "generateFromText": "用文本生图",
@@ -1748,9 +1745,7 @@
                 "withoutReferences": "根据文字完整构建观看者四周的连续环境。",
                 "constraints": "最终只输出一张 2:1 等距柱状投影全景图，水平覆盖 360 度，垂直覆盖 180 度，观看者位于场景中心。地平线保持在垂直中心附近，左右边缘自然无缝衔接，天空或天花板、地面或地板必须完整。不要普通横幅、鱼眼圆形边框、多图拼接、文字、水印、界面元素或明显接缝。"
             },
-            "reviewPending": "部分任务待管理员确认，系统未重复提交。",
             "videoContinuing": "视频仍在后台生成，系统会继续查询原任务。",
-            "checkingOriginal": "正在检查原任务状态，不会重复提交。",
             "agentRetrySuccess": "Agent 任务已重新生成",
             "titles": { "panorama": "生成的全景图", "image": "生成的图片", "video": "生成的视频", "audio": "生成的音频", "text": "生成的文本", "prompt": "提示词", "assistantText": "助手文本", "config": "生成配置" },
             "errors": {

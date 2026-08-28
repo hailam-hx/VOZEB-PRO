@@ -194,14 +194,13 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 
 ## 生成任务恢复、Worker 与回调
 
-文本、图片、视频和音频任务详情接口，以及 Agent Run SSE，只会唤醒当前用户正在读取的同一持久任务。业务状态与执行阶段分离：`pending/running` 任务可处于 `created/submitting/submitted/polling/result_ready/persisting`；普通 Agent 生成完成后可进入 `review_pending/reviewing/review_unavailable/completed`，持久 Worker 执行一次复盘，调用失败即记录为不可用，不会使用未配置的固定次数重复计费，也不改变用户已经收到的生成结果。`needs_review` 和普通终态不会被页面或 Worker 自动推进。已经保存上游任务 ID 后，恢复路径只能查询原任务；`result_ready` 只重试结果保存，不能再次创建上游任务。
+文本、图片、视频和音频任务详情接口，以及 Agent Run SSE，只会唤醒当前用户正在读取的同一持久任务。业务状态与执行阶段分离：`pending/running` 任务可处于 `created/submitting/submitted/polling/result_ready/persisting`；普通 Agent 生成完成后可进入 `review_pending/reviewing/review_unavailable/completed`，持久 Worker 执行一次复盘，调用失败即记录为不可用，不会使用未配置的固定次数重复计费，也不改变用户已经收到的生成结果。已经保存上游任务 ID 后，恢复路径只能查询原任务；`result_ready` 只重试结果保存，不能再次创建上游任务。若提交结果不确定或查询契约缺失，任务直接结束失败、释放积分暂存且不产生消费记录。
 
 - `POST /api/maintenance/generation-tasks/run`：使用 `Authorization: Bearer <VOZEB_PRO_WORKER_TOKEN>` 领取一个有界恢复批次；可通过 `x-vozeb-pro-worker-id` 同步心跳。
 - `POST /api/maintenance/generation-tasks/heartbeat`：使用相同 Worker Bearer Token 和必填 `x-vozeb-pro-worker-id` 上报心跳。
 - `POST /api/maintenance/usage-holds/run`：使用相同 Worker Bearer Token 检查一个由后台 `dataLifecycle.maintenanceBatchSize` 限定的到期用量预留批次。到期只触发调查：持久任务成功时按冻结快照结算，确认失败或确认未接收时释放，仍在处理时保留，无法确认时保留并标记人工复核；接口不会仅因年龄释放预留，也不会重新创建上游任务。
 - `POST /api/maintenance/data-lifecycle/run`：使用 `Authorization: Bearer <VOZEB_PRO_MAINTENANCE_TOKEN>` 执行一个管理员配置的有界批次，只处理已过期 Session、已过期或已使用邮箱验证码、超过自身 `expires_at` 的生成任务，以及到期且全站引用数为零的临时媒体；返回各类删除数量、媒体字节数和被引用阻止的媒体摘要。
 - `POST /api/generation-webhooks/{channelId}`：接收不超过 1MB 的 JSON；要求稳定的 `x-vozeb-pro-event-id`、5 分钟误差内的 `x-vozeb-pro-timestamp` 和 `x-vozeb-pro-signature`。签名使用当前渠道独立密钥，对 `JSON.stringify([channelId, timestamp, eventId]) + "\n" + rawBody` 生成 HMAC-SHA256 十六进制摘要。
-- `POST /api/admin/generation-operations/{type}/{id}/review`：管理员处理 `needs_review` 的 `text/image/video/audio` 任务，动作仅允许 `resume_upstream`、`provide_result` 或 `confirm_failed`。
 
 维护与 Worker 接口未配置各自令牌时返回 503，认证失败返回 401；两类令牌必须至少 32 个字符且不能相同。当前渠道未配置安全回调密钥时返回 409 并继续使用任务轮询；签名错误或时间戳过期返回 401。可信回调只按 `(channelId, upstreamTaskId)` 精确匹配一条已有图片、视频或音频任务，并使用 PostgreSQL 中的 `(channelId, eventId)` 保证幂等；相同事件 ID 对应不同载荷时记录冲突并返回 409。回调已登记但尚未匹配任务时返回成功并保留对账状态，不会创建新任务或重复扣费。以上接口均返回 `{ code, data, msg }`，日志与响应不得包含维护令牌、Worker 令牌、Webhook 密钥、渠道 API Key 或完整鉴权头。
 

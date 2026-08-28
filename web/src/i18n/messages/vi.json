@@ -1284,7 +1284,6 @@
         },
         "persistence": {
             "loadFailed": "Tải Canvas này thất bại",
-            "reviewPending": "Tác vụ này cần quản trị viên xác nhận. Hệ thống không gửi lại tác vụ.",
             "imageFailed": "Tạo hình ảnh thất bại. Vui lòng thử lại sau.",
             "videoFailed": "Tạo video thất bại. Vui lòng thử lại sau.",
             "textFailed": "Tạo văn bản thất bại. Vui lòng thử lại sau.",
@@ -1555,8 +1554,6 @@
             "generating": "Đang tạo",
             "generationFailed": "Tạo nội dung thất bại. Vui lòng thử lại sau.",
             "retry": "Thử lại",
-            "reviewRequired": "Kết quả tạo tác vụ cần quản trị viên xác nhận. Hệ thống chưa gửi lại.",
-            "checkStatus": "Kiểm tra trạng thái",
             "cancelled": "Tác vụ đã hủy",
             "unknown": "Node không xác định",
             "generateFromText": "Tạo hình ảnh từ văn bản",
@@ -1829,9 +1826,7 @@
                 "withoutReferences": "Tạo môi trường liên tục bao quanh người xem từ mô tả văn bản.",
                 "constraints": "Chỉ xuất đúng một ảnh toàn cảnh equirectangular tỷ lệ 2:1, bao phủ 360 độ theo chiều ngang và 180 độ theo chiều dọc, với người xem ở giữa cảnh. Giữ đường chân trời gần tâm dọc, nối liền tự nhiên hai mép trái phải, đồng thời hiển thị đầy đủ bầu trời hoặc trần và mặt đất hoặc sàn. Không tạo banner thông thường, viền mắt cá tròn, ảnh ghép, chữ, watermark, thành phần giao diện hoặc đường nối rõ rệt."
             },
-            "reviewPending": "Một số tác vụ cần quản trị viên xác nhận. Hệ thống không gửi lại tác vụ.",
             "videoContinuing": "Video vẫn đang được tạo trong nền. Hệ thống sẽ tiếp tục kiểm tra tác vụ ban đầu.",
-            "checkingOriginal": "Đang kiểm tra trạng thái tác vụ ban đầu và không gửi lại tác vụ.",
             "agentRetrySuccess": "Đã tạo lại tác vụ Agent",
             "titles": { "panorama": "Toàn cảnh đã tạo", "image": "Hình ảnh đã tạo", "video": "Video đã tạo", "audio": "Âm thanh đã tạo", "text": "Văn bản đã tạo", "prompt": "Prompt", "assistantText": "Văn bản của trợ lý", "config": "Cấu hình tạo" },
             "errors": {
