@@ -64,12 +64,26 @@ function LogicalModelHarness({
 
 const videoChannels = [{ id: "one", name: "渠道", baseUrl: "https://api.example.com/v1", apiKey: "", apiFormat: "openai" as const, models: ["video"], enabled: true }];
 const videoDefaults = { imageModel: "", videoModel: "video", textModel: "", audioModel: "" };
+const textChannels = [{ ...videoChannels[0], models: ["gpt-5.6-sol"] }];
+const textDefaults = { imageModel: "", videoModel: "", textModel: "gpt-5.6-sol", audioModel: "" };
 
 function videoModels(
     generationParameters?: Parameters<typeof LogicalModelHarness>[0]["logicalModels"][number]["bindings"][number]["generationParameters"],
     capabilityProfile?: Parameters<typeof LogicalModelHarness>[0]["logicalModels"][number]["bindings"][number]["capabilityProfile"],
 ) {
     return [{ id: "video", name: "视频", capability: "video" as const, enabled: true, bindings: [{ id: "video:one", channelId: "one", upstreamModel: "video", enabled: true, priority: 1, generationParameters, capabilityProfile }] }];
+}
+
+function textModels(capabilityProfile?: Parameters<typeof LogicalModelHarness>[0]["logicalModels"][number]["bindings"][number]["capabilityProfile"]) {
+    return [
+        {
+            id: "gpt-5.6-sol",
+            name: "GPT-5.6 Sol",
+            capability: "text" as const,
+            enabled: true,
+            bindings: [{ id: "gpt-5.6-sol:one", channelId: "one", upstreamModel: "gpt-5.6-sol", enabled: true, priority: 1, capabilityProfile }],
+        },
+    ];
 }
 
 async function openVideoEditor(host: HTMLElement) {
@@ -94,6 +108,26 @@ describe("admin generation controls", () => {
         } finally {
             consoleError.mockRestore();
         }
+    });
+
+    it("configures text input and output token limits while preserving the operational profile", async () => {
+        const applied = vi.fn();
+        const host = await render(<LogicalModelHarness channels={textChannels} logicalModels={textModels({ supportsAsync: false, timeoutMs: 180000, concurrencyLimit: 3 })} defaultModels={textDefaults} onApplied={applied} />);
+
+        await openVideoEditor(host);
+        expect(document.body.textContent).toContain("最大输入 Token");
+        expect(document.body.textContent).toContain("最大输出 Token");
+        await act(async () => fireEvent.change(fieldInput("最大输入 Token"), { target: { value: "1000000" } }));
+        await act(async () => fireEvent.change(fieldInput("最大输出 Token"), { target: { value: "16384" } }));
+        await userEvent.setup().click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "应用修改") as HTMLButtonElement);
+
+        expect(applied.mock.lastCall?.[0].logicalModels[0].bindings[0].capabilityProfile).toEqual({
+            supportsAsync: false,
+            timeoutMs: 180000,
+            concurrencyLimit: 3,
+            maxInputTokens: 1000000,
+            maxOutputTokens: 16384,
+        });
     });
 
     it("enables every VOZEB option for only the selected binding", async () => {

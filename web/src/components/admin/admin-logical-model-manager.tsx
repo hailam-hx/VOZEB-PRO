@@ -364,6 +364,16 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                             Webhook
                         </Checkbox>
                     </div>
+                    {capability === "text" ? (
+                        <>
+                            <LabeledControl label="最大输入 Token">
+                                <InputNumber className="w-full" min={1} precision={0} value={profile.maxInputTokens} placeholder="留空表示未配置" onChange={(value) => updateProfile({ maxInputTokens: value ? Number(value) : undefined })} />
+                            </LabeledControl>
+                            <LabeledControl label="最大输出 Token">
+                                <InputNumber className="w-full" min={1} precision={0} value={profile.maxOutputTokens} placeholder="留空表示未配置" onChange={(value) => updateProfile({ maxOutputTokens: value ? Number(value) : undefined })} />
+                            </LabeledControl>
+                        </>
+                    ) : null}
                     <LabeledControl label="请求超时（秒）">
                         <InputNumber
                             className="w-full"
