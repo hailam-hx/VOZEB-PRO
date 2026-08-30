@@ -4,20 +4,35 @@ import { describe, expect, it } from "vitest";
 import { CreativeCreditIndicator } from "./creative-credit-indicator";
 
 describe("CreativeCreditIndicator", () => {
-    it("shows the exact formatted estimate with an accessible settlement note", () => {
-        const markup = renderToStaticMarkup(<CreativeCreditIndicator estimate={{ status: "ready", credits: "1234.50000000" }} />);
+    it("shows only the exact formatted estimate with an accessible settlement note", () => {
+        for (const locale of ["zh-CN", "en", "vi"] as const) {
+            const markup = renderToStaticMarkup(<CreativeCreditIndicator estimate={{ status: "ready", credits: "1234.50000000" }} />, locale);
 
-        expect(markup).toContain('data-testid="creative-credit-estimate"');
-        expect(markup).toContain('aria-label="预计消耗 1,234.5 积分"');
-        expect(markup).toContain("预计消耗 1,234.5 积分");
-        expect(markup).toContain("实际按最终模型与用量结算");
+            expect(markup).toContain('data-testid="creative-credit-estimate"');
+            expect(markup).toContain('aria-label="1,234.5"');
+            expect(markup.match(/>1,234\.5<\/span>/g)).toHaveLength(2);
+        }
     });
 
-    it("explains non-numeric smart-planning and unavailable estimates without calling them free", () => {
-        const planning = renderToStaticMarkup(<CreativeCreditIndicator estimate={{ status: "planning" }} />);
+    it("keeps smart-planning detail accessible without rendering it visibly", () => {
+        const cases = [
+            { locale: "zh-CN", label: "预计积分：智能规划后确定", compactLabel: "规划后确定" },
+            { locale: "en", label: "Estimated credits: set after smart planning", compactLabel: "After planning" },
+            { locale: "vi", label: "Điểm ước tính: xác định sau khi lập kế hoạch", compactLabel: "Sau lập kế hoạch" },
+        ] as const;
+
+        for (const { locale, label, compactLabel } of cases) {
+            const planning = renderToStaticMarkup(<CreativeCreditIndicator estimate={{ status: "planning" }} />, locale);
+
+            expect(planning).toContain(`aria-label="${label}"`);
+            expect(planning).not.toContain(`>${label}</span>`);
+            expect(planning).not.toContain(`>${compactLabel}</span>`);
+        }
+    });
+
+    it("explains unavailable estimates without calling them free", () => {
         const unavailable = renderToStaticMarkup(<CreativeCreditIndicator estimate={{ status: "unavailable" }} />);
 
-        expect(planning).toContain("智能规划后确定");
         expect(unavailable).toContain("暂不可估算");
         expect(unavailable).not.toContain("0 积分");
     });

@@ -11,6 +11,7 @@ export function CreativeCreditIndicator({ estimate }: { estimate: CreativeCredit
     const credits = estimate.status === "ready" ? formatCreditAmount(estimate.credits) : "";
     const label = estimate.status === "ready" ? t("estimatedCreditCost", { credits }) : estimate.status === "planning" ? t("creditAfterPlanning") : t("creditUnavailable");
     const compactLabel = estimate.status === "ready" ? t("estimatedCreditAmount", { credits }) : estimate.status === "planning" ? t("creditAfterPlanningCompact") : t("creditUnavailableCompact");
+    const showLabel = estimate.status !== "planning";
     return (
         <div
             data-testid="creative-credit-estimate"
@@ -19,8 +20,12 @@ export function CreativeCreditIndicator({ estimate }: { estimate: CreativeCredit
             title={t("creditSettlementHint")}
         >
             <CreditSymbol className="text-[#6c75d8] dark:text-[#aaa6ff]" aria-hidden="true" />
-            <span className="sm:hidden">{compactLabel}</span>
-            <span className="hidden whitespace-nowrap sm:inline">{label}</span>
+            {showLabel ? (
+                <>
+                    <span className="sm:hidden">{compactLabel}</span>
+                    <span className="hidden whitespace-nowrap sm:inline">{label}</span>
+                </>
+            ) : null}
         </div>
     );
 }
