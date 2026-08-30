@@ -6,13 +6,16 @@ describe("generation parameters", () => {
     it("builds complete editable presets from every option exposed by VOZEB", () => {
         expect(fullGenerationParametersPreset("image")).toEqual({
             referenceInputs: ["image"],
-            maxReferenceImages: 1,
+            maxReferenceImages: 14,
             aspectRatios: ["1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16"],
             pixelSizes: [],
             supportsCustomSize: true,
             qualities: ["high", "medium", "low"],
             resolutions: [],
             durationSeconds: [],
+            maxBatchSize: 4,
+            supportsCustomBatchSize: true,
+            customBatchSizeRange: { min: 1, max: 30 },
             videoReferenceModes: [],
             voices: [],
             formats: [],

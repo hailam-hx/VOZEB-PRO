@@ -47,10 +47,13 @@ export function fullGenerationParametersPreset(capability: LogicalModelCapabilit
         return normalizeGenerationParameters({
             ...shared,
             referenceInputs: ["image"],
-            maxReferenceImages: 1,
+            maxReferenceImages: 14,
             aspectRatios: VOZEB_IMAGE_ASPECT_RATIOS,
             supportsCustomSize: true,
             qualities: VOZEB_IMAGE_QUALITIES,
+            maxBatchSize: 4,
+            supportsCustomBatchSize: true,
+            customBatchSizeRange: { min: 1, max: 30 },
         });
     }
     if (capability === "video") {
