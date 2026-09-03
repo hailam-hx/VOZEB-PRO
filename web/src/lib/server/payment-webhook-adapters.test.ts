@@ -1,4 +1,4 @@
-import { createSign, generateKeyPairSync } from "node:crypto";
+import { createHmac, createSign, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import type { PaymentRuntimeConfig } from "./payment-config-store";
@@ -31,6 +31,34 @@ describe("Alipay payment webhook adapter", () => {
         const parsed = resolveWebhookAdapter("alipay").parse("alipay", params.toString(), new Headers(), alipayConfig());
 
         expect(parsed.signatureValid).toBe(false);
+    });
+});
+
+describe("ZaloPay payment webhook adapter", () => {
+    it("uses the ZaloPay Key2 callback contract instead of the custom-provider signature", () => {
+        const data = JSON.stringify({
+            app_id: 2553,
+            app_trans_id: "260824_0123456789abcdef0123456789abcdef",
+            amount: 250000,
+            embed_data: JSON.stringify({ vozebProOrderId: "order-one", vozebProOrderNo: "VZ001" }),
+            zp_trans_id: 240824000000001,
+            server_time: Date.parse("2026-08-24T10:00:00.000Z"),
+        });
+        const rawBody = JSON.stringify({ data, mac: createHmac("sha256", "callback-key").update(data).digest("hex"), type: 1 });
+        const paymentConfig: PaymentRuntimeConfig = {
+            saved: { providers: {} },
+            providers: { zalopay: { enabled: true, saved: true } },
+            valuesByEnvName: { VOZEB_PRO_ZALOPAY_APP_ID: "2553", VOZEB_PRO_ZALOPAY_KEY2: "callback-key" },
+        };
+
+        expect(resolveWebhookAdapter("zalopay").parse("zalopay", rawBody, new Headers(), paymentConfig)).toMatchObject({
+            signatureValid: true,
+            eventType: "zalopay.payment.succeeded",
+            orderId: "order-one",
+            orderNo: "VZ001",
+            amountMinor: "250000",
+            currency: "VND",
+        });
     });
 });
 

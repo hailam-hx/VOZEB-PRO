@@ -140,11 +140,11 @@ Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，�
 
 `topUps` Repository 提供充值预设、权威报价快照和订单读写。`GET /api/billing/top-ups/presets` 返回 `presets`，`POST /api/billing/top-ups/quotes` 接受 `presetId` 或 `customAmountVnd`，`POST /api/billing/top-ups/orders` 保存服务端报价；客户端一旦提交积分、FX、定价版本、币种指数、USD 快照、成本或毛利字段就会被拒绝。这些接口统一返回 `{ code, data, msg }`。推荐门槛只读取已核验订单的 `nominalUsdValue`，财务汇总按原生支付币种分组并只汇总订单上的 USD 快照。
 
-后台支付配置已通过 `vozeb_pro_app_settings.payment_config` 保存；Stripe、支付宝、微信支付、PayPly 和人工确认的密钥会按字段加密存储。支付宝在同一个 Provider 配置内保存 `mode=official|face_to_face`，因此官方支付和当面付天然互斥，不会向用户暴露两个支付宝渠道。支付下单、回调验签和后台配置状态读取时优先使用后台保存值，环境变量仍作为服务器部署兜底。
+后台支付配置已通过 `vozeb_pro_app_settings.payment_config` 保存；Stripe、支付宝、微信支付、ZaloPay、PayPly 和人工确认的密钥会按字段加密存储。支付宝在同一个 Provider 配置内保存 `mode=official|face_to_face`，因此官方支付和当面付天然互斥，不会向用户暴露两个支付宝渠道。ZaloPay 保存显式环境、App ID、Key1、Key2 和可选回调/返回地址；Key1 与 Key2 不进入订单 metadata、浏览器响应或审计详情。支付下单、回调验签和后台配置状态读取时优先使用后台保存值，环境变量仍作为服务器部署兜底。
 
 ## 支付配置
 
-用户创建充值订单后，可调用 `POST /api/billing/top-ups/orders/{id}/checkout` 生成真实支付下单参数。接口会校验订单归属和状态，然后按订单支付渠道返回 Stripe Checkout 跳转链接、支付宝官方支付 `alipay.trade.page.pay` 结构化表单/链接、支付宝当面付 `alipay.trade.precreate` 二维码、微信支付 v3 Native `code_url` 二维码内容，或 PayPly 自定义接口返回的支付链接、二维码内容、结构化表单。支付宝两种模式在用户端都显示为“支付宝”。
+用户创建充值订单后，可调用 `POST /api/billing/top-ups/orders/{id}/checkout` 生成真实支付下单参数。接口会校验订单归属和状态，然后按订单支付渠道返回 Stripe Checkout 跳转链接、支付宝官方支付 `alipay.trade.page.pay` 结构化表单/链接、支付宝当面付 `alipay.trade.precreate` 二维码、微信支付 v3 Native `code_url` 二维码内容、ZaloPay `order_url`/`qr_code`，或 PayPly 自定义接口返回的支付链接、二维码内容、结构化表单。支付宝两种模式在用户端都显示为“支付宝”。ZaloPay 使用 VND 整数快照，并把 `app_trans_id` 保存为 `provider_order_id`；不需要增加数据库字段或迁移。
 
 管理员也可以在后台支付配置页直接填写渠道开关、下单密钥、回调验签密钥、PayPly 返回字段映射和返回地址。页面只返回配置状态与非密钥字段；已保存的密钥不会回显到浏览器，留空保存会保留原密钥。
 
@@ -178,6 +178,14 @@ VOZEB_PRO_WECHAT_PAY_PLATFORM_CERTIFICATE_PATH=
 VOZEB_PRO_WECHAT_PAY_NOTIFY_URL=
 VOZEB_PRO_WECHAT_PAY_WEBHOOK_TOLERANCE_SECONDS=300
 
+VOZEB_PRO_ZALOPAY_ENVIRONMENT=sandbox
+VOZEB_PRO_ZALOPAY_APP_ID=
+VOZEB_PRO_ZALOPAY_KEY1=
+VOZEB_PRO_ZALOPAY_KEY2=
+VOZEB_PRO_ZALOPAY_CALLBACK_URL=
+VOZEB_PRO_ZALOPAY_REDIRECT_URL=
+VOZEB_PRO_ZALOPAY_PREFERRED_PAYMENT_METHODS=
+
 VOZEB_PRO_PAYPLY_CHECKOUT_URL=
 VOZEB_PRO_PAYPLY_API_KEY=
 VOZEB_PRO_PAYPLY_API_KEY_HEADER=
@@ -208,7 +216,9 @@ VOZEB_PRO_PAYPLY_WEBHOOK_PAID_AT_FIELD=data.paidAt
 
 PayPly 下单由服务端向 `VOZEB_PRO_PAYPLY_CHECKOUT_URL` 发起请求，密钥只读取服务器环境变量或后台加密配置，不会返回给浏览器。默认使用 `POST + application/json`，也可通过 `VOZEB_PRO_PAYPLY_REQUEST_METHOD`、`VOZEB_PRO_PAYPLY_CONTENT_TYPE`、`VOZEB_PRO_PAYPLY_EXTRA_HEADERS` 和 `VOZEB_PRO_PAYPLY_REQUEST_TEMPLATE` 适配 GET、表单提交、额外请求头和自定义请求体模板。返回字段可通过 `VOZEB_PRO_PAYPLY_URL_FIELD`、`VOZEB_PRO_PAYPLY_QR_FIELD`、`VOZEB_PRO_PAYPLY_FORM_FIELD` 等点路径配置；表单 HTML 只在服务端解析为有限的 `action/method/fields`，脚本、事件处理器和其它节点不会进入浏览器。浏览器仅向校验后的 HTTP(S) 目标提交结构化隐藏字段，不执行上游 HTML。
 
-支付回调入口为 `/api/billing/webhooks/{provider}`。`stripe` 校验 `Stripe-Signature`，支付宝校验异步通知 RSA2 签名，微信支付校验 `Wechatpay-*` 回调头后使用 API v3 key 解密资源；PayPly 使用 `VOZEB_PRO_PAYPLY_WEBHOOK_SECRET` 或通用 `VOZEB_PRO_PAYMENT_WEBHOOK_SECRET` 做 HMAC-SHA256 验签，并可通过 `VOZEB_PRO_PAYPLY_WEBHOOK_*_FIELD` 配置回调字段路径。通过校验且状态为支付成功的回调会进入订单开通服务。
+支付回调入口为 `/api/billing/webhooks/{provider}`。`stripe` 校验 `Stripe-Signature`，支付宝校验异步通知 RSA2 签名，微信支付校验 `Wechatpay-*` 回调头后使用 API v3 key 解密资源；ZaloPay 使用 Key2 对原始 `data` 字符串执行 HMAC-SHA256，并以 `zp_trans_id` 作为支付事件和流水身份；PayPly 使用 `VOZEB_PRO_PAYPLY_WEBHOOK_SECRET` 或通用 `VOZEB_PRO_PAYMENT_WEBHOOK_SECRET` 做 HMAC-SHA256 验签，并可通过 `VOZEB_PRO_PAYPLY_WEBHOOK_*_FIELD` 配置回调字段路径。通过校验且状态为支付成功的回调会进入订单开通服务。
+
+ZaloPay 回调与 `POST /api/billing/top-ups/orders/{id}/sync` 的 Query Order 结果统一转换为 `TopUpPaymentEvent` 并进入同一 PostgreSQL settlement。两条路径都使用 `provider_order_id=app_trans_id`、`provider_payment_id=zp_trans_id` 和相同事件 ID，因此回调丢失、迟到或重复不会重复发放积分。结果页只提交站内订单 ID，服务端从订单记录读取 `app_trans_id`；redirect query 参数永远不能确认支付。V1 不自动退款、不后台轮询，也不在缺少已验证取消 URI 时硬取消已经创建的 ZaloPay 订单；只有 Query Order 明确返回已过期 `sub_return_code=-54` 时才关闭订单并释放优惠券。
 
 支付宝 `official` 与 `face_to_face` 共用 `/api/billing/webhooks/alipay`、支付宝公钥验签和 `alipay.trade.refund` 整单退款。切换模式只影响后续新建 Checkout；已经创建且尚未过期的订单继续使用订单元数据中的原支付表单或二维码。生产启用当面付前仍需使用真实支付宝沙箱/商户能力验证预下单、扫码、异步通知、迟到通知、退款和账单对账。
 

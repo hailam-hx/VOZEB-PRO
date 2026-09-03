@@ -104,7 +104,9 @@ export async function getTopUpOrderForUser(userId: string, orderId: string) {
         const repos = createPostgresRepositories(client);
         const order = await repos.topUps.getOrderById(normalizeId(orderId), true);
         if (!order || order.userId !== userId) throw new BillingInputError("充值订单不存在", 404);
-        if (order.status === "pending" && order.expiresAt && Date.parse(order.expiresAt) <= Date.now()) return (await repos.topUps.expirePendingOrder(order.id, new Date().toISOString())) || order;
+        if (order.status === "pending" && order.expiresAt && Date.parse(order.expiresAt) <= Date.now() && !(order.provider === "zalopay" && order.providerOrderId)) {
+            return (await repos.topUps.expirePendingOrder(order.id, new Date().toISOString())) || order;
+        }
         return order;
     });
 }
@@ -113,6 +115,9 @@ export async function cancelTopUpOrderForUser(userId: string, orderId: string) {
     await assertTopUpDatabase();
     return withPostgresTransaction(async (client) => {
         const repos = createPostgresRepositories(client);
+        const current = await repos.topUps.getOrderById(normalizeId(orderId), true);
+        if (!current || current.userId !== userId || current.status !== "pending") throw new BillingInputError("充值订单不存在或状态不可取消", 409);
+        if (current.provider === "zalopay" && current.providerOrderId) throw new BillingInputError("ZaloPay 订单已发起支付，请先同步支付状态", 409);
         const order = await repos.topUps.cancelPendingOrder(normalizeId(orderId), userId);
         if (!order) throw new BillingInputError("充值订单不存在或状态不可取消", 409);
         if (order.userCouponId && !(await repos.topUps.releaseCouponForOrder(order.userCouponId, order.id))) throw new BillingInputError("充值订单优惠券绑定状态不可释放", 409);

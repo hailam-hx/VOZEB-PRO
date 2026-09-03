@@ -1,4 +1,4 @@
-export type PaymentProviderId = "stripe" | "alipay" | "wechat" | "payply" | "manual";
+export type PaymentProviderId = "stripe" | "alipay" | "wechat" | "payply" | "zalopay" | "manual";
 
 export const ALIPAY_PAYMENT_MODES = ["official", "face_to_face"] as const;
 export type AlipayPaymentMode = (typeof ALIPAY_PAYMENT_MODES)[number];
@@ -186,6 +186,36 @@ export const PAYMENT_PROVIDER_DEFINITIONS: PaymentProviderDefinition[] = [
             { key: "notifyUrl", label: "支付回调地址", kind: "url", envNames: ["VOZEB_PRO_WECHAT_PAY_NOTIFY_URL"], placeholder: "默认 /api/billing/webhooks/wechat", advanced: true },
             { key: "refundNotifyUrl", label: "退款回调地址", kind: "url", envNames: ["VOZEB_PRO_WECHAT_PAY_REFUND_NOTIFY_URL"], placeholder: "可选，默认不单独接收退款回调", advanced: true },
             { key: "webhookToleranceSeconds", label: "回调时间容差秒数", kind: "text", envNames: ["VOZEB_PRO_WECHAT_PAY_WEBHOOK_TOLERANCE_SECONDS"], placeholder: "300", advanced: true },
+        ],
+    },
+    {
+        id: "zalopay",
+        name: "ZaloPay",
+        description: "适合越南市场的 ZaloPay 跳转收银台与二维码支付。",
+        checkoutKind: "跳转支付页 / 二维码",
+        checkoutFieldKeys: ["environment", "appId", "key1", "key2"],
+        webhookFieldKeys: ["appId", "key2"],
+        fields: [
+            {
+                key: "environment",
+                label: "运行环境",
+                kind: "select",
+                required: true,
+                envNames: ["VOZEB_PRO_ZALOPAY_ENVIRONMENT"],
+                options: [
+                    { label: "沙箱", value: "sandbox" },
+                    { label: "生产", value: "production" },
+                ],
+                note: "必须显式选择环境，系统不会默认连接生产环境。",
+            },
+            { key: "appId", label: "App ID", kind: "text", required: true, envNames: ["VOZEB_PRO_ZALOPAY_APP_ID"], placeholder: "ZaloPay 应用 ID" },
+            { key: "key1", label: "Key 1", kind: "secret", secret: true, required: true, envNames: ["VOZEB_PRO_ZALOPAY_KEY1"], placeholder: "下单与查询签名密钥" },
+            { key: "key2", label: "Key 2", kind: "secret", secret: true, required: true, envNames: ["VOZEB_PRO_ZALOPAY_KEY2"], placeholder: "支付回调验签密钥" },
+            { key: "callbackUrl", label: "支付回调地址", kind: "url", envNames: ["VOZEB_PRO_ZALOPAY_CALLBACK_URL"], placeholder: "默认 /api/billing/webhooks/zalopay" },
+            { key: "redirectUrl", label: "支付返回地址", kind: "url", envNames: ["VOZEB_PRO_ZALOPAY_REDIRECT_URL"], placeholder: "默认 /billing/success" },
+            { key: "preferredPaymentMethods", label: "优先支付方式", kind: "text", envNames: ["VOZEB_PRO_ZALOPAY_PREFERRED_PAYMENT_METHODS"], placeholder: "zalopay_wallet,bank_card", note: "使用英文逗号分隔；留空时由 ZaloPay 决定。", advanced: true },
+            { key: "apiBase", label: "ZaloPay API Base", kind: "url", envNames: ["VOZEB_PRO_ZALOPAY_API_BASE"], placeholder: "按运行环境自动选择", advanced: true },
+            { key: "subAppId", label: "Sub App ID", kind: "text", envNames: ["VOZEB_PRO_ZALOPAY_SUB_APP_ID"], placeholder: "可选", advanced: true },
         ],
     },
     {

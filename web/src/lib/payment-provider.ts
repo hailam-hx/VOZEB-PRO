@@ -7,6 +7,8 @@ const PAYMENT_PROVIDER_ALIASES: Record<string, string> = {
     weixin: "wechat",
     "pay-ply": "payply",
     pay_ply: "payply",
+    "zalo-pay": "zalopay",
+    zalo_pay: "zalopay",
 };
 
 export function normalizePaymentProvider(value: unknown, fallback = "manual") {

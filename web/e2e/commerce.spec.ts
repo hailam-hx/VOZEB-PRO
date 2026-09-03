@@ -147,6 +147,63 @@ test("preset or custom top-up uses a server quote, checks out, receives paid SSE
     await expectVisibleControlsWithinViewport(page, `top-up paid controls ${testInfo.project.name}`);
 });
 
+test("ZaloPay checkout shows QR and only a server sync can confirm a pending return", async ({ page }, testInfo) => {
+    await setProjectTheme(page, testInfo.project.name === "mobile-430" ? "dark" : "light");
+    const pendingOrder = {
+        ...paidOrder(),
+        provider: "zalopay",
+        providerOrderId: "260824_0123456789abcdef0123456789abcdef",
+        status: "pending",
+        paymentState: "pending",
+        creditGrantState: "pending",
+        paidAt: undefined,
+    };
+    const syncedOrder = { ...pendingOrder, status: "paid", paymentState: "paid", creditGrantState: "granted", providerPaymentId: "240824000000001", paidAt: TIMESTAMP };
+    let syncCalls = 0;
+    await page.addInitScript(() => {
+        window.open = () => ({ opener: null, location: { replace: () => undefined }, close: () => undefined }) as unknown as Window;
+    });
+    await page.route(/\/api\/billing\/top-ups\/presets$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { presets: [preset], paymentProviders: ["zalopay"] }, msg: "" }) }));
+    await page.route(/\/api\/billing\/top-ups\/quotes$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { quote: quote() }, msg: "" }) }));
+    await page.route(/\/api\/billing\/top-ups\/orders$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { order: pendingOrder }, msg: "" }) }));
+    await page.route(/\/api\/billing\/top-ups\/orders\/e2e-top-up-order\/checkout$/, (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                code: 0,
+                data: {
+                    checkout: { provider: "zalopay", orderId: pendingOrder.id, orderNo: pendingOrder.orderNo, kind: "redirect", url: "https://checkout.fixture/zalopay", qrContent: "zalopay-qr-content", providerOrderId: pendingOrder.providerOrderId },
+                },
+                msg: "",
+            }),
+        }),
+    );
+    await page.route(/\/api\/billing\/top-ups\/orders\/e2e-top-up-order\/events$/, (route) =>
+        route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" }, body: `data: ${JSON.stringify({ code: 0, data: { order: pendingOrder }, msg: "" })}\n\n` }),
+    );
+    await page.route(/\/api\/billing\/top-ups\/orders\/e2e-top-up-order\/sync$/, async (route) => {
+        syncCalls += 1;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { order: syncedOrder, syncStatus: "paid" }, msg: "" }) });
+    });
+    await page.route(/\/api\/auth\/session$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ user: null }) }));
+    await page.route(/\/api\/points(?:\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ records: [], total: 0, page: 1, pageSize: 1 }) }));
+
+    await page.goto("/billing/checkout", { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("ZaloPay", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: /确认并支付/ }).click();
+    await expect(page.getByRole("heading", { name: "订单已创建" })).toBeVisible();
+    await expect(page.locator("canvas")).toBeVisible();
+    await page.getByRole("button", { name: "前往支付" }).click();
+    await expect(page.getByRole("heading", { name: "等待确认" })).toBeVisible();
+    expect(syncCalls).toBe(0);
+    await page.getByRole("button", { name: "重新检查" }).click();
+    await expect.poll(() => syncCalls).toBe(1);
+    await expect(page.getByRole("heading", { name: "支付成功" })).toBeVisible();
+    await expectNoHorizontalOverflow(page, `ZaloPay result ${testInfo.project.name}`);
+    await expectVisibleControlsWithinViewport(page, `ZaloPay result controls ${testInfo.project.name}`);
+});
+
 test("invalid admin top-up preset stays in form validation without an unhandled rejection", async ({ page }) => {
     const pageErrors: string[] = [];
     const formWarnings: string[] = [];

@@ -26,6 +26,20 @@ describe("payment provider checkout readiness", () => {
     it("rejects an unsupported Alipay mode", () => {
         expect(isPaymentRuntimeProviderCheckoutReady(config({ alipay: { enabled: true, saved: true } }, alipayValues("both")), "alipay")).toBe(false);
     });
+
+    it("requires both ZaloPay signing keys and an explicit environment", () => {
+        const provider = { zalopay: { enabled: true, saved: true } };
+        const values = {
+            VOZEB_PRO_ZALOPAY_ENVIRONMENT: "sandbox",
+            VOZEB_PRO_ZALOPAY_APP_ID: "2553",
+            VOZEB_PRO_ZALOPAY_KEY1: "create-query-key",
+            VOZEB_PRO_ZALOPAY_KEY2: "callback-key",
+        };
+
+        expect(isPaymentRuntimeProviderCheckoutReady(config(provider, values), "zalopay")).toBe(true);
+        expect(isPaymentRuntimeProviderCheckoutReady(config(provider, { ...values, VOZEB_PRO_ZALOPAY_KEY2: "" }), "zalopay")).toBe(false);
+        expect(isPaymentRuntimeProviderCheckoutReady(config(provider, { ...values, VOZEB_PRO_ZALOPAY_ENVIRONMENT: "live" }), "zalopay")).toBe(false);
+    });
 });
 
 function config(providers: PaymentRuntimeConfig["providers"] = {}, valuesByEnvName: Record<string, string> = {}): PaymentRuntimeConfig {

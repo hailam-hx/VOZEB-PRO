@@ -264,6 +264,7 @@ function normalizePaymentProviderId(value: string): PaymentProviderId | undefine
     if (provider === "alipay" || provider === "ali") return "alipay";
     if (provider === "wechat" || provider === "wxpay" || provider === "wechatpay" || provider === "weixin") return "wechat";
     if (provider === "payply") return "payply";
+    if (provider === "zalopay" || provider === "zalo") return "zalopay";
     if (provider === "manual" || provider === "custom") return "manual";
     return undefined;
 }

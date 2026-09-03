@@ -2836,6 +2836,7 @@
             "missingOrder": "缺少订单信息",
             "connectionInterrupted": "支付确认连接已中断，请重新检查。",
             "loadFailed": "订单状态加载失败",
+            "syncFailed": "无法与 ZaloPay 同步支付状态，请稍后重试。",
             "confirming": "正在确认支付状态…",
             "checkAgain": "重新检查",
             "orderNumber": "订单号",
@@ -2889,6 +2890,7 @@
                 "stripe": { "label": "国际银行卡", "description": "通过 Stripe 使用银行卡安全支付" },
                 "alipay": { "label": "支付宝", "description": "使用支付宝完成支付" },
                 "wechat": { "label": "微信支付", "description": "使用微信支付完成付款" },
+                "zalopay": { "label": "ZaloPay", "description": "通过 ZaloPay 钱包、银行卡或二维码付款" },
                 "payply": { "label": "PayPly", "description": "通过 PayPly 完成支付" },
                 "manual": { "label": "线下支付", "description": "根据转账与确认说明完成支付" }
             },

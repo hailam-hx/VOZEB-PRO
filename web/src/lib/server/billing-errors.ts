@@ -10,3 +10,9 @@ export class BillingInputError extends Error {
 export function isBillingInputError(error: unknown): error is BillingInputError {
     return error instanceof BillingInputError;
 }
+
+export class PaymentWebhookProcessingError extends Error {
+    constructor(readonly cause?: unknown) {
+        super("支付回调处理失败");
+    }
+}

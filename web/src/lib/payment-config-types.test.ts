@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import { getAlipayPaymentModePresentation, PAYMENT_PROVIDER_DEFINITIONS } from "./payment-config-types";
 
 describe("payment provider definitions", () => {
+    it("defines ZaloPay with explicit environment and separate create/callback keys", () => {
+        const provider = PAYMENT_PROVIDER_DEFINITIONS.find((item) => item.id === "zalopay");
+
+        expect(provider).toMatchObject({
+            id: "zalopay",
+            checkoutFieldKeys: ["environment", "appId", "key1", "key2"],
+            webhookFieldKeys: ["appId", "key2"],
+        });
+        expect(provider?.fields.find((field) => field.key === "environment")?.options).toEqual([
+            { label: "沙箱", value: "sandbox" },
+            { label: "生产", value: "production" },
+        ]);
+        expect(provider?.fields.find((field) => field.key === "key1")).toMatchObject({ secret: true, required: true });
+        expect(provider?.fields.find((field) => field.key === "key2")).toMatchObject({ secret: true, required: true });
+    });
+
     it("exposes one mutually exclusive Alipay mode selector", () => {
         const providers = PAYMENT_PROVIDER_DEFINITIONS.filter((provider) => provider.id === "alipay");
         const mode = providers[0]?.fields.find((field) => field.key === "mode");

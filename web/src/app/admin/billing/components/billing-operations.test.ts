@@ -13,6 +13,7 @@ describe("admin billing form validation", () => {
 describe("admin top-up order presentation", () => {
     it("labels manual payment and exposes only valid finance actions", () => {
         expect(adminTopUpProviderLabel("manual")).toBe("人工确认");
+        expect(adminTopUpProviderLabel("zalopay")).toBe("ZaloPay");
         expect(adminTopUpProviderLabel("stripe")).toBe("stripe");
         expect(adminTopUpOrderActions({ provider: "manual", status: "pending" })).toEqual(["receive", "close"]);
         expect(adminTopUpOrderActions({ provider: "manual", status: "paid" })).toEqual(["refund"]);

@@ -44,4 +44,28 @@ describe("fiat top-up checkout provider", () => {
         expect(body.get("line_items[0][price_data][unit_amount]")).toBe("250000");
         expect(body.get("line_items[0][price_data][currency]")).toBe("vnd");
     });
+
+    it("dispatches ZaloPay checkout through the shared provider abstraction", async () => {
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ return_code: 1, order_url: "https://sbgateway.zalopay.vn/pay/order-one", qr_code: "qr-content" }), { status: 200 }));
+        vi.stubGlobal("fetch", fetchMock);
+        const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+
+        const checkout = await createProviderCheckout(
+            "zalopay",
+            { ...order, provider: "zalopay", expiresAt },
+            { origin: "https://app.test" },
+            {
+                saved: { providers: {} },
+                providers: { zalopay: { enabled: true, saved: true } },
+                valuesByEnvName: {
+                    VOZEB_PRO_ZALOPAY_ENVIRONMENT: "sandbox",
+                    VOZEB_PRO_ZALOPAY_APP_ID: "2553",
+                    VOZEB_PRO_ZALOPAY_KEY1: "key-one",
+                    VOZEB_PRO_ZALOPAY_KEY2: "key-two",
+                },
+            },
+        );
+
+        expect(checkout).toMatchObject({ provider: "zalopay", kind: "redirect", qrContent: "qr-content" });
+    });
 });

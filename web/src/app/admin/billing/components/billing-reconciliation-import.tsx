@@ -17,6 +17,7 @@ const providerOptions = [
     { label: "Stripe", value: "stripe" },
     { label: "支付宝", value: "alipay" },
     { label: "微信支付", value: "wechat" },
+    { label: "ZaloPay", value: "zalopay" },
     { label: "PayPly", value: "payply" },
     { label: "人工确认", value: "manual" },
 ];
@@ -319,6 +320,7 @@ function providerLabel(provider: string) {
     if (provider === "stripe") return "Stripe";
     if (provider === "alipay") return "支付宝";
     if (provider === "wechat") return "微信支付";
+    if (provider === "zalopay") return "ZaloPay";
     if (provider === "payply") return "PayPly";
     if (provider === "manual") return "人工确认";
     return provider || "-";

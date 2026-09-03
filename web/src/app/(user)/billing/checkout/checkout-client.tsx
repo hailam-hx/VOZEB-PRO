@@ -14,10 +14,11 @@ import { formatVndAmount as formatVnd } from "@/lib/billing/money";
 import { createTopUpCheckout, createTopUpOrder, listTopUpPresets, quoteTopUpOrder, type PaymentCheckout, type TopUpPreset, type TopUpQuote, type TopUpSelection } from "@/services/api/billing";
 import { openPaymentCheckoutWindow } from "./payment-checkout-window";
 
-const providerOptions = [
+export const billingCheckoutProviderOptions = [
     { value: "stripe", icon: CreditCard },
     { value: "alipay", icon: Landmark },
     { value: "wechat", icon: QrCode },
+    { value: "zalopay", icon: WalletCards },
     { value: "payply", icon: WalletCards },
     { value: "manual", icon: FileText },
 ] as const;
@@ -48,7 +49,7 @@ export function BillingCheckoutPage({ initialPresetId, initialAmountVnd, promoti
         if (customMode) return /^[1-9]\d*$/.test(customAmount) ? { customAmountVnd: customAmount, ...discountIds } : null;
         return presetId ? { presetId, ...discountIds } : null;
     }, [customAmount, customMode, presetId, promotionId, userCouponId]);
-    const availableProviders = useMemo(() => providerOptions.filter((item) => providers.includes(item.value)), [providers]);
+    const availableProviders = useMemo(() => billingCheckoutProviderOptions.filter((item) => providers.includes(item.value)), [providers]);
 
     useEffect(() => {
         let active = true;

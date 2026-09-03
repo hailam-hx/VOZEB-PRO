@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
     lockCoupon: vi.fn(),
     cancelOrder: vi.fn(),
     releaseCoupon: vi.fn(),
+    getOrderById: vi.fn(),
+    expirePendingOrder: vi.fn(),
     getPaymentConfig: vi.fn(),
 }));
 
@@ -27,6 +29,8 @@ vi.mock("@/lib/server/database", async (importOriginal) => ({
             lockCoupon: mocks.lockCoupon,
             cancelPendingOrder: mocks.cancelOrder,
             releaseCouponForOrder: mocks.releaseCoupon,
+            getOrderById: mocks.getOrderById,
+            expirePendingOrder: mocks.expirePendingOrder,
         },
     })),
 }));
@@ -35,7 +39,7 @@ vi.mock("@/lib/server/payment-config-store", () => ({
     isPaymentRuntimeProviderCheckoutReady: vi.fn(() => true),
 }));
 
-import { cancelTopUpOrderForUser, createTopUpOrder, saveTopUpPreset } from "./top-up-commerce-service";
+import { cancelTopUpOrderForUser, createTopUpOrder, getTopUpOrderForUser, saveTopUpPreset } from "./top-up-commerce-service";
 
 describe("top-up commerce service", () => {
     beforeEach(() => {
@@ -50,6 +54,8 @@ describe("top-up commerce service", () => {
         mocks.createOrder.mockImplementation(async (value) => value);
         mocks.lockCoupon.mockResolvedValue(true);
         mocks.releaseCoupon.mockResolvedValue(true);
+        mocks.getOrderById.mockResolvedValue({ id: "order-one", userId: "user-one", provider: "payply", status: "pending" });
+        mocks.expirePendingOrder.mockResolvedValue({ id: "order-one", userId: "user-one", provider: "payply", status: "canceled" });
     });
 
     it("releases the coupon bound to a canceled pending order in the same transaction", async () => {
@@ -58,6 +64,21 @@ describe("top-up commerce service", () => {
         await cancelTopUpOrderForUser("user-one", "order-one");
 
         expect(mocks.releaseCoupon).toHaveBeenCalledWith("coupon-one", expect.any(String));
+    });
+
+    it("blocks local cancellation after a ZaloPay checkout has been created", async () => {
+        mocks.getOrderById.mockResolvedValue({ id: "order-one", userId: "user-one", provider: "zalopay", providerOrderId: "260824_transaction", status: "pending" });
+
+        await expect(cancelTopUpOrderForUser("user-one", "order-one")).rejects.toMatchObject({ status: 409 });
+        expect(mocks.cancelOrder).not.toHaveBeenCalled();
+    });
+
+    it("does not auto-expire a pending ZaloPay order that exists at the provider", async () => {
+        const order = { id: "order-one", userId: "user-one", provider: "zalopay", providerOrderId: "260824_transaction", status: "pending", expiresAt: "2020-01-01T00:00:00.000Z" };
+        mocks.getOrderById.mockResolvedValue(order);
+
+        expect(await getTopUpOrderForUser("user-one", "order-one")).toBe(order);
+        expect(mocks.expirePendingOrder).not.toHaveBeenCalled();
     });
 
     it("rejects a fractional VND admin preset", async () => {

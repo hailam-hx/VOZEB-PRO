@@ -2971,6 +2971,7 @@
             "missingOrder": "Thiếu thông tin đơn hàng",
             "connectionInterrupted": "Kết nối xác nhận thanh toán bị gián đoạn. Hãy kiểm tra lại.",
             "loadFailed": "Không thể tải trạng thái đơn hàng",
+            "syncFailed": "Không thể đồng bộ trạng thái với ZaloPay. Hãy thử lại sau.",
             "confirming": "Đang xác nhận trạng thái thanh toán…",
             "checkAgain": "Kiểm tra lại",
             "orderNumber": "Mã đơn hàng",
@@ -3024,6 +3025,7 @@
                 "stripe": { "label": "Thẻ quốc tế", "description": "Thanh toán bằng thẻ qua Stripe" },
                 "alipay": { "label": "Alipay", "description": "Thanh toán bằng Alipay" },
                 "wechat": { "label": "WeChat Pay", "description": "Thanh toán bằng WeChat Pay" },
+                "zalopay": { "label": "ZaloPay", "description": "Thanh toán qua ví, ngân hàng hoặc mã QR ZaloPay" },
                 "payply": { "label": "PayPly", "description": "Thanh toán qua PayPly" },
                 "manual": { "label": "Thanh toán thủ công", "description": "Làm theo hướng dẫn chuyển khoản và xác nhận" }
             },

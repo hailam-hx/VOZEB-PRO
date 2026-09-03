@@ -88,6 +88,14 @@ export async function cancelTopUpOrder(orderId: string) {
     return requestCommerce<{ order: TopUpOrder }>(`${TOP_UP_ROUTE}/orders/${encodeURIComponent(orderId)}/cancel`, { method: "POST" });
 }
 
+export async function syncTopUpOrder(orderId: string) {
+    return requestCommerce<{ order: TopUpOrder; syncStatus: "paid" | "pending" | "already_final" }>(`${TOP_UP_ROUTE}/orders/${encodeURIComponent(orderId)}/sync`, { method: "POST" });
+}
+
+export async function checkTopUpOrder(order: Pick<TopUpOrder, "id" | "provider">) {
+    return order.provider === "zalopay" ? syncTopUpOrder(order.id) : getTopUpOrder(order.id);
+}
+
 export async function createTopUpCheckout(orderId: string) {
     return requestCommerce<{ checkout: PaymentCheckout }>(`${TOP_UP_ROUTE}/orders/${encodeURIComponent(orderId)}/checkout`, jsonPost({}));
 }

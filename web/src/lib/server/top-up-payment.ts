@@ -75,32 +75,18 @@ export function assertFiatTopUpCheckout(input: unknown) {
 
 export async function processTopUpPaymentEvent(event: TopUpPaymentEvent, store: TopUpPaymentSettlementStore) {
     if (!event.signatureValid) throw new BillingInputError("支付回调签名无效", 401);
-    const eventId = required(event.eventId, "支付回调事件编号不能为空");
     const orderId = required(event.orderId, "支付回调订单编号不能为空");
     const order = await store.getLockedOrder(orderId);
     if (!order) throw new BillingInputError("充值订单不存在", 404);
-    if (required(event.provider, "支付回调渠道不能为空") !== order.provider) throw new BillingInputError("支付回调渠道与订单渠道不一致", 409);
-    if (event.orderId !== order.id || event.orderNo !== order.orderNo) throw new BillingInputError("支付回调订单身份与订单快照不一致", 409);
-    if (!acceptedPaidStatus(event.status)) throw new BillingInputError("支付回调状态尚未确认付款", 409);
-    if (!event.providerPaymentId?.trim()) throw new BillingInputError("支付交易编号不能为空", 409);
-    let amount: PaymentAmount;
-    try {
-        amount = validatePaymentAmount(event.amount);
-    } catch (error) {
-        throw new BillingInputError(`支付金额无效：${error instanceof Error ? error.message : "未知错误"}`, 409);
-    }
-    if (!sameAmount(amount, order.paymentAmount)) throw new BillingInputError("支付金额或币种与订单快照不一致", 409);
-    if (order.paymentState === "refunded" || order.creditRecoveryState === "recovered") throw new BillingInputError("退款完成后的支付事件必须人工复核", 409);
-
-    const normalizedEvent = { ...event, eventId, orderId, amount };
+    const normalizedEvent = validateTopUpPaymentEventForOrder(event, order);
     const eventFingerprint = fingerprint({
         provider: event.provider,
-        eventId,
+        eventId: normalizedEvent.eventId,
         eventType: event.eventType,
-        orderId,
+        orderId: normalizedEvent.orderId,
         orderNo: event.orderNo,
         status: event.status,
-        amount,
+        amount: normalizedEvent.amount,
         providerOrderId: event.providerOrderId || "",
         providerPaymentId: event.providerPaymentId,
     });
@@ -115,6 +101,25 @@ export async function processTopUpPaymentEvent(event: TopUpPaymentEvent, store: 
     });
     if (result === "conflict") throw new BillingInputError("支付回调事件编号已对应不同载荷", 409);
     return { applied: result === "applied", duplicate: result === "duplicate", orderId: order.id, orderNo: order.orderNo, creditAmount: order.creditAmount, businessId };
+}
+
+export function validateTopUpPaymentEventForOrder(event: TopUpPaymentEvent, order: TopUpOrder): TopUpPaymentEvent {
+    if (!event.signatureValid) throw new BillingInputError("支付回调签名无效", 401);
+    const eventId = required(event.eventId, "支付回调事件编号不能为空");
+    const orderId = required(event.orderId, "支付回调订单编号不能为空");
+    if (required(event.provider, "支付回调渠道不能为空") !== order.provider) throw new BillingInputError("支付回调渠道与订单渠道不一致", 409);
+    if (orderId !== order.id || event.orderNo !== order.orderNo) throw new BillingInputError("支付回调订单身份与订单快照不一致", 409);
+    if (!acceptedPaidStatus(event.status)) throw new BillingInputError("支付回调状态尚未确认付款", 409);
+    if (!event.providerPaymentId?.trim()) throw new BillingInputError("支付交易编号不能为空", 409);
+    let amount: PaymentAmount;
+    try {
+        amount = validatePaymentAmount(event.amount);
+    } catch (error) {
+        throw new BillingInputError(`支付金额无效：${error instanceof Error ? error.message : "未知错误"}`, 409);
+    }
+    if (!sameAmount(amount, order.paymentAmount)) throw new BillingInputError("支付金额或币种与订单快照不一致", 409);
+    if (order.paymentState === "refunded" || order.creditRecoveryState === "recovered") throw new BillingInputError("退款完成后的支付事件必须人工复核", 409);
+    return { ...event, eventId, orderId, amount };
 }
 
 function acceptedPaidStatus(value: string) {

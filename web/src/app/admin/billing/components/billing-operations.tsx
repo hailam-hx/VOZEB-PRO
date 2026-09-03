@@ -1038,6 +1038,7 @@ export async function resolveFormValidation<T>(validation: Promise<T>) {
     }
 }
 export function adminTopUpProviderLabel(provider: string) {
+    if (provider === "zalopay") return "ZaloPay";
     return provider === "manual" ? "人工确认" : provider;
 }
 export function adminTopUpOrderActions(order: Pick<TopUpOrder, "provider" | "status">): Array<"receive" | "close" | "refund"> {

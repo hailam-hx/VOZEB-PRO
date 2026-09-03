@@ -5,6 +5,8 @@ import { BillingInputError } from "@/lib/server/billing-errors";
 import type { JsonValue } from "@/lib/server/database";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
 import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
+import { assertZaloPayWebhookOrder, parseZaloPayCallback } from "./zalopay-payment-provider";
+import type { TopUpOrder } from "./top-up-payment";
 
 type WebhookStatus = "succeeded" | "ignored";
 
@@ -23,8 +25,9 @@ export type ParsedPaymentWebhook = {
     signatureValid: boolean;
 };
 
-type PaymentWebhookAdapter = {
+export type PaymentWebhookAdapter = {
     parse(provider: string, rawBody: string, headers: Headers, paymentConfig: PaymentRuntimeConfig): ParsedPaymentWebhook;
+    assertOrder?(parsed: ParsedPaymentWebhook, order: TopUpOrder): void;
 };
 
 const customWebhookAdapter: PaymentWebhookAdapter = {
@@ -146,10 +149,18 @@ const wechatWebhookAdapter: PaymentWebhookAdapter = {
     },
 };
 
+const zalopayWebhookAdapter: PaymentWebhookAdapter = {
+    parse(_provider, rawBody, _headers, paymentConfig) {
+        return parseZaloPayCallback(rawBody, paymentConfig);
+    },
+    assertOrder: assertZaloPayWebhookOrder,
+};
+
 export function resolveWebhookAdapter(provider: string) {
     if (provider === "stripe") return stripeWebhookAdapter;
     if (provider === "alipay") return alipayWebhookAdapter;
     if (provider === "wechat") return wechatWebhookAdapter;
+    if (provider === "zalopay") return zalopayWebhookAdapter;
     return customWebhookAdapter;
 }
 

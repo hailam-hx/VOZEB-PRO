@@ -2951,6 +2951,7 @@
             "missingOrder": "Order information is missing",
             "connectionInterrupted": "The payment confirmation connection was interrupted. Check again.",
             "loadFailed": "Unable to load the order status",
+            "syncFailed": "Unable to sync the payment status with ZaloPay. Try again later.",
             "confirming": "Confirming payment status…",
             "checkAgain": "Check again",
             "orderNumber": "Order number",
@@ -3004,6 +3005,7 @@
                 "stripe": { "label": "International card", "description": "Pay securely by card through Stripe" },
                 "alipay": { "label": "Alipay", "description": "Pay with Alipay" },
                 "wechat": { "label": "WeChat Pay", "description": "Pay with WeChat Pay" },
+                "zalopay": { "label": "ZaloPay", "description": "Pay by ZaloPay wallet, bank, or QR code" },
                 "payply": { "label": "PayPly", "description": "Pay through PayPly" },
                 "manual": { "label": "Manual payment", "description": "Follow transfer and confirmation instructions" }
             },

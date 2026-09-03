@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { cancelTopUpOrder, getTopUpOrder, subscribeTopUpOrder, type TopUpOrder } from "@/services/api/billing";
+import { cancelTopUpOrder, checkTopUpOrder, subscribeTopUpOrder, type TopUpOrder } from "@/services/api/billing";
 import { listPointRecords } from "@/services/api/points";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
@@ -82,9 +82,9 @@ export function BillingResultPage({ mode, orderId }: { mode: "success" | "cancel
         if (!orderId || checking) return;
         setChecking(true);
         try {
-            applyOrder((await getTopUpOrder(orderId)).order);
+            applyOrder((await checkTopUpOrder({ id: orderId, provider: order?.provider || "" })).order);
         } catch {
-            setError(t("loadFailed"));
+            setError(t(order?.provider === "zalopay" ? "syncFailed" : "loadFailed"));
         } finally {
             setChecking(false);
         }

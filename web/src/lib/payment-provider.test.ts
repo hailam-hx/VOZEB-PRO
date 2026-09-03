@@ -8,6 +8,8 @@ describe("payment provider normalization", () => {
         expect(normalizePaymentProvider("ALI")).toBe("alipay");
         expect(normalizePaymentProvider("wechatPay")).toBe("wechat");
         expect(normalizePaymentProvider("pay_ply")).toBe("payply");
+        expect(normalizePaymentProvider("zalo-pay")).toBe("zalopay");
+        expect(normalizePaymentProvider("zalo_pay")).toBe("zalopay");
     });
 
     it("preserves custom provider ids and caller fallbacks", () => {

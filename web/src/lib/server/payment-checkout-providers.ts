@@ -11,6 +11,7 @@ import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import type { CreatePaymentCheckoutOptions, PaymentCheckoutKind, PaymentCheckoutResult } from "./payment-checkout-types";
 import { normalizePaymentForm, type PaymentForm } from "./payment-form";
 import { assertFiatTopUpCheckout, type TopUpOrder } from "./top-up-payment";
+import { createZaloPayCheckout } from "./zalopay-payment-provider";
 
 type CheckoutOrder = TopUpOrder;
 
@@ -18,6 +19,7 @@ export async function createProviderCheckout(provider: string, order: CheckoutOr
     if (provider === "stripe") return createStripeCheckout(order, options, paymentConfig);
     if (provider === "alipay") return createAlipayCheckout(order, options, paymentConfig);
     if (provider === "wechat") return createWechatNativeCheckout(order, options, paymentConfig);
+    if (provider === "zalopay") return createZaloPayCheckout(order, options, paymentConfig);
     if (provider === "payply") return createPayplyCheckout(order, options, paymentConfig);
     if (provider === "manual" || provider === "custom") return createManualCheckout(provider, order);
     throw new BillingInputError("暂不支持该支付渠道", 400);
