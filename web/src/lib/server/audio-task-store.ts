@@ -58,7 +58,7 @@ export async function updateAudioTask(id: string, patch: Partial<Pick<AudioTask,
 export function transitionAudioTask(
     task: AudioTask,
     allowedStatuses: Array<AudioTask["status"]>,
-    patch: Partial<Pick<AudioTask, "config" | "upstream" | "result" | "billing" | "error">> & { status: AudioTask["status"] },
+    patch: Partial<Pick<AudioTask, "config" | "candidateConfigs" | "upstream" | "result" | "billing" | "error">> & { status: AudioTask["status"] },
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
 ) {
     return transitionStoredGenerationTask<AudioTask>("audio", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch);

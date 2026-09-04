@@ -46,7 +46,7 @@ export function resolveAudioGenerationCandidates<T extends GenerationCandidate>(
     return resolveCandidates(candidates, (candidate) => {
         const parameters = candidate.generationParameters as LogicalModelGenerationParameters | undefined;
         const selection = config?.voiceSelection && typeof config.voiceSelection === "object" ? (config.voiceSelection as Record<string, unknown>) : undefined;
-        const voice = selection ? concreteText(config?.voice) : resolveText(config?.voice, defaults.audioVoice, parameters, parameters?.voices, (value) => ({ voice: value }));
+        const voice = selection ? undefined : resolveText(config?.voice, defaults.audioVoice, parameters, parameters?.voices, (value) => ({ voice: value }));
         const format = resolveText(config?.format, defaults.audioFormat, parameters, parameters?.formats, (value) => ({ format: value }));
         const explicitSpeed = positiveNumber(config?.speed);
         const speedAllowed = parameters?.speedAppliesTo !== "cloned" || selection?.type === "profile";

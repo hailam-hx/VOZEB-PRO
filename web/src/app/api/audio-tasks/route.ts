@@ -13,6 +13,8 @@ import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { resolveAudioGenerationCandidates } from "@/lib/server/capability-constraints";
+import { retryAudioTaskAfterCapabilityChange } from "@/lib/server/audio-task-capability-retry";
+import { publicAudioTaskError } from "@/lib/server/audio-task-public";
 import { AudioVoiceError, resolveAudioVoiceCandidates } from "@/lib/server/audio-voice-service";
 import { normalizeVoiceSelection, resolveAudioTaskSource, unicodeCodePointCount } from "@/lib/voice-selection";
 
@@ -60,7 +62,14 @@ export async function POST(request: Request) {
         const requestId = body.context?.clientRequestId?.trim();
         if (requestId) {
             const existing = await getStoredGenerationTaskByRequest<AudioTask>("audio", user.id, requestId, body.context?.attemptNo);
-            if (existing) return NextResponse.json({ task: publicTask(existing) });
+            if (existing) {
+                const retried = await retryAudioTaskAfterCapabilityChange(existing, configs[0], configs.slice(1));
+                if (retried) {
+                    const origin = resolveInternalOrigin(new URL(request.url).origin);
+                    after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [retried.id] }));
+                }
+                return NextResponse.json({ task: publicTask(retried || existing) });
+            }
         }
         const task = await createAudioTask({
             ...(body.context || {}),
@@ -81,7 +90,7 @@ export async function POST(request: Request) {
 }
 
 function publicTask(task: AudioTask) {
-    return { id: task.id, status: task.status, model: generationModelId(task.config), result: task.result, error: task.error };
+    return { id: task.id, status: task.status, model: generationModelId(task.config), result: task.result, error: publicAudioTaskError(task) };
 }
 
 function clean(value: unknown, max: number) {

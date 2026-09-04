@@ -125,6 +125,17 @@ describe("generation capability constraints", () => {
         expect(result.candidates).toEqual([expect.objectContaining({ id: "audio", voice: "nova", format: "wav", speed: "1.25" })]);
     });
 
+    it("defers a cloned profile provider voice to the owned profile resolver", () => {
+        const result = resolveAudioGenerationCandidates(
+            [{ id: "audio", generationParameters: { audioOperation: "speech", supportsClonedVoices: true, voices: ["alloy"], formats: ["mp3"] } }],
+            { voiceSelection: { type: "profile", voiceProfileId: "profile-one" }, voice: "provider-private-voice", format: "mp3" },
+            { audioVoice: "alloy", audioFormat: "mp3" },
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.candidates).toEqual([expect.objectContaining({ id: "audio", format: "mp3" })]);
+    });
+
     it("uses the binding speed minimum instead of inventing speed one", () => {
         const result = resolveAudioGenerationCandidates([{ id: "audio", generationParameters: { speedRange: { min: 0.5, max: 2 } } }], { speed: "auto" }, { audioVoice: "auto", audioFormat: "auto" });
 

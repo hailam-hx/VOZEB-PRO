@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
     scheduleGenerationTask: vi.fn(),
     checkGenerationRateLimit: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(),
+    getStoredGenerationTaskByRequest: vi.fn(),
+    transitionAudioTask: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -31,7 +33,11 @@ vi.mock("@/lib/auth/store", () => {
         refundUserPoints: vi.fn(),
     };
 });
-vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit, linkStoredGenerationTask: vi.fn() }));
+vi.mock("@/lib/server/generation-task-store", () => ({
+    withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit,
+    getStoredGenerationTaskByRequest: mocks.getStoredGenerationTaskByRequest,
+    linkStoredGenerationTask: vi.fn(),
+}));
 vi.mock("@/lib/server/security", () => ({
     checkGenerationRateLimit: mocks.checkGenerationRateLimit,
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
@@ -39,7 +45,7 @@ vi.mock("@/lib/server/security", () => ({
 vi.mock("@/lib/server/audio-task-store", () => ({
     createAudioTask: mocks.createAudioTask,
     getAudioTask: vi.fn(),
-    transitionAudioTask: vi.fn(),
+    transitionAudioTask: mocks.transitionAudioTask,
     updateAudioTask: vi.fn(),
 }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
@@ -51,6 +57,8 @@ describe("audio task model routing", () => {
         vi.clearAllMocks();
         mocks.checkGenerationRateLimit.mockResolvedValue({ allowed: true, remaining: 19, resetAt: Date.now() + 60_000 });
         mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
+        mocks.getStoredGenerationTaskByRequest.mockResolvedValue(null);
+        mocks.transitionAudioTask.mockImplementation(async (task, _statuses, patch) => ({ ...task, ...patch }));
     });
 
     it("skips an incompatible binding and creates the task with the compatible profile", async () => {
@@ -110,6 +118,26 @@ describe("audio task model routing", () => {
         expect(mocks.createAudioTask.mock.calls[0][0].config.speed).toBeUndefined();
     });
 
+    it("resumes the same request after a safe pre-submission capability failure", async () => {
+        mocks.getAuthSettings.mockResolvedValue(audioSettings([generationParameters({ voices: ["nova"] }), generationParameters({ voices: ["alloy"] })]));
+        mocks.getStoredGenerationTaskByRequest.mockResolvedValue({
+            id: "audio-failed",
+            userId: "user",
+            status: "error",
+            createdAt: 1,
+            updatedAt: 1,
+            config: { baseUrl: "https://two.example.com", apiKey: "", apiFormat: "openai", model: "audio-two" },
+            prompt: "Generate narration",
+            error: "没有兼容当前生成参数的音频渠道：当前模型不支持音色 private-voice",
+        });
+
+        const response = await POST(audioRequest({ model: "audio", voiceSelection: { type: "preset", voiceId: "alloy" }, format: "auto" }, "Generate narration", { clientRequestId: "preview-one" }));
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({ task: { id: "audio-failed", status: "pending" } });
+        expect(mocks.createAudioTask).not.toHaveBeenCalled();
+    });
+
     it("rejects legacy raw voices and counts the prompt with Unicode code points", async () => {
         mocks.getAuthSettings.mockResolvedValue(audioSettings([generationParameters({ voices: ["nova"], maxCharacters: 3 }), generationParameters({ voices: ["nova"], maxCharacters: 3 })]));
 
@@ -145,8 +173,8 @@ describe("audio task model routing", () => {
     });
 });
 
-function audioRequest(config: Record<string, unknown>, prompt = "Generate narration") {
-    return new Request("http://localhost/api/audio-tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config, prompt }) });
+function audioRequest(config: Record<string, unknown>, prompt = "Generate narration", context?: Record<string, unknown>) {
+    return new Request("http://localhost/api/audio-tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config, prompt, context }) });
 }
 
 function generationParameters(patch: Record<string, unknown>) {

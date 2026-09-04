@@ -8,6 +8,7 @@ import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { generationModelId } from "@/lib/server/generation-channel";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { cancellationExecutionPatch, type GenerationCancellationTarget } from "@/lib/server/generation-task-cancellation-service";
+import { publicAudioTaskError } from "@/lib/server/audio-task-public";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,7 +60,7 @@ function publicTask(task: NonNullable<Awaited<ReturnType<typeof getAudioTask>>>)
         status: task.status,
         model: generationModelId(task.config),
         result: task.result,
-        error: task.error,
+        error: publicAudioTaskError(task),
         billing: task.billing ? { pointsCost: task.billing.pointsCost, refunded: task.billing.refunded } : undefined,
     };
 }
