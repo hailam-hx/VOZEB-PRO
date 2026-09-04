@@ -76,6 +76,7 @@ export default async function RootLayout({
     const websiteUrl = absoluteSiteUrl("/", base);
     const websiteStructuredData = buildWebsiteStructuredData({
         name: site.title,
+        alternateName: ["HOTXAI"],
         description: localizeBuiltInSiteCopy(site.seoDescription, builtInSiteCopy.seoDescription, homeT("footerDefaultDescription")),
         url: websiteUrl,
         logoUrl: absoluteSiteUrl(site.logoUrl || "/logo.svg", base),

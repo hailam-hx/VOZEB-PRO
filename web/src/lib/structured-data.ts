@@ -1,5 +1,6 @@
 type WebsiteStructuredDataInput = {
     name: string;
+    alternateName?: string[];
     description: string;
     url: string;
     logoUrl: string;
@@ -29,6 +30,9 @@ export function buildWebsiteStructuredData(input: WebsiteStructuredDataInput) {
         "@id": `${input.url}#website`,
         url: input.url,
         name: input.name,
+        ...(input.alternateName?.length
+            ? { alternateName: input.alternateName }
+            : {}),
         description: input.description,
         publisher: {
             "@type": "Organization",
