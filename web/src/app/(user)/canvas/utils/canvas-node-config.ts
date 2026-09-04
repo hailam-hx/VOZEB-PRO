@@ -1,6 +1,7 @@
 import { defaultConfig, modelOptionName, selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasAudioSettingKey } from "../components/canvas-audio-settings-popover";
-import type { CanvasGenerationMode, CanvasNodeData } from "../types";
+import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "../types";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 export function buildCanvasNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasGenerationMode, model: string): AiConfig {
     return {
@@ -40,9 +41,10 @@ export function canvasVideoConfigPatch(key: keyof AiConfig, value: string) {
     return { [key]: value };
 }
 
-export function canvasAudioConfigPatch(key: CanvasAudioSettingKey, value: string) {
-    if (key === "audioVoice") return { audioVoice: value };
-    if (key === "audioFormat") return { audioFormat: value };
-    if (key === "audioSpeed") return { audioSpeed: value };
-    return { audioInstructions: value };
+export function canvasAudioConfigPatch(key: CanvasAudioSettingKey, value: string | VoiceSelection): Partial<CanvasNodeMetadata> {
+    if (key === "audioVoice") return typeof value === "object" ? { audioVoice: value } : {};
+    const text = typeof value === "string" ? value : "";
+    if (key === "audioFormat") return { audioFormat: text };
+    if (key === "audioSpeed") return { audioSpeed: text };
+    return { audioInstructions: text };
 }

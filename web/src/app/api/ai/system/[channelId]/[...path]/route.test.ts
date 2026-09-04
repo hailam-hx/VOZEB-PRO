@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 
 const mocks = vi.hoisted(() => ({
+    currentUser: vi.fn(),
     checkMediaProxyRateLimit: vi.fn(),
     consumeUserPoints: vi.fn(),
     getAuthSettings: vi.fn(),
@@ -12,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     release: vi.fn(),
     mediaAccess: vi.fn(),
     taskAccess: vi.fn(),
+    voiceAccess: vi.fn(),
+    voiceSourceDuration: vi.fn(),
     reserveUsageBilling: vi.fn(),
     reuseExistingUsageBilling: vi.fn(),
     attachUsageProviderEvidence: vi.fn(),
@@ -22,7 +25,7 @@ const mocks = vi.hoisted(() => ({
     settleCancelledUsageBilling: vi.fn(),
 }));
 
-vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one", role: "user", pointsBalance: 5 })) }));
+vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.currentUser }));
 vi.mock("@/lib/auth/store", () => ({
     consumeUserPoints: mocks.consumeUserPoints,
     getAuthSettings: mocks.getAuthSettings,
@@ -35,6 +38,7 @@ vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mock
 vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 vi.mock("@/lib/server/generation-media-access", () => ({ authorizeGenerationMediaProxyRequest: mocks.mediaAccess }));
 vi.mock("@/lib/server/generation-task-authorization", () => ({ userOwnsGenerationUpstreamTask: mocks.taskAccess }));
+vi.mock("@/lib/server/voice-profile-store", () => ({ userOwnsVoiceProfileProviderVoice: mocks.voiceAccess, getVoiceProfileSourceDurationForBilling: mocks.voiceSourceDuration }));
 vi.mock("@/lib/server/usage-billing-runtime", () => ({
     reserveUsageBilling: mocks.reserveUsageBilling,
     reuseExistingUsageBilling: mocks.reuseExistingUsageBilling,
@@ -52,9 +56,10 @@ vi.mock("@/lib/server/security", () => ({
 }));
 
 import { meteredTextResponseBody } from "@/lib/server/system-ai-metered-text-stream";
-import { GET, maxDuration, POST, PUT } from "./route";
+import { DELETE, GET, maxDuration, POST, PUT } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
 import { readSystemAiUsageBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
 
 const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_media"] }) };
 
@@ -67,6 +72,7 @@ describe("system generation proxy runtime", () => {
 describe("system media proxy", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        mocks.currentUser.mockReset().mockResolvedValue({ id: "user-one", role: "user", pointsBalance: 5 });
         mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
         mocks.refundUserPoints.mockReset();
         mocks.checkMediaProxyRateLimit.mockResolvedValue({ allowed: true, remaining: 119, resetAt: Date.now() + 60_000 });
@@ -76,6 +82,8 @@ describe("system media proxy", () => {
         mocks.wrap.mockImplementation((response: Response) => response);
         mocks.mediaAccess.mockReset().mockResolvedValue(true);
         mocks.taskAccess.mockReset().mockResolvedValue(true);
+        mocks.voiceAccess.mockReset().mockResolvedValue(true);
+        mocks.voiceSourceDuration.mockReset().mockResolvedValue(undefined);
         mocks.reserveUsageBilling.mockReset().mockResolvedValue({
             holdId: "hold-one",
             userId: "user-one",
@@ -93,6 +101,131 @@ describe("system media proxy", () => {
         mocks.getAuthSettings.mockResolvedValue({
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: [] }],
         });
+    });
+
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("proxies only configured voice catalog reads and owned profile deletion", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("speech", "audio", "voice-tts-pro")],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://api.example.com",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: ["voice-tts-pro"],
+                    advancedConfig: { protocol: "custom", catalogPath: "/audio/voices", deletePath: "/audio/voices/:voice_id" },
+                },
+            ],
+        });
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(async () => Response.json({ voices: [{ id: "private", name: "Private clone" }], presets: [{ id: "alloy", name: "Alloy", secret: "drop-me" }] }, { headers: { "x-gateway-trace": "provider-trace" } }));
+        const headers = systemModelHeaders("speech", "voice-tts-pro");
+
+        const catalog = await GET(new Request("http://localhost/api/ai/system/channel-one/audio/voices", { headers }), { params: Promise.resolve({ channelId: "channel-one", path: ["audio", "voices"] }) });
+        const deleted = await DELETE(new Request("http://localhost/api/ai/system/channel-one/audio/voices/provider-voice", { method: "DELETE", headers }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["audio", "voices", "provider-voice"] }),
+        });
+
+        expect(catalog.status).toBe(200);
+        expect(catalog.headers.get("x-gateway-trace")).toBeNull();
+        expect(catalog.headers.get("x-vozeb-pro-upstream-url")).toBeNull();
+        expect(catalog.headers.get("x-vozeb-pro-upstream-response")).toBeNull();
+        await expect(catalog.json()).resolves.toEqual({ presets: [{ id: "alloy", name: "Alloy" }] });
+        expect(deleted.status).toBe(200);
+        expect(deleted.headers.get("x-vozeb-pro-upstream-url")).toBeNull();
+        expect(mocks.voiceAccess).toHaveBeenCalledWith("user-one", "channel-one", "provider-voice");
+        expect(mocks.taskAccess).not.toHaveBeenCalled();
+        expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(["https://api.example.com/audio/voices", "https://api.example.com/audio/voices/provider-voice"]);
+    });
+
+    it("returns gateway trace metadata only to an authenticated internal worker", async () => {
+        const token = "worker-token-that-is-at-least-32-characters-long";
+        vi.stubEnv("VOZEB_PRO_WORKER_TOKEN", token);
+        mocks.currentUser.mockResolvedValue(null);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("speech", "audio", "voice-tts-pro")],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com", apiKey: "secret", apiFormat: "openai", models: ["voice-tts-pro"], advancedConfig: { protocol: "custom", catalogPath: "/audio/voices" } }],
+        });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ voices: [{ id: "private" }], presets: [{ id: "alloy", name: "Alloy" }] }, { headers: { "x-gateway-trace": "provider-trace" } }));
+
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/audio/voices", { headers: { ...systemModelHeaders("speech", "voice-tts-pro"), ...maintenanceWorkerHeaders("user-one") } }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["audio", "voices"] }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("x-gateway-trace")).toBe("provider-trace");
+        expect(response.headers.get("x-vozeb-pro-upstream-response")).toBe("1");
+        await expect(response.json()).resolves.toEqual({ presets: [{ id: "alloy", name: "Alloy" }] });
+    });
+
+    it("redacts provider voice and diagnostic fields from failed catalog responses", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("speech", "audio", "voice-tts-pro")],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com", apiKey: "secret", apiFormat: "openai", models: ["voice-tts-pro"], advancedConfig: { protocol: "custom", catalogPath: "/audio/voices" } }],
+        });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ error: "api_key=provider-secret", voices: [{ id: "private-provider-voice" }] }, { status: 400, headers: { "x-gateway-trace": "provider-trace" } }));
+
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/audio/voices", { headers: systemModelHeaders("speech", "voice-tts-pro") }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["audio", "voices"] }),
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(400);
+        expect(body).toContain("声音目录暂时不可用");
+        expect(body).not.toMatch(/provider-secret|private-provider-voice|api_key/);
+        expect(response.headers.get("x-gateway-trace")).toBeNull();
+        expect(response.headers.get("x-vozeb-pro-upstream-url")).toBeNull();
+    });
+
+    it("prices voice cloning from the owned source duration without forwarding billing fields upstream", async () => {
+        const components = [
+            { id: "request", dimension: "request", unitPrice: "1" },
+            { id: "audio", dimension: "durationSeconds", unitPrice: "0.5" },
+        ] as const;
+        const baseModel = logicalModel("voice-clone", "audio", "voice-clone-pro");
+        const model = {
+            ...baseModel,
+            saleRateCard: { version: 1, components: [...components] },
+            bindings: baseModel.bindings.map((binding) => ({
+                ...binding,
+                costRateCard: { version: 1, components: [...components] },
+                generationParameters: { audioOperation: "voice-clone" } as never,
+            })),
+        };
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [model],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://api.example.com",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: ["voice-clone-pro"],
+                    advancedConfig: { protocol: "custom", createPath: "/voice/clone" },
+                },
+            ],
+        });
+        mocks.voiceSourceDuration.mockResolvedValue(8);
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ task_id: "task-one" }));
+        const url = "http://localhost/api/ai/system/channel-one/voice/clone";
+        const body = JSON.stringify({ model: "voice-clone-pro", name: "Voice", audio_url: "https://vozeb.example/api/reference-assets/permanent/source.wav?purpose=provider-read" });
+        const response = await POST(new Request(url, { method: "POST", headers: { "content-type": "application/json", ...signedModelHeaders(url, body, "voice-clone", "voice-clone-pro", "audio", "voice-clone-binding") }, body }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["voice", "clone"] }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(mocks.voiceSourceDuration).toHaveBeenCalledWith("user-one", "permanent/source.wav");
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ requestUsage: expect.objectContaining({ request: "1", durationSeconds: "8" }) }));
+        expect(JSON.parse(new TextDecoder().decode(fetchMock.mock.calls[0]?.[1]?.body as ArrayBuffer))).toEqual(JSON.parse(body));
     });
 
     it("reserves and records the routed attempt before a signed upstream create", async () => {

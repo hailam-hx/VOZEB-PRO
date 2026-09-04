@@ -43,7 +43,7 @@ export function useDramaAudioQueue(project: DramaProject, episode: DramaEpisode,
             body: JSON.stringify({
                 config: {
                     model: config.audioModel,
-                    voice: voice?.voice.trim() || config.audioVoice,
+                    voiceSelection: voice?.voiceSelection || config.audioVoice,
                     format: config.audioFormat,
                     speed: voice?.speed || config.audioSpeed,
                     instructions: [config.audioInstructions, voice?.instructions].filter(Boolean).join("\n"),
@@ -71,11 +71,11 @@ export function useDramaAudioQueue(project: DramaProject, episode: DramaEpisode,
             }),
         })
             .then(async (response) => {
-                const payload = (await response.json().catch(() => ({}))) as { task?: { id?: string }; error?: string };
-                if (!response.ok || !payload.task?.id) throw new Error(t("audioTaskCreateFailed"));
+                const payload = (await response.json().catch(() => ({}))) as { task?: { id?: string }; error?: string; msg?: string };
+                if (!response.ok || !payload.task?.id) throw new Error(payload.error || payload.msg || t("audioTaskCreateFailed"));
                 updateShot(project.id, episode.id, next.id, { audioStatus: "running", audioTaskId: payload.task.id, audioError: undefined });
             })
-            .catch(() => updateShot(project.id, episode.id, next.id, { audioStatus: "error", audioError: t("audioTaskCreateFailed") }))
+            .catch((cause) => updateShot(project.id, episode.id, next.id, { audioStatus: "error", audioError: cause instanceof Error ? cause.message : t("audioTaskCreateFailed") }))
             .finally(() => {
                 startingRef.current = "";
             });

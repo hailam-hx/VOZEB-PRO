@@ -3,13 +3,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { REFERENCE_ASSET_SIGNATURE_PURPOSE } from "@/lib/reference-asset-url";
 
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
-const SIGNED_URL_TTL_SECONDS = SIGNED_URL_TTL_MS / 1000;
 
-export function createSignedReferenceAssetUrl(token: string, origin: string, now = Date.now()) {
+export function createSignedReferenceAssetUrl(token: string, origin: string, now = Date.now(), ttlMs = SIGNED_URL_TTL_MS) {
     const secret = signingSecret();
     const normalizedOrigin = normalizeOrigin(origin);
     if (!secret || !normalizedOrigin || !token) return "";
-    const expires = Math.floor((now + SIGNED_URL_TTL_MS) / 1000);
+    const effectiveTtl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : SIGNED_URL_TTL_MS;
+    const expires = Math.floor((now + effectiveTtl) / 1000);
     const signature = sign(token, REFERENCE_ASSET_SIGNATURE_PURPOSE, expires, secret);
     const path = token.split("/").map(encodeURIComponent).join("/");
     return `${normalizedOrigin}/api/reference-assets/${path}?purpose=${REFERENCE_ASSET_SIGNATURE_PURPOSE}&expires=${expires}&signature=${signature}`;
@@ -38,7 +38,7 @@ export function verifyReferenceAssetSignature(token: string, purpose: string | n
     const secret = signingSecret();
     const expires = Number(expiresValue);
     const nowSeconds = Math.floor(now / 1000);
-    if (!secret || !token || purpose !== REFERENCE_ASSET_SIGNATURE_PURPOSE || !signature || !Number.isInteger(expires) || expires <= nowSeconds || expires > nowSeconds + SIGNED_URL_TTL_SECONDS + 1) return false;
+    if (!secret || !token || purpose !== REFERENCE_ASSET_SIGNATURE_PURPOSE || !signature || !Number.isInteger(expires) || expires <= nowSeconds) return false;
     const expected = Buffer.from(sign(token, purpose, expires, secret));
     const actual = Buffer.from(signature);
     return expected.length === actual.length && timingSafeEqual(expected, actual);

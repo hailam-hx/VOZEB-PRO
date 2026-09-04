@@ -23,4 +23,12 @@ describe("generation upstream task authorization", () => {
         mocks.getByUpstream.mockResolvedValue({ status: "cancelled", payload: { config: { model: "vendor-video" } } });
         await expect(userOwnsGenerationUpstreamTask({ userId: "user", capability: "video", channelId: "channel", upstreamModel: "vendor-video", upstreamTaskId: "task" })).resolves.toBe(false);
     });
+
+    it("finds audio operation tasks in the voice-clone store and checks the upstream model", async () => {
+        mocks.getByUpstream.mockResolvedValueOnce(null).mockResolvedValueOnce({ status: "running", payload: { config: { upstreamModel: "voice-clone-pro" } } });
+
+        await expect(userOwnsGenerationUpstreamTask({ userId: "user", capability: "audio", channelId: "dflop", upstreamModel: "voice-clone-pro", upstreamTaskId: "task" })).resolves.toBe(true);
+        expect(mocks.getByUpstream).toHaveBeenNthCalledWith(1, "audio", "user", "dflop", "task");
+        expect(mocks.getByUpstream).toHaveBeenNthCalledWith(2, "voice-clone", "user", "dflop", "task");
+    });
 });

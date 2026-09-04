@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
     deleteGenerationLogsByUserId: vi.fn(),
     deleteRegisteredLocalMediaSnapshots: vi.fn(),
     listLocalMediaRegistrationsForDeletion: vi.fn(),
+    hasProviderVoices: vi.fn(),
+    deleteFileVoiceProfilesWithUserAccount: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ deleteUserByAdmin: mocks.deleteUserByAdmin, getAuthSettings: mocks.getAuthSettings }));
@@ -14,6 +16,11 @@ vi.mock("@/lib/server/database", () => ({ getDatabaseProvider: mocks.getDatabase
 vi.mock("@/lib/server/generation-log-store", () => ({ deleteGenerationLogsByUserId: mocks.deleteGenerationLogsByUserId }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteRegisteredLocalMediaSnapshots: mocks.deleteRegisteredLocalMediaSnapshots }));
 vi.mock("@/lib/server/local-media-registry", () => ({ listLocalMediaRegistrationsForDeletion: mocks.listLocalMediaRegistrationsForDeletion }));
+vi.mock("@/lib/server/voice-profile-store", () => ({
+    hasProviderVoiceProfilesForUser: mocks.hasProviderVoices,
+    deleteFileVoiceProfilesWithUserAccount: mocks.deleteFileVoiceProfilesWithUserAccount,
+    VoiceProfileUserDeletionConflictError: class VoiceProfileUserDeletionConflictError extends Error {},
+}));
 
 import { deleteAdminUserWithMediaCleanup } from "./admin-user-deletion-service";
 
@@ -24,6 +31,8 @@ describe("administrator user deletion orchestration", () => {
         mocks.listLocalMediaRegistrationsForDeletion.mockResolvedValue([{ storageKey: "permanent/user.webp", ownerUserId: "user-one" }]);
         mocks.deleteRegisteredLocalMediaSnapshots.mockResolvedValue({ deletedFiles: 1, deletedBytes: 4, blocked: [] });
         mocks.deleteGenerationLogsByUserId.mockResolvedValue({ deleted: 1 });
+        mocks.hasProviderVoices.mockResolvedValue(false);
+        mocks.deleteFileVoiceProfilesWithUserAccount.mockImplementation(async (_userId: string, callback: () => Promise<unknown>) => callback());
     });
 
     it("snapshots media inside the locked PostgreSQL deletion transaction before cascade", async () => {
@@ -47,9 +56,19 @@ describe("administrator user deletion orchestration", () => {
         await expect(deleteAdminUserWithMediaCleanup("admin-one", "user-one")).resolves.toEqual({ ok: true });
 
         expect(mocks.listLocalMediaRegistrationsForDeletion).toHaveBeenCalledWith("user-one", { batchSize: 24 });
+        expect(mocks.deleteFileVoiceProfilesWithUserAccount).toHaveBeenCalledWith("user-one", expect.any(Function));
         expect(mocks.deleteGenerationLogsByUserId).toHaveBeenCalledWith("user-one");
         expect(mocks.deleteRegisteredLocalMediaSnapshots).toHaveBeenCalledWith([{ storageKey: "permanent/user.webp", ownerUserId: "user-one" }]);
         expect(mocks.deleteUserByAdmin.mock.invocationCallOrder[0]).toBeLessThan(mocks.deleteGenerationLogsByUserId.mock.invocationCallOrder[0]);
         expect(mocks.deleteGenerationLogsByUserId.mock.invocationCallOrder[0]).toBeLessThan(mocks.deleteRegisteredLocalMediaSnapshots.mock.invocationCallOrder[0]);
+    });
+
+    it("blocks account deletion while a provider voice still needs upstream cleanup", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("file");
+        mocks.deleteFileVoiceProfilesWithUserAccount.mockRejectedValue(Object.assign(new Error("blocked"), { name: "VoiceProfileUserDeletionConflictError" }));
+
+        await expect(deleteAdminUserWithMediaCleanup("admin-one", "user-one")).rejects.toMatchObject({ status: 409 });
+        expect(mocks.deleteUserByAdmin).not.toHaveBeenCalled();
+        expect(mocks.deleteRegisteredLocalMediaSnapshots).not.toHaveBeenCalled();
     });
 });

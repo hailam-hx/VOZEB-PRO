@@ -21,6 +21,8 @@ export type SystemChannelModelConfig = {
     editPath?: string;
     imageToVideoPath?: string;
     queryPath?: string;
+    catalogPath?: string;
+    deletePath?: string;
     cancelPath?: string;
     cancelMethod?: "POST" | "DELETE";
     requestTemplate?: string;
@@ -48,6 +50,8 @@ export type SystemChannelAdvancedConfig = {
     editPath?: string;
     imageToVideoPath?: string;
     queryPath: string;
+    catalogPath?: string;
+    deletePath?: string;
     cancelPath?: string;
     cancelMethod?: "POST" | "DELETE";
     requestTemplate: string;
@@ -86,6 +90,11 @@ export type SystemModelChannel = {
 export type LogicalModelCapability = "text" | "image" | "video" | "audio";
 
 export type LogicalModelGenerationParameters = {
+    audioOperation?: "speech" | "voice-clone";
+    maxCharacters?: number;
+    voiceCatalog?: "static" | "provider";
+    supportsClonedVoices?: boolean;
+    speedAppliesTo?: "all" | "cloned";
     referenceInputs: Array<"image" | "video" | "audio">;
     maxReferenceImages?: number;
     aspectRatios: string[];
@@ -147,6 +156,7 @@ export type SystemDefaultModels = {
     videoModel: string;
     textModel: string;
     audioModel: string;
+    voiceCloneModel: string;
 };
 
 export type AgentSkillWorkspace = "image" | "video" | "canvas" | "drama";
@@ -411,7 +421,7 @@ export type UsageBillingHoldSnapshot = {
     reservedCredits: string;
     inputLimits?: { maxInputTokens?: string; maxOutputTokens?: string };
     providerIdempotency?: { supported: boolean; key?: string };
-    recovery?: { taskType: "text" | "image" | "video" | "audio"; taskId: string };
+    recovery?: { taskType: "text" | "image" | "video" | "audio" | "voice-clone"; taskId: string };
 };
 
 export type WalletHold = {

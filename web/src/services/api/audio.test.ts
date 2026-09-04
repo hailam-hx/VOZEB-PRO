@@ -14,7 +14,7 @@ const config = {
     audioModel: "voice",
     audioFormat: "mp3",
     audioInstructions: "",
-    audioVoice: "alloy",
+    audioVoice: { type: "preset", voiceId: "alloy" },
     audioSpeed: "1",
 } as AiConfig;
 
@@ -37,7 +37,7 @@ describe("audio API service", () => {
 
         expect(result.blob.type).toBe("audio/mpeg");
         expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/audio-tasks", "/api/audio-tasks/task-1", "/api/reference-assets/audio"]);
-        expect(createBody.config).toMatchObject({ model: "voice", voice: "alloy", format: "mp3", speed: "1" });
+        expect(createBody.config).toMatchObject({ model: "voice", voiceSelection: { type: "preset", voiceId: "alloy" }, format: "mp3", speed: "1" });
         expect(createBody.config).not.toHaveProperty("apiKey");
         expect(createBody.config).not.toHaveProperty("baseUrl");
         expect(createBody.config).not.toHaveProperty("advancedConfig");

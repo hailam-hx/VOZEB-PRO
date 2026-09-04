@@ -301,6 +301,16 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                                         onChange={(event) => updateAdvanced({ createPath: event.target.value })}
                                     />
                                 </LabeledControl>
+                                {detectedCapabilities.has("audio") ? (
+                                    <LabeledControl label="兜底音色目录路径">
+                                        <Input value={advanced.catalogPath || ""} placeholder="/audio/voices" onChange={(event) => updateAdvanced({ catalogPath: event.target.value })} />
+                                    </LabeledControl>
+                                ) : null}
+                                {detectedCapabilities.has("audio") ? (
+                                    <LabeledControl label="兜底声音删除路径">
+                                        <Input value={advanced.deletePath || ""} placeholder="/audio/voices/:voice_id" onChange={(event) => updateAdvanced({ deletePath: event.target.value })} />
+                                    </LabeledControl>
+                                ) : null}
                                 {detectedCapabilities.has("image") ? (
                                     <LabeledControl label="兜底图生图路径">
                                         <Input disabled={multipleGlobalPresets} value={advanced.editPath} placeholder={multipleGlobalPresets ? "按模型自动路由" : "/images/edits"} onChange={(event) => updateAdvanced({ editPath: event.target.value })} />
@@ -472,6 +482,16 @@ function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: Syst
                         {showAsyncFields ? (
                             <LabeledControl label="查询路径">
                                 <Input disabled={definition.strict} value={config.queryPath || ""} placeholder="/videos/:task_id" onChange={(event) => update({ queryPath: event.target.value })} />
+                            </LabeledControl>
+                        ) : null}
+                        {config.capability === "audio" ? (
+                            <LabeledControl label="音色目录路径">
+                                <Input disabled={definition.strict} value={config.catalogPath || ""} placeholder="/audio/voices" onChange={(event) => update({ catalogPath: event.target.value })} />
+                            </LabeledControl>
+                        ) : null}
+                        {config.capability === "audio" ? (
+                            <LabeledControl label="声音删除路径">
+                                <Input disabled={definition.strict} value={config.deletePath || ""} placeholder="/audio/voices/:voice_id" onChange={(event) => update({ deletePath: event.target.value })} />
                             </LabeledControl>
                         ) : null}
                         {showAsyncFields ? (

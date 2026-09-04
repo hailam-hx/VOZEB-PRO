@@ -39,7 +39,7 @@ describe("countLocalMediaReferences", () => {
         expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
         expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("unnest($1::text[])"), [["permanent/one.png", "permanent/two.png"]]);
         const sql = String(mocks.postgresQuery.mock.calls[0]?.[0]);
-        for (const table of ["creative_assets", "library_assets", "canvas_projects", "drama_projects", "generation_log_assets", "generation_tasks", "published_work_assets"]) expect(sql).toContain(table);
+        for (const table of ["creative_assets", "library_assets", "canvas_projects", "drama_projects", "generation_log_assets", "generation_tasks", "published_work_assets", "voice_profiles"]) expect(sql).toContain(table);
     });
 
     it("keeps media referenced by another file-provider generation task", async () => {
@@ -52,6 +52,22 @@ describe("countLocalMediaReferences", () => {
             new Map([
                 ["permanent/shared.png", 1],
                 ["permanent/unreferenced.png", 0],
+            ]),
+        );
+    });
+
+    it("keeps source and preview media referenced by a file-provider voice profile", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("file");
+        mocks.readJsonDataFile.mockImplementation(async (name: string, fallback: unknown) =>
+            name === "voice-profiles.json" ? { version: 1, profiles: [{ id: "voice", sourceStorageKey: "permanent/source.mp3", previewStorageKey: "permanent/preview.mp3" }] } : fallback,
+        );
+
+        const result = await countLocalMediaReferences(["permanent/source.mp3", "permanent/preview.mp3"]);
+
+        expect(result).toEqual(
+            new Map([
+                ["permanent/source.mp3", 1],
+                ["permanent/preview.mp3", 1],
             ]),
         );
     });

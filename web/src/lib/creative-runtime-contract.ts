@@ -1,4 +1,5 @@
 import { videoFrameAssetIds, type CreativeVideoReferenceMode } from "@/lib/video-reference-contract";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 export const creativeSurfaces = ["chat", "canvas", "drama"] as const;
 export type CreativeSurface = (typeof creativeSurfaces)[number];
@@ -134,7 +135,7 @@ export type CreativeGenerationPreferences = {
         firstFrameAssetId?: string;
         lastFrameAssetId?: string;
     };
-    audio?: { voice?: string; format?: string; speed?: number };
+    audio?: { voiceSelection?: VoiceSelection; voiceName?: string; format?: string; speed?: number };
 };
 
 export type CreativeRunRequest = {

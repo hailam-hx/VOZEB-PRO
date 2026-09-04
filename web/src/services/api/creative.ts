@@ -10,6 +10,7 @@ import {
 } from "@/lib/creative-runtime-contract";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { ClientSessionExpiredError, stopIfClientSessionExpired, throwIfClientSessionExpired } from "@/services/api/session-expiration";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 export type CreativeAgentRun = {
     id: string;
@@ -37,6 +38,8 @@ export type CreativeAgentRun = {
         quality?: string;
         seconds?: number;
         voice?: string;
+        voiceSelection?: VoiceSelection;
+        voiceName?: string;
         format?: string;
         generateAudio?: boolean;
         watermark?: boolean;

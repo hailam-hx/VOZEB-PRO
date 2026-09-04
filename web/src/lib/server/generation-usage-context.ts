@@ -55,14 +55,14 @@ export function systemAiTextUsageContext(input: { candidate: PricedTextCandidate
 }
 
 export function usageRecoveryIdentity(businessRequestId: string) {
-    const match = businessRequestId.match(/^(text|image|video|audio)-task:(.+)$/);
+    const match = businessRequestId.match(/^(text|image|video|audio|voice-clone)-task:(.+)$/);
     if (!match?.[2]) return undefined;
-    return { taskType: match[1] as "text" | "image" | "video" | "audio", taskId: match[2] };
+    return { taskType: match[1] as "text" | "image" | "video" | "audio" | "voice-clone", taskId: match[2] };
 }
 
 function parseAttemptKey(value: string) {
     const normalized = value.trim();
-    const match = normalized.match(/^((?:text|image|video|audio)-task:.+?):attempt:(\d+)(?::[^:]*)?$/);
+    const match = normalized.match(/^((?:text|image|video|audio|voice-clone)-task:.+?):attempt:(\d+)(?::[^:]*)?$/);
     if (match) return { businessRequestId: match[1], attemptNumber: Number(match[2]) };
     const request = normalized.match(/^(video-request:.+)$/);
     return request ? { businessRequestId: request[1], attemptNumber: 1 } : undefined;

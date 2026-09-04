@@ -91,10 +91,9 @@ function canvasGenerationRequest(
             ...(videoReferenceMode ? { videoReferenceMode } : {}),
         };
     }
-    const voice = concreteText(config.audioVoice);
     const format = concreteText(config.audioFormat);
     const speed = concreteNumber(config.audioSpeed);
-    return { ...(voice ? { voice } : {}), ...(format ? { format } : {}), ...(speed !== undefined ? { speed } : {}) };
+    return { ...(format ? { format } : {}), ...(speed !== undefined ? { speed } : {}) };
 }
 
 function normalizedModel(value: string) {

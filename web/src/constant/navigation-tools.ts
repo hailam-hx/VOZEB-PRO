@@ -1,4 +1,4 @@
-import { BookMarked, Clapperboard, Compass, FileText, GalleryVerticalEnd, Images, Maximize2, Sparkles, UserRound } from "lucide-react";
+import { AudioLines, BookMarked, Clapperboard, Compass, FileText, GalleryVerticalEnd, Images, Maximize2, Sparkles, UserRound } from "lucide-react";
 
 export const navigationGroups = [
     { id: "create", label: "创作", labelKey: "groupCreate" },
@@ -59,6 +59,15 @@ export const navigationTools = [
         descriptionKey: "assetsDescription",
         group: "assets",
         icon: Images,
+    },
+    {
+        slug: "voices",
+        label: "声音",
+        labelKey: "voices",
+        description: "克隆与管理我的声音",
+        descriptionKey: "voicesDescription",
+        group: "assets",
+        icon: AudioLines,
     },
     {
         slug: "my-prompts",

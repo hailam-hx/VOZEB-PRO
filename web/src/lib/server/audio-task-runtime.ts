@@ -18,6 +18,7 @@ import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { attachSystemAiUsageUpstreamTask } from "@/lib/server/usage-billing-runtime";
+import { getVoiceProfileForUser, updateVoiceProfile } from "@/lib/server/voice-profile-store";
 
 export type AudioUpstreamStep =
     | { state: "pending"; status: string; upstreamTaskId: string; createPath: string; pointsCost?: number; pointsRecordId?: string }
@@ -240,7 +241,31 @@ async function completeAudioTask(task: AudioTask, url: string, mimeType: string)
         title: completed.prompt.slice(0, 80) || "生成音频",
         assets: [{ type: "audio", url, mimeType }],
     }).catch((error) => console.error("Creative audio asset registration failed", error));
+    const selection = completed.config.voiceSelection;
+    if (selection?.type === "profile") {
+        const profile = await getVoiceProfileForUser(completed.userId, selection.voiceProfileId).catch(() => null);
+        if (profile?.status === "ready") {
+            const previewProfileId = completed.source?.startsWith("voice-profile-preview:") ? completed.source.slice("voice-profile-preview:".length).trim() : "";
+            const previewStorageKey = previewProfileId === profile.id ? referenceStorageKey(url) : "";
+            await updateVoiceProfile(profile.id, { lastUsedAt: new Date().toISOString(), ...(previewStorageKey ? { previewStorageKey } : {}) }).catch(() => undefined);
+        }
+    }
     return completed;
+}
+
+function referenceStorageKey(url: string) {
+    const prefix = "/api/reference-assets/";
+    const index = url.indexOf(prefix);
+    if (index < 0) return "";
+    try {
+        return url
+            .slice(index + prefix.length)
+            .split("/")
+            .map(decodeURIComponent)
+            .join("/");
+    } catch {
+        return "";
+    }
 }
 
 async function markAudioAttemptSucceeded(task: AudioTask, billing: { pointsCost?: number; pointsRecordId?: string }) {

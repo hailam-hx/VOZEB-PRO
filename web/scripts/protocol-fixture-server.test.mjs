@@ -110,6 +110,36 @@ describe("protocol fixture server", () => {
         expect(bytes.subarray(0, 4).toString()).toBe("RIFF");
     });
 
+    it("serves the Dflop voice catalog, idempotent clone lifecycle, deletion and traced TTS", async () => {
+        const catalog = await fetch(`${origin}/v1/audio/voices`);
+        const request = {
+            method: "POST",
+            headers: { "content-type": "application/json", "idempotency-key": "voice-attempt-one" },
+            body: JSON.stringify({ name: "Fixture voice", audio_url: `${origin}/media/fixture.wav`, async: true }),
+        };
+        const createdResponse = await fetch(`${origin}/v1/audio/voices`, request);
+        const created = await createdResponse.json();
+        const retried = await fetch(`${origin}/v1/audio/voices`, request).then((response) => response.json());
+        const queriedResponse = await fetch(`${origin}/v1/audio/voices/${created.id}`);
+        const queried = await queriedResponse.json();
+        const ttsResponse = await fetch(`${origin}/v1/audio/speech`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ model: "voice-tts-pro", input: "fixture", voice: queried.id, format: "wav", async: false }),
+        });
+        const deletedResponse = await fetch(`${origin}/v1/audio/voices/${queried.id}`, { method: "DELETE" });
+
+        await expect(catalog.json()).resolves.toMatchObject({ voices: [], presets: expect.arrayContaining([expect.objectContaining({ id: "alloy" })]) });
+        expect(created).toMatchObject({ id: "fixture-voice-clone-1", status: "pending" });
+        expect(retried).toEqual(created);
+        expect(queried).toMatchObject({ id: "fixture-voice-clone-1", status: "ready" });
+        expect(createdResponse.headers.get("x-gateway-trace")).toBe("fixture-voice-clone-1-create");
+        expect(queriedResponse.headers.get("x-gateway-trace")).toBe("fixture-voice-clone-1-query");
+        expect(ttsResponse.headers.get("x-gateway-trace")).toBe("fixture-audio-speech");
+        expect(deletedResponse.headers.get("x-gateway-trace")).toBe("fixture-voice-clone-1-delete");
+        expect(fixture.tasks.get(created.id)).toMatchObject({ kind: "voice-clone", deleted: true, idempotencyKey: "voice-attempt-one" });
+    });
+
     it("does not reuse upstream task ids after resetting assertion state", async () => {
         const first = await fetch(`${origin}/v1/videos`, { method: "POST" }).then((response) => response.json());
         await fetch(`${origin}/v1/__reset`, { method: "POST" });

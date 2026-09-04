@@ -95,6 +95,31 @@ describe("system AI proxy policy", () => {
         expect(authorizeSystemAiProxyRequest({ ...base, method: "GET", path: ["jobs", "other", "task-one"], search: "" })).toMatchObject({ allowed: false, status: 404 });
     });
 
+    it("allows only the configured voice catalog and delete paths", () => {
+        const voiceModels = [
+            ...logicalModels,
+            {
+                id: "speech",
+                name: "语音",
+                capability: "audio" as const,
+                enabled: true,
+                bindings: [{ id: "speech-main", channelId: "main", upstreamModel: "voice-tts-pro", enabled: true, priority: 1 }],
+            },
+        ];
+        const base = {
+            channelId: "main",
+            upstreamModel: "voice-tts-pro",
+            preferredLogicalModelId: "speech",
+            logicalModels: voiceModels,
+            apiFormat: "openai" as const,
+            paths: { catalog: ["/audio/voices"], deleteVoice: ["/audio/voices/:voice_id"] },
+        };
+
+        expect(authorizeSystemAiProxyRequest({ ...base, method: "GET", path: ["audio", "voices"], search: "" })).toMatchObject({ allowed: true, operation: "catalog" });
+        expect(authorizeSystemAiProxyRequest({ ...base, method: "DELETE", path: ["audio", "voices", "provider-voice"], search: "" })).toMatchObject({ allowed: true, operation: "delete_voice", providerVoiceId: "provider-voice" });
+        expect(authorizeSystemAiProxyRequest({ ...base, method: "GET", path: ["audio", "all-voices"], search: "" })).toMatchObject({ allowed: false, status: 404 });
+    });
+
     it("extracts task ids from query strings and rejects conflicting hints", () => {
         const base = {
             channelId: "main",

@@ -201,7 +201,7 @@ describe("model routing config", () => {
             { id: "voice", name: "Voice", capability: "audio", enabled: true, bindings: [{ id: "two", channelId: "off", upstreamModel: "voice", enabled: true, priority: 1 }] },
         ];
         expect(isLogicalModelResolvable(models, channels, "text", "writer")).toBe(true);
-        expect(normalizeDefaultModelsConfig({ textModel: "writer", imageModel: "writer", videoModel: "", audioModel: "voice" }, models, channels)).toEqual({ textModel: "writer", imageModel: "", videoModel: "", audioModel: "" });
+        expect(normalizeDefaultModelsConfig({ textModel: "writer", imageModel: "writer", videoModel: "", audioModel: "voice" }, models, channels)).toEqual({ textModel: "writer", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" });
     });
 
     it("switches a stale default to another resolvable model of the same capability", () => {
@@ -212,6 +212,34 @@ describe("model routing config", () => {
         ];
 
         expect(normalizeDefaultModelsConfig({ textModel: "", imageModel: "gpt-image-2", videoModel: "", audioModel: "" }, models, channels).imageModel).toBe("flux-pro");
+    });
+
+    it("normalizes speech and voice cloning defaults independently", () => {
+        const channels = [channel("dflop", ["voice-tts-pro", "voice-clone-pro"])];
+        const models: LogicalModel[] = [
+            {
+                id: "voice-tts",
+                name: "Voice TTS",
+                capability: "audio",
+                enabled: true,
+                bindings: [{ id: "tts", channelId: "dflop", upstreamModel: "voice-tts-pro", enabled: true, priority: 1, generationParameters: { audioOperation: "speech" } as never }],
+            },
+            {
+                id: "voice-clone",
+                name: "Voice Clone",
+                capability: "audio",
+                enabled: true,
+                bindings: [{ id: "clone", channelId: "dflop", upstreamModel: "voice-clone-pro", enabled: true, priority: 1, generationParameters: { audioOperation: "voice-clone" } as never }],
+            },
+        ];
+
+        expect(normalizeDefaultModelsConfig({ textModel: "", imageModel: "", videoModel: "", audioModel: "voice-clone", voiceCloneModel: "voice-tts" } as never, models, channels)).toEqual({
+            textModel: "",
+            imageModel: "",
+            videoModel: "",
+            audioModel: "voice-tts",
+            voiceCloneModel: "voice-clone",
+        });
     });
 
     it("uses binding priority and falls back from a disabled channel", () => {
@@ -314,13 +342,15 @@ describe("model routing config", () => {
                 ],
             },
         ];
-        expect(modelRoutingValidationErrors(models, channels, { textModel: "missing", imageModel: "", videoModel: "", audioModel: "" })).toEqual(expect.arrayContaining(["逻辑模型 writer 存在重复绑定", "默认文本模型不可解析：missing"]));
+        expect(modelRoutingValidationErrors(models, channels, { textModel: "missing", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" })).toEqual(
+            expect.arrayContaining(["逻辑模型 writer 存在重复绑定", "默认文本模型不可解析：missing"]),
+        );
     });
 
     it("does not reject an administrator capability override based only on its name", () => {
         const channels = [channel("one", ["stable-diffusion-2.0"])];
         const models: LogicalModel[] = [{ id: "stable-diffusion-2.0", name: "自定义视频能力", capability: "video", enabled: true, bindings: [{ id: "one", channelId: "one", upstreamModel: "stable-diffusion-2.0", enabled: true, priority: 1 }] }];
 
-        expect(modelRoutingValidationErrors(models, channels, { textModel: "", imageModel: "", videoModel: "stable-diffusion-2.0", audioModel: "" })).not.toContain("逻辑模型 stable-diffusion-2.0 更像图片模型，请调整能力类型");
+        expect(modelRoutingValidationErrors(models, channels, { textModel: "", imageModel: "", videoModel: "stable-diffusion-2.0", audioModel: "", voiceCloneModel: "" })).not.toContain("逻辑模型 stable-diffusion-2.0 更像图片模型，请调整能力类型");
     });
 });

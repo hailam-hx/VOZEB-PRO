@@ -59,6 +59,7 @@ const POSTGRES_TABLES = [
     "creative_messages",
     "creative_assets",
     "local_media_assets",
+    "voice_profiles",
     "object_storage_settings",
     "canvas_projects",
     "library_assets",
@@ -178,6 +179,12 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "local_media_assets_local_filter_idx",
     "local_media_assets_storage_provider_check",
     "local_media_assets_external_object_idx",
+    "voice_profiles_user_request_idx",
+    "voice_profiles_channel_provider_voice_idx",
+    "voice_profiles_user_status_updated_idx",
+    "voice_profiles_clone_task_idx",
+    "voice_profiles_source_storage_key_fkey",
+    "voice_profiles_preview_storage_key_fkey",
     "canvas_projects_user_updated_idx",
     "library_assets_user_updated_idx",
     "drama_projects_user_updated_idx",
@@ -215,6 +222,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "generation_logs_set_updated_at",
     "drama_projects_set_updated_at",
     "object_storage_settings_set_updated_at",
+    "voice_profiles_set_updated_at",
 ] as const;
 
 const POSTGRES_RELATION_NAMES = new Set<string>([...POSTGRES_TABLES, ...POSTGRES_SCHEMA_OBJECTS]);

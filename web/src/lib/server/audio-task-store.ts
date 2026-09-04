@@ -3,6 +3,7 @@ import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenera
 import type { LogicalModelCapabilityProfile, LogicalModelGenerationParameters, SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 export type AudioTaskConfig = {
     apiSource?: "system" | "custom";
@@ -16,6 +17,8 @@ export type AudioTaskConfig = {
     generationParameters?: LogicalModelGenerationParameters;
     advancedConfig?: SystemChannelAdvancedConfig;
     voice?: string;
+    voiceSelection?: VoiceSelection;
+    voiceDisplayName?: string;
     format?: string;
     speed?: string;
     instructions?: string;

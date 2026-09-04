@@ -184,6 +184,19 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 
 用户明确要求“建立画布项目”或“建立短剧项目”时，Chat 规划可返回 `projectHandoff`。运行完成前 SSE 发送一次 `project.handoff`，数据包含稳定 `id/sourceRunId/conversationId`、目标 `surface`、标题、摘要、风格、比例、稳定 `assetIds` 和完整资产信息；`run.completed.data.projectHandoff` 与助手消息 metadata 保存同一份交接。客户端必须使用交接 ID 幂等落地 Canvas 本地项目或服务端短剧项目，SSE 重放不得重复创建。
 
+## 声音克隆与音色选择
+
+声音档案接口全部要求当前用户 Session，并使用 `{ code, data, msg }`：
+
+- `POST/GET /api/voice-profiles`：使用 `name/sourceAssetToken/clientRequestId/consentConfirmed` 创建档案，或按 `page/pageSize/status` 分页查询。创建沿用音频请求限流与并发额度；同一客户端请求 ID 只允许重放完全相同的输入，不同输入返回 `409`。存在待处理任务时列表响应携带由 Scheduler 计算的 `Retry-After`。
+- `GET/PATCH/DELETE /api/voice-profiles/{id}`：读取、重命名或删除本人档案。`pending` 档案不能删除；有上游 Voice ID 的档案先进入 `deleting` 并等待固定渠道确认，没有上游身份时直接写本地 tombstone。
+- `GET/POST /api/voice-profiles/{id}/preview`：首次只返回当前短句与计费估算，确认后创建普通音频任务；成功媒体保存为档案预览，后续读取只返回缓存媒体签名 URL。
+- `GET /api/audio-voices/presets?model=...`：按逻辑 Speech 模型读取当前 Provider 或静态预置目录，不设置额外服务端定时缓存。Dflop 的账户级 `voices` 永不透传，系统代理只保留脱敏后的 `presets[].id/name`。
+
+`POST /api/audio-tasks` 使用 `voiceSelection: { type: "preset", voiceId } | { type: "profile", voiceProfileId }`。服务端在积分预留前按 Unicode code point 校验 `maxCharacters`，再逐候选校验预置目录，或校验档案归属、`ready` 状态、固定渠道及 `supportsClonedVoices`；`speed` 只在绑定的 `speedAppliesTo` 允许时发送。Provider Voice ID、渠道、绑定、API Key、Gateway Trace 和源音频签名 URL 永不进入公开响应或客户端持久状态。
+
+声音克隆只通过现有 Dflop 渠道与系统代理执行。创建、查询、目录和删除路径来自管理员配置；Dflop 的异步 `id` 在 `pending` 阶段作为查询资源 ID 保存，只有同一资源进入 `ready` 后才完成档案。创建使用稳定 `Idempotency-Key`，结果不确定时复用同一 attempt/key，只有能确认上游未接受时才允许尝试下一绑定。克隆按 `audio + request`、TTS/预览按 `audio + characters` 使用后台售价与现有 hold/settle/refund/attempt 审计，代码不硬编码积分价格。管理员删除用户前必须先删除其未结束或仍绑定 Provider Voice ID 的声音档案，避免遗留上游声音。
+
 ## 短剧项目与生成运营
 
 - `GET/POST /api/drama/projects`：列出或创建当前用户的短剧项目；`ratio` 支持 `9:16`、`16:9` 或经过边界校验的精确 `宽x高`，镜头图片/视频沿用项目尺寸优先级并可在无精确项目尺寸时继承参考图比例。

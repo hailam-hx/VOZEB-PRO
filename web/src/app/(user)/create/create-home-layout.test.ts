@@ -85,7 +85,7 @@ describe("create Agent home layout", () => {
         expect(preferences).toContain('t("generationParametersSummary"');
         expect(preferences).toContain('t("ratio")');
         expect(preferences).toContain("1080P");
-        expect(preferences).toContain('t("selectVoice")');
+        expect(preferences).toContain("<VoiceSelector");
         expect(preferences).toContain("<Select");
         expect(preferences).not.toContain("选择模型");
         expect(preferences).not.toContain("修改后立即生效，例如 1024 × 1536");

@@ -46,6 +46,12 @@ export async function countLocalMediaReferences(storageKeys: string[]) {
                 UNION ALL
                 SELECT r.storage_key, count(*)::int
                 FROM requested r
+                JOIN voice_profiles v ON v.status <> 'deleted'
+                    AND (v.source_storage_key = r.storage_key OR v.preview_storage_key = r.storage_key)
+                GROUP BY r.storage_key
+                UNION ALL
+                SELECT r.storage_key, count(*)::int
+                FROM requested r
                 JOIN published_work_assets a ON a.storage_key = r.storage_key
                 GROUP BY r.storage_key
                 UNION ALL
@@ -70,8 +76,11 @@ export async function countLocalMediaReferences(storageKeys: string[]) {
         readJsonDataFile<unknown>("drama-projects.json", {}),
         readJsonDataFile<unknown>("generation-logs.json", {}),
         readJsonDataFile<unknown>("generation-tasks.json", []),
+        readJsonDataFile<{ profiles?: Array<{ status?: string }> }>("voice-profiles.json", {}),
         readJsonDataFile<unknown>("auth.json", {}),
     ]);
+    const voiceDatabase = databases[6] as { profiles?: Array<{ status?: string }> };
+    databases[6] = { profiles: (voiceDatabase.profiles || []).filter((profile) => profile.status !== "deleted") };
     for (const key of keys)
         counts.set(
             key,

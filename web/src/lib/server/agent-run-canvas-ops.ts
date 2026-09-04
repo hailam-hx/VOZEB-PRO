@@ -223,7 +223,7 @@ function outputMetadata(runId: string, task: AgentRunTask, status: "loading" | "
         quality: task.quality,
         count: task.count,
         seconds: task.seconds ? String(task.seconds) : undefined,
-        audioVoice: task.voice,
+        audioVoice: task.voiceSelection,
         audioFormat: task.format,
         status,
         errorDetails: "",

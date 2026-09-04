@@ -66,4 +66,7 @@ CREATE TRIGGER generation_logs_set_updated_at BEFORE UPDATE ON generation_logs F
 
 DROP TRIGGER IF EXISTS object_storage_settings_set_updated_at ON object_storage_settings;
 CREATE TRIGGER object_storage_settings_set_updated_at BEFORE UPDATE ON object_storage_settings FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+
+DROP TRIGGER IF EXISTS voice_profiles_set_updated_at ON voice_profiles;
+CREATE TRIGGER voice_profiles_set_updated_at BEFORE UPDATE ON voice_profiles FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 `;

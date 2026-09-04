@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { isAuthInputError, updateUserByAdmin, type UserRole, type UserStatus } from "@/lib/auth/store";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
-import { deleteAdminUserWithMediaCleanup } from "@/lib/server/admin-user-deletion-service";
+import { AdminUserDeletionError, deleteAdminUserWithMediaCleanup } from "@/lib/server/admin-user-deletion-service";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { hasAnyAdminPermission, normalizeAdminPermissions } from "@/lib/admin-permissions";
 
@@ -75,7 +75,7 @@ export async function DELETE(request: Request, context: RouteContext) {
             target: { type: "user" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isAuthInputError(error)) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
+        if (isAuthInputError(error) || error instanceof AdminUserDeletionError) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
         console.error("Admin user delete failed", error);
         return NextResponse.json({ code: 500, data: null, msg: "删除用户失败" }, { status: 500 });
     }

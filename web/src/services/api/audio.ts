@@ -1,4 +1,4 @@
-import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
@@ -42,7 +42,7 @@ export async function createAudioGenerationTask(config: AiConfig, prompt: string
         body: JSON.stringify({
             config: {
                 model,
-                voice: normalizeAudioVoiceValue(config.audioVoice),
+                voiceSelection: config.audioVoice,
                 format,
                 speed: normalizeAudioSpeedValue(config.audioSpeed),
                 ...(instructions ? { instructions } : {}),

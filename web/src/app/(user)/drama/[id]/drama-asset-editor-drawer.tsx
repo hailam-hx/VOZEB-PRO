@@ -17,6 +17,7 @@ import { startDramaTaskAfterPreflight } from "../drama-generation-capabilities";
 import type { DramaAssetKind } from "./drama-asset-definitions";
 import { dramaAssetReferences, imageResultsToReferences } from "./drama-asset-reference-utils";
 import { dramaGenerationSize, dramaImageGenerationPreflight } from "./drama-shot-generation-utils";
+import { VoiceSelector } from "@/components/voice-selector";
 
 type AssetDraft = {
     name: string;
@@ -27,7 +28,7 @@ type AssetDraft = {
 };
 
 const emptyProfile = (): DramaAssetProfile => ({ visualIdentity: "", styling: "", colorPalette: "", consistencyRules: "" });
-const emptyVoiceProfile = (): DramaVoiceProfile => ({ voice: "", speed: 1, instructions: "" });
+const emptyVoiceProfile = (): DramaVoiceProfile => ({ speed: 1, instructions: "" });
 const emptyDraft = (): AssetDraft => ({ name: "", description: "", payoff: "", profile: emptyProfile(), voiceProfile: emptyVoiceProfile() });
 
 export function DramaAssetEditorDrawer({ project, kind, assetId, open, onClose }: { project: DramaProject; kind: DramaAssetKind; assetId?: string; open: boolean; onClose: () => void }) {
@@ -279,7 +280,7 @@ export function DramaAssetEditorDrawer({ project, kind, assetId, open, onClose }
                         <p className="text-xs text-muted-foreground">{t("characterVoiceDescription")}</p>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-[minmax(140px,0.8fr)_110px_minmax(220px,1.2fr)]">
-                        <Input value={draft.voiceProfile.voice} onChange={(event) => setDraft((current) => ({ ...current, voiceProfile: { ...current.voiceProfile, voice: event.target.value } }))} placeholder={t("voiceId")} />
+                        <VoiceSelector model={config.audioModel} value={draft.voiceProfile.voiceSelection} onChange={(voiceSelection) => setDraft((current) => ({ ...current, voiceProfile: { ...current.voiceProfile, voiceSelection } }))} />
                         <Space.Compact className="w-full">
                             <InputNumber
                                 className="!min-w-0 !flex-1"

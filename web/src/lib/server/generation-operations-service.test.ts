@@ -170,6 +170,36 @@ describe("generation operations aggregation", () => {
 
         expect(result.items[0]).not.toHaveProperty("canReview");
     });
+
+    it("lists active voice-clone work without exposing an unsupported cancel action", async () => {
+        mocks.listStoredGenerationTaskRecords.mockResolvedValue({
+            items: [{ ...task(), type: "voice-clone", status: "running", executionPhase: "polling", payload: { config: { logicalModel: "voice-clone" } } }],
+            all: [],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            summary: { total: 1, active: 1, success: 0, failed: 0, averageDurationMs: 0, totalPointsCost: 0, byType: { "voice-clone": 1 }, byStatus: { running: 1 } },
+        });
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+
+        expect(result.items[0]).toMatchObject({ type: "voice-clone", model: "voice-clone", canCancel: false });
+    });
+
+    it("exposes only the sanitized gateway trace to administrators", async () => {
+        mocks.listStoredGenerationTaskRecords.mockResolvedValue({
+            items: [{ ...task(), type: "voice-clone", payload: { config: { logicalModel: "voice-clone" }, attempts: [{ attemptNo: 1, model: "voice-clone-pro", status: "succeeded", startedAt: 1, providerTrace: "trace-123 [redacted-url]" }] } }],
+            all: [],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            summary: { total: 1, active: 0, success: 1, failed: 0, averageDurationMs: 0, totalPointsCost: 0, byType: { "voice-clone": 1 }, byStatus: { success: 1 } },
+        });
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+
+        expect(result.items[0].attempts?.[0]?.providerTrace).toBe("trace-123 [redacted-url]");
+    });
 });
 
 function task() {

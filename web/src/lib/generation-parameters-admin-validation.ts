@@ -6,6 +6,11 @@ export function validateGenerationParametersInput(value: unknown) {
     if (value === undefined) return undefined;
     if (!value || typeof value !== "object" || Array.isArray(value)) return "生成能力档案格式无效";
     const input = value as Record<string, unknown>;
+    if (input.audioOperation !== undefined && input.audioOperation !== "speech" && input.audioOperation !== "voice-clone") return "音频操作类型无效";
+    if (input.maxCharacters !== undefined && !positiveInteger(input.maxCharacters)) return "最大字符数必须是正整数";
+    if (input.voiceCatalog !== undefined && input.voiceCatalog !== "static" && input.voiceCatalog !== "provider") return "音色目录类型无效";
+    if (input.supportsClonedVoices !== undefined && typeof input.supportsClonedVoices !== "boolean") return "supportsClonedVoices必须是布尔值";
+    if (input.speedAppliesTo !== undefined && input.speedAppliesTo !== "all" && input.speedAppliesTo !== "cloned") return "语速适用范围无效";
     for (const field of ["referenceInputs", "qualities", "resolutions", "voices", "formats"] satisfies ListField[]) if (input[field] !== undefined && !stringList(input[field])) return `${label(field)}必须是非空文本列表`;
     if (input.aspectRatios !== undefined && (!Array.isArray(input.aspectRatios) || input.aspectRatios.some((item) => !ratio(item)))) return "支持比例必须使用正数 W:H 格式";
     if (input.pixelSizes !== undefined && (!Array.isArray(input.pixelSizes) || input.pixelSizes.some((item) => !size(item)))) return "精确尺寸必须使用正数 WIDTHxHEIGHT 格式";

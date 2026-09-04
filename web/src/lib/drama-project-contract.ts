@@ -1,3 +1,5 @@
+import type { VoiceSelection } from "@/lib/voice-selection";
+
 export type DramaTaskStatus = "idle" | "queued" | "running" | "success" | "error" | "cancelled";
 export type DramaReviewStatus = "draft" | "content_review" | "approved" | "visual_ready";
 export type DramaVideoMode = "storyboard" | "direct" | "reference";
@@ -23,7 +25,8 @@ export type DramaAssetProfile = {
 };
 
 export type DramaVoiceProfile = {
-    voice: string;
+    voiceSelection?: VoiceSelection;
+    voiceName?: string;
     speed: number;
     instructions: string;
 };

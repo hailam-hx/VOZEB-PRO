@@ -28,7 +28,7 @@ export type GenerationTaskLease = Pick<
 export type GenerationTaskSchedulePatch = Partial<Pick<GenerationTaskLease, "executionPhase" | "upstreamTaskId" | "channelId" | "provider" | "queryPath" | "submittedAt" | "nextPollAt" | "lastPollAt" | "lastUpstreamStatus" | "resultPayload">>;
 type GenerationTaskScheduleOptions = { cancellation?: boolean };
 
-const SCHEDULABLE_TYPES = new Set<GenerationTaskType>(["image", "video", "audio", "text", "agent"]);
+const SCHEDULABLE_TYPES = new Set<GenerationTaskType>(["image", "video", "audio", "voice-clone", "text", "agent"]);
 const ACTIVE_PHASES = new Set<GenerationTaskExecutionPhase>(["created", "submitting", "submitted", "polling", "result_ready", "persisting"]);
 const REVIEW_PHASES = new Set<GenerationTaskExecutionPhase>(["review_pending", "reviewing"]);
 const CANCELLATION_PHASES = new Set<GenerationTaskExecutionPhase>(["cancel_requested", "cancel_polling"]);
@@ -301,5 +301,5 @@ function isPhase(value: unknown): value is GenerationTaskExecutionPhase {
 }
 
 function isTaskType(value: unknown): value is GenerationTaskType {
-    return value === "text" || value === "image" || value === "video" || value === "audio" || value === "agent" || value === "render";
+    return value === "text" || value === "image" || value === "video" || value === "audio" || value === "voice-clone" || value === "agent" || value === "render";
 }

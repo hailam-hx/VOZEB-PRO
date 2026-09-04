@@ -728,6 +728,7 @@
         "drama": "Phim ngắn",
         "works": "Tác phẩm",
         "assets": "Tài nguyên",
+        "voices": "Giọng nói",
         "myPrompts": "Prompt của tôi",
         "promptLibrary": "Thư viện prompt",
         "community": "Khám phá",
@@ -746,6 +747,7 @@
         "dramaDescription": "Kịch bản, phân cảnh và phim hoàn chỉnh",
         "worksDescription": "Xuất bản, kiểm duyệt và chia sẻ",
         "assetsDescription": "Hình ảnh, video và âm thanh",
+        "voicesDescription": "Nhân bản và quản lý giọng nói của tôi",
         "myPromptsDescription": "Prompt cá nhân",
         "promptLibraryDescription": "Prompt dùng chung",
         "communityDescription": "Khám phá tác phẩm công khai",
@@ -849,7 +851,7 @@
         "generationCapabilityIntersection": "Không phải tất cả model đã chọn đều hỗ trợ tham số này",
         "generationReferenceImageLimit": "Model hiện tại hỗ trợ tối đa {count} ảnh tham chiếu",
         "generationReferenceImageIntersectionLimit": "Không phải tất cả model đã chọn đều hỗ trợ thêm ảnh tham chiếu (tối đa {count})",
-        "estimatedCreditCost": "{credits}",
+        "estimatedCreditCost": "Ước tính tiêu tốn {credits} điểm",
         "estimatedCreditAmount": "{credits}",
         "creditAfterPlanning": "Điểm ước tính: xác định sau khi lập kế hoạch",
         "creditAfterPlanningCompact": "Sau lập kế hoạch",
@@ -3030,6 +3032,67 @@
                 "manual": { "label": "Thanh toán thủ công", "description": "Làm theo hướng dẫn chuyển khoản và xác nhận" }
             },
             "errors": { "paymentInfoFailed": "Tải thông tin thanh toán thất bại", "quoteFailed": "Tính giá đơn hàng thất bại.", "createOrderFailed": "Tạo đơn hàng thất bại" }
+        }
+    },
+    "voices": {
+        "title": "Quản lý giọng nói",
+        "description": "Nhân bản giọng nói của bạn và tái sử dụng an toàn trong Agent, Canvas và AI短剧.",
+        "refresh": "Làm mới",
+        "retry": "Thử lại",
+        "cancel": "Hủy",
+        "cloneAction": "Nhân bản giọng",
+        "notConfigured": "Quản trị viên chưa cấu hình mô hình nhân bản giọng nói",
+        "notConfiguredDescription": "Chưa có mô hình nhân bản giọng nói. Bạn vẫn có thể xem và quản lý các giọng hiện có.",
+        "allStatuses": "Tất cả trạng thái",
+        "loadFailed": "Không thể tải hồ sơ giọng nói",
+        "empty": "Chưa có hồ sơ giọng nói",
+        "rename": "Nhấn để đổi tên",
+        "renameFailed": "Không thể đổi tên giọng nói",
+        "duration": "{seconds} giây",
+        "statuses": { "pending": "Đang nhân bản", "ready": "Sẵn sàng", "failed": "Thất bại", "deleting": "Đang xóa", "deleted": "Đã xóa" },
+        "selector": {
+            "platformVoices": "Giọng nền tảng",
+            "myVoices": "Giọng của tôi",
+            "loadFailed": "Không thể tải danh sách giọng",
+            "loading": "Đang tải giọng",
+            "placeholder": "Chọn một giọng",
+            "empty": "Không có giọng khả dụng",
+            "retry": "Tải lại",
+            "ariaLabel": "Chọn giọng nói",
+            "noClonedVoices": "Chưa có giọng nhân bản nào sẵn sàng",
+            "manage": "Quản lý giọng"
+        },
+        "clone": {
+            "title": "Nhân bản giọng nói",
+            "confirm": "Xác nhận tạo",
+            "name": "Tên giọng nói",
+            "namePlaceholder": "Ví dụ: Giọng thuyết minh của tôi",
+            "sample": "Mẫu giọng nói",
+            "selectSample": "Chọn âm thanh dài 5–180 giây",
+            "consent": "Tôi xác nhận có quyền hợp pháp sử dụng giọng nói này và đồng ý dùng giọng cho mục đích nhân bản.",
+            "created": "Đã tạo tác vụ nhân bản giọng nói",
+            "createFailed": "Không thể tạo giọng nói",
+            "uploadFailed": "Không thể tải mẫu giọng nói lên",
+            "readFailed": "Không thể đọc mẫu giọng nói"
+        },
+        "preview": {
+            "action": "Nghe thử",
+            "title": "Nghe thử giọng nói",
+            "confirmTitle": "Tạo bản nghe thử",
+            "confirm": "Xác nhận và tạo",
+            "unknownCost": "Một câu ngắn sẽ được tạo theo mức giá quản trị đã cấu hình. Bản nghe thử thành công được lưu đệm và không bị tính phí lại.",
+            "estimatedCost": "Một câu ngắn sẽ được tạo với chi phí ước tính {points} điểm. Bản nghe thử thành công được lưu đệm và không bị tính phí lại.",
+            "loadFailed": "Không thể tải bản nghe thử",
+            "createFailed": "Không thể tạo bản nghe thử",
+            "generating": "Bản nghe thử đang được tạo và sẽ được lưu đệm khi hoàn tất"
+        },
+        "delete": {
+            "action": "Xóa",
+            "confirmTitle": "Xóa giọng nói này?",
+            "readyDescription": "Giọng nói ở thượng nguồn cũng sẽ bị xóa. Không thể hoàn tác sau khi hoàn tất.",
+            "localDescription": "Không thể hoàn tác thao tác này.",
+            "success": "Yêu cầu xóa đã được xử lý",
+            "failed": "Không thể xóa giọng nói"
         }
     },
     "profile": {

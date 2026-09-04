@@ -33,7 +33,7 @@ const profiles = {
 
 const settings = (generationDefaults = {}) => ({
     logicalModels: [image(profiles.image), video(profiles.video), audio(profiles.audio)],
-    defaultModels: { imageModel: "image", videoModel: "video", textModel: "", audioModel: "audio" },
+    defaultModels: { imageModel: "image", videoModel: "video", textModel: "", audioModel: "audio", voiceCloneModel: "" },
     generationDefaults: { canvasImageCount: 1, imageCount: 1, imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto", ...generationDefaults },
 });
 
@@ -45,6 +45,12 @@ describe("generation-default capability validation", () => {
         expect(generationParametersStatus("audio", profiles.audio)).toEqual({ state: "configured", label: "已配置" });
         expect(generationParametersStatus("video", { ...profiles.video, supportsCustomDuration: true })).toEqual({ state: "incomplete", label: "能力档案未完成" });
         expect(generationParametersStatus("image", { ...profiles.image, supportsCustomBatchSize: true })).toEqual({ state: "incomplete", label: "能力档案未完成" });
+    });
+
+    it("treats clone bindings separately from static and provider speech profiles", () => {
+        expect(generationParametersStatus("audio", { audioOperation: "voice-clone" })).toEqual({ state: "configured", label: "已配置" });
+        expect(generationParametersStatus("audio", { audioOperation: "speech", voiceCatalog: "provider", formats: ["mp3"], maxCharacters: 5000 })).toEqual({ state: "configured", label: "已配置" });
+        expect(generationParametersStatus("audio", { audioOperation: "speech", voiceCatalog: "static", formats: ["mp3"] })).toEqual({ state: "incomplete", label: "能力档案未完成" });
     });
 
     it("requires a positive image-reference limit when image references are enabled", () => {

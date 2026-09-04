@@ -30,4 +30,13 @@ describe("reference asset access", () => {
         expect(signReferenceAssetInputUrl("https://cdn.example/image.png", "https://vozeb.example")).toBe("https://cdn.example/image.png");
         expect(signReferenceAssetInputUrl("/api/reference-assets/permanent/2026/07/19/images/file.png", "https://vozeb.example")).toContain("purpose=provider-read");
     });
+
+    it("derives provider-read expiry from the configured task timeout", () => {
+        process.env.VOZEB_PRO_REFERENCE_ASSET_SIGNING_KEY = "test-signing-key";
+        const now = Date.UTC(2026, 6, 19);
+        const url = new URL(createSignedReferenceAssetUrl("permanent/audio.wav", "https://vozeb.example", now, 30 * 60_000));
+
+        expect(Number(url.searchParams.get("expires"))).toBe(Math.floor((now + 30 * 60_000) / 1000));
+        expect(verifyReferenceAssetSignature("permanent/audio.wav", url.searchParams.get("purpose"), url.searchParams.get("expires"), url.searchParams.get("signature"), now)).toBe(true);
+    });
 });

@@ -137,14 +137,28 @@ import {
 
 export let mutationQueue = Promise.resolve();
 
+function enqueueFileAuthOperation<T>(operation: () => Promise<T>) {
+    const run = mutationQueue.then(operation);
+    mutationQueue = run.then(
+        () => undefined,
+        () => undefined,
+    );
+    return run;
+}
+
 export async function readAuthDb(): Promise<AuthDatabase> {
     if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL auth reads must use entity repositories");
     return normalizeDb(await readJsonDataFile<Partial<AuthDatabase>>(AUTH_DATA_FILE, emptyDb()));
 }
 
+export async function withFileAuthDatabaseLock<T>(callback: (database: AuthDatabase) => T | Promise<T>) {
+    if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL auth reads must use entity repositories");
+    return enqueueFileAuthOperation(async () => callback(await readAuthDb()));
+}
+
 export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise<T>) {
     if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL auth mutations must use entity repositories");
-    const run = mutationQueue.then(async () => {
+    return enqueueFileAuthOperation(async () => {
         const db = await readAuthDb();
         try {
             const result = await mutator(db);
@@ -155,11 +169,6 @@ export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise
             throw error;
         }
     });
-    mutationQueue = run.then(
-        () => undefined,
-        () => undefined,
-    );
-    return run;
 }
 
 export async function writeAuthDb(db: AuthDatabase) {

@@ -212,7 +212,7 @@ export function GenerationOperationsClient() {
                                 value={type || undefined}
                                 allowClear
                                 placeholder="任务类型"
-                                options={["agent", "text", "image", "video", "audio", "render"].map((value) => ({ value, label: taskTypeLabel(value) }))}
+                                options={["agent", "text", "image", "video", "audio", "voice-clone", "render"].map((value) => ({ value, label: taskTypeLabel(value) }))}
                                 onChange={(value) => {
                                     setPage(1);
                                     setType(value || "");
@@ -362,7 +362,7 @@ function TaskTypeTag({ type }: { type: string }) {
 }
 
 function taskTypeLabel(value: string) {
-    return ({ agent: "Agent", text: "文本", image: "图片", video: "视频", audio: "音频", render: "合成" } as Record<string, string>)[value] || value;
+    return ({ agent: "Agent", text: "文本", image: "图片", video: "视频", audio: "音频", "voice-clone": "声音克隆", render: "合成" } as Record<string, string>)[value] || value;
 }
 function statusLabel(value: string) {
     return ({ pending: "排队", running: "执行中", paused: "已暂停", success: "成功", error: "失败", cancelled: "已取消" } as Record<string, string>)[value] || value;

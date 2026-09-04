@@ -45,10 +45,12 @@ export function resolveImageGenerationCandidates<T extends GenerationCandidate>(
 export function resolveAudioGenerationCandidates<T extends GenerationCandidate>(candidates: readonly T[], config: Record<string, unknown> | undefined, defaults: { audioVoice: string; audioFormat: string }) {
     return resolveCandidates(candidates, (candidate) => {
         const parameters = candidate.generationParameters as LogicalModelGenerationParameters | undefined;
-        const voice = resolveText(config?.voice, defaults.audioVoice, parameters, parameters?.voices, (value) => ({ voice: value }));
+        const selection = config?.voiceSelection && typeof config.voiceSelection === "object" ? (config.voiceSelection as Record<string, unknown>) : undefined;
+        const voice = selection ? concreteText(config?.voice) : resolveText(config?.voice, defaults.audioVoice, parameters, parameters?.voices, (value) => ({ voice: value }));
         const format = resolveText(config?.format, defaults.audioFormat, parameters, parameters?.formats, (value) => ({ format: value }));
         const explicitSpeed = positiveNumber(config?.speed);
-        const speed = explicitSpeed || parameters?.speedRange?.min;
+        const speedAllowed = parameters?.speedAppliesTo !== "cloned" || selection?.type === "profile";
+        const speed = speedAllowed ? explicitSpeed || parameters?.speedRange?.min : undefined;
         const resolved = { ...candidate, ...(voice ? { voice } : {}), ...(format ? { format } : {}), ...(speed ? { speed: String(speed) } : {}) };
         return { candidate: resolved, request: audioGenerationRequest(resolved as Record<string, unknown>) };
     });

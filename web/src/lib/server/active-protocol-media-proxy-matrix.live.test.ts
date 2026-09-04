@@ -298,7 +298,7 @@ async function configureProxyChannel(definition: ChannelProtocolDefinition, capa
             ],
         },
     ];
-    const defaultModels: SystemDefaultModels = { textModel: "", imageModel: "", videoModel: "", audioModel: "", [`${capability}Model`]: logicalModelId };
+    const defaultModels: SystemDefaultModels = { textModel: "", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "", [`${capability}Model`]: logicalModelId };
     const response = await saveAdminSettings(
         new Request(`${INTERNAL_ORIGIN}/api/admin/settings`, {
             method: "PATCH",

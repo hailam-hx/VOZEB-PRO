@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
     schedule: vi.fn(),
     register: vi.fn(),
     writeMedia: vi.fn(),
+    getProfile: vi.fn(),
+    updateProfile: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: vi.fn(), refundUserPoints: vi.fn() }));
@@ -21,6 +23,7 @@ vi.mock("@/lib/server/audio-task-store", () => ({
 vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: mocks.register }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.schedule }));
 vi.mock("@/lib/server/reference-asset-store", () => ({ writePersistentMediaDataUrl: mocks.writeMedia }));
+vi.mock("@/lib/server/voice-profile-store", () => ({ getVoiceProfileForUser: mocks.getProfile, updateVoiceProfile: mocks.updateProfile }));
 
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 import { GenerationSubmissionUncertainError } from "./generation-submission-error";
@@ -48,6 +51,8 @@ describe("audio task runtime submission safety", () => {
         });
         mocks.writeMedia.mockResolvedValue({ token: "fixture-audio.wav" });
         mocks.register.mockResolvedValue(undefined);
+        mocks.getProfile.mockResolvedValue(undefined);
+        mocks.updateProfile.mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -113,6 +118,33 @@ describe("audio task runtime submission safety", () => {
         await persistAudioTaskResult(state, "http://127.0.0.1:3000", "data:audio/wav;base64,UklGRg==");
 
         expect(state).toMatchObject({ status: "success", result: { url: "/api/reference-assets/fixture-audio.wav", mimeType: "audio/wav" } });
+    });
+
+    it("updates only the owned selected profile usage and preview cache after cloned TTS succeeds", async () => {
+        state = {
+            ...state,
+            source: "voice-profile-preview:profile-one",
+            config: { ...state.config, voiceSelection: { type: "profile", voiceProfileId: "profile-one" } },
+        };
+        mocks.getProfile.mockResolvedValue({ id: "profile-one", userId: "user-one", status: "ready" });
+
+        await persistAudioTaskResult(state, "http://127.0.0.1:3000", "data:audio/wav;base64,UklGRg==");
+
+        expect(mocks.getProfile).toHaveBeenCalledWith("user-one", "profile-one");
+        expect(mocks.updateProfile).toHaveBeenCalledWith("profile-one", { lastUsedAt: expect.any(String), previewStorageKey: "fixture-audio.wav" });
+    });
+
+    it("does not attach a preview marker to a different or unowned profile", async () => {
+        state = {
+            ...state,
+            source: "voice-profile-preview:other-profile",
+            config: { ...state.config, voiceSelection: { type: "profile", voiceProfileId: "profile-one" } },
+        };
+        mocks.getProfile.mockResolvedValue(null);
+
+        await persistAudioTaskResult(state, "http://127.0.0.1:3000", "data:audio/wav;base64,UklGRg==");
+
+        expect(mocks.updateProfile).not.toHaveBeenCalled();
     });
 
     it.each(AUDIO_PROTOCOLS)("receives an audio response from the $id protocol over a local TCP interface", async (definition) => {

@@ -20,6 +20,10 @@ const mocks = vi.hoisted(() => ({
     createAudioTaskUpstreamStep: vi.fn(),
     markAudioTaskFailed: vi.fn(),
     queryAudioTaskUpstreamStep: vi.fn(),
+    getVoiceCloneTask: vi.fn(),
+    createVoiceCloneUpstreamStep: vi.fn(),
+    queryVoiceCloneUpstreamStep: vi.fn(),
+    markVoiceCloneFailed: vi.fn(),
     queryCancelledImageTaskUpstreamStep: vi.fn(),
     queryImageTaskUpstreamStep: vi.fn(),
     queryCancelledTextTaskUpstreamStep: vi.fn(),
@@ -56,6 +60,12 @@ vi.mock("@/lib/server/audio-task-runtime", () => ({
     queryAudioTaskUpstreamStep: mocks.queryAudioTaskUpstreamStep,
 }));
 vi.mock("@/lib/server/audio-task-store", () => ({ getAudioTask: mocks.getAudioTask, updateAudioTask: mocks.updateAudioTask }));
+vi.mock("@/lib/server/voice-profile-store", () => ({ getVoiceCloneTask: mocks.getVoiceCloneTask }));
+vi.mock("@/lib/server/voice-clone-runtime", () => ({
+    createVoiceCloneUpstreamStep: mocks.createVoiceCloneUpstreamStep,
+    queryVoiceCloneUpstreamStep: mocks.queryVoiceCloneUpstreamStep,
+    markVoiceCloneFailed: mocks.markVoiceCloneFailed,
+}));
 vi.mock("@/lib/server/image-task-runtime", () => ({
     createImageTaskUpstreamStep: mocks.createImageTaskUpstreamStep,
     markImageTaskFailed: mocks.markImageTaskFailed,
@@ -357,6 +367,24 @@ describe("generation task recovery service", () => {
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
     });
 
+    it("executes and polls voice cloning through the shared recovery scheduler", async () => {
+        const task = {
+            id: "voice-clone-one",
+            userId: "user-one",
+            status: "pending",
+            config: { channelId: "dflop", queryPath: "/voice/tasks/:task_id" },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "voice-clone", executionPhase: "created" }]);
+        mocks.getVoiceCloneTask.mockResolvedValue(task);
+        mocks.createVoiceCloneUpstreamStep.mockResolvedValue({ state: "pending", status: "queued", upstreamTaskId: "upstream-one" });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", publicOrigin: "https://vozeb.example", workerId: "worker-one" });
+
+        expect(mocks.createVoiceCloneUpstreamStep).toHaveBeenCalledWith(task, "http://internal", "https://vozeb.example", "user-one");
+        expect(mocks.release).toHaveBeenCalledWith("voice-clone", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", upstreamTaskId: "upstream-one", channelId: "dflop", queryPath: "/voice/tasks/:task_id" }));
+        expect(result).toMatchObject({ claimed: 1, pending: 1 });
+    });
+
     it("fails interrupted audio and video submissions instead of waiting for review", async () => {
         const audio = { id: "audio-interrupted", userId: "user-one", status: "running", config: { channelId: "audio-channel", apiFormat: "openai", advancedConfig: { protocol: "custom" } } };
         const video = { id: "video-interrupted", userId: "user-one", status: "running", upstream: { id: "" }, config: { channelId: "video-channel", apiFormat: "openai", advancedConfig: { protocol: "openai" } } };
@@ -473,7 +501,7 @@ function mediaTask(type: "image" | "audio") {
             logicalModel: `${type}-logical`,
             channelId: `${type}-channel`,
             generationParameters: type === "image" ? { qualities: ["high"] } : { voices: ["alloy"], formats: ["mp3"], speedRange: { min: 1, max: 1 } },
-            ...(type === "image" ? { quality: "high", size: "1:1", count: 1 } : { voice: "alloy", format: "mp3", speed: "1" }),
+            ...(type === "image" ? { quality: "high", size: "1:1", count: 1 } : { voiceSelection: { type: "preset" as const, voiceId: "alloy" }, voice: "alloy", format: "mp3", speed: "1" }),
         },
         candidateConfigs: [],
     };

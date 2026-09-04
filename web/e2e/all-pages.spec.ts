@@ -37,6 +37,7 @@ test("all authenticated pages reach their real routes and stay usable", async ({
         { path: `/drama/${fixtures.dramaId}` },
         { path: "/works", readyHeading: "作品管理" },
         { path: "/assets", readyHeading: "我的素材" },
+        { path: "/voices", readyHeading: "声音管理" },
         { path: "/my-prompts", readyHeading: "我的提示词" },
         { path: "/prompts", readyHeading: "提示词库" },
         { path: "/help", readyHeading: "从操作到交付，按真实流程完成创作" },

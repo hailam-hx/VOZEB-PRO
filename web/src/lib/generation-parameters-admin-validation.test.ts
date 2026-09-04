@@ -27,4 +27,13 @@ describe("admin generation-parameter input validation", () => {
         expect(validateGenerationParametersInput({ supportsCustomBatchSize: true, customBatchSizeRange: { min: 1.5, max: 10 } })).toBe("自定义数量范围必须是正整数");
         expect(validateGenerationParametersInput({ supportsCustomBatchSize: true, customBatchSizeRange: { min: 5, max: 10 } })).toBeUndefined();
     });
+
+    it("validates voice cloning capability fields before normalization", () => {
+        expect(validateGenerationParametersInput({ audioOperation: "speech", maxCharacters: 5000, voiceCatalog: "provider", supportsClonedVoices: true, speedAppliesTo: "cloned" })).toBeUndefined();
+        expect(validateGenerationParametersInput({ audioOperation: "clone" })).toBe("音频操作类型无效");
+        expect(validateGenerationParametersInput({ maxCharacters: 0 })).toBe("最大字符数必须是正整数");
+        expect(validateGenerationParametersInput({ voiceCatalog: "remote" })).toBe("音色目录类型无效");
+        expect(validateGenerationParametersInput({ supportsClonedVoices: "yes" })).toBe("supportsClonedVoices必须是布尔值");
+        expect(validateGenerationParametersInput({ speedAppliesTo: "preset" })).toBe("语速适用范围无效");
+    });
 });

@@ -65,7 +65,7 @@ describe("generation defaults panel behavior", () => {
                 ],
             },
         ];
-        settings.defaultModels = { imageModel: "image", videoModel: "video", textModel: "", audioModel: "" };
+        settings.defaultModels = { imageModel: "image", videoModel: "video", textModel: "", audioModel: "", voiceCloneModel: "" };
         settings.generationDefaults = { ...settings.generationDefaults, imageSize: "1920x1080", imageCount: 3, canvasImageCount: 3 };
 
         expect(generationDefaultsPanelState(settings)).toMatchObject({ imageSizeOptions: expect.arrayContaining([expect.objectContaining({ value: "1920x1080" })]), resets: { imageCount: "auto", canvasImageCount: "auto" } });

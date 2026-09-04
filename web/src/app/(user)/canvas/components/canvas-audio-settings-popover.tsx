@@ -7,6 +7,7 @@ import { useCreativeComposerPopoverPlacement, type CreativeComposerPopoverPlacem
 import { CreativeGenerationPreferences, useGenerationPreferenceSummary, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
 import type { CreativeGenerationPreferences as GenerationPreferences } from "@/lib/creative-runtime-contract";
 import type { AiConfig } from "@/stores/use-config-store";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 import { resolveCanvasGenerationCapability } from "../utils/canvas-generation-capabilities";
 
@@ -14,7 +15,7 @@ export type CanvasAudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" 
 
 type CanvasAudioSettingsPopoverProps = {
     config: AiConfig;
-    onConfigChange: (key: CanvasAudioSettingKey, value: string) => void;
+    onConfigChange: (key: CanvasAudioSettingKey, value: string | VoiceSelection) => void;
     buttonClassName?: string;
     placement?: CreativeComposerPopoverPlacement;
 };
@@ -26,7 +27,7 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
     const preferences: GenerationPreferences = {
         mode: "audio",
         audio: {
-            ...(concreteText(config.audioVoice) ? { voice: config.audioVoice } : {}),
+            ...(config.audioVoice ? { voiceSelection: config.audioVoice } : {}),
             ...(concreteText(config.audioFormat) ? { format: config.audioFormat } : {}),
             ...(positiveNumber(config.audioSpeed) ? { speed: positiveNumber(config.audioSpeed) } : {}),
         },
@@ -62,8 +63,8 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
     );
 }
 
-function applyAudioPreferencePatch(patch: CreativeGenerationPreferencePatch, onChange: (key: CanvasAudioSettingKey, value: string) => void) {
-    if ("voice" in patch) onChange("audioVoice", patch.voice || "auto");
+function applyAudioPreferencePatch(patch: CreativeGenerationPreferencePatch, onChange: (key: CanvasAudioSettingKey, value: string | VoiceSelection) => void) {
+    if (patch.voiceSelection) onChange("audioVoice", patch.voiceSelection);
     if ("format" in patch) onChange("audioFormat", patch.format || "auto");
     if ("speed" in patch) onChange("audioSpeed", patch.speed === undefined ? "auto" : String(patch.speed));
 }

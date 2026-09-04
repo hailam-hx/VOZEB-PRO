@@ -18,7 +18,7 @@ describe("user navigation order", () => {
     });
 
     it("keeps published works and personal assets in the requested asset order", () => {
-        expect(navigationTools.filter((tool) => tool.group === "assets").map((tool) => tool.label)).toEqual(["作品", "素材", "提示词", "词库"]);
+        expect(navigationTools.filter((tool) => tool.group === "assets").map((tool) => tool.label)).toEqual(["作品", "素材", "声音", "提示词", "词库"]);
         expect(navigationTools.filter((tool) => tool.group === "community").map((tool) => tool.label)).toEqual(["广场", "主页"]);
         expect(navigationTools.find((tool) => tool.group === "community")?.slug).toBe("community");
     });

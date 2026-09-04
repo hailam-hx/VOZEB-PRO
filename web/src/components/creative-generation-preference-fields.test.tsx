@@ -31,7 +31,10 @@ beforeAll(() => {
     HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+});
 
 describe("capability-aware generation preference components", () => {
     it("opens the disabled button tooltip by focus and touch-compatible click", async () => {
@@ -109,6 +112,15 @@ describe("capability-aware generation preference components", () => {
 
         view.unmount();
         cleanup();
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (url.startsWith("/api/audio-voices/presets")) return Response.json({ code: 0, data: { voices: [{ id: "narrator-pro", name: "narrator-pro" }] }, msg: "ok" });
+                if (url.startsWith("/api/voice-profiles")) return Response.json({ code: 0, data: { items: [], total: 0, page: 1, pageSize: 100 }, msg: "ok" });
+                throw new Error(`unexpected request: ${url}`);
+            }),
+        );
         const audioChange = vi.fn();
         renderInteractive(
             <CreativeGenerationPreferences capability="audio" preferences={{}} generationParameters={profile({ voices: ["narrator-pro"], formats: ["m4a"] })} capabilityReason="unsupported" triggerAriaLabel="打开音频参数" onChange={audioChange} />,
@@ -117,15 +129,7 @@ describe("capability-aware generation preference components", () => {
         const voice = screen.getByRole("combobox", { name: "选择音色" });
         await user.click(voice);
         await user.click(await screen.findByText("narrator-pro"));
-        expect(audioChange).toHaveBeenCalledWith({ voice: "narrator-pro" });
-
-        await user.click(voice);
-        const disabledOptionLabel = await screen.findByText("Alloy");
-        const disabledOption = disabledOptionLabel.closest<HTMLElement>(".ant-select-item-option");
-        expect(disabledOption?.classList.contains("ant-select-item-option-disabled")).toBe(true);
-        const tooltipTarget = disabledOptionLabel.closest<HTMLElement>("[data-capability-tooltip]");
-        fireEvent.click(tooltipTarget!);
-        await waitFor(() => expect(screen.getAllByRole("tooltip").some((item) => item.textContent === "当前模型不支持此参数")).toBe(true));
+        expect(audioChange).toHaveBeenCalledWith({ voiceSelection: { type: "preset", voiceId: "narrator-pro" } });
     });
 
     it("offers 2K and 4K presets without exposing configured extra video resolutions", async () => {

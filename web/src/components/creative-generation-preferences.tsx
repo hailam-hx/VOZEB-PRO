@@ -5,13 +5,15 @@ import { AudioLines, ChevronDown, ImageIcon, Lightbulb, Maximize2, Sparkles, Vid
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { audioFormatOptions, audioVoiceOptions } from "@/lib/audio-generation";
+import { audioFormatOptions } from "@/lib/audio-generation";
 import type { LogicalModelGenerationParameters } from "@/lib/auth/store-types";
 import { configuredCreativeGenerationOptions, creativeGenerationValueSupported, type CreativeGenerationCapabilityReason } from "@/lib/creative-generation-capabilities";
 import type { CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { VOZEB_GENERATION_BATCH_OPTIONS, VOZEB_IMAGE_ASPECT_RATIOS, VOZEB_IMAGE_QUALITIES, VOZEB_VIDEO_ASPECT_RATIOS, VOZEB_VIDEO_DURATION_OPTIONS, VOZEB_VIDEO_REFERENCE_MODES, VOZEB_VIDEO_RESOLUTIONS } from "@/lib/generation-parameters";
 import { cn } from "@/lib/utils";
 import { useConfigStore } from "@/stores/use-config-store";
+import { VoiceSelector } from "@/components/voice-selector";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 import { creativeComposerPopoverOverflow, creativeComposerPopoverPanelMaxHeight, type CreativeComposerPopoverPlacement } from "./creative-composer-popover";
 import { creativeComposerToolButtonClass } from "./creative-composer-styles";
@@ -29,7 +31,8 @@ export type CreativeGenerationPreferencePatch = {
     referenceMode?: NonNullable<CreativeGenerationPreferences["video"]>["referenceMode"];
     firstFrameAssetId?: string;
     lastFrameAssetId?: string;
-    voice?: string;
+    voiceSelection?: VoiceSelection;
+    voiceName?: string;
     format?: string;
     speed?: number;
 };
@@ -241,6 +244,7 @@ function PreferencePanel({
 }) {
     const t = useTranslations("create");
     const configuredVideoSeconds = useConfigStore((state) => Number(state.config.videoSeconds));
+    const configuredAudioModel = useConfigStore((state) => state.config.audioModel);
     const disabledReason = t(capabilityReasonMessageKeys[capabilityReason]);
     const ratios = capability === "image" ? imageRatios : videoRatios;
     const sizeValues = configuredCreativeGenerationOptions(
@@ -300,22 +304,13 @@ function PreferencePanel({
     }, [capability]);
 
     if (capability === "audio") {
-        const voiceValues = configuredCreativeGenerationOptions(["auto", ...audioVoiceOptions.map((option) => option.value)], generationParameters?.voices);
         const formatValues = configuredCreativeGenerationOptions(["auto", ...audioFormatOptions.map((option) => option.value)], generationParameters?.formats);
         return (
             <div className="grid grid-cols-2 gap-1.5">
-                <PreferenceSelect
-                    label={t("voice")}
-                    ariaLabel={t("selectVoice")}
-                    value={preferences.audio?.voice || "auto"}
-                    options={voiceValues.map((value) => ({
-                        value,
-                        label: value === "auto" ? t("smart") : audioVoiceOptions.find((option) => option.value === value)?.label || value,
-                        supported: creativeGenerationValueSupported(generationParameters, "audioVoice", value),
-                    }))}
-                    disabledReason={disabledReason}
-                    onChange={(voice) => onChange({ voice: voice === "auto" ? undefined : voice })}
-                />
+                <label className="grid gap-1.5 text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">
+                    {t("voice")}
+                    <VoiceSelector model={configuredAudioModel} value={preferences.audio?.voiceSelection} disabled={!generationParameters} onChange={(voiceSelection) => onChange({ voiceSelection })} />
+                </label>
                 <PreferenceSelect
                     label={t("format")}
                     ariaLabel={t("selectAudioFormat")}
@@ -807,13 +802,9 @@ function PreferenceSummaryIcon({ capability, preferences }: { capability: MediaC
 
 export function generationPreferenceSummary(capability: MediaCapability, preferences: CreativeGenerationPreferences, copy: GenerationPreferenceSummaryCopy) {
     if (capability === "audio") {
-        const voice = preferences.audio?.voice;
+        const voice = preferences.audio?.voiceName || (preferences.audio?.voiceSelection?.type === "preset" ? preferences.audio.voiceSelection.voiceId : preferences.audio?.voiceSelection?.type === "profile" ? "我的声音" : undefined);
         const format = preferences.audio?.format;
-        const audioParts = [
-            voice ? audioVoiceOptions.find((option) => option.value === voice)?.label || voice : undefined,
-            format ? audioFormatOptions.find((option) => option.value === format)?.label || format : undefined,
-            preferences.audio?.speed ? `${preferences.audio.speed}x` : undefined,
-        ].filter(Boolean);
+        const audioParts = [voice, format ? audioFormatOptions.find((option) => option.value === format)?.label || format : undefined, preferences.audio?.speed ? `${preferences.audio.speed}x` : undefined].filter(Boolean);
         return audioParts.length ? audioParts.join(" · ") : copy.smartParameters;
     }
     const size = capability === "image" ? preferences.image?.size || "auto" : preferences.video?.size || "auto";
