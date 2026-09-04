@@ -457,6 +457,8 @@ pnpm install --frozen-lockfile
 pnpm run dev
 ```
 
+源码启动时将 `web/.env.local` 的 `VOZEB_PRO_DATA_DIR` 留空或设为 `.data`；`/app/web/.data` 只用于 Docker 持久卷。
+
 访问 `http://localhost:3000/install`。文档站在 `docs/` 中独立运行，并固定使用 `http://localhost:3001`，不会占用主应用的 `3000` 端口：
 
 ```bash

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { generationRuntimeEnvironment, superviseGenerationRuntime } from "./generation-runtime.mjs";
+import { generationRuntimeEnvironment, resolveSourceDevelopmentDataDir, superviseGenerationRuntime } from "./generation-runtime.mjs";
 import { prepareStandaloneAssets } from "./standalone-assets.mjs";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -16,7 +16,7 @@ const runtime = generationRuntimeEnvironment({
         ...process.env,
         PORT: process.env.PORT || "3000",
         HOSTNAME: process.env.HOSTNAME || "0.0.0.0",
-        VOZEB_PRO_DATA_DIR: process.env.VOZEB_PRO_DATA_DIR || path.join(webRoot, ".data"),
+        VOZEB_PRO_DATA_DIR: resolveSourceDevelopmentDataDir(process.env.VOZEB_PRO_DATA_DIR, webRoot),
         VOZEB_PRO_INTERNAL_ORIGIN: process.env.VOZEB_PRO_INTERNAL_ORIGIN || `http://127.0.0.1:${process.env.PORT || "3000"}`,
     },
 });

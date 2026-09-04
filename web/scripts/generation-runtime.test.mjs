@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { generationRuntimeEnvironment, resolveGenerationWorkerOrigin } from "./generation-runtime.mjs";
+import * as generationRuntime from "./generation-runtime.mjs";
+
+const { generationRuntimeEnvironment, resolveGenerationWorkerOrigin } = generationRuntime;
 
 describe("generation runtime environment", () => {
     it("uses distinct configured maintenance and worker tokens", () => {
@@ -27,5 +29,17 @@ describe("generation runtime environment", () => {
 
     it("normalizes a Render private hostport to an HTTP origin", () => {
         expect(resolveGenerationWorkerOrigin({ environment: { VOZEB_PRO_WORKER_API_ORIGIN: "vozeb-pro:3000" } })).toBe("http://vozeb-pro:3000");
+    });
+
+    it("maps the copied Docker data directory to the source workspace", () => {
+        expect(generationRuntime.resolveSourceDevelopmentDataDir?.("/app/web/.data", "/workspace/web")).toBe("/workspace/web/.data");
+    });
+
+    it("preserves a custom source-development data directory", () => {
+        expect(generationRuntime.resolveSourceDevelopmentDataDir?.("/srv/vozeb-data", "/workspace/web")).toBe("/srv/vozeb-data");
+    });
+
+    it("anchors a relative data directory to the source workspace", () => {
+        expect(generationRuntime.resolveSourceDevelopmentDataDir?.(".data", "/workspace/web")).toBe("/workspace/web/.data");
     });
 });

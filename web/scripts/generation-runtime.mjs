@@ -1,7 +1,15 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 
 const MIN_TOKEN_LENGTH = 32;
+const DOCKER_DATA_DIR = "/app/web/.data";
+
+export function resolveSourceDevelopmentDataDir(configuredDir, webRoot) {
+    const value = configuredDir?.trim() || "";
+    if (!value || value === DOCKER_DATA_DIR) return path.join(webRoot, ".data");
+    return path.isAbsolute(value) ? value : path.resolve(webRoot, value);
+}
 
 export function generationRuntimeEnvironment({ environment = process.env, allowEphemeralToken = false } = {}) {
     const source = { ...environment };
