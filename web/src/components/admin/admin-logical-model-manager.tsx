@@ -360,6 +360,9 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                         <Checkbox checked={effectiveAsync} onChange={(event) => updateProfile({ supportsAsync: event.target.checked })}>
                             异步查询
                         </Checkbox>
+                        <Checkbox checked={profile.supportsIdempotency === true} onChange={(event) => updateProfile({ supportsIdempotency: event.target.checked || undefined })}>
+                            支持上游幂等
+                        </Checkbox>
                         <Checkbox checked={profile.supportsCancel === true} onChange={(event) => updateProfile({ supportsCancel: event.target.checked })}>
                             上游取消
                         </Checkbox>

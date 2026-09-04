@@ -151,6 +151,9 @@ test("admin saves and reloads logical model generation capability", async ({ pag
         logicalModels: Array<{
             id: string;
             bindings: Array<{
+                capabilityProfile?: {
+                    supportsIdempotency?: boolean;
+                };
                 generationParameters?: {
                     referenceInputs: string[];
                     maxReferenceImages?: number;
@@ -168,6 +171,8 @@ test("admin saves and reloads logical model generation capability", async ({ pag
     const beforeResponse = await request.get("/api/admin/settings");
     expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
     const before = ((await beforeResponse.json()) as { settings: SettingsSnapshot }).settings;
+    const originalIdempotency = before.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.capabilityProfile?.supportsIdempotency === true;
+    const nextIdempotency = !originalIdempotency;
 
     try {
         await page.goto("/admin?section=channels", { waitUntil: "domcontentloaded" });
@@ -191,6 +196,10 @@ test("admin saves and reloads logical model generation capability", async ({ pag
         await expect(drawer.getByRole("spinbutton", { name: "自定义数量上限" }).first()).toHaveValue("30");
         await expect(drawer.getByRole("checkbox", { name: "允许自定义时长" }).first()).toBeChecked();
         await expect(drawer.getByRole("textbox", { name: "可选秒数（逗号分隔）" }).first()).toHaveValue("5, 15");
+        const idempotency = drawer.getByRole("checkbox", { name: "支持上游幂等" }).first();
+        await expect(idempotency).toBeChecked({ checked: originalIdempotency });
+        if (nextIdempotency) await idempotency.check();
+        else await idempotency.uncheck();
         const customDurationMax = drawer.getByRole("spinbutton", { name: "自定义时长上限（秒）" }).first();
         const originalCustomDurationMax = Number(await customDurationMax.inputValue());
         const nextCustomDurationMax = originalCustomDurationMax === 19 ? 20 : 19;
@@ -218,6 +227,29 @@ test("admin saves and reloads logical model generation capability", async ({ pag
         await expect(drawer.getByRole("spinbutton", { name: "最大批量数量" }).first()).toHaveValue("4");
         await expect(drawer.getByRole("textbox", { name: "可选秒数（逗号分隔）" }).first()).toHaveValue("5, 15");
         await expect(drawer.getByRole("spinbutton", { name: "自定义时长上限（秒）" }).first()).toHaveValue(String(nextCustomDurationMax));
+        await expect(drawer.getByRole("checkbox", { name: "支持上游幂等" }).first()).toBeChecked({ checked: nextIdempotency });
+        for (const viewport of [
+            { width: 390, height: 844 },
+            { width: 430, height: 932 },
+        ]) {
+            await drawer.getByRole("button", { name: /取\s*消/ }).click();
+            await page.setViewportSize(viewport);
+            await modelCard.getByRole("button", { name: "路由设置" }).click();
+            await expect(drawer.getByRole("checkbox", { name: "支持上游幂等" }).first()).toBeVisible();
+            await expect
+                .poll(() =>
+                    drawer.evaluate((element) => {
+                        const bounds = element.getBoundingClientRect();
+                        const viewportWidth = document.documentElement.clientWidth;
+                        return {
+                            insideViewport: bounds.left >= -1 && bounds.right <= viewportWidth + 1,
+                            drawerOverflow: element.scrollWidth > element.clientWidth + 1,
+                            documentOverflow: document.documentElement.scrollWidth > viewportWidth + 1,
+                        };
+                    }),
+                )
+                .toEqual({ insideViewport: true, drawerOverflow: false, documentOverflow: false });
+        }
 
         const persistedResponse = await request.get("/api/admin/settings");
         expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
@@ -228,6 +260,7 @@ test("admin saves and reloads logical model generation capability", async ({ pag
         expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.durationSeconds).toEqual([5, 15]);
         expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.maxBatchSize).toBe(4);
         expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.generationParameters?.customDurationRange?.max).toBe(nextCustomDurationMax);
+        expect(persisted.logicalModels.find((model) => model.id === "e2e-video")?.bindings[0]?.capabilityProfile?.supportsIdempotency).toBe(nextIdempotency ? true : undefined);
     } finally {
         const restored = await request.patch("/api/admin/settings", { data: { logicalModels: before.logicalModels, defaultModels: before.defaultModels } });
         expect(restored.ok(), await restored.text()).toBe(true);

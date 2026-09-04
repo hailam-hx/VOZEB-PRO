@@ -232,7 +232,7 @@ export default function VoicesPage() {
                 confirmLoading={previewGenerating}
                 cancelButtonProps={{ disabled: previewGenerating }}
                 closable={!previewGenerating}
-                maskClosable={!previewGenerating}
+                mask={{ closable: !previewGenerating }}
                 onOk={() => void confirmPreview()}
                 onCancel={() => !previewGenerating && setPreview(undefined)}
             >

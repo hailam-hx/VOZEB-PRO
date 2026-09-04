@@ -130,6 +130,30 @@ describe("admin generation controls", () => {
         });
     });
 
+    it("configures upstream idempotency while preserving the operational profile", async () => {
+        const applied = vi.fn();
+        const host = await render(
+            <LogicalModelHarness channels={videoChannels} logicalModels={videoModels(undefined, { supportsAsync: true, supportsCancel: true, timeoutMs: 600000, concurrencyLimit: 2 })} defaultModels={videoDefaults} onApplied={applied} />,
+        );
+
+        await openVideoEditor(host);
+        const idempotencyCheckbox = Array.from(document.querySelectorAll("label"))
+            .find((item) => item.textContent?.includes("支持上游幂等"))
+            ?.querySelector("input") as HTMLInputElement;
+        expect(idempotencyCheckbox).toBeInstanceOf(HTMLInputElement);
+        expect(idempotencyCheckbox.checked).toBe(false);
+        await userEvent.setup().click(idempotencyCheckbox);
+        await userEvent.setup().click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "应用修改") as HTMLButtonElement);
+
+        expect(applied.mock.lastCall?.[0].logicalModels[0].bindings[0].capabilityProfile).toEqual({
+            supportsAsync: true,
+            supportsCancel: true,
+            supportsIdempotency: true,
+            timeoutMs: 600000,
+            concurrencyLimit: 2,
+        });
+    });
+
     it("enables every VOZEB option for only the selected binding", async () => {
         const channels = [...videoChannels, { ...videoChannels[0], id: "two", name: "备用渠道" }];
         const models = [
