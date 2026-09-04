@@ -2,10 +2,12 @@ import type { LogicalModelCapability } from "@/lib/auth/store";
 import { getStoredGenerationTaskByUpstream } from "@/lib/server/generation-task-store";
 
 export async function userOwnsGenerationUpstreamTask(input: { userId: string; capability: LogicalModelCapability; channelId: string; upstreamModel: string; upstreamTaskId: string }) {
-    const record = await getStoredGenerationTaskByUpstream(input.capability, input.userId, input.channelId, input.upstreamTaskId);
+    const record =
+        (await getStoredGenerationTaskByUpstream(input.capability, input.userId, input.channelId, input.upstreamTaskId)) ||
+        (input.capability === "audio" ? await getStoredGenerationTaskByUpstream("voice-clone", input.userId, input.channelId, input.upstreamTaskId) : null);
     if (!record || (record.status === "cancelled" && record.executionPhase !== "cancel_requested" && record.executionPhase !== "cancel_polling")) return false;
     const config = objectValue(record.payload.config);
-    return sameModel(String(config.model || ""), input.upstreamModel);
+    return sameModel(String(config.model || config.upstreamModel || ""), input.upstreamModel);
 }
 
 function objectValue(value: unknown) {

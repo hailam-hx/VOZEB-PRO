@@ -36,7 +36,11 @@ export function creativeRunPresentation(run: CreativeAgentRun | undefined, model
     const seconds = firstNumber(tasks.map((task) => task.seconds)) || (preferences && "seconds" in preferences && typeof preferences.seconds === "number" ? preferences.seconds : undefined);
     if (seconds) items.push({ key: "seconds", label: copy.labels.duration, value: copy.seconds(seconds) });
 
-    const voice = firstText(tasks.map((task) => task.voice)) || (preferences && "voice" in preferences ? preferences.voice : undefined);
+    const audioPreferences = mode === "audio" ? run.generationPreferences?.audio : undefined;
+    const voice =
+        firstText(tasks.map((task) => task.voiceName || (task.voiceSelection?.type === "preset" ? task.voiceSelection.voiceId : task.voiceSelection?.type === "profile" ? "我的声音" : undefined))) ||
+        audioPreferences?.voiceName ||
+        (audioPreferences?.voiceSelection?.type === "preset" ? audioPreferences.voiceSelection.voiceId : audioPreferences?.voiceSelection?.type === "profile" ? "我的声音" : undefined);
     if (voice) items.push({ key: "voice", label: copy.labels.voice, value: voice });
     const format = firstText(tasks.map((task) => task.format)) || (preferences && "format" in preferences ? preferences.format : undefined);
     if (format) items.push({ key: "format", label: copy.labels.format, value: format.toUpperCase() });

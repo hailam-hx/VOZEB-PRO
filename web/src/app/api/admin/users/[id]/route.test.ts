@@ -12,7 +12,17 @@ vi.mock("@/lib/auth/store", () => ({
     updateUserByAdmin: mocks.updateUserByAdmin,
     isAuthInputError: mocks.isAuthInputError,
 }));
-vi.mock("@/lib/server/admin-user-deletion-service", () => ({ deleteAdminUserWithMediaCleanup: mocks.deleteAdminUserWithMediaCleanup }));
+vi.mock("@/lib/server/admin-user-deletion-service", () => ({
+    deleteAdminUserWithMediaCleanup: mocks.deleteAdminUserWithMediaCleanup,
+    AdminUserDeletionError: class AdminUserDeletionError extends Error {
+        constructor(
+            message: string,
+            readonly status: number,
+        ) {
+            super(message);
+        }
+    },
+}));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({})), safeRecordAuditLog: vi.fn() }));
 
 import { DELETE, PATCH } from "./route";
@@ -40,6 +50,16 @@ describe("admin user detail route", () => {
         expect(response.status).toBe(200);
         expect(mocks.deleteAdminUserWithMediaCleanup).toHaveBeenCalledWith("admin-one", "user-one");
         expect(await response.json()).toEqual({ code: 0, data: { ok: true }, msg: "" });
+    });
+
+    it("returns an actionable conflict while provider voices still exist", async () => {
+        const { AdminUserDeletionError } = await import("@/lib/server/admin-user-deletion-service");
+        mocks.deleteAdminUserWithMediaCleanup.mockRejectedValue(new AdminUserDeletionError("请先删除该用户的声音档案", 409));
+
+        const response = await DELETE(request("DELETE"), context());
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ code: 409, data: null, msg: "请先删除该用户的声音档案" });
     });
 
     it("rejects absolute balance changes outside the points ledger", async () => {

@@ -111,6 +111,30 @@ describe("generation parameters", () => {
         expect(normalizeGenerationParameters({ supportsGenerateAudio: true, supportsWatermark: true })).not.toHaveProperty("supportsWatermark");
     });
 
+    it("normalizes the audio operation and provider voice capability contract", () => {
+        expect(
+            normalizeGenerationParameters({
+                audioOperation: "voice-clone",
+                maxCharacters: 5000.8,
+                voiceCatalog: "provider",
+                supportsClonedVoices: true,
+                speedAppliesTo: "cloned",
+            }),
+        ).toMatchObject({
+            audioOperation: "voice-clone",
+            maxCharacters: 5000,
+            voiceCatalog: "provider",
+            supportsClonedVoices: true,
+            speedAppliesTo: "cloned",
+        });
+        expect(normalizeGenerationParameters({ audioOperation: "unknown", maxCharacters: 0, voiceCatalog: "other", speedAppliesTo: "preset" })).not.toMatchObject({
+            audioOperation: expect.anything(),
+            maxCharacters: expect.anything(),
+            voiceCatalog: expect.anything(),
+            speedAppliesTo: expect.anything(),
+        });
+    });
+
     it("unions enabled bindings, intersects manual models, and preserves Smart fail-closed semantics", () => {
         const image = {
             enabled: true,

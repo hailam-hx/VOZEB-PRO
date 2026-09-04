@@ -63,6 +63,13 @@ export async function createExternalMediaReadUrl(request: Request, registration:
     });
 }
 
+export async function readExternalMediaBytes(registration: LocalMediaRegistration) {
+    if (registration.storageProvider !== "object" || !registration.externalObjectKey) return null;
+    const config = await getObjectStorageRuntimeConfig();
+    assertRegistrationConfig(config, registration);
+    return getObjectBytes(config, registration.externalObjectKey);
+}
+
 export async function createExternalStorageImagePreviewUrl(objectKey: string, width: unknown) {
     const config = await getObjectStorageRuntimeConfig();
     assertObjectStorageConfigured(config);

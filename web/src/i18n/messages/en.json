@@ -725,6 +725,7 @@
         "drama": "Short drama",
         "works": "Works",
         "assets": "Assets",
+        "voices": "Voices",
         "myPrompts": "My prompts",
         "promptLibrary": "Prompt library",
         "community": "Explore",
@@ -743,6 +744,7 @@
         "dramaDescription": "Scripts, storyboards, and finished video",
         "worksDescription": "Publish, review, and share",
         "assetsDescription": "Images, video, and audio",
+        "voicesDescription": "Clone and manage my voices",
         "myPromptsDescription": "Personal prompts",
         "promptLibraryDescription": "Shared prompts",
         "communityDescription": "Discover public works",
@@ -846,7 +848,7 @@
         "generationCapabilityIntersection": "Not all selected models support this parameter",
         "generationReferenceImageLimit": "The current model supports at most {count} reference images",
         "generationReferenceImageIntersectionLimit": "Not all selected models support more reference images (maximum {count})",
-        "estimatedCreditCost": "{credits}",
+        "estimatedCreditCost": "Estimated cost: {credits} credits",
         "estimatedCreditAmount": "{credits}",
         "creditAfterPlanning": "Estimated credits: set after smart planning",
         "creditAfterPlanningCompact": "After planning",
@@ -3010,6 +3012,67 @@
                 "manual": { "label": "Manual payment", "description": "Follow transfer and confirmation instructions" }
             },
             "errors": { "paymentInfoFailed": "Failed to load payment information", "quoteFailed": "Failed to calculate the order price.", "createOrderFailed": "Failed to create the order" }
+        }
+    },
+    "voices": {
+        "title": "Voice management",
+        "description": "Clone your voice and reuse it securely in Agent, Canvas, and AI Drama.",
+        "refresh": "Refresh",
+        "retry": "Retry",
+        "cancel": "Cancel",
+        "cloneAction": "Clone voice",
+        "notConfigured": "The administrator has not configured a voice cloning model",
+        "notConfiguredDescription": "A voice cloning model has not been configured. You can still view and manage existing voices.",
+        "allStatuses": "All statuses",
+        "loadFailed": "Failed to load voice profiles",
+        "empty": "No voice profiles yet",
+        "rename": "Click to rename",
+        "renameFailed": "Failed to rename the voice",
+        "duration": "{seconds} sec",
+        "statuses": { "pending": "Cloning", "ready": "Ready", "failed": "Failed", "deleting": "Deleting", "deleted": "Deleted" },
+        "selector": {
+            "platformVoices": "Platform voices",
+            "myVoices": "My voices",
+            "loadFailed": "Failed to load voices",
+            "loading": "Loading voices",
+            "placeholder": "Select a voice",
+            "empty": "No voices available",
+            "retry": "Reload",
+            "ariaLabel": "Select a voice",
+            "noClonedVoices": "No cloned voices are ready yet",
+            "manage": "Manage voices"
+        },
+        "clone": {
+            "title": "Clone voice",
+            "confirm": "Create clone",
+            "name": "Voice name",
+            "namePlaceholder": "For example: My narrator",
+            "sample": "Voice sample",
+            "selectSample": "Select 5–180 seconds of audio",
+            "consent": "I confirm that I have the legal right to use this voice and consent to voice cloning.",
+            "created": "Voice cloning task created",
+            "createFailed": "Failed to create the voice",
+            "uploadFailed": "Failed to upload the voice sample",
+            "readFailed": "Failed to read the voice sample"
+        },
+        "preview": {
+            "action": "Preview",
+            "title": "Voice preview",
+            "confirmTitle": "Generate voice preview",
+            "confirm": "Confirm and generate",
+            "unknownCost": "A short sample sentence will be generated and charged at the configured rate. Successful previews are cached and are not charged again.",
+            "estimatedCost": "A short sample sentence will be generated for approximately {points} points. Successful previews are cached and are not charged again.",
+            "loadFailed": "Failed to load the voice preview",
+            "createFailed": "Failed to create the voice preview",
+            "generating": "The preview is being generated and will be cached when ready"
+        },
+        "delete": {
+            "action": "Delete",
+            "confirmTitle": "Delete this voice?",
+            "readyDescription": "The upstream voice will also be deleted. This cannot be undone after completion.",
+            "localDescription": "This cannot be undone.",
+            "success": "Delete request processed",
+            "failed": "Failed to delete the voice"
         }
     },
     "profile": {

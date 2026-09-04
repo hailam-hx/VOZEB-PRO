@@ -31,6 +31,19 @@ describe("directAgentPlan", () => {
         ).toEqual(["image-pro"]);
     });
 
+    it("does not expose a voice-clone-only logical model to Agent planning", () => {
+        const nextSettings = generationSettings();
+        nextSettings.logicalModels.push({
+            id: "voice-clone",
+            name: "声音克隆",
+            capability: "audio",
+            enabled: true,
+            bindings: [{ id: "binding-clone", channelId: "audio-channel", upstreamModel: "vendor/audio-pro", enabled: true, priority: 1, generationParameters: generationParameters({ audioOperation: "voice-clone" }) }],
+        });
+
+        expect(agentModelOptions(nextSettings as never).map((model) => model.id)).not.toContain("voice-clone");
+    });
+
     it("rejects an incompatible manual model without substituting a compatible default", () => {
         const models = [
             { id: "manual-low", name: "Low", capability: "image" as const, generationParameters: generationParameters({ qualities: ["low"] }) },
@@ -300,11 +313,11 @@ describe("directAgentPlan", () => {
 
         const [video, audio] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, "生成产品视频", "chat", [], undefined, {
             video: { quality: "2160", seconds: 60, generateAudio: false, watermark: true },
-            audio: { voice: "nova", format: "wav", speed: 1.25 },
+            audio: { voiceSelection: { type: "preset", voiceId: "nova" }, format: "wav", speed: 1.25 },
         });
 
         expect(video).toMatchObject({ type: "video", quality: "2160", seconds: 60, generateAudio: false, watermark: true });
-        expect(audio).toMatchObject({ type: "audio", voice: "nova", format: "wav", speed: 1.25 });
+        expect(audio).toMatchObject({ type: "audio", voiceSelection: { type: "preset", voiceId: "nova" }, format: "wav", speed: 1.25 });
     });
 
     it("即使 Planner 漏掉资产也会把用户明确选择的首尾帧注入视频任务", () => {

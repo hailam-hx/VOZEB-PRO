@@ -30,6 +30,7 @@ import { attachUsageProviderEvidence, finishUsageProviderAttempt, recordUsagePro
 import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
 import { usageRecoveryIdentity } from "@/lib/server/generation-usage-context";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
+import { getVoiceProfileSourceDurationForBilling, userOwnsVoiceProfileProviderVoice } from "@/lib/server/voice-profile-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,7 +74,8 @@ export async function DELETE(request: Request, context: RouteContext) {
 
 async function proxySystemRequest(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
-    const userId = currentUser?.id || authorizedWorkerUserId(request);
+    const workerUserId = currentUser ? "" : authorizedWorkerUserId(request);
+    const userId = currentUser?.id || workerUserId;
     if (!userId) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { channelId, path } = await context.params;
@@ -134,6 +136,8 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         paths: {
             create: [globalPreset?.createPath, modelConfig?.createPath, modelConfig?.editPath, modelConfig?.imageToVideoPath, channel.advancedConfig?.createPath, channel.advancedConfig?.editPath, channel.advancedConfig?.imageToVideoPath],
             query: [globalPreset?.queryPath, modelConfig?.queryPath, channel.advancedConfig?.queryPath],
+            catalog: [modelConfig?.catalogPath, channel.advancedConfig?.catalogPath],
+            deleteVoice: [modelConfig?.deletePath, channel.advancedConfig?.deletePath],
             cancel: [
                 { path: modelConfig?.cancelPath, method: modelConfig?.cancelMethod },
                 { path: channel.advancedConfig?.cancelPath, method: channel.advancedConfig?.cancelMethod },
@@ -141,10 +145,11 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         },
     });
     if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
-    if (access.operation !== "create") {
+    if (access.operation === "query" || access.operation === "cancel") {
         const owned = await userOwnsGenerationUpstreamTask({ userId, capability: access.capability, channelId: channel.id, upstreamModel, upstreamTaskId: access.upstreamTaskId });
         if (!owned) return NextResponse.json({ error: "任务不存在或无权访问" }, { status: 404 });
     }
+    if (access.operation === "delete_voice" && !(await userOwnsVoiceProfileProviderVoice(userId, channel.id, access.providerVoiceId))) return NextResponse.json({ error: "声音档案不存在或无权访问" }, { status: 404 });
 
     const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, requestUrl.search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
     if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
@@ -192,7 +197,8 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
                 const inputLimits = capabilityProfile
                     ? { maxInputTokens: capabilityProfile.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined, maxOutputTokens: capabilityProfile.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined }
                     : undefined;
-                const requestUsage = normalizeProxyBillableRequest({ capability: access.capability, payload: readRequestBody(contentType, requestBody.pointsPayload), rateCard: logicalModel.saleRateCard, inputLimits });
+                const billablePayload = await voiceCloneBillablePayload(userId, binding.generationParameters?.audioOperation, readRequestBody(contentType, requestBody.pointsPayload));
+                const requestUsage = normalizeProxyBillableRequest({ capability: access.capability, payload: billablePayload, rateCard: logicalModel.saleRateCard, inputLimits });
                 usageBilling = await reserveUsageBilling({
                     userId,
                     businessId: usageContext.businessRequestId,
@@ -275,6 +281,17 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (isRedirectStatus(upstream.status)) {
         return NextResponse.json({ error: "上游接口不允许重定向，请检查后台渠道地址" }, { status: 502, headers: responseHeaders(new Headers()) });
     }
+    const responseUpstreamUrl = access.operation === "catalog" || access.operation === "delete_voice" ? undefined : target;
+    if (access.operation === "catalog") {
+        const catalogHeaders = responseHeaders(upstream.headers, responseUpstreamUrl, undefined, Boolean(workerUserId));
+        if (!upstream.ok) {
+            await upstream.body?.cancel().catch(() => undefined);
+            return NextResponse.json({ error: "声音目录暂时不可用" }, { status: upstream.status, headers: catalogHeaders });
+        }
+        const payload = await upstream.json().catch(() => null);
+        if (!payload) return NextResponse.json({ error: "上游声音目录返回了无效 JSON" }, { status: 502, headers: catalogHeaders });
+        return NextResponse.json(publicVoicePresets(payload), { status: upstream.status, headers: catalogHeaders });
+    }
     if (globalAdaptation && upstream.ok) {
         const payload = await upstream.json().catch(() => null);
         if (!payload) {
@@ -287,7 +304,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         }
         return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), {
             status: upstream.status,
-            headers: responseHeaders(upstream.headers, target, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined),
+            headers: responseHeaders(upstream.headers, target, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined, Boolean(workerUserId)),
         });
     }
 
@@ -295,8 +312,23 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     return new Response(responseBody, {
         status: upstream.status,
         statusText: upstream.statusText,
-        headers: responseHeaders(upstream.headers, target, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined),
+        headers: responseHeaders(upstream.headers, responseUpstreamUrl, usageBilling ? { holdId: usageBilling.holdId, attemptNumber: usageContext!.attemptNumber, requestFingerprint: usageBilling.requestFingerprint } : undefined, Boolean(workerUserId)),
     });
+}
+
+function publicVoicePresets(payload: unknown) {
+    const root = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : undefined;
+    const data = root?.data && typeof root.data === "object" && !Array.isArray(root.data) ? (root.data as Record<string, unknown>) : undefined;
+    const values = [root?.presets, data?.presets].find((value): value is unknown[] => Array.isArray(value)) || [];
+    const presets = values.flatMap((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const item = value as Record<string, unknown>;
+        const id = typeof item.id === "string" ? item.id.trim() : typeof item.voice_id === "string" ? item.voice_id.trim() : "";
+        if (!id) return [];
+        const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : id;
+        return [{ id, name }];
+    });
+    return { presets };
 }
 
 function channelHasModel(models: string[], requested: string) {
@@ -629,6 +661,30 @@ function readRequestBody(contentType: string | null, body?: ArrayBuffer | Record
     }
 }
 
+async function voiceCloneBillablePayload(userId: string, audioOperation: string | undefined, payload: Record<string, unknown>) {
+    if (audioOperation !== "voice-clone") return payload;
+    const sourceStorageKey = referenceAssetStorageKey(payload.audio_url ?? payload.audioUrl);
+    const duration = sourceStorageKey ? await getVoiceProfileSourceDurationForBilling(userId, sourceStorageKey) : undefined;
+    if (!duration) throw new Error("声音克隆请求缺少可验证的源音频时长");
+    return { ...payload, duration };
+}
+
+function referenceAssetStorageKey(value: unknown) {
+    if (typeof value !== "string") return "";
+    try {
+        const pathname = new URL(value).pathname;
+        const prefix = "/api/reference-assets/";
+        if (!pathname.startsWith(prefix)) return "";
+        return pathname
+            .slice(prefix.length)
+            .split("/")
+            .map((part) => decodeURIComponent(part))
+            .join("/");
+    } catch {
+        return "";
+    }
+}
+
 function readMultipartFields(text: string): Record<string, string> {
     const fields: Record<string, string> = {};
     for (const key of ["model", "n", "quality", "resolution_name", "resolution", "vquality", "seconds", "duration"]) {
@@ -685,13 +741,15 @@ function normalizeApiBaseUrl(baseUrl: string, apiFormat: "openai" | "gemini", gl
     return `${normalized}/v1`;
 }
 
-function responseHeaders(headers: Headers, upstreamUrl?: string, usageBilling?: SystemAiUsageBilling) {
+function responseHeaders(headers: Headers, upstreamUrl?: string, usageBilling?: SystemAiUsageBilling, includeGatewayTrace = false) {
     const nextHeaders = new Headers();
     const passthrough = ["content-type", "cache-control", "content-disposition"];
     passthrough.forEach((key) => {
         const value = headers.get(key);
         if (value) nextHeaders.set(key, value);
     });
+    if (includeGatewayTrace && headers.get("x-gateway-trace")) nextHeaders.set("x-gateway-trace", headers.get("x-gateway-trace")!.slice(0, 1_000));
+    if (includeGatewayTrace) nextHeaders.set("x-vozeb-pro-upstream-response", "1");
     if (upstreamUrl) nextHeaders.set("x-vozeb-pro-upstream-url", upstreamUrl);
     if (usageBilling) Object.entries(systemAiUsageResponseHeaders(usageBilling)).forEach(([key, value]) => nextHeaders.set(key, value));
     return nextHeaders;

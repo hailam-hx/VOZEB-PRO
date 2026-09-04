@@ -77,7 +77,10 @@ function profileComplete(capability: LogicalModelCapability, profile: LogicalMod
     const supportsSize = profile.aspectRatios.length > 0 || profile.pixelSizes.length > 0 || profile.supportsCustomSize;
     if (capability === "image") return supportsSize && profile.qualities.length > 0 && Boolean(profile.maxBatchSize);
     if (capability === "video") return supportsSize && profile.resolutions.length > 0 && Boolean(profile.durationMode && (profile.durationMode === "range" ? profile.durationRange : profile.durationSeconds.length)) && Boolean(profile.maxBatchSize);
-    if (capability === "audio") return profile.voices.length > 0 && profile.formats.length > 0 && Boolean(profile.speedRange);
+    if (capability === "audio") {
+        if (profile.audioOperation === "voice-clone") return true;
+        return profile.formats.length > 0 && (profile.voiceCatalog === "provider" || profile.voices.length > 0);
+    }
     return true;
 }
 

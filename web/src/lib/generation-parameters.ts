@@ -96,6 +96,11 @@ export function normalizeGenerationParameters(value: unknown): LogicalModelGener
     const supportsCustomDuration = input.supportsCustomDuration === true;
     const supportsCustomBatchSize = input.supportsCustomBatchSize === true;
     const profile: LogicalModelGenerationParameters = {
+        audioOperation: input.audioOperation === "speech" || input.audioOperation === "voice-clone" ? input.audioOperation : undefined,
+        maxCharacters: positiveInteger(input.maxCharacters),
+        voiceCatalog: input.voiceCatalog === "static" || input.voiceCatalog === "provider" ? input.voiceCatalog : undefined,
+        supportsClonedVoices: input.supportsClonedVoices === true || undefined,
+        speedAppliesTo: input.speedAppliesTo === "all" || input.speedAppliesTo === "cloned" ? input.speedAppliesTo : undefined,
         referenceInputs: normalizeEnumList(input.referenceInputs, ["image", "video", "audio"]) || [],
         maxReferenceImages: positiveInteger(input.maxReferenceImages),
         aspectRatios: normalizeAspectRatios(input.aspectRatios) || [],
@@ -160,6 +165,11 @@ function unionProfiles(profiles: LogicalModelGenerationParameters[]) {
     if (!profiles.length) return undefined;
     const duration = unionDuration(profiles);
     return normalizeGenerationParameters({
+        audioOperation: commonValue(profiles, "audioOperation"),
+        maxCharacters: maximum(profiles, "maxCharacters"),
+        voiceCatalog: profiles.some((profile) => profile.voiceCatalog === "provider") ? "provider" : commonValue(profiles, "voiceCatalog"),
+        supportsClonedVoices: profiles.some((profile) => profile.supportsClonedVoices) || undefined,
+        speedAppliesTo: unionSpeedAppliesTo(profiles),
         referenceInputs: unionList(profiles, "referenceInputs"),
         maxReferenceImages: maximum(profiles, "maxReferenceImages"),
         aspectRatios: unionList(profiles, "aspectRatios"),
@@ -181,6 +191,11 @@ function unionProfiles(profiles: LogicalModelGenerationParameters[]) {
 function intersectProfiles(profiles: LogicalModelGenerationParameters[]) {
     const duration = intersectDuration(profiles);
     return normalizeGenerationParameters({
+        audioOperation: commonValue(profiles, "audioOperation"),
+        maxCharacters: minimum(profiles, "maxCharacters"),
+        voiceCatalog: commonValue(profiles, "voiceCatalog"),
+        supportsClonedVoices: profiles.every((profile) => profile.supportsClonedVoices) || undefined,
+        speedAppliesTo: intersectSpeedAppliesTo(profiles),
         referenceInputs: intersectList(profiles, "referenceInputs"),
         maxReferenceImages: minimum(profiles, "maxReferenceImages"),
         aspectRatios: intersectList(profiles, "aspectRatios"),
@@ -219,6 +234,23 @@ function intersectDuration(profiles: LogicalModelGenerationParameters[]) {
     const min = Math.max(...profiles.map((profile) => profile.durationRange?.min || Infinity));
     const max = Math.min(...profiles.map((profile) => profile.durationRange?.max || -Infinity));
     return min <= max ? { durationMode: "range" as const, durationRange: { min, max } } : {};
+}
+
+function commonValue<K extends keyof LogicalModelGenerationParameters>(profiles: LogicalModelGenerationParameters[], key: K) {
+    const first = profiles[0]?.[key];
+    return profiles.every((profile) => profile[key] === first) ? first : undefined;
+}
+
+function unionSpeedAppliesTo(profiles: LogicalModelGenerationParameters[]) {
+    const values = profiles.map((profile) => profile.speedAppliesTo).filter(Boolean);
+    if (!values.length) return undefined;
+    return values.includes("all") || new Set(values).size > 1 ? "all" : "cloned";
+}
+
+function intersectSpeedAppliesTo(profiles: LogicalModelGenerationParameters[]) {
+    const values = profiles.map((profile) => profile.speedAppliesTo);
+    if (values.some((value) => !value)) return undefined;
+    return values.includes("cloned") ? "cloned" : "all";
 }
 
 function durationCompatible(profile: LogicalModelGenerationParameters, value: number) {
@@ -342,12 +374,12 @@ function intersectList<K extends "referenceInputs" | "aspectRatios" | "pixelSize
     return values.filter((value) => profiles.every((profile) => ((profile[key] || []) as string[]).includes(value)));
 }
 
-function maximum<K extends "maxReferenceImages" | "maxBatchSize">(profiles: LogicalModelGenerationParameters[], key: K) {
+function maximum<K extends "maxReferenceImages" | "maxBatchSize" | "maxCharacters">(profiles: LogicalModelGenerationParameters[], key: K) {
     const values = profiles.map((profile) => profile[key]).filter((value): value is number => value !== undefined);
     return values.length ? Math.max(...values) : undefined;
 }
 
-function minimum<K extends "maxReferenceImages" | "maxBatchSize">(profiles: LogicalModelGenerationParameters[], key: K) {
+function minimum<K extends "maxReferenceImages" | "maxBatchSize" | "maxCharacters">(profiles: LogicalModelGenerationParameters[], key: K) {
     const values = profiles.map((profile) => profile[key]);
     return values.every((value): value is number => value !== undefined) ? Math.min(...values) : undefined;
 }

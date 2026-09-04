@@ -9,6 +9,7 @@ import { getTextTask } from "./text-task-store";
 import { getImageTask } from "./image-task-store";
 import { getVideoTask } from "./video-task-store";
 import { getAudioTask } from "./audio-task-store";
+import { getVoiceCloneTask } from "./voice-profile-store";
 import { listExpiredActiveWalletHolds, getWalletHoldByBusinessId, getWalletHoldById, listProviderUsageAttemptsForHold, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold } from "./points-wallet-service";
 
 export type UsageBilling = {
@@ -311,7 +312,15 @@ export async function inspectPersistedUsageHold(hold: WalletHold): Promise<Orpha
     const recovery = snapshot?.recovery;
     if (!snapshot || !recovery) return { state: "unknown", reason: "预留缺少稳定任务身份" };
     const task =
-        recovery.taskType === "text" ? await getTextTask(recovery.taskId) : recovery.taskType === "image" ? await getImageTask(recovery.taskId) : recovery.taskType === "video" ? await getVideoTask(recovery.taskId) : await getAudioTask(recovery.taskId);
+        recovery.taskType === "text"
+            ? await getTextTask(recovery.taskId)
+            : recovery.taskType === "image"
+              ? await getImageTask(recovery.taskId)
+              : recovery.taskType === "video"
+                ? await getVideoTask(recovery.taskId)
+                : recovery.taskType === "voice-clone"
+                  ? await getVoiceCloneTask(recovery.taskId)
+                  : await getAudioTask(recovery.taskId);
     if (!task) return { state: "unknown", reason: "本地任务不存在，无法确认上游是否接收" };
     if (task.status === "success") {
         const actualUsage = await persistedActualUsage(hold.id, snapshot);
@@ -377,7 +386,7 @@ function assertUsageCapability(snapshot: UsageBillingHoldSnapshot, ...usageValue
     for (const usage of usageValues) if (usage && usage.capability !== snapshot.capability) throw new Error("结算用量能力与预留不一致");
 }
 
-function persistedDerivedUsage(taskType: "text" | "image" | "video" | "audio", task: unknown, snapshot: UsageBillingHoldSnapshot) {
+function persistedDerivedUsage(taskType: "text" | "image" | "video" | "audio" | "voice-clone", task: unknown, snapshot: UsageBillingHoldSnapshot) {
     const record = task && typeof task === "object" ? (task as Record<string, unknown>) : {};
     if (taskType === "text") return undefined;
     if (taskType === "image") {
@@ -389,6 +398,7 @@ function persistedDerivedUsage(taskType: "text" | "image" | "video" | "audio", t
         const durationMs = Number(result?.durationMs);
         if (Number.isFinite(durationMs) && durationMs > 0) return normalizeBillableUsage({ ...snapshot.requestUsage, capability: "video", source: "derived", count: "1", durationSeconds: String(durationMs / 1000) });
     }
+    if (taskType === "voice-clone") return normalizeBillableUsage({ ...snapshot.requestUsage, capability: "audio", source: "derived" });
     return undefined;
 }
 

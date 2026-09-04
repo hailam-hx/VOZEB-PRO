@@ -11,6 +11,7 @@ export type GenerationAttempt = {
     pointsCost?: number;
     pointsRecordId?: string;
     error?: string;
+    providerTrace?: string;
     capability?: LogicalModelCapability;
 };
 
@@ -19,7 +20,7 @@ export function startGenerationAttempt(attempts: GenerationAttempt[] | undefined
     return { attempt, attempts: [...(attempts || []), attempt] };
 }
 
-export function finishGenerationAttempt(attempts: GenerationAttempt[], attemptNo: number, patch: Pick<GenerationAttempt, "status"> & Partial<Pick<GenerationAttempt, "completedAt" | "pointsCost" | "pointsRecordId" | "error">>) {
+export function finishGenerationAttempt(attempts: GenerationAttempt[], attemptNo: number, patch: Pick<GenerationAttempt, "status"> & Partial<Pick<GenerationAttempt, "completedAt" | "pointsCost" | "pointsRecordId" | "error" | "providerTrace">>) {
     return attempts.map((attempt) => {
         if (attempt.attemptNo !== attemptNo) return attempt;
         const completed = { ...attempt, ...patch, completedAt: patch.completedAt || Date.now() };

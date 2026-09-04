@@ -5,6 +5,8 @@ import { failVideoTaskFromWorker, persistVideoTaskResult, queryVideoTaskUpstream
 import { getVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { createAudioTaskUpstreamStep, markAudioTaskFailed, persistAudioTaskResult, queryAudioTaskUpstreamStep } from "@/lib/server/audio-task-runtime";
 import { getAudioTask, updateAudioTask, type AudioTask } from "@/lib/server/audio-task-store";
+import { createVoiceCloneUpstreamStep, markVoiceCloneFailed, queryVoiceCloneUpstreamStep } from "@/lib/server/voice-clone-runtime";
+import { getVoiceCloneTask } from "@/lib/server/voice-profile-store";
 import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResult, queryCancelledImageTaskUpstreamStep, queryImageTaskUpstreamStep } from "@/lib/server/image-task-runtime";
 import { getImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
 import { getTextTask, updateTextTask } from "@/lib/server/text-task-store";
@@ -26,6 +28,8 @@ import { toSystemGenerationChannel } from "@/lib/server/generation-channel";
 import { resolveAudioGenerationCandidates, resolveImageGenerationCandidates } from "@/lib/server/capability-constraints";
 import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
 import { finalizeUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
+import { resolveAudioVoiceCandidates } from "@/lib/server/audio-voice-service";
+import { normalizeVoiceSelection, unicodeCodePointCount } from "@/lib/voice-selection";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "deferred";
 
@@ -56,6 +60,7 @@ async function processGenerationTaskLease(lease: GenerationTaskLease, workerId: 
     if (lease.type === "text") return processTextLease(lease, workerId, origin, cookie);
     if (lease.type === "image") return processImageLease(lease, workerId, origin, publicOrigin, cookie);
     if (lease.type === "audio") return processAudioLease(lease, workerId, origin, cookie);
+    if (lease.type === "voice-clone") return processVoiceCloneLease(lease, workerId, origin, publicOrigin);
     if (lease.type === "agent") return processAgentLease(lease, workerId, origin, cookie);
     if (lease.type !== "video") {
         await releaseGenerationTaskLease(lease.type, lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "worker_handler_missing" });
@@ -536,7 +541,7 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
     try {
         let currentTask = task;
         if (!task.upstream?.id) {
-            const refreshed = await refreshAudioTaskCandidates(task);
+            const refreshed = await refreshAudioTaskCandidates(task, origin, cookie);
             if ("error" in refreshed) {
                 await markAudioTaskFailed(task, refreshed.error);
                 await releaseGenerationTaskLease("audio", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: "capability_incompatible" });
@@ -596,6 +601,60 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
     }
 }
 
+async function processVoiceCloneLease(lease: GenerationTaskLease, workerId: string, origin: string, publicOrigin: string): Promise<RecoveryResult> {
+    const task = await getVoiceCloneTask(lease.id);
+    if (!task || task.status === "success" || task.status === "cancelled") {
+        await releaseGenerationTaskLease("voice-clone", lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined });
+        return "completed";
+    }
+    const startedAt = lease.submittedAt || task.createdAt;
+    if (Date.now() - startedAt >= task.config.timeoutMs) {
+        const reason = task.operation === "delete" ? "声音删除确认超时，请稍后重试" : "声音克隆超时，请稍后重试";
+        await markVoiceCloneFailed(task, reason);
+        await releaseGenerationTaskLease("voice-clone", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: "timeout" });
+        return "failed";
+    }
+    try {
+        const step = task.upstream?.id ? await queryVoiceCloneUpstreamStep(task, origin, task.userId) : await createVoiceCloneUpstreamStep(task, origin, publicOrigin, task.userId);
+        const now = Date.now();
+        if (step.state === "failed") {
+            await markVoiceCloneFailed(task, step.error);
+            await releaseGenerationTaskLease("voice-clone", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
+            return "failed";
+        }
+        if (step.state === "completed") {
+            await releaseGenerationTaskLease("voice-clone", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
+            return "completed";
+        }
+        await releaseGenerationTaskLease("voice-clone", task.id, workerId, {
+            executionPhase: "polling",
+            upstreamTaskId: step.upstreamTaskId,
+            channelId: task.config.channelId,
+            provider: "dflop",
+            queryPath: task.config.queryPath,
+            submittedAt: lease.submittedAt || now,
+            nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt || now, now }),
+            lastPollAt: task.upstream?.id ? now : undefined,
+            lastUpstreamStatus: step.status,
+        });
+        return "pending";
+    } catch (error) {
+        const upstreamTaskId = (await getVoiceCloneTask(task.id))?.upstream?.id || lease.upstreamTaskId;
+        const count = errorCount(lease.lastUpstreamStatus) + 1;
+        await releaseGenerationTaskLease("voice-clone", task.id, workerId, {
+            executionPhase: upstreamTaskId ? "polling" : "submitting",
+            upstreamTaskId,
+            channelId: task.config.channelId,
+            provider: "dflop",
+            queryPath: task.config.queryPath,
+            nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt, consecutiveErrors: count }),
+            lastPollAt: Date.now(),
+            lastUpstreamStatus: `${upstreamTaskId ? "query" : "submission"}_error:${count}`,
+        });
+        return "deferred";
+    }
+}
+
 async function refreshImageTaskCandidates(task: ImageTask): Promise<{ task: ImageTask } | { error: string }> {
     const logicalModel = task.config.logicalModel?.trim();
     if (!logicalModel) return { error: "没有兼容当前生成参数的图片渠道：任务缺少稳定逻辑模型" };
@@ -617,16 +676,26 @@ async function refreshImageTaskCandidates(task: ImageTask): Promise<{ task: Imag
     return { task: { ...task, config, candidateConfigs } };
 }
 
-async function refreshAudioTaskCandidates(task: AudioTask): Promise<{ task: AudioTask } | { error: string }> {
+async function refreshAudioTaskCandidates(task: AudioTask, origin: string, cookie: string): Promise<{ task: AudioTask } | { error: string }> {
     const logicalModel = task.config.logicalModel?.trim();
     if (!logicalModel) return { error: "没有兼容当前生成参数的音频渠道：任务缺少稳定逻辑模型" };
+    const selection = normalizeVoiceSelection(task.config.voiceSelection);
+    if (!selection) return { error: "音频任务缺少稳定的音色选择" };
     const settings = await getFreshAuthSettings();
     const routed = resolveLogicalModelCandidates(settings, "audio", logicalModel)
         .map((candidate) => toSystemGenerationChannel(candidate))
-        .filter((candidate) => candidate.apiFormat !== "gemini");
-    const resolved = resolveAudioGenerationCandidates(routed, task.config as Record<string, unknown>, settings.generationDefaults);
+        .filter((candidate) => candidate.apiFormat !== "gemini" && (candidate.generationParameters?.audioOperation || "speech") === "speech")
+        .filter((candidate) => !candidate.generationParameters?.maxCharacters || unicodeCodePointCount(task.prompt) <= candidate.generationParameters.maxCharacters);
+    const resolved = resolveAudioGenerationCandidates(routed, { ...task.config, voiceSelection: selection }, settings.generationDefaults);
     if (!resolved.candidates.length) return { error: `没有兼容当前生成参数的音频渠道${resolved.error ? `：${resolved.error.message}` : ""}` };
-    const configs = resolved.candidates.map((candidate) => ({ ...candidate, ...(task.config.instructions ? { instructions: task.config.instructions } : {}) }));
+    let voiced;
+    try {
+        voiced = await resolveAudioVoiceCandidates({ userId: task.userId, selection, candidates: resolved.candidates, origin, cookie, workerUserId: cookie ? undefined : task.userId });
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : "音色校验失败" };
+    }
+    if (!voiced.length) return { error: "没有兼容当前音色选择的音频渠道" };
+    const configs = voiced.map((candidate) => ({ ...candidate, ...(task.config.instructions ? { instructions: task.config.instructions } : {}) }));
     await updateAudioTask(task.id, { config: configs[0], candidateConfigs: configs.slice(1) });
     return { task: { ...task, config: configs[0], candidateConfigs: configs.slice(1) } };
 }

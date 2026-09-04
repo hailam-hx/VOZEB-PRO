@@ -339,7 +339,9 @@ test("legacy image and video routes hand off to the unified creative Agent", asy
 });
 
 test("audio task stores a valid audio result", async ({ request }) => {
-    const created = await request.post("/api/audio-tasks", { data: { config: { model: "e2e-audio", voice: "alloy", format: "wav" }, prompt: "audio fixture", source: "agent", context: { clientRequestId: `e2e-audio:${randomUUID()}` } } });
+    const created = await request.post("/api/audio-tasks", {
+        data: { config: { model: "e2e-audio", voiceSelection: { type: "preset", voiceId: "alloy" }, format: "wav" }, prompt: "audio fixture", source: "agent", context: { clientRequestId: `e2e-audio:${randomUUID()}` } },
+    });
     expect(created.ok(), await created.text()).toBe(true);
     const task = ((await created.json()) as { task: { id: string } }).task;
     expect(await pollTask(request, `/api/audio-tasks/${task.id}`)).toMatchObject({ status: "success", result: { mimeType: "audio/wav" } });

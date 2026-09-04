@@ -220,10 +220,54 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     }
     if (request.method === "GET" && path === "/media/fixture.png") return sendBytes(response, 200, "image/png", await fixtureImage(options));
 
+    if (request.method === "GET" && path === "/audio/voices") {
+        return sendJson(
+            response,
+            200,
+            {
+                voices: [],
+                presets: [
+                    { id: "alloy", name: "Alloy" },
+                    { id: "nova", name: "Nova" },
+                ],
+            },
+            { "x-gateway-trace": "fixture-voice-catalog" },
+        );
+    }
+    if (request.method === "POST" && path === "/audio/voices") {
+        const idempotencyKey = String(request.headers["idempotency-key"] || "");
+        const existing = idempotencyKey ? Array.from(tasks.entries()).find(([, task]) => task.kind === "voice-clone" && task.idempotencyKey === idempotencyKey) : undefined;
+        const id = existing?.[0] || nextTaskId("voice-clone");
+        if (!existing) {
+            tasks.set(id, {
+                kind: "voice-clone",
+                status: "ready",
+                idempotencyKey,
+                providerVoiceId: id,
+                deleted: false,
+            });
+        }
+        return sendJson(response, 200, { id, status: "pending" }, { "x-gateway-trace": `${id}-create` });
+    }
+    const voiceCloneTaskId = path.match(/^\/audio\/voices\/([^/]+)$/)?.[1];
+    if (request.method === "GET" && voiceCloneTaskId) {
+        const id = decodeURIComponent(voiceCloneTaskId);
+        const task = tasks.get(id);
+        if (!task || task.kind !== "voice-clone") return sendJson(response, 404, { error: { message: "Voice clone task not found" } });
+        return sendJson(response, 200, { id, status: task.status }, { "x-gateway-trace": `${id}-query` });
+    }
+    const providerVoiceId = path.match(/^\/audio\/voices\/([^/]+)$/)?.[1];
+    if (request.method === "DELETE" && providerVoiceId) {
+        const decodedVoiceId = decodeURIComponent(providerVoiceId);
+        const entry = Array.from(tasks.entries()).find(([, task]) => task.kind === "voice-clone" && task.providerVoiceId === decodedVoiceId);
+        if (!entry) return sendJson(response, 404, { error: { message: "Voice not found" } });
+        tasks.set(entry[0], { ...entry[1], deleted: true });
+        return sendJson(response, 200, { status: "deleted" }, { "x-gateway-trace": `${decodedVoiceId}-delete` });
+    }
     if (request.method === "POST" && path === "/audio/speech") {
         const model = requestedModel(body, request.headers["content-type"] || "");
         if (shouldFailRequest(request, model)) return sendJson(response, model.includes("-fail") ? 400 : 503, { error: { message: "fixture audio failure" } });
-        return sendBytes(response, 200, "audio/wav", createWave());
+        return sendBytes(response, 200, "audio/wav", createWave(), { "x-gateway-trace": "fixture-audio-speech" });
     }
     if (request.method === "POST" && path === "/custom/audio") return sendJson(response, 200, { data: { audio_url: `${url.origin}/media/fixture.wav` } });
     if (request.method === "GET" && path === "/media/fixture.wav") return sendBytes(response, 200, "audio/wav", createWave());
@@ -400,12 +444,12 @@ function shouldFailRequest(request, model) {
     return model.includes("-fallback") && String(request.headers.authorization || "").includes("e2e-primary-secret");
 }
 
-function sendJson(response, status, value) {
-    sendBytes(response, status, "application/json; charset=utf-8", Buffer.from(JSON.stringify(value)));
+function sendJson(response, status, value, headers) {
+    sendBytes(response, status, "application/json; charset=utf-8", Buffer.from(JSON.stringify(value)), headers);
 }
 
-function sendBytes(response, status, contentType, bytes) {
-    response.writeHead(status, { "content-type": contentType, "content-length": bytes.length, "cache-control": "no-store" });
+function sendBytes(response, status, contentType, bytes, headers = {}) {
+    response.writeHead(status, { "content-type": contentType, "content-length": bytes.length, "cache-control": "no-store", ...headers });
     response.end(bytes);
 }
 

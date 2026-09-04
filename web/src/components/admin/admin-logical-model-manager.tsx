@@ -25,11 +25,12 @@ const capabilityOptions: Array<{ label: string; value: LogicalModelCapability }>
     { label: "音频", value: "audio" },
 ];
 
-const defaultFields: Array<{ capability: LogicalModelCapability; key: keyof SystemDefaultModels; label: string }> = [
+const defaultFields: Array<{ capability: LogicalModelCapability; key: keyof SystemDefaultModels; label: string; audioOperation?: "speech" | "voice-clone" }> = [
     { capability: "text", key: "textModel", label: "默认文本模型" },
     { capability: "image", key: "imageModel", label: "默认图片模型" },
     { capability: "video", key: "videoModel", label: "默认视频模型" },
-    { capability: "audio", key: "audioModel", label: "默认音频模型" },
+    { capability: "audio", key: "audioModel", label: "默认语音合成模型", audioOperation: "speech" },
+    { capability: "audio", key: "voiceCloneModel", label: "默认声音克隆模型", audioOperation: "voice-clone" },
 ];
 
 export function AdminLogicalModelManager({ channels, logicalModels, defaultModels, onChange }: Props) {
@@ -47,9 +48,9 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
             ),
         [capabilityFilter, deferredQuery, logicalModels],
     );
-    const availableDefaultFields = defaultFields.filter(({ capability }) => logicalModels.some((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id)));
+    const availableDefaultFields = defaultFields.filter(({ capability, audioOperation }) => logicalModels.some((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id, audioOperation)));
     const availableCapabilityOptions = capabilityOptions.filter(({ value }) => availableDefaultFields.some(({ capability }) => capability === value));
-    const readyCount = availableDefaultFields.filter(({ capability, key }) => isLogicalModelResolvable(logicalModels, channels, capability, defaultModels[key])).length;
+    const readyCount = availableDefaultFields.filter(({ capability, key, audioOperation }) => isLogicalModelResolvable(logicalModels, channels, capability, defaultModels[key], audioOperation)).length;
 
     const openEdit = (model: LogicalModel) => {
         setEditingId(model.id);
@@ -149,10 +150,12 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                 <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
                     <SectionTitle icon={<GitBranch className="size-4" />} title="默认模型" />
                     <div className="mt-4 space-y-4">
-                        {availableDefaultFields.map(({ capability, key, label }) => {
-                            const options = logicalModels.filter((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id)).map((model) => ({ label: model.name, value: model.id }));
+                        {availableDefaultFields.map(({ capability, key, label, audioOperation }) => {
+                            const options = logicalModels
+                                .filter((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id, audioOperation))
+                                .map((model) => ({ label: model.name, value: model.id }));
                             const selected = logicalModels.find((model) => model.id === defaultModels[key]);
-                            const resolved = selected ? resolveLogicalModelConfig(logicalModels, channels, capability, selected.id) : null;
+                            const resolved = selected ? resolveLogicalModelConfig(logicalModels, channels, capability, selected.id, audioOperation) : null;
                             return (
                                 <LabeledControl key={key} label={label}>
                                     <Select
@@ -573,14 +576,58 @@ function GenerationCapabilityEditor({
             )}
             {capability === "audio" && (
                 <>
-                    {listInput("音色（逗号分隔）", "voices", "alloy, nova")}
-                    {listInput("输出格式（逗号分隔）", "formats", "mp3, wav")}
-                    <LabeledControl label="最慢语速">
-                        <InputNumber className="w-full" min={0.01} value={parameters.speedRange?.min} onChange={(value) => onUpdate({ speedRange: { min: Number(value), max: parameters.speedRange?.max || Number(value) } })} />
+                    <LabeledControl label="音频操作">
+                        <Select
+                            className="w-full"
+                            value={parameters.audioOperation || "speech"}
+                            options={[
+                                { value: "speech", label: "语音合成" },
+                                { value: "voice-clone", label: "声音克隆" },
+                            ]}
+                            onChange={(audioOperation) => onUpdate({ audioOperation })}
+                        />
                     </LabeledControl>
-                    <LabeledControl label="最快语速">
-                        <InputNumber className="w-full" min={0.01} value={parameters.speedRange?.max} onChange={(value) => onUpdate({ speedRange: { min: parameters.speedRange?.min || Number(value), max: Number(value) } })} />
-                    </LabeledControl>
+                    {(parameters.audioOperation || "speech") === "speech" ? (
+                        <>
+                            <LabeledControl label="音色目录">
+                                <Select
+                                    className="w-full"
+                                    value={parameters.voiceCatalog || "static"}
+                                    options={[
+                                        { value: "static", label: "静态配置" },
+                                        { value: "provider", label: "上游目录" },
+                                    ]}
+                                    onChange={(voiceCatalog) => onUpdate({ voiceCatalog })}
+                                />
+                            </LabeledControl>
+                            <LabeledControl label="最大字符数">
+                                <InputNumber className="w-full" min={1} precision={0} value={parameters.maxCharacters} onChange={(value) => onUpdate({ maxCharacters: value ? Number(value) : undefined })} />
+                            </LabeledControl>
+                            <LabeledControl label="语速适用范围">
+                                <Select
+                                    className="w-full"
+                                    allowClear
+                                    value={parameters.speedAppliesTo}
+                                    options={[
+                                        { value: "all", label: "全部声音" },
+                                        { value: "cloned", label: "仅克隆声音" },
+                                    ]}
+                                    onChange={(speedAppliesTo) => onUpdate({ speedAppliesTo })}
+                                />
+                            </LabeledControl>
+                            <Checkbox checked={parameters.supportsClonedVoices === true} onChange={(event) => onUpdate({ supportsClonedVoices: event.target.checked || undefined })}>
+                                支持克隆声音
+                            </Checkbox>
+                            {(parameters.voiceCatalog || "static") === "static" ? listInput("音色（逗号分隔）", "voices", "alloy, nova") : null}
+                            {listInput("输出格式（逗号分隔）", "formats", "mp3, wav")}
+                            <LabeledControl label="最慢语速">
+                                <InputNumber className="w-full" min={0.01} value={parameters.speedRange?.min} onChange={(value) => onUpdate({ speedRange: { min: Number(value), max: parameters.speedRange?.max || Number(value) } })} />
+                            </LabeledControl>
+                            <LabeledControl label="最快语速">
+                                <InputNumber className="w-full" min={0.01} value={parameters.speedRange?.max} onChange={(value) => onUpdate({ speedRange: { min: parameters.speedRange?.min || Number(value), max: Number(value) } })} />
+                            </LabeledControl>
+                        </>
+                    ) : null}
                 </>
             )}
         </div>

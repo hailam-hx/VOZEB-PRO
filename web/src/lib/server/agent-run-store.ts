@@ -10,6 +10,7 @@ import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowl
 import { agentTaskCompletionMessage } from "./agent-run-messages";
 import type { AgentRunPlannerAudit } from "./agent-run-audit";
 import { normalizeAgentRunCanvasSnapshot, selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentRunReviewStatus = "review_pending" | "reviewing" | "review_completed" | "review_unavailable";
@@ -27,6 +28,8 @@ export type AgentRunGenerationSelection = {
     quality?: string;
     seconds?: number;
     voice?: string;
+    voiceSelection?: VoiceSelection;
+    voiceName?: string;
     format?: string;
     generateAudio?: boolean;
     watermark?: boolean;

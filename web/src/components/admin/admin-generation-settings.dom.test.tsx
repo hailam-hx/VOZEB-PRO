@@ -63,9 +63,9 @@ function LogicalModelHarness({
 }
 
 const videoChannels = [{ id: "one", name: "渠道", baseUrl: "https://api.example.com/v1", apiKey: "", apiFormat: "openai" as const, models: ["video"], enabled: true }];
-const videoDefaults = { imageModel: "", videoModel: "video", textModel: "", audioModel: "" };
+const videoDefaults = { imageModel: "", videoModel: "video", textModel: "", audioModel: "", voiceCloneModel: "" };
 const textChannels = [{ ...videoChannels[0], models: ["gpt-5.6-sol"] }];
-const textDefaults = { imageModel: "", videoModel: "", textModel: "gpt-5.6-sol", audioModel: "" };
+const textDefaults = { imageModel: "", videoModel: "", textModel: "gpt-5.6-sol", audioModel: "", voiceCloneModel: "" };
 
 function videoModels(
     generationParameters?: Parameters<typeof LogicalModelHarness>[0]["logicalModels"][number]["bindings"][number]["generationParameters"],
@@ -230,7 +230,7 @@ describe("admin generation controls", () => {
                 ],
             },
         ];
-        settings.defaultModels = { imageModel: "image", videoModel: "", textModel: "", audioModel: "" };
+        settings.defaultModels = { imageModel: "image", videoModel: "", textModel: "", audioModel: "", voiceCloneModel: "" };
         settings.generationDefaults.imageSize = "4:3";
         const onChange = vi.fn();
         const host = await render(<GenerationDefaultsPanel settings={settings} onChange={onChange} />);
@@ -280,7 +280,7 @@ describe("admin generation controls", () => {
                 ],
             },
         ];
-        settings.defaultModels = { imageModel: "", videoModel: "video", textModel: "", audioModel: "" };
+        settings.defaultModels = { imageModel: "", videoModel: "video", textModel: "", audioModel: "", voiceCloneModel: "" };
         settings.generationDefaults.videoSeconds = 5.5;
         const onChange = vi.fn();
         const host = await render(<GenerationDefaultsPanel settings={settings} onChange={onChange} />);

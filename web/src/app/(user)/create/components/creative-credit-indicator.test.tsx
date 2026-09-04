@@ -5,12 +5,19 @@ import { CreativeCreditIndicator } from "./creative-credit-indicator";
 
 describe("CreativeCreditIndicator", () => {
     it("shows only the exact formatted estimate with an accessible settlement note", () => {
-        for (const locale of ["zh-CN", "en", "vi"] as const) {
+        const cases = [
+            { locale: "zh-CN", label: "预计消耗 1,234.5 积分" },
+            { locale: "en", label: "Estimated cost: 1,234.5 credits" },
+            { locale: "vi", label: "Ước tính tiêu tốn 1,234.5 điểm" },
+        ] as const;
+
+        for (const { locale, label } of cases) {
             const markup = renderToStaticMarkup(<CreativeCreditIndicator estimate={{ status: "ready", credits: "1234.50000000" }} />, locale);
 
             expect(markup).toContain('data-testid="creative-credit-estimate"');
-            expect(markup).toContain('aria-label="1,234.5"');
-            expect(markup.match(/>1,234\.5<\/span>/g)).toHaveLength(2);
+            expect(markup).toContain(`aria-label="${label}"`);
+            expect(markup).toContain(`>${label}</span>`);
+            expect(markup.match(/>1,234\.5<\/span>/g)).toHaveLength(1);
         }
     });
 

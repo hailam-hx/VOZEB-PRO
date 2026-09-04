@@ -4,6 +4,8 @@ type ProxyPathSet = {
     create?: Array<string | undefined>;
     query?: Array<string | undefined>;
     cancel?: Array<{ path?: string; method?: string }>;
+    catalog?: Array<string | undefined>;
+    deleteVoice?: Array<string | undefined>;
 };
 
 type ProxyPolicyInput = {
@@ -22,6 +24,8 @@ type ProxyPolicyInput = {
 
 export type SystemAiProxyAccess =
     | { allowed: true; capability: LogicalModelCapability; logicalModelId: string; operation: "create" }
+    | { allowed: true; capability: LogicalModelCapability; logicalModelId: string; operation: "catalog" }
+    | { allowed: true; capability: LogicalModelCapability; logicalModelId: string; operation: "delete_voice"; providerVoiceId: string }
     | { allowed: true; capability: LogicalModelCapability; logicalModelId: string; operation: "query" | "cancel"; upstreamTaskId: string }
     | { allowed: false; status: 400 | 403 | 404 | 405; error: string };
 
@@ -38,6 +42,9 @@ export function authorizeSystemAiProxyRequest(input: ProxyPolicyInput): SystemAi
     if (!logical) return denied(403, "该上游模型未绑定可用逻辑模型");
 
     const candidates = requestPathCandidates(input.path, input.search);
+    if (method === "GET" && (input.paths?.catalog || []).some((path) => pathMatchesAny(candidates, path, upstreamModel))) return { allowed: true, capability: logical.capability, logicalModelId: logical.id, operation: "catalog" };
+    const deleteVoiceMatch = method === "DELETE" ? firstVoicePathMatch(candidates, input.paths?.deleteVoice || [], upstreamModel) : null;
+    if (deleteVoiceMatch) return { allowed: true, capability: logical.capability, logicalModelId: logical.id, operation: "delete_voice", providerVoiceId: deleteVoiceMatch.providerVoiceId };
     const cancelPaths = [...(input.paths?.cancel || []), ...defaultCancelPaths(logical.capability, input.paths?.create || [])].filter((item) => !item.method || item.method.toUpperCase() === method);
     const cancelMatch =
         method === "POST" || method === "DELETE"
@@ -134,6 +141,15 @@ function firstPathMatch(candidates: string[], templates: Array<string | undefine
         }
     }
     return null;
+}
+
+function firstVoicePathMatch(candidates: string[], templates: Array<string | undefined>, model: string) {
+    const match = firstPathMatch(
+        candidates,
+        templates.map((template) => template?.replace(/\{\{\s*(?:voiceId|voice_id)\s*\}\}|\{(?:voiceId|voice_id)\}|:(?:voiceId|voice_id)\b/gi, ":task_id")),
+        model,
+    );
+    return match?.taskId ? { providerVoiceId: match.taskId } : null;
 }
 
 function pathTemplatePattern(template: string, model: string, captureTaskId = false) {

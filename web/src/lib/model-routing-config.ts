@@ -5,12 +5,13 @@ import { channelConnectionReady, protocolCatalogCapability } from "@/lib/channel
 import { validatePricingRateCard } from "@/lib/billing/pricing";
 import { validateProviderCostUnit } from "@/lib/billing/money";
 
-const CAPABILITY_DEFAULT_KEYS = {
-    text: "textModel",
-    image: "imageModel",
-    video: "videoModel",
-    audio: "audioModel",
-} as const satisfies Record<LogicalModelCapability, keyof SystemDefaultModels>;
+const DEFAULT_MODEL_SPECS: ReadonlyArray<{ capability: LogicalModelCapability; key: keyof SystemDefaultModels; audioOperation?: "speech" | "voice-clone" }> = [
+    { capability: "text", key: "textModel" },
+    { capability: "image", key: "imageModel" },
+    { capability: "video", key: "videoModel" },
+    { capability: "audio", key: "audioModel", audioOperation: "speech" },
+    { capability: "audio", key: "voiceCloneModel", audioOperation: "voice-clone" },
+];
 
 export function normalizeLogicalModelsConfig(models: LogicalModel[] | undefined, channels: SystemModelChannel[]) {
     return synchronizeLogicalModelsWithChannels(Array.isArray(models) ? models : [], channels);
@@ -94,23 +95,25 @@ export function mergeChannelModelsIntoLogicalModels(logicalModels: LogicalModel[
 
 export function normalizeDefaultModelsConfig(defaults: Partial<SystemDefaultModels> | undefined, logicalModels: LogicalModel[], channels: SystemModelChannel[]): SystemDefaultModels {
     return Object.fromEntries(
-        (Object.entries(CAPABILITY_DEFAULT_KEYS) as Array<[LogicalModelCapability, keyof SystemDefaultModels]>).map(([capability, key]) => {
+        DEFAULT_MODEL_SPECS.map(({ capability, key, audioOperation }) => {
             const modelId = text(defaults?.[key], 120);
-            if (!modelId || isLogicalModelResolvable(logicalModels, channels, capability, modelId)) return [key, modelId];
-            const fallback = logicalModels.find((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id));
+            if (!modelId || isLogicalModelResolvable(logicalModels, channels, capability, modelId, audioOperation)) return [key, modelId];
+            const fallback = logicalModels.find((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id, audioOperation));
             return [key, fallback?.id || ""];
         }),
     ) as SystemDefaultModels;
 }
 
-export function isLogicalModelResolvable(logicalModels: LogicalModel[], channels: SystemModelChannel[], capability: LogicalModelCapability, modelId: string) {
-    return Boolean(resolveLogicalModelConfig(logicalModels, channels, capability, modelId));
+export function isLogicalModelResolvable(logicalModels: LogicalModel[], channels: SystemModelChannel[], capability: LogicalModelCapability, modelId: string, audioOperation?: "speech" | "voice-clone") {
+    return Boolean(resolveLogicalModelConfig(logicalModels, channels, capability, modelId, audioOperation));
 }
 
-export function resolveLogicalModelConfig(logicalModels: LogicalModel[], channels: SystemModelChannel[], capability: LogicalModelCapability, modelId: string) {
+export function resolveLogicalModelConfig(logicalModels: LogicalModel[], channels: SystemModelChannel[], capability: LogicalModelCapability, modelId: string, audioOperation?: "speech" | "voice-clone") {
     const logical = logicalModels.find((model) => model.enabled && model.capability === capability && model.id.toLowerCase() === rawModelName(modelId).toLowerCase());
     if (!logical) return null;
-    const bindings = [...logical.bindings].filter((binding) => binding.enabled).sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+    const bindings = [...logical.bindings]
+        .filter((binding) => binding.enabled && (capability !== "audio" || !audioOperation || (binding.generationParameters?.audioOperation || "speech") === audioOperation))
+        .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
     for (const binding of bindings) {
         const channel = channels.find((item) => item.id === binding.channelId && item.enabled && channelConnectionReady(item) && channelSupportsModel(item, binding.upstreamModel));
         if (channel) return { logicalModel: logical, binding, channel };
@@ -137,9 +140,9 @@ export function modelRoutingValidationErrors(logicalModels: LogicalModel[], chan
             bindingKeys.add(bindingKey);
         }
     }
-    for (const [capability, key] of Object.entries(CAPABILITY_DEFAULT_KEYS) as Array<[LogicalModelCapability, keyof SystemDefaultModels]>) {
+    for (const { capability, key, audioOperation } of DEFAULT_MODEL_SPECS) {
         const modelId = defaults[key];
-        if (modelId && !isLogicalModelResolvable(logicalModels, channels, capability, modelId)) errors.push(`默认${capabilityLabel(capability)}模型不可解析：${modelId}`);
+        if (modelId && !isLogicalModelResolvable(logicalModels, channels, capability, modelId, audioOperation)) errors.push(`默认${key === "voiceCloneModel" ? "声音克隆" : capabilityLabel(capability)}模型不可解析：${modelId}`);
     }
     return Array.from(new Set(errors));
 }

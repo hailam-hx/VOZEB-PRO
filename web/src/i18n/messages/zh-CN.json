@@ -704,6 +704,7 @@
         "drama": "短剧",
         "works": "作品",
         "assets": "素材",
+        "voices": "声音",
         "myPrompts": "提示词",
         "promptLibrary": "词库",
         "community": "广场",
@@ -722,6 +723,7 @@
         "dramaDescription": "剧本、分镜与成片",
         "worksDescription": "发布、审核与分享",
         "assetsDescription": "图片、视频与音频",
+        "voicesDescription": "克隆与管理我的声音",
         "myPromptsDescription": "个人提示词",
         "promptLibraryDescription": "公共提示词",
         "communityDescription": "发现公开作品",
@@ -825,7 +827,7 @@
         "generationCapabilityIntersection": "并非所有已选模型都支持此参数",
         "generationReferenceImageLimit": "当前模型最多支持{count}张参考图",
         "generationReferenceImageIntersectionLimit": "并非所有已选模型都支持更多参考图（最多{count}张）",
-        "estimatedCreditCost": "{credits}",
+        "estimatedCreditCost": "预计消耗 {credits} 积分",
         "estimatedCreditAmount": "{credits}",
         "creditAfterPlanning": "预计积分：智能规划后确定",
         "creditAfterPlanningCompact": "规划后确定",
@@ -2895,6 +2897,67 @@
                 "manual": { "label": "线下支付", "description": "根据转账与确认说明完成支付" }
             },
             "errors": { "paymentInfoFailed": "支付信息加载失败", "quoteFailed": "订单价格计算失败。", "createOrderFailed": "订单创建失败" }
+        }
+    },
+    "voices": {
+        "title": "声音管理",
+        "description": "克隆自己的声音，并在 Agent、画布和短剧中安全复用。",
+        "refresh": "刷新",
+        "retry": "重试",
+        "cancel": "取消",
+        "cloneAction": "克隆声音",
+        "notConfigured": "管理员尚未配置声音克隆模型",
+        "notConfiguredDescription": "管理员尚未配置声音克隆模型，当前只能查看和管理已有声音。",
+        "allStatuses": "全部状态",
+        "loadFailed": "声音档案加载失败",
+        "empty": "暂无声音档案",
+        "rename": "点击重命名",
+        "renameFailed": "声音重命名失败",
+        "duration": "{seconds} 秒",
+        "statuses": { "pending": "克隆中", "ready": "可用", "failed": "失败", "deleting": "删除中", "deleted": "已删除" },
+        "selector": {
+            "platformVoices": "平台音色",
+            "myVoices": "我的声音",
+            "loadFailed": "音色加载失败",
+            "loading": "正在加载音色",
+            "placeholder": "请选择音色",
+            "empty": "暂无可用音色",
+            "retry": "重新加载",
+            "ariaLabel": "选择音色",
+            "noClonedVoices": "还没有可用的克隆声音",
+            "manage": "管理声音"
+        },
+        "clone": {
+            "title": "克隆声音",
+            "confirm": "确认创建",
+            "name": "声音名称",
+            "namePlaceholder": "例如：我的旁白声",
+            "sample": "声音样本",
+            "selectSample": "选择 5–180 秒音频",
+            "consent": "我确认拥有该声音的合法使用权，并同意用于声音克隆。",
+            "created": "声音克隆任务已创建",
+            "createFailed": "创建声音失败",
+            "uploadFailed": "声音样本上传失败",
+            "readFailed": "读取声音样本失败"
+        },
+        "preview": {
+            "action": "试听",
+            "title": "声音预览",
+            "confirmTitle": "生成声音预览",
+            "confirm": "确认并生成",
+            "unknownCost": "将使用一条短句生成试听并按后台定价消耗积分。生成成功后会缓存，后续试听不重复收费。",
+            "estimatedCost": "将使用一条短句生成试听，预计消耗 {points} 积分。生成成功后会缓存，后续试听不重复收费。",
+            "loadFailed": "读取声音预览失败",
+            "createFailed": "创建声音预览失败",
+            "generating": "预览生成中，完成后将自动缓存"
+        },
+        "delete": {
+            "action": "删除",
+            "confirmTitle": "确认删除该声音？",
+            "readyDescription": "将同步删除上游声音，操作完成后不可恢复。",
+            "localDescription": "删除后不可恢复。",
+            "success": "删除请求已处理",
+            "failed": "删除失败"
         }
     },
     "profile": {

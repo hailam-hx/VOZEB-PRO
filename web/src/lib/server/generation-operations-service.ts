@@ -45,7 +45,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
     const plannerAudit = agentPlannerAudit(payload.plannerAudit);
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(object) : [];
     const failedTask = tasks.find((task) => task.status === "failed" && text(task.id));
-    const model = firstText(plannerAudit?.logicalModelId, payload.logicalModelId, payload.model, config.model, config.imageModel, config.videoModel, config.audioModel, upstream.model, tasks.find((task) => text(task.model))?.model);
+    const model = firstText(plannerAudit?.logicalModelId, payload.logicalModelId, payload.model, config.logicalModel, config.model, config.imageModel, config.videoModel, config.audioModel, upstream.model, tasks.find((task) => text(task.model))?.model);
     const ownPointsCost = generationTaskPointsCost(payload);
     const childPointsCost = childRecords.reduce((total, child) => total + generationTaskPointsCost(child.payload), 0);
     const pointsBreakdown =
@@ -93,7 +93,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         plannerAudit,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
-        canCancel: record.status === "pending" || record.status === "running" || record.status === "paused",
+        canCancel: record.type !== "voice-clone" && (record.status === "pending" || record.status === "running" || record.status === "paused"),
         retryTaskId: record.type === "agent" ? text(failedTask?.id) || undefined : undefined,
     };
 }
@@ -161,6 +161,7 @@ function generationAttempts(value: unknown): GenerationAttempt[] | undefined {
             completedAt: Number(item.completedAt) || undefined,
             pointsCost: Number(item.pointsCost) > 0 ? Number(item.pointsCost) : undefined,
             error: text(item.error) || undefined,
+            providerTrace: text(item.providerTrace) || undefined,
         }));
 }
 

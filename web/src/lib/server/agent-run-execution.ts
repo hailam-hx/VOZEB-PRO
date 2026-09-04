@@ -230,7 +230,9 @@ export function normalizeTasks(
             }),
             quality: preferredQuality || item.quality?.trim() || textDefault(item.type === "video" ? defaults.vquality : defaults.quality),
             seconds: item.type === "video" ? positiveTaskNumber(generationPreferences?.video?.seconds) || positiveTaskNumber(item.seconds) || positiveTaskNumber(defaults.videoSeconds) : undefined,
-            voice: item.type === "audio" ? generationPreferences?.audio?.voice || item.voice?.trim() || textDefault(defaults.voice) : item.voice?.trim() || textDefault(defaults.voice),
+            voiceSelection:
+                item.type === "audio" ? generationPreferences?.audio?.voiceSelection || (item.voice?.trim() || textDefault(defaults.voice) ? { type: "preset" as const, voiceId: item.voice?.trim() || textDefault(defaults.voice)! } : undefined) : undefined,
+            voiceName: item.type === "audio" ? generationPreferences?.audio?.voiceName : undefined,
             format: item.type === "audio" ? generationPreferences?.audio?.format || item.format?.trim() || textDefault(defaults.format) : item.format?.trim() || textDefault(defaults.format),
             generateAudio: item.type === "video" ? (generationPreferences?.video?.generateAudio ?? item.generateAudio) : undefined,
             watermark: item.type === "video" ? (generationPreferences?.video?.watermark ?? item.watermark) : undefined,
@@ -252,24 +254,25 @@ export type AgentModelOption = {
 };
 
 export function agentModelOptions(settings: Awaited<ReturnType<typeof getAuthSettings>>): AgentModelOption[] {
-    return settings.logicalModels
-        .filter((model) => model.enabled && resolveLogicalModel(settings, model.capability, model.id))
-        .map((model) => {
-            const resolved = resolveLogicalModel(settings, model.capability, model.id);
-            const candidates = resolveLogicalModelCandidates(settings, model.capability, model.id);
-            const generationParameters = unionGenerationParameters({
-                enabled: true,
-                bindings: candidates.map((candidate) => ({ enabled: true, generationParameters: candidate.generationParameters })),
-            });
-            return {
+    return settings.logicalModels.flatMap((model) => {
+        if (!model.enabled) return [];
+        const candidates = resolveLogicalModelCandidates(settings, model.capability, model.id).filter((candidate) => model.capability !== "audio" || (candidate.generationParameters?.audioOperation || "speech") === "speech");
+        if (!candidates.length) return [];
+        const generationParameters = unionGenerationParameters({
+            enabled: true,
+            bindings: candidates.map((candidate) => ({ enabled: true, generationParameters: candidate.generationParameters })),
+        });
+        return [
+            {
                 id: model.id,
                 name: model.name,
                 capability: model.capability,
-                capabilityProfile: resolved?.capabilityProfile,
+                capabilityProfile: candidates[0].capabilityProfile,
                 ...(generationParameters ? { generationParameters } : {}),
                 generationParameterCandidates: candidates.map((candidate) => candidate.generationParameters),
-            };
-        });
+            },
+        ];
+    });
 }
 
 export function agentGenerationRequest(preferences: CreativeGenerationPreferences | undefined, referencedAssetTypes: readonly CreativeAsset["type"][]): NormalizedGenerationRequest {
@@ -316,7 +319,7 @@ export function agentTaskGenerationRequest(task: AgentRunTask): NormalizedGenera
             ...referenceRequest,
         };
     }
-    return { ...audioGenerationRequest({ voice: task.voice, format: task.format, speed: task.speed }), ...referenceRequest };
+    return { ...audioGenerationRequest({ format: task.format, speed: task.speed }), ...referenceRequest };
 }
 
 function referenceGenerationRequest(types: readonly CreativeAsset["type"][]): NormalizedGenerationRequest {
@@ -369,7 +372,10 @@ export function resolveAgentTaskBinding<T extends AgentGenerationCandidateModel>
     if (task.type === "text") return { ...task, model: modelId };
     const model = models.find((item) => item.id === modelId && item.capability === task.type);
     if (!model) return undefined;
-    const candidates = modelGenerationProfiles(model).map((generationParameters, index) => ({ index, generationParameters }));
+    const candidates = modelGenerationProfiles(model)
+        .map((generationParameters, index) => ({ index, generationParameters }))
+        .filter((candidate) => task.type !== "audio" || (candidate.generationParameters?.audioOperation || "speech") === "speech")
+        .filter((candidate) => task.type !== "audio" || task.voiceSelection?.type !== "profile" || candidate.generationParameters?.supportsClonedVoices === true);
     const references = (task.references || []).map((reference) => ({ type: reference.type, role: reference.role }));
     if (task.type === "image") {
         const selected = resolveImageGenerationCandidates(candidates, { size: task.ratio, quality: task.quality, count: task.count }, defaults, references.filter((reference) => reference.type === "image").length, false).candidates[0];
@@ -386,8 +392,8 @@ export function resolveAgentTaskBinding<T extends AgentGenerationCandidateModel>
             ? { ...task, model: modelId, ratio: selected.size, quality: selected.vquality, seconds: selected.videoSeconds, count: selected.count || 1, generateAudio: selected.videoGenerateAudio, watermark: selected.videoWatermark }
             : undefined;
     }
-    const selected = resolveAudioGenerationCandidates(candidates, { voice: task.voice, format: task.format, speed: task.speed }, defaults).candidates[0];
-    return selected ? { ...task, model: modelId, voice: selected.voice, format: selected.format, speed: selected.speed ? Number(selected.speed) : undefined } : undefined;
+    const selected = resolveAudioGenerationCandidates(candidates, { voiceSelection: task.voiceSelection, format: task.format, speed: task.speed }, defaults).candidates[0];
+    return selected ? { ...task, model: modelId, format: selected.format, speed: selected.speed ? Number(selected.speed) : undefined } : undefined;
 }
 
 export function resolveAgentTaskWithFallback<T extends AgentGenerationCandidateModel>(models: readonly T[], task: AgentRunTask, defaultModelId: string, defaults: Awaited<ReturnType<typeof getAuthSettings>>["generationDefaults"]) {
@@ -709,7 +715,8 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
                 ratio: resolvedTask.ratio,
                 quality: resolvedTask.quality,
                 seconds: resolvedTask.seconds,
-                voice: resolvedTask.voice,
+                voiceSelection: resolvedTask.voiceSelection,
+                voiceName: resolvedTask.voiceName,
                 format: resolvedTask.format,
                 generateAudio: resolvedTask.generateAudio,
                 watermark: resolvedTask.watermark,
@@ -933,7 +940,7 @@ function agentTaskSubmissionBody(task: AgentRunTask, settings: Awaited<ReturnTyp
                   ...(task.watermark !== undefined ? { videoWatermark: String(task.watermark) } : {}),
               }
             : {}),
-        ...(task.type === "audio" ? { ...(task.voice ? { voice: task.voice } : {}), ...(task.format ? { format: task.format } : {}), ...(task.speed ? { speed: String(task.speed) } : {}) } : {}),
+        ...(task.type === "audio" ? { ...(task.voiceSelection ? { voiceSelection: task.voiceSelection } : {}), ...(task.format ? { format: task.format } : {}), ...(task.speed ? { speed: String(task.speed) } : {}) } : {}),
     };
     const references = taskReferences(task);
     const source = run.surface === "canvas" ? "canvas" : run.surface === "drama" ? "drama" : "agent";
@@ -987,7 +994,8 @@ function agentGenerationSelection(value: AgentRunGenerationSelection): AgentRunG
         ...(value.ratio ? { ratio: value.ratio } : {}),
         ...(value.quality ? { quality: value.quality } : {}),
         ...(value.seconds !== undefined ? { seconds: value.seconds } : {}),
-        ...(value.voice ? { voice: value.voice } : {}),
+        ...(value.voiceSelection ? { voiceSelection: value.voiceSelection } : {}),
+        ...(value.voiceName ? { voiceName: value.voiceName } : {}),
         ...(value.format ? { format: value.format } : {}),
         ...(value.generateAudio !== undefined ? { generateAudio: value.generateAudio } : {}),
         ...(value.watermark !== undefined ? { watermark: value.watermark } : {}),

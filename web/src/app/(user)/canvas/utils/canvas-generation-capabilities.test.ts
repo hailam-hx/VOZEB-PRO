@@ -114,11 +114,11 @@ describe("canvasGenerationPreflight", () => {
         const audio = canvasGenerationPreflight({
             mode: "audio",
             capability: { reason: "unsupported", parameters: profile({ voices: ["narrator"], formats: ["flac"], speedRange: { min: 0.75, max: 1.25 } }) },
-            config: { ...defaultConfig, audioVoice: "narrator", audioFormat: "flac", audioSpeed: "1.125" },
+            config: { ...defaultConfig, audioVoice: { type: "preset", voiceId: "narrator" }, audioFormat: "flac", audioSpeed: "1.125" },
         });
 
         expect(video).toEqual({ compatible: true, request: { durationSeconds: 4.75 } });
-        expect(audio).toEqual({ compatible: true, request: { voice: "narrator", format: "flac", speed: 1.125 } });
+        expect(audio).toEqual({ compatible: true, request: { format: "flac", speed: 1.125 } });
     });
 
     it("accepts configured custom count and duration values without replacing the fixed options", () => {

@@ -20,7 +20,7 @@ import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
 const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
     logicalModels: [{ id: "writer", name: "Writer", capability: "text", enabled: true, bindings: [{ id: "binding", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1 }] }],
-    defaultModels: { textModel: "writer", imageModel: "", videoModel: "", audioModel: "" },
+    defaultModels: { textModel: "writer", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" },
     generationDefaults: { canvasImageCount: "auto", imageCount: "auto", imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto" },
 };
 
@@ -54,7 +54,7 @@ describe("admin settings model routing", () => {
     it("deletes a channel together with stale logical bindings and defaults", async () => {
         const response = await PATCH(request({ systemChannels: [], logicalModels: savedSettings.logicalModels, defaultModels: savedSettings.defaultModels }));
         expect(response.status).toBe(200);
-        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ systemChannels: [], logicalModels: [], defaultModels: { textModel: "", imageModel: "", videoModel: "", audioModel: "" } }));
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ systemChannels: [], logicalModels: [], defaultModels: { textModel: "", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" } }));
     });
 
     it("rebuilds an explicitly empty logical model catalog from channels", async () => {

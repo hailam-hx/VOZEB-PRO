@@ -56,7 +56,7 @@ describe("file settings capability persistence", () => {
             },
         ];
 
-        await setAuthSettings({ systemChannels, logicalModels, defaultModels: { imageModel: "image", videoModel: "", textModel: "", audioModel: "" } });
+        await setAuthSettings({ systemChannels, logicalModels, defaultModels: { imageModel: "image", videoModel: "", textModel: "", audioModel: "", voiceCloneModel: "" } });
 
         await expect(getFreshAuthSettings()).resolves.toMatchObject({
             logicalModels: [

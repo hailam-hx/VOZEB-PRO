@@ -90,7 +90,7 @@ export function sanitizeCreativeGenerationPreferences(preferences: CreativeGener
         const audio = preferences.audio;
         if (!audio) return preferences;
         return replacePreference(preferences, "audio", {
-            ...(creativeGenerationValueSupported(parameters, "audioVoice", audio.voice) && concreteText(audio.voice) ? { voice: audio.voice } : {}),
+            ...(audio.voiceSelection ? { voiceSelection: audio.voiceSelection, ...(audio.voiceName ? { voiceName: audio.voiceName } : {}) } : {}),
             ...(creativeGenerationValueSupported(parameters, "audioFormat", audio.format) && concreteText(audio.format) ? { format: audio.format } : {}),
             ...(creativeGenerationValueSupported(parameters, "audioSpeed", audio.speed) && audio.speed !== undefined ? { speed: audio.speed } : {}),
         });

@@ -9,6 +9,7 @@ import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import { resolveChannelModelAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import type { PricingRateCardV1 } from "@/lib/billing/pricing";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 type ApiCallFormat = "openai" | "gemini";
 type SystemChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
@@ -26,6 +27,8 @@ type SystemChannelAdvancedConfig = {
     videoModel: string;
     createPath: string;
     queryPath: string;
+    catalogPath?: string;
+    deletePath?: string;
     requestTemplate: string;
     resultField: string;
     statusField: string;
@@ -45,6 +48,8 @@ type SystemChannelAdvancedConfig = {
             protocol?: SystemChannelProtocol;
             createPath?: string;
             queryPath?: string;
+            catalogPath?: string;
+            deletePath?: string;
             requestTemplate?: string;
             resultField?: string;
             statusField?: string;
@@ -68,6 +73,11 @@ type ModelChannel = {
 };
 
 type LogicalModelGenerationParameters = {
+    audioOperation?: "speech" | "voice-clone";
+    maxCharacters?: number;
+    voiceCatalog?: "static" | "provider";
+    supportsClonedVoices?: boolean;
+    speedAppliesTo?: "all" | "cloned";
     referenceInputs: Array<"image" | "video" | "audio">;
     maxReferenceImages?: number;
     aspectRatios: string[];
@@ -111,7 +121,8 @@ export type AiConfig = {
     videoModel: string;
     textModel: string;
     audioModel: string;
-    audioVoice: string;
+    voiceCloneModel: string;
+    audioVoice: VoiceSelection;
     audioFormat: string;
     audioSpeed: string;
     audioInstructions: string;
@@ -169,6 +180,7 @@ export type PublicSystemSettings = {
         videoModel?: string;
         textModel?: string;
         audioModel?: string;
+        voiceCloneModel?: string;
     };
     systemChannels?: Array<ModelChannel & { enabled?: boolean; hasApiKey?: boolean }>;
     logicalModels?: LogicalModel[];
@@ -191,7 +203,8 @@ export const defaultConfig: AiConfig = {
     videoModel: "",
     textModel: "",
     audioModel: "",
-    audioVoice: "alloy",
+    voiceCloneModel: "",
+    audioVoice: { type: "preset", voiceId: "alloy" },
     audioFormat: "mp3",
     audioSpeed: "1",
     audioInstructions: "",
@@ -302,6 +315,7 @@ export function applyPublicSystemSettings(config: AiConfig, settings?: PublicSys
         videoModel,
         textModel,
         audioModel,
+        voiceCloneModel: settings?.defaultModels?.voiceCloneModel || "",
         model: imageModel || textModel || videoModel || audioModel || "",
         systemPrompt: "",
         audioInstructions: "",
@@ -314,7 +328,7 @@ export function applyPublicSystemSettings(config: AiConfig, settings?: PublicSys
         count: String(settings?.generationDefaults?.imageCount || defaultConfig.count),
         videoSeconds: String(settings?.generationDefaults?.videoSeconds || defaultConfig.videoSeconds),
         vquality: settings?.generationDefaults?.videoQuality || defaultConfig.vquality,
-        audioVoice: settings?.generationDefaults?.audioVoice || defaultConfig.audioVoice,
+        audioVoice: settings?.generationDefaults?.audioVoice ? { type: "preset", voiceId: settings.generationDefaults.audioVoice } : defaultConfig.audioVoice,
         audioFormat: settings?.generationDefaults?.audioFormat || defaultConfig.audioFormat,
     };
 }

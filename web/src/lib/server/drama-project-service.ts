@@ -11,6 +11,7 @@ import { createDramaProject, deleteDramaProject, DramaProjectStoreError, findDra
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
+import { normalizeVoiceSelection } from "@/lib/voice-selection";
 
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024;
 
@@ -425,8 +426,10 @@ function normalizeAssetReferences(value: unknown, assetId: string, legacyUrl: un
 
 function normalizeVoiceProfile(value: unknown) {
     const input = object(value);
+    const voiceSelection = normalizeVoiceSelection(input.voiceSelection);
     return {
-        voice: cleanText(input.voice),
+        ...(voiceSelection ? { voiceSelection } : {}),
+        ...(cleanText(input.voiceName) ? { voiceName: cleanText(input.voiceName) } : {}),
         speed: Math.max(0.25, Math.min(4, Number(input.speed) || 1)),
         instructions: cleanText(input.instructions),
     };

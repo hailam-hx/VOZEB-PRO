@@ -13,6 +13,8 @@ import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { resolveAudioGenerationCandidates } from "@/lib/server/capability-constraints";
+import { AudioVoiceError, resolveAudioVoiceCandidates } from "@/lib/server/audio-voice-service";
+import { normalizeVoiceSelection, resolveAudioTaskSource, unicodeCodePointCount } from "@/lib/voice-selection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,17 +36,40 @@ export async function POST(request: Request) {
         }
         const channels = resolveLogicalModelCandidates(settings, "audio", body.config?.model || settings.defaultModels.audioModel).map((resolved) => ({ ...toSystemGenerationChannel(resolved), channelId: resolved.channelId }));
         const prompt = String(body.prompt || "").trim();
-        const supportedChannels = channels.filter((channel) => channel.apiFormat !== "gemini");
+        const selection = normalizeVoiceSelection(body.config?.voiceSelection);
+        const supportedChannels = channels.filter((channel) => channel.apiFormat !== "gemini" && (channel.generationParameters?.audioOperation || "speech") === "speech");
         if (!supportedChannels.length || !prompt) return NextResponse.json({ error: "音频任务参数不完整或渠道不支持" }, { status: 400 });
-        const capability = resolveAudioGenerationCandidates(supportedChannels, (body.config || {}) as Record<string, unknown>, settings.generationDefaults);
+        if (!selection) return NextResponse.json({ error: "请选择有效的预设音色或声音档案" }, { status: 400 });
+        const promptLength = unicodeCodePointCount(prompt);
+        const withinCharacterLimit = supportedChannels.filter((channel) => !channel.generationParameters?.maxCharacters || promptLength <= channel.generationParameters.maxCharacters);
+        if (!withinCharacterLimit.length) {
+            const limit = Math.max(...supportedChannels.map((channel) => channel.generationParameters?.maxCharacters || 0));
+            return NextResponse.json({ error: `文本超过当前模型最多 ${limit} 个字符的限制` }, { status: 400 });
+        }
+        const capability = resolveAudioGenerationCandidates(withinCharacterLimit, { ...(body.config || {}), voiceSelection: selection }, settings.generationDefaults);
         if (!capability.candidates.length) return NextResponse.json({ error: capability.error?.message || "当前模型不支持所选生成参数" }, { status: 400 });
-        const configs: AudioTaskConfig[] = capability.candidates.map((channel) => ({ ...channel, instructions: clean(body.config?.instructions, 2_000) }));
+        let voiced: AudioTaskConfig[];
+        try {
+            voiced = await resolveAudioVoiceCandidates({ userId: user.id, selection, candidates: capability.candidates, origin: resolveInternalOrigin(new URL(request.url).origin), cookie: request.headers.get("cookie") || "" });
+        } catch (error) {
+            if (error instanceof AudioVoiceError) return NextResponse.json({ error: error.message }, { status: error.status });
+            throw error;
+        }
+        if (!voiced.length) return NextResponse.json({ error: selection.type === "preset" ? `当前模型不支持音色 ${selection.voiceId}` : "声音档案与当前模型渠道不兼容" }, { status: 400 });
+        const configs: AudioTaskConfig[] = voiced.map((channel) => ({ ...channel, instructions: clean(body.config?.instructions, 2_000) }));
         const requestId = body.context?.clientRequestId?.trim();
         if (requestId) {
             const existing = await getStoredGenerationTaskByRequest<AudioTask>("audio", user.id, requestId, body.context?.attemptNo);
             if (existing) return NextResponse.json({ task: publicTask(existing) });
         }
-        const task = await createAudioTask({ ...(body.context || {}), userId: user.id, config: configs[0], candidateConfigs: configs.slice(1), prompt: prompt.slice(0, 20_000), source: mediaTaskSource(body.source, body.context, "audio-task") });
+        const task = await createAudioTask({
+            ...(body.context || {}),
+            userId: user.id,
+            config: configs[0],
+            candidateConfigs: configs.slice(1),
+            prompt,
+            source: resolveAudioTaskSource(body.source, selection) || mediaTaskSource(body.source, body.context, "audio-task"),
+        });
         await linkStoredGenerationTask("audio", task.id, body.context || {});
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = request.headers.get("cookie") || "";

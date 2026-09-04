@@ -72,6 +72,12 @@ describe("generation task scheduler", () => {
         await expect(claimDueGenerationTasks({ workerId: "review-worker", now: 1_000 })).resolves.toEqual([expect.objectContaining({ id: "review", status: "success", executionPhase: "review_pending" })]);
     });
 
+    it("claims a due voice cloning task", async () => {
+        mocks.records = [{ ...record("voice-clone", 900), type: "voice-clone", status: "pending", executionPhase: "created" }];
+
+        await expect(claimDueGenerationTasks({ workerId: "voice-worker", now: 1_000 })).resolves.toEqual([expect.objectContaining({ id: "voice-clone", type: "voice-clone" })]);
+    });
+
     it("uses SKIP LOCKED and an owner-qualified release in PostgreSQL", async () => {
         mocks.provider = "postgres";
         mocks.transactionQuery.mockResolvedValueOnce({ rows: [] });

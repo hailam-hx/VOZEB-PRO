@@ -1,4 +1,5 @@
 import type { CreativeVideoReferenceMode, VideoReferenceRole } from "@/lib/video-reference-contract";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 export type Position = {
     x: number;
@@ -124,7 +125,7 @@ export type CanvasNodeMetadata = {
     videoFirstFrame?: CanvasVideoFrameSelection;
     videoLastFrame?: CanvasVideoFrameSelection;
     videoReferences?: CanvasVideoReferenceSnapshot[];
-    audioVoice?: string;
+    audioVoice?: VoiceSelection;
     audioFormat?: string;
     audioSpeed?: string;
     audioInstructions?: string;

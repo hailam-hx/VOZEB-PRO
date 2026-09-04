@@ -230,13 +230,13 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     expires_at timestamptz NOT NULL,
-    CONSTRAINT generation_tasks_type CHECK (task_type IN ('text', 'image', 'video', 'audio', 'agent', 'render')),
+    CONSTRAINT generation_tasks_type CHECK (task_type IN ('text', 'image', 'video', 'audio', 'voice-clone', 'agent', 'render')),
     CONSTRAINT generation_tasks_status CHECK (status IN ('pending', 'running', 'success', 'error', 'paused', 'cancelled'))
 );
 
 CREATE INDEX IF NOT EXISTS generation_tasks_user_status_idx ON generation_tasks (user_id, task_type, status, updated_at DESC);
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type;
-ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_type CHECK (task_type IN ('text', 'image', 'video', 'audio', 'agent', 'render'));
+ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_type CHECK (task_type IN ('text', 'image', 'video', 'audio', 'voice-clone', 'agent', 'render'));
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_status;
 ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_status CHECK (status IN ('pending', 'running', 'success', 'error', 'paused', 'cancelled'));
 CREATE INDEX IF NOT EXISTS generation_tasks_expires_idx ON generation_tasks (expires_at);
@@ -426,6 +426,53 @@ $$;
 CREATE INDEX IF NOT EXISTS local_media_assets_external_object_idx ON local_media_assets (external_storage_id, external_object_key) WHERE external_object_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS local_media_assets_local_created_idx ON local_media_assets (created_at DESC) WHERE storage_provider = 'local';
 CREATE INDEX IF NOT EXISTS local_media_assets_local_filter_idx ON local_media_assets (storage_class, type, created_at DESC) WHERE storage_provider = 'local';
+
+CREATE TABLE IF NOT EXISTS voice_profiles (
+    id text PRIMARY KEY,
+    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name text NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    source_storage_key text REFERENCES local_media_assets(storage_key) ON DELETE SET NULL,
+    source_mime_type text NOT NULL,
+    source_duration_seconds numeric(12, 3) NOT NULL,
+    provider text NOT NULL DEFAULT 'dflop',
+    channel_id text,
+    provider_voice_id text,
+    upstream_status text,
+    provider_trace text,
+    preview_storage_key text REFERENCES local_media_assets(storage_key) ON DELETE SET NULL,
+    consent_version text NOT NULL,
+    consented_at timestamptz NOT NULL,
+    client_request_id text NOT NULL,
+    clone_task_id text NOT NULL,
+    error text,
+    last_used_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    deleted_at timestamptz,
+    CONSTRAINT voice_profiles_status CHECK (status IN ('pending', 'ready', 'failed', 'deleting', 'deleted')),
+    CONSTRAINT voice_profiles_provider CHECK (provider = 'dflop'),
+    CONSTRAINT voice_profiles_source_duration CHECK (source_duration_seconds > 0)
+);
+
+ALTER TABLE voice_profiles ALTER COLUMN source_storage_key DROP NOT NULL;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'voice_profiles_source_storage_key_fkey' AND confdeltype <> 'n') THEN
+        ALTER TABLE voice_profiles DROP CONSTRAINT voice_profiles_source_storage_key_fkey;
+        ALTER TABLE voice_profiles ADD CONSTRAINT voice_profiles_source_storage_key_fkey FOREIGN KEY (source_storage_key) REFERENCES local_media_assets(storage_key) ON DELETE SET NULL;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'voice_profiles_preview_storage_key_fkey' AND confdeltype <> 'n') THEN
+        ALTER TABLE voice_profiles DROP CONSTRAINT voice_profiles_preview_storage_key_fkey;
+        ALTER TABLE voice_profiles ADD CONSTRAINT voice_profiles_preview_storage_key_fkey FOREIGN KEY (preview_storage_key) REFERENCES local_media_assets(storage_key) ON DELETE SET NULL;
+    END IF;
+END;
+$$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS voice_profiles_user_request_idx ON voice_profiles (user_id, client_request_id);
+CREATE UNIQUE INDEX IF NOT EXISTS voice_profiles_channel_provider_voice_idx ON voice_profiles (channel_id, provider_voice_id) WHERE channel_id IS NOT NULL AND provider_voice_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS voice_profiles_user_status_updated_idx ON voice_profiles (user_id, status, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS voice_profiles_clone_task_idx ON voice_profiles (clone_task_id);
 
 CREATE TABLE IF NOT EXISTS object_storage_settings (
     id text PRIMARY KEY DEFAULT 'default',
@@ -834,6 +881,6 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs (target_type, tar
 ${POSTGRESQL_TRIGGER_SCHEMA_SQL}
 
 INSERT INTO schema_migrations (version)
-VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce')
+VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce'), ('20260903_voice_cloning')
 ON CONFLICT (version) DO NOTHING;
 `;

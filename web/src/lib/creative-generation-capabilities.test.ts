@@ -85,7 +85,7 @@ describe("creative generation capabilities", () => {
                 generateAudio: true,
                 watermark: false,
             },
-            audio: { voice: "nova", format: "wav", speed: 1.25 },
+            audio: { voiceSelection: { type: "preset", voiceId: "nova" }, format: "wav", speed: 1.25 },
         };
         const parameters = profile({
             aspectRatios: ["16:9"],
@@ -126,7 +126,7 @@ describe("creative generation capabilities", () => {
         const preferences: CreativeGenerationPreferences = {
             mode: "image",
             image: { size: "1024x1024", quality: "studio", count: 3 },
-            audio: { voice: "nova", format: "wav", speed: 1.5 },
+            audio: { voiceSelection: { type: "preset", voiceId: "nova" }, format: "wav", speed: 1.5 },
         };
 
         const imageSanitized = sanitizeCreativeGenerationPreferences(preferences, "image", profile({ pixelSizes: ["1024x1024"], qualities: ["studio"], maxBatchSize: 2 }));
@@ -134,7 +134,7 @@ describe("creative generation capabilities", () => {
         expect(sanitizeCreativeGenerationPreferences(imageSanitized, "audio", profile({ voices: ["nova"], formats: ["mp3"], speedRange: { min: 0.5, max: 1 } }))).toEqual({
             mode: "image",
             image: { size: "1024x1024", quality: "studio" },
-            audio: { voice: "nova" },
+            audio: { voiceSelection: { type: "preset", voiceId: "nova" } },
         });
     });
 

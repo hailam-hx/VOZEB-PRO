@@ -24,4 +24,13 @@ describe("resolvePublicCapabilityModels", () => {
 
         expect(flattenPublicCapabilityModels(result)).toEqual(["image-logical", "video-logical", "text-logical", "audio-logical"]);
     });
+
+    it("keeps voice cloning models out of the public speech catalog", () => {
+        const models = [
+            { id: "voice-tts", capability: "audio" as const, enabled: true, bindings: [{ enabled: true, generationParameters: { audioOperation: "speech" } }] },
+            { id: "voice-clone", capability: "audio" as const, enabled: true, bindings: [{ enabled: true, generationParameters: { audioOperation: "voice-clone" } }] },
+        ] as const;
+
+        expect(resolvePublicCapabilityModels(models, fallback).audio).toEqual(["voice-tts"]);
+    });
 });

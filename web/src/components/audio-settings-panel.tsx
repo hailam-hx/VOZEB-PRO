@@ -5,9 +5,11 @@ import { Select } from "antd";
 import { useTranslations } from "next-intl";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { audioFormatOptions, audioSpeedLabel, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { audioFormatOptions, audioSpeedLabel, normalizeAudioFormatValue, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import type { AiConfig } from "@/stores/use-config-store";
+import { VoiceSelector } from "@/components/voice-selector";
+import type { VoiceSelection } from "@/lib/voice-selection";
 
 const speedOptions = ["0.75", "1", "1.25", "1.5"];
 
@@ -15,7 +17,7 @@ type AudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" | "audioInstr
 
 type AudioSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: AudioSettingKey, value: string) => void;
+    onConfigChange: (key: AudioSettingKey, value: string | VoiceSelection) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -23,7 +25,6 @@ type AudioSettingsPanelProps = {
 
 export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: AudioSettingsPanelProps) {
     const t = useTranslations("create.sharedSettings");
-    const voice = normalizeAudioVoiceValue(config.audioVoice);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const speed = normalizeAudioSpeedValue(config.audioSpeed);
     const speedSelectOptions = speedOptions.map((value) => ({ value, label: audioSpeedLabel(value) }));
@@ -33,7 +34,7 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("audioSettings")}</div> : null}
                 <SettingGroup title={t("voice")} color={theme.node.muted}>
-                    <AudioSelect value={voice} options={audioVoiceOptions} theme={theme} onChange={(value) => onConfigChange("audioVoice", value)} />
+                    <VoiceSelector model={config.audioModel} value={config.audioVoice} onChange={(value) => onConfigChange("audioVoice", value)} />
                 </SettingGroup>
                 <div className="grid grid-cols-2 gap-2.5">
                     <SettingGroup title={t("format")} color={theme.node.muted}>
