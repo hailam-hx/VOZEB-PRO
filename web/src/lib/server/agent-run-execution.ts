@@ -213,7 +213,10 @@ export function normalizeTasks(
             type: item.type,
             model: resolvePlannedModel(settings, item.type, item.model),
             optimizedPrompt,
-            prompt: `${withCreativeFoundation(optimizedPrompt, plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${selectedCanvasContext ? `\n\n使用本轮画布引用：\n${selectedCanvasContext}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
+            prompt:
+                item.type === "audio"
+                    ? optimizedPrompt
+                    : `${withCreativeFoundation(optimizedPrompt, plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${selectedCanvasContext ? `\n\n使用本轮画布引用：\n${selectedCanvasContext}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
             count:
                 item.type === "image" || item.type === "video"
                     ? positiveTaskInteger(item.type === "image" ? generationPreferences?.image?.count || item.count : generationPreferences?.video?.count || item.count) ||
@@ -830,7 +833,7 @@ export async function withDependencyContext(runId: string, task: AgentRunTask): 
         referenceUrl: primaryReference?.url || task.referenceUrl,
         referenceType: primaryReference?.type || task.referenceType,
         references,
-        prompt: context ? `${task.prompt}\n\n请保持与以下已完成产物一致，并将依赖媒体作为真实生成参考：\n${context}` : task.prompt,
+        prompt: context && task.type !== "audio" ? `${task.prompt}\n\n请保持与以下已完成产物一致，并将依赖媒体作为真实生成参考：\n${context}` : task.prompt,
     };
 }
 

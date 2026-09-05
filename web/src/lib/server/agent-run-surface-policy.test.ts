@@ -31,6 +31,13 @@ describe("selectAgentSkills", () => {
 });
 
 describe("agentPlannerInput", () => {
+    it("requires audio deliverables to contain only the final spoken text", () => {
+        const prompt = agentPlannerSystemPrompt("chat", "{}");
+
+        expect(prompt).toContain("type=audio 时，deliverable.prompt 只能填写最终需要合成并朗读的原文");
+        expect(prompt).toContain("不得加入朗读、配音、音色指令、标题、引号、foundation、Skill、依赖说明或其他元数据");
+    });
+
     it("constrains drama generation to the current project snapshot", () => {
         const prompt = agentPlannerSystemPrompt("drama", "{}");
 

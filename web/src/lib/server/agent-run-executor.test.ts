@@ -1196,10 +1196,23 @@ describe("executeAgentRun backend settings", () => {
         });
     });
 
-    it("passes explicit video flags and audio speed to child task routes", async () => {
+    it("passes explicit media options without appending dependency metadata to speech input", async () => {
         mocks.run = runWithTasks([
             { id: "video-one", title: "产品视频", type: "video", model: "video-model", prompt: "生成产品视频", count: 1, ratio: "21:9", quality: "2160", seconds: 60, generateAudio: false, watermark: true, dependencies: [], status: "ready", attempts: 0 },
-            { id: "audio-one", title: "产品旁白", type: "audio", model: "audio-model", prompt: "生成产品旁白", count: 1, voiceSelection: { type: "preset", voiceId: "nova" }, format: "wav", speed: 1.25, dependencies: [], status: "ready", attempts: 0 },
+            {
+                id: "audio-one",
+                title: "产品旁白",
+                type: "audio",
+                model: "audio-model",
+                prompt: "生成产品旁白",
+                count: 1,
+                voiceSelection: { type: "preset", voiceId: "nova" },
+                format: "wav",
+                speed: 1.25,
+                dependencies: ["video-one"],
+                status: "ready",
+                attempts: 0,
+            },
         ]);
         const nextSettings = settings("image-model", "image-channel") as unknown as {
             defaultModels: { videoModel: string; audioModel: string };
@@ -1260,7 +1273,7 @@ describe("executeAgentRun backend settings", () => {
         const videoCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/video-generation-tasks"));
         const audioCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/audio-tasks"));
         expect(JSON.parse(String(videoCall?.[1]?.body))).toMatchObject({ config: { size: "21:9", vquality: "2160", videoSeconds: "60", videoGenerateAudio: "false", videoWatermark: "true" } });
-        expect(JSON.parse(String(audioCall?.[1]?.body))).toMatchObject({ config: { voiceSelection: { type: "preset", voiceId: "nova" }, format: "wav", speed: "1.25" } });
+        expect(JSON.parse(String(audioCall?.[1]?.body))).toMatchObject({ config: { voiceSelection: { type: "preset", voiceId: "nova" }, format: "wav", speed: "1.25" }, prompt: "生成产品旁白" });
     });
 
     it("passes drama project context to planning without creating canvas operations", async () => {

@@ -334,6 +334,24 @@ describe("directAgentPlan", () => {
         expect(audio).toMatchObject({ type: "audio", voiceSelection: { type: "preset", voiceId: "nova" }, format: "wav", speed: 1.25 });
     });
 
+    it("音频任务只把最终朗读文本发送给语音合成模型", () => {
+        const spokenText = "你好，这是测试声音克隆功能";
+        const plan = {
+            intent: "generation",
+            objective: "测试声音克隆",
+            reply: "开始生成",
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: spokenText }, direction: { summary: "自然、清晰" } },
+            deliverables: [{ id: "audio", title: "测试音频", type: "audio", model: "audio-pro", prompt: spokenText, dependencies: [] }],
+        };
+        const skills = [{ defaultConfig: {}, instructions: "使用自然语气，不要添加其他内容" }];
+
+        const [task] = normalizeTasks(plan as never, skills as never, generationSettings() as never, undefined, spokenText, "chat", []);
+
+        expect(task.prompt).toBe(spokenText);
+        expect(task.optimizedPrompt).toBe(spokenText);
+    });
+
     it("即使 Planner 漏掉资产也会把用户明确选择的首尾帧注入视频任务", () => {
         const plan = {
             intent: "generation",
