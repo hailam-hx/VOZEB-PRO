@@ -38,6 +38,7 @@ export function generationDefaultsValidationError(context: GenerationDefaultsCon
     const defaults = context.generationDefaults;
     const capabilities = generationDefaultCapabilities(context);
     const includes = (field: keyof GenerationDefaultSettings) => !fields || fields.includes(field);
+    if (includes("createPromptMaxLength") && (!Number.isSafeInteger(defaults.createPromptMaxLength) || defaults.createPromptMaxLength <= 0)) return "创作输入字符上限必须是正整数";
     if (includes("imageSize") && defaults.imageSize !== "auto") {
         const profiles = [capabilities.image, capabilities.video].filter((profile): profile is LogicalModelGenerationParameters => Boolean(profile));
         const requiredProfiles = [context.defaultModels.imageModel, context.defaultModels.videoModel].filter(Boolean).length;

@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { CreativeRuntimeInputError, isCreativeProjectHandoff, normalizeCreativeRunRequest } from "./creative-runtime-contract";
 
 describe("normalizeCreativeRunRequest", () => {
+    it("rejects prompts longer than the configured creative prompt limit", () => {
+        const normalizeWithLimit = normalizeCreativeRunRequest as unknown as (value: unknown, promptMaxLength: number) => unknown;
+        expect(() => normalizeWithLimit({ clientRequestId: "req-long", surface: "chat", prompt: "123456", assetIds: [], skillIds: [], modelIds: [] }, 5)).toThrow("创作需求不能超过 5 个字符");
+    });
+
     it("normalizes a chat request and deduplicates assets", () => {
         expect(
             normalizeCreativeRunRequest({

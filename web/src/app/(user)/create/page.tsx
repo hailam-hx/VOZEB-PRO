@@ -20,7 +20,7 @@ import type { CreativeAgentRun } from "@/services/api/creative";
 import { optimizePrompt } from "@/services/api/prompt-optimization";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
-import { createAgentDraftFromHash } from "@/lib/create-agent-prompt";
+import { CREATE_AGENT_PROMPT_MAX_LENGTH, createAgentDraftFromHash } from "@/lib/create-agent-prompt";
 import { resolveSiteTitle } from "@/lib/site-brand";
 
 import { CreativeComposer } from "./components/creative-composer";
@@ -73,6 +73,7 @@ export default function CreatePage() {
     const [awayFromLatest, setAwayFromLatest] = useState(false);
     const [composerExpanded, setComposerExpanded] = useState(true);
     const publicSettings = usePublicSessionStore((state) => state.payload?.settings);
+    const promptMaxLength = publicSettings?.generationDefaults?.createPromptMaxLength || CREATE_AGENT_PROMPT_MAX_LENGTH;
     const siteTitle = resolveSiteTitle(publicSettings?.site?.title);
     const agent = useCreateAgent();
     const openAgentConversation = agent.openConversation;
@@ -90,11 +91,15 @@ export default function CreatePage() {
     }).join(",");
     const referenceCapabilityMessage = (reason: typeof referenceCapabilityState.reason, maxReferenceImages?: number) =>
         maxReferenceImages ? t(reason === "intersection" ? "generationReferenceImageIntersectionLimit" : "generationReferenceImageLimit", { count: maxReferenceImages }) : t(capabilityReasonMessageKeys[reason]);
-    const updatePrompt = useCallback((value: string) => {
-        promptValueRef.current = value;
-        promptRevisionRef.current += 1;
-        setPrompt(value);
-    }, []);
+    const updatePrompt = useCallback(
+        (value: string) => {
+            const nextValue = value.slice(0, promptMaxLength);
+            promptValueRef.current = nextValue;
+            promptRevisionRef.current += 1;
+            setPrompt(nextValue);
+        },
+        [promptMaxLength],
+    );
 
     useEffect(() => {
         let active = true;
@@ -520,6 +525,7 @@ export default function CreatePage() {
         <CreativeComposer
             inputRef={inputRef}
             value={prompt}
+            maxPromptLength={promptMaxLength}
             busy={agent.sending}
             optimizing={optimizingPrompt}
             centered={!showConversation}

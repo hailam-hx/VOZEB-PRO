@@ -1,3 +1,4 @@
+import { CREATE_AGENT_PROMPT_MAX_LENGTH } from "@/lib/create-agent-prompt";
 import { videoFrameAssetIds, type CreativeVideoReferenceMode } from "@/lib/video-reference-contract";
 import type { VoiceSelection } from "@/lib/voice-selection";
 
@@ -163,19 +164,22 @@ export class CreativeRuntimeInputError extends Error {
 
 const MAX_CLIENT_REQUEST_ID = 120;
 const MAX_ID = 160;
-const MAX_PROMPT = 4000;
+const MAX_PROMPT = CREATE_AGENT_PROMPT_MAX_LENGTH;
 export const CREATIVE_RUN_SKILL_LIMIT = 6;
 export const CREATIVE_RUN_MODEL_LIMIT = 6;
 const MAX_SNAPSHOT_BYTES = 512 * 1024;
 
-export function normalizeCreativeRunRequest(value: unknown): CreativeRunRequest {
+export function normalizeCreativeRunRequest(value: unknown, configuredPromptMaxLength = MAX_PROMPT): CreativeRunRequest {
     const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+    const promptMaxLength = Number.isSafeInteger(configuredPromptMaxLength) && configuredPromptMaxLength > 0 ? configuredPromptMaxLength : MAX_PROMPT;
+    if (typeof input.prompt === "string" && input.prompt.length > promptMaxLength) throw new CreativeRuntimeInputError(`创作需求不能超过 ${promptMaxLength} 个字符`);
+    if (typeof input.publicPrompt === "string" && input.publicPrompt.length > promptMaxLength) throw new CreativeRuntimeInputError(`创作需求不能超过 ${promptMaxLength} 个字符`);
     const clientRequestId = text(input.clientRequestId, MAX_CLIENT_REQUEST_ID);
     const surface = normalizeCreativeSurface(input.surface);
     const conversationId = optionalText(input.conversationId, MAX_ID);
     const projectId = optionalText(input.projectId, MAX_ID);
-    const prompt = text(input.prompt, MAX_PROMPT);
-    const publicPrompt = optionalText(input.publicPrompt, MAX_PROMPT);
+    const prompt = text(input.prompt, promptMaxLength);
+    const publicPrompt = optionalText(input.publicPrompt, promptMaxLength);
     const snapshot = input.snapshot;
     const assetIds = Array.from(new Set((Array.isArray(input.assetIds) ? input.assetIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
     const skillIds = Array.from(new Set((Array.isArray(input.skillIds) ? input.skillIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));

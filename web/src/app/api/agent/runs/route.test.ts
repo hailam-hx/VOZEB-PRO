@@ -28,7 +28,7 @@ describe("POST /api/agent/runs", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user" });
-        mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 2 } });
+        mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 2 }, generationDefaults: { createPromptMaxLength: 4000 } });
         mocks.checkRateLimit.mockReturnValue({ allowed: true });
         mocks.countActiveStoredGenerationTasks.mockResolvedValue(0);
         mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
@@ -49,6 +49,17 @@ describe("POST /api/agent/runs", () => {
         const response = await POST(request({ ...validInput(), projectId: "project" }));
         expect(response.status).toBe(400);
         expect(await response.json()).toMatchObject({ msg: "普通对话不接受项目或快照" });
+        expect(mocks.createAgentRun).not.toHaveBeenCalled();
+    });
+
+    it("rejects a prompt beyond the administrator-defined character limit", async () => {
+        mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 2 }, generationDefaults: { createPromptMaxLength: 5 } });
+        mocks.createAgentRun.mockResolvedValue({ run: { id: "new-run", userId: "user", clientRequestId: "request-one" }, conversation: { id: "conversation" }, created: true });
+
+        const response = await POST(request({ ...validInput(), prompt: "123456" }));
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ msg: "创作需求不能超过 5 个字符" });
         expect(mocks.createAgentRun).not.toHaveBeenCalled();
     });
 

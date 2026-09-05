@@ -37,6 +37,14 @@ beforeAll(() => {
 afterEach(() => cleanup());
 
 describe("/create reference capability controls", () => {
+    it("silently enforces the configured creative prompt limit without rendering a counter", () => {
+        renderInteractive(<CreativeComposer {...composerProps()} maxPromptLength={12} referenceCapabilityState={{ reason: "unconfigured" }} />);
+
+        const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+        expect(textarea.maxLength).toBe(12);
+        expect(document.querySelector(".ant-input-data-count")).toBeNull();
+    });
+
     it("disables upload and conversation-reference entry points when the active model is unconfigured", async () => {
         const user = userEvent.setup();
         renderInteractive(<CreativeComposer {...composerProps()} referenceCapabilityState={{ reason: "unconfigured" }} />);

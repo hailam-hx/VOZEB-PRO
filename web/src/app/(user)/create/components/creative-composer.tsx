@@ -15,6 +15,7 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { cn } from "@/lib/utils";
 import { useConfigStore } from "@/stores/use-config-store";
+import { CREATE_AGENT_PROMPT_MAX_LENGTH } from "@/lib/create-agent-prompt";
 
 import { creativeComposerPopoverOverflow, useCreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
@@ -74,6 +75,7 @@ export function CreativeComposer({
     onSelectVideoFrame,
     onUploadVideoFrame,
     onRemoveVideoFrame,
+    maxPromptLength = CREATE_AGENT_PROMPT_MAX_LENGTH,
     centered = false,
     compact = false,
     onExpand,
@@ -115,6 +117,7 @@ export function CreativeComposer({
     onSelectVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">, assetId: string) => void;
     onUploadVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">) => void;
     onRemoveVideoFrame: (role: Extract<VideoReferenceRole, "first_frame" | "last_frame">) => void;
+    maxPromptLength?: number;
     centered?: boolean;
     compact?: boolean;
     onExpand?: () => void;
@@ -234,7 +237,7 @@ export function CreativeComposer({
                 <Input.TextArea
                     ref={inputRef}
                     value={value}
-                    maxLength={4000}
+                    maxLength={maxPromptLength}
                     autoSize={compactMode ? { minRows: 1, maxRows: 5 } : { minRows: centered ? 4 : 2, maxRows: 8 }}
                     variant="borderless"
                     className={cn(

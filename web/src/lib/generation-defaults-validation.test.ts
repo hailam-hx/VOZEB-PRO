@@ -34,7 +34,7 @@ const profiles = {
 const settings = (generationDefaults = {}) => ({
     logicalModels: [image(profiles.image), video(profiles.video), audio(profiles.audio)],
     defaultModels: { imageModel: "image", videoModel: "video", textModel: "", audioModel: "audio", voiceCloneModel: "" },
-    generationDefaults: { canvasImageCount: 1, imageCount: 1, imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto", ...generationDefaults },
+    generationDefaults: { createPromptMaxLength: 4000, canvasImageCount: 1, imageCount: 1, imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto", ...generationDefaults },
 });
 
 describe("generation-default capability validation", () => {
@@ -63,6 +63,12 @@ describe("generation-default capability validation", () => {
         expect(generationDefaultsValidationError(settings({ imageSize: "1:1", imageQuality: "high", videoQuality: "1080", videoSeconds: 5, audioVoice: "alloy", audioFormat: "mp3" }))).toBeUndefined();
         expect(generationDefaultsValidationError(settings({ imageSize: "16:9" }))).toBe("默认图片/视频比例不受当前默认模型支持");
         expect(generationDefaultsValidationError(settings({ imageSize: "1024x1024" }))).toBeUndefined();
+    });
+
+    it("requires the creative prompt limit to be a positive safe integer", () => {
+        expect(generationDefaultsValidationError(settings({ createPromptMaxLength: 12 }), ["createPromptMaxLength"])).toBeUndefined();
+        expect(generationDefaultsValidationError(settings({ createPromptMaxLength: 0 }), ["createPromptMaxLength"])).toBe("创作输入字符上限必须是正整数");
+        expect(generationDefaultsValidationError(settings({ createPromptMaxLength: 12.5 }), ["createPromptMaxLength"])).toBe("创作输入字符上限必须是正整数");
     });
 
     it("rejects concrete defaults that the effective model capability cannot execute", () => {

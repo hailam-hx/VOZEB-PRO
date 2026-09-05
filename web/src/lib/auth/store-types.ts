@@ -192,6 +192,7 @@ export type GenerationConcurrencySettings = {
 };
 
 export type GenerationDefaultSettings = {
+    createPromptMaxLength: number;
     canvasImageCount: number | "auto";
     imageSize: string;
     imageQuality: string;

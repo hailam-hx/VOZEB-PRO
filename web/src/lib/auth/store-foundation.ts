@@ -1,6 +1,7 @@
 import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image";
 import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
+import { CREATE_AGENT_PROMPT_MAX_LENGTH } from "@/lib/create-agent-prompt";
 import {
     type UserRole,
     type UserStatus,
@@ -131,6 +132,7 @@ export const DEFAULT_SETTINGS: AuthSettings = {
     dataLifecycle: DEFAULT_DATA_LIFECYCLE,
     generationConcurrency: { agent: 2, image: 4, video: 1, audio: 2, text: 4, render: 1 },
     generationDefaults: {
+        createPromptMaxLength: CREATE_AGENT_PROMPT_MAX_LENGTH,
         canvasImageCount: "auto",
         imageSize: "1:1",
         imageQuality: "auto",

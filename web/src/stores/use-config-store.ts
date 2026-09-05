@@ -166,6 +166,7 @@ export type PublicSystemSettings = {
     generationPointMultipliers?: GenerationPointMultipliers;
     generationConcurrency?: GenerationConcurrencySettings;
     generationDefaults?: {
+        createPromptMaxLength?: number;
         canvasImageCount?: number | "auto";
         imageSize?: string;
         imageQuality?: string;

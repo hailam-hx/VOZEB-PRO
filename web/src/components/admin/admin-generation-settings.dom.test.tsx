@@ -42,6 +42,24 @@ async function render(node: ReactNode) {
     return host;
 }
 
+describe("GenerationDefaultsPanel creative prompt limit", () => {
+    it("lets an administrator update the creative prompt character limit", async () => {
+        const settings = structuredClone(DEFAULT_SETTINGS);
+        (settings.generationDefaults as typeof settings.generationDefaults & { createPromptMaxLength: number }).createPromptMaxLength = 2500;
+        const onChange = vi.fn();
+        const host = await render(<GenerationDefaultsPanel settings={settings} onChange={onChange} />);
+        const input = host.querySelector('input[value="2500"]') as HTMLInputElement;
+        const user = userEvent.setup();
+
+        expect(input).not.toBeNull();
+        await user.clear(input);
+        await user.type(input, "3200");
+        await user.tab();
+
+        expect(onChange).toHaveBeenCalledWith("createPromptMaxLength", 3200);
+    });
+});
+
 function LogicalModelHarness({
     channels,
     logicalModels,

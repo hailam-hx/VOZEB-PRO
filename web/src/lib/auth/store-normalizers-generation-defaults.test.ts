@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { normalizeGenerationConcurrency, normalizeGenerationDefaults } from "./store-normalizers";
 
 describe("generation default normalization", () => {
+    it("preserves a positive administrator-defined creative prompt limit and rejects invalid values", () => {
+        expect(normalizeGenerationDefaults({ createPromptMaxLength: 9000 } as never)).toMatchObject({ createPromptMaxLength: 9000 });
+        expect(normalizeGenerationDefaults({ createPromptMaxLength: 0 } as never)).toMatchObject({ createPromptMaxLength: 4000 });
+    });
+
     it("preserves administrator-defined video quality and positive duration", () => {
         expect(normalizeGenerationDefaults({ videoQuality: "1440", videoSeconds: 60 })).toMatchObject({ videoQuality: "1440", videoSeconds: 60 });
         expect(normalizeGenerationDefaults({ videoQuality: "2K", videoSeconds: -1 })).toMatchObject({ videoQuality: "2K", videoSeconds: -1 });

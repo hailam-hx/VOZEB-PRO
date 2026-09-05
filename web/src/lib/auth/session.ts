@@ -120,6 +120,7 @@ export function serializePublicSettings(settings: AuthSettings) {
         emailRegistrationEnabled: settings.emailRegistrationEnabled,
         generationConcurrency: { ...settings.generationConcurrency },
         generationDefaults: {
+            createPromptMaxLength: settings.generationDefaults.createPromptMaxLength,
             canvasImageCount: settings.generationDefaults.canvasImageCount,
             imageSize: settings.generationDefaults.imageSize,
             imageQuality: settings.generationDefaults.imageQuality,

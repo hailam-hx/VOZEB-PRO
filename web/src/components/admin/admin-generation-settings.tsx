@@ -8,6 +8,7 @@ import type { AuthSettings } from "@/lib/auth/store";
 import { generationDefaultCapabilities, generationDefaultImageSizeOptions, generationDefaultsValidationError, resetIncompatibleGenerationDefaults } from "@/lib/generation-defaults-validation";
 import { resolveLogicalModelConfig } from "@/lib/model-routing-config";
 import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
+import { CREATE_AGENT_PROMPT_MAX_LENGTH } from "@/lib/create-agent-prompt";
 
 const settingsPanelSurfaceClass = "rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950";
 
@@ -119,6 +120,9 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
         <div className={settingsPanelSurfaceClass}>
             <SectionTitle icon={<SlidersHorizontal className="size-4" />} title="生成默认值" />
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <LabeledControl label="创作输入字符上限">
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationDefaults.createPromptMaxLength} onChange={(value) => onChange("createPromptMaxLength", Number(value) || CREATE_AGENT_PROMPT_MAX_LENGTH)} />
+                </LabeledControl>
                 <LabeledControl label="画布默认生图张数">
                     <Select
                         className="w-full"

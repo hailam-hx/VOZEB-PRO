@@ -101,6 +101,7 @@ describe("serializePublicSettings", () => {
             x: { enabled: true, label: "X", url: "https://x.com/vozeb_pro" },
             instagram: { enabled: true, label: "Instagram", url: "https://instagram.com/vozeb.pro" },
         };
+        (settings.generationDefaults as typeof settings.generationDefaults & { createPromptMaxLength: number }).createPromptMaxLength = 9876;
 
         const result = serializePublicSettings(settings);
         const serialized = JSON.stringify(result);
@@ -143,6 +144,7 @@ describe("serializePublicSettings", () => {
                 speedRange: { min: 0.5, max: 2 },
             },
         });
+        expect(result.generationDefaults.createPromptMaxLength).toBe(9876);
         expect(result.logicalModels[0]?.saleRateCard).toEqual(settings.logicalModels[0]?.saleRateCard);
         expect(serialized).not.toContain("cost-secret");
         expect(serialized).not.toContain("timeoutMs");
