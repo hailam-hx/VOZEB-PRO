@@ -69,7 +69,14 @@ export async function waitForAudioGenerationTask(config: AiConfig, task: AudioGe
         for (;;) {
             if (options?.signal?.aborted) throw new DOMException("请求已取消", "AbortError");
             if (Date.now() - startedAt > AUDIO_TASK_TIMEOUT_MS) throw new Error("音频生成超时，请稍后重试");
-            const taskResponse = await fetch(`/api/audio-tasks/${encodeURIComponent(task.id)}`, { cache: "no-store", signal: options?.signal });
+            let taskResponse: Response;
+            try {
+                taskResponse = await fetch(`/api/audio-tasks/${encodeURIComponent(task.id)}`, { cache: "no-store", signal: options?.signal });
+            } catch (error) {
+                if (options?.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
+                await delay(AUDIO_TASK_POLL_INTERVAL_MS, options?.signal);
+                continue;
+            }
             throwIfClientSessionExpired(taskResponse);
             syncUserPointsFromHeaders(taskResponse.headers, requestConfig.apiSource);
             if (!taskResponse.ok) throw new Error(await readFetchError(taskResponse, "读取音频任务失败"));
@@ -78,7 +85,14 @@ export async function waitForAudioGenerationTask(config: AiConfig, task: AudioGe
             if (!current) throw new Error(taskPayload.error || "音频任务不存在");
             if (current.status === "success") {
                 if (!current.result?.url) throw new Error("音频任务没有返回结果");
-                const audioResponse = await fetch(current.result.url, { signal: options?.signal });
+                let audioResponse: Response;
+                try {
+                    audioResponse = await fetch(current.result.url, { signal: options?.signal });
+                } catch (error) {
+                    if (options?.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
+                    await delay(AUDIO_TASK_POLL_INTERVAL_MS, options?.signal);
+                    continue;
+                }
                 if (!audioResponse.ok) throw new Error(await readFetchError(audioResponse, "读取音频结果失败"));
                 const blob = await audioResponse.blob();
                 await assertAudioBlob(blob);
@@ -159,12 +173,12 @@ function delay(ms: number, signal?: AbortSignal) {
             reject(new DOMException("请求已取消", "AbortError"));
             return;
         }
-        const timer = window.setTimeout(() => {
+        const timer = globalThis.setTimeout(() => {
             signal?.removeEventListener("abort", abort);
             resolve();
         }, ms);
         const abort = () => {
-            window.clearTimeout(timer);
+            globalThis.clearTimeout(timer);
             reject(new DOMException("请求已取消", "AbortError"));
         };
         signal?.addEventListener("abort", abort, { once: true });

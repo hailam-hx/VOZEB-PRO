@@ -20,6 +20,7 @@ const config = {
 
 describe("audio API service", () => {
     afterEach(() => {
+        vi.useRealTimers();
         vi.unstubAllGlobals();
     });
 
@@ -82,6 +83,46 @@ describe("audio API service", () => {
 
         await expect(waitForAudioGenerationTask(config, { id: "audio-failed", status: "running", model: "voice" })).rejects.toThrow("音频提交结果无法确认");
         expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("continues the same audio task after a transient polling connection failure", async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .fn()
+            .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+            .mockResolvedValueOnce(json({ task: { id: "audio-transient-poll", status: "success", model: "voice", result: { url: "/api/reference-assets/transient-poll.mp3", mimeType: "audio/mpeg" } } }))
+            .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const observed = waitForAudioGenerationTask(config, { id: "audio-transient-poll", status: "running", model: "voice" }).then(
+            (value) => ({ value }),
+            (error) => ({ error }),
+        );
+        await vi.advanceTimersByTimeAsync(1800);
+
+        await expect(observed).resolves.toMatchObject({ value: { url: "/api/reference-assets/transient-poll.mp3" } });
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/audio-tasks/audio-transient-poll", "/api/audio-tasks/audio-transient-poll", "/api/reference-assets/transient-poll.mp3"]);
+    });
+
+    it("retries the stored audio result after a transient media connection failure", async () => {
+        vi.useFakeTimers();
+        const completedTask = () => json({ task: { id: "audio-transient-media", status: "success", model: "voice", result: { url: "/api/reference-assets/transient-media.mp3", mimeType: "audio/mpeg" } } });
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(completedTask())
+            .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+            .mockResolvedValueOnce(completedTask())
+            .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const observed = waitForAudioGenerationTask(config, { id: "audio-transient-media", status: "running", model: "voice" }).then(
+            (value) => ({ value }),
+            (error) => ({ error }),
+        );
+        await vi.advanceTimersByTimeAsync(1800);
+
+        await expect(observed).resolves.toMatchObject({ value: { url: "/api/reference-assets/transient-media.mp3" } });
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/audio-tasks/audio-transient-media", "/api/reference-assets/transient-media.mp3", "/api/audio-tasks/audio-transient-media", "/api/reference-assets/transient-media.mp3"]);
     });
 });
 

@@ -44,6 +44,7 @@ test("voice management supports clone consent, preview, rename and delete withou
 
     expect(JSON.stringify(state.created)).not.toContain("providerVoiceId");
     expect(state.previewCreates).toBe(1);
+    expect(state.previewPolls).toBeGreaterThanOrEqual(2);
 });
 
 async function mockVoiceManagement(page: Page) {
@@ -52,7 +53,7 @@ async function mockVoiceManagement(page: Page) {
         { id: "profile-ready", name: "我的声音", status: "ready", source: { mimeType: "audio/wav", durationSeconds: 8 }, hasPreview: false, createdAt: now, updatedAt: now },
         { id: "profile-failed", name: "失败样本", status: "failed", source: { mimeType: "audio/mpeg", durationSeconds: 9 }, hasPreview: false, error: "上游拒绝了该样本", createdAt: now, updatedAt: now },
     ];
-    const state: { created?: Record<string, unknown>; previewCreates: number } = { previewCreates: 0 };
+    const state: { created?: Record<string, unknown>; previewCreates: number; previewPolls: number } = { previewCreates: 0, previewPolls: 0 };
 
     await page.route(/\/api\/auth\/session(?:\?.*)?$/, async (route) => {
         const response = await route.fetch();
@@ -80,7 +81,12 @@ async function mockVoiceManagement(page: Page) {
     await page.route(/\/api\/voice-profiles\/profile-ready\/preview(?:\?.*)?$/, async (route) => {
         if (route.request().method() === "GET") return route.fulfill({ json: { code: 0, data: { cached: false, locale: "zh-CN", estimatedPoints: 0.25 }, msg: "" } });
         state.previewCreates += 1;
-        return route.fulfill({ json: { code: 0, data: { cached: true, url: "/api/reference-assets/e2e-preview.mp3" }, msg: "" } });
+        return route.fulfill({ json: { code: 0, data: { cached: false, task: { id: "e2e-preview-task", status: "pending", model: "e2e-speech" } }, msg: "" } });
+    });
+    await page.route(/\/api\/audio-tasks\/e2e-preview-task$/, async (route) => {
+        state.previewPolls += 1;
+        if (state.previewPolls === 1) return route.abort("failed");
+        return route.fulfill({ json: { task: { id: "e2e-preview-task", status: "success", model: "e2e-speech", result: { url: "/api/reference-assets/e2e-preview.mp3", mimeType: "audio/mpeg" } } } });
     });
     await page.route(/\/api\/reference-assets$/, async (route) => route.fulfill({ json: { token: "permanent/e2e-source.wav" } }));
     await page.route(/\/api\/reference-assets\/e2e-preview\.mp3$/, async (route) => route.fulfill({ contentType: "audio/mpeg", body: Buffer.from([0xff, 0xfb, 0x90, 0x64]) }));
