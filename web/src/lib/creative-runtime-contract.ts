@@ -1,6 +1,6 @@
 import { CREATE_AGENT_PROMPT_MAX_LENGTH } from "@/lib/create-agent-prompt";
 import { videoFrameAssetIds, type CreativeVideoReferenceMode } from "@/lib/video-reference-contract";
-import type { VoiceSelection } from "@/lib/voice-selection";
+import { normalizeVoiceSelection, type VoiceSelection } from "@/lib/voice-selection";
 
 export const creativeSurfaces = ["chat", "canvas", "drama"] as const;
 export type CreativeSurface = (typeof creativeSurfaces)[number];
@@ -258,13 +258,13 @@ function normalizeVideoPreferences(value: unknown) {
 function normalizeAudioPreferences(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const input = value as Record<string, unknown>;
-    const rawVoice = optionalText(input.voice, 40);
     const rawFormat = optionalText(input.format, 16);
-    const voice = rawVoice?.toLowerCase() === "auto" ? undefined : rawVoice;
+    const voiceSelection = normalizeVoiceSelection(input.voiceSelection) || undefined;
+    const voiceName = voiceSelection ? optionalText(input.voiceName, 120) : undefined;
     const format = rawFormat?.toLowerCase() === "auto" ? undefined : rawFormat;
     const speed = Number(input.speed);
     const normalizedSpeed = Number.isFinite(speed) && speed > 0 ? speed : undefined;
-    return voice || format || normalizedSpeed ? { ...(voice ? { voice } : {}), ...(format ? { format } : {}), ...(normalizedSpeed ? { speed: normalizedSpeed } : {}) } : undefined;
+    return voiceSelection || format || normalizedSpeed ? { ...(voiceSelection ? { voiceSelection } : {}), ...(voiceName ? { voiceName } : {}), ...(format ? { format } : {}), ...(normalizedSpeed ? { speed: normalizedSpeed } : {}) } : undefined;
 }
 
 function normalizePreferenceSize(value: unknown) {

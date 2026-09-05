@@ -30,7 +30,7 @@ describe("normalizeCreativeRunRequest", () => {
         });
     });
 
-    it("normalizes explicit media mode, size and quality preferences", () => {
+    it("normalizes explicit media preferences including a cloned voice selection", () => {
         expect(
             normalizeCreativeRunRequest({
                 clientRequestId: "req-2",
@@ -43,7 +43,7 @@ describe("normalizeCreativeRunRequest", () => {
                     mode: "video",
                     image: { size: " 1024 × 1536 ", quality: "high", count: 12 },
                     video: { size: " 9：16 ", quality: " 2160P ", seconds: 10, count: 12, generateAudio: false, watermark: true },
-                    audio: { voice: " nova ", format: " wav ", speed: 1.25 },
+                    audio: { voiceSelection: { type: "profile", voiceProfileId: " profile-one " }, voiceName: " 我的声音3 ", format: " wav ", speed: 1.25 },
                 },
             }),
         ).toMatchObject({
@@ -51,7 +51,7 @@ describe("normalizeCreativeRunRequest", () => {
                 mode: "video",
                 image: { size: "1024x1536", quality: "high", count: 12 },
                 video: { size: "9:16", quality: "2160P", seconds: 10, count: 12, generateAudio: false, watermark: true },
-                audio: { voice: "nova", format: "wav", speed: 1.25 },
+                audio: { voiceSelection: { type: "profile", voiceProfileId: "profile-one" }, voiceName: "我的声音3", format: "wav", speed: 1.25 },
             },
         });
     });
@@ -69,7 +69,7 @@ describe("normalizeCreativeRunRequest", () => {
                     mode: "video",
                     image: { size: "auto", quality: "studio-pro" },
                     video: { size: "auto", quality: "auto", seconds: 7.5 },
-                    audio: { voice: "auto", format: "auto" },
+                    audio: { format: "auto" },
                 },
             }),
         ).toMatchObject({
