@@ -1,8 +1,46 @@
+// @vitest-environment jsdom
+
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { useCreateAgent } from "./use-create-agent";
+import { useCreateDraftAttachmentsStore } from "./use-create-draft-attachments-store";
+
+vi.mock("next-intl", () => ({ useTranslations: () => (key: string) => key }));
+vi.mock("@/services/api/creative", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/services/api/creative")>()),
+    listCreativeAgentRuns: vi.fn().mockResolvedValue([]),
+    listCreativeConversationPage: vi.fn().mockResolvedValue({ conversations: [], hasMore: false }),
+}));
+
+beforeEach(() => {
+    useCreateDraftAttachmentsStore.setState({ attachments: [] });
+    vi.spyOn(URL, "createObjectURL").mockImplementation((file) => `blob:${(file as File).name}`);
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+});
+
+afterEach(() => {
+    useCreateDraftAttachmentsStore.getState().clear();
+    vi.restoreAllMocks();
+});
 
 describe("useCreateAgent submission retry", () => {
+    it("keeps draft and saved asset selections in the order the user chose them", async () => {
+        const { result, unmount } = renderHook(() => useCreateAgent());
+        let draftId = "";
+
+        await act(async () => {
+            const [draft] = await result.current.uploadAttachments([new File(["image"], "draft.webp", { type: "image/webp" })]);
+            draftId = draft.id;
+        });
+        act(() => result.current.selectAsset("saved-image"));
+
+        expect(result.current.selectedAssetIds).toEqual([draftId, "saved-image"]);
+        unmount();
+    });
+
     it("keeps newly selected files as local drafts until the user submits", async () => {
         const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-agent.ts"), "utf8");
         const draftStoreSource = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-draft-attachments-store.ts"), "utf8");
@@ -36,7 +74,7 @@ describe("useCreateAgent submission retry", () => {
         expect(executeSource).toContain("clientRequestId: snapshot.clientRequestId");
         expect(executeSource).toContain("preferences: snapshot.preferences");
         expect(submitSource).toContain("metadata: { assetIds }");
-        expect(submitSource).toContain("options?.assetIds || selectedAssetIdsWithDrafts");
+        expect(submitSource).toContain("options?.assetIds || selectedAssetIds");
         expect(submitSource).toContain("setSelectedAssetIds((current) => current.filter");
         expect(retrySource).toContain("failedSubmissionsRef.current.get(assistantMessageId)");
         expect(retrySource).toContain("executeSubmission(snapshot)");

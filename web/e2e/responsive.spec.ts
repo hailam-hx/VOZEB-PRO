@@ -683,6 +683,13 @@ test("creative composer renders uploaded images as thumbnails instead of filenam
         .toBe(true);
     await expectNoHorizontalOverflow(page, `${testInfo.project.name} creative image attachment preview`);
 
+    await page.getByRole("button", { name: "引用当前对话资产" }).click();
+    await expect(page.getByText("没有匹配的图片、视频或音频", { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: `选择${fileName}` }).click();
+    await expect(textarea).toHaveValue("@图片1 ");
+    expect(requests.conversationCreates()).toBe(0);
+    expect(requests.assetUploads()).toBe(0);
+
     const removeButton = page.getByRole("button", { name: `移除${fileName}` });
     const addButton = page.getByRole("button", { name: "继续添加参考素材" });
     await expect

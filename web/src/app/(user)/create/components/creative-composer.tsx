@@ -154,8 +154,8 @@ export function CreativeComposer({
     const frameAssetIds = new Set([videoPreference?.firstFrameAssetId, videoPreference?.lastFrameAssetId].filter(Boolean));
     const popoverPlacement = centered ? "bottomLeft" : "topLeft";
     const composerPopoverPlacement = useCreativeComposerPopoverPlacement(popoverPlacement);
-    const mentionCandidates = useMemo(() => creativeAssetMentionCandidates(referenceAssets, mentionQuery || ""), [mentionQuery, referenceAssets]);
     const referenceAliasAssets = useMemo(() => Array.from(new Map([...referenceAssets, ...attachments].map((asset) => [asset.id, asset])).values()), [attachments, referenceAssets]);
+    const mentionCandidates = useMemo(() => creativeAssetMentionCandidates(referenceAliasAssets, mentionQuery || ""), [mentionQuery, referenceAliasAssets]);
     const referenceAssetsById = useMemo(() => new Map(referenceAliasAssets.map((asset) => [asset.id, asset])), [referenceAliasAssets]);
     const referenceAliases = useMemo(() => creativeAssetReferenceAliases(referenceAliasAssets, selectedAssetIds), [referenceAliasAssets, selectedAssetIds]);
     const mentionSegments = useMemo(() => creativeAssetMentionSegments(value, referenceAliases), [referenceAliases, value]);

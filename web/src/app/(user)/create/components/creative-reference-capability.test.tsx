@@ -172,6 +172,17 @@ describe("/create reference capability controls", () => {
         fireEvent.click(audioButton);
         expect(onSelect).toHaveBeenCalledWith(audio);
     });
+
+    it("offers a selected local draft in the mention picker before server materialization", async () => {
+        const user = userEvent.setup();
+        const draft = { ...asset("draft-image", "image"), userId: "draft", conversationId: "", metadata: { source: "draft-upload" } };
+        renderInteractive(<CreativeComposer {...composerProps()} attachments={[draft]} selectedAssetIds={[draft.id]} referenceCapabilityState={{ reason: "unsupported", parameters: profile({ referenceInputs: ["image"], maxReferenceImages: 2 }) }} />);
+
+        await user.click(screen.getByRole("button", { name: "引用当前对话资产" }));
+
+        expect(((await screen.findByRole("button", { name: "选择图片素材" })) as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.queryByText("没有匹配的图片、视频或音频")).toBeNull();
+    });
 });
 
 function renderInteractive(element: ReactElement) {
