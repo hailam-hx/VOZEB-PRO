@@ -23,7 +23,7 @@ export function CreativeCreditIndicator({ estimate }: { estimate: CreativeCredit
             {showLabel ? (
                 <>
                     <span className="sm:hidden">{compactLabel}</span>
-                    <span className="hidden whitespace-nowrap sm:inline">{label}</span>
+                    <span className="hidden whitespace-nowrap sm:inline">{compactLabel}</span>
                 </>
             ) : null}
         </div>

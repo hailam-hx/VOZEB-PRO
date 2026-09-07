@@ -484,14 +484,16 @@ test("creative composer displays the shared PAYG estimate before submission", as
     const modelPopover = page.locator(".ant-popover").filter({ hasText: "选择模型" }).last();
     await openComposerPopover(modelTrigger, modelPopover);
     await modelPopover.getByRole("button", { name: /^e2e-image 图片模型/ }).click();
-    await expect(estimate).toHaveAttribute("aria-label", "预计消耗 2.5 积分");
+    await expect(estimate).toHaveAccessibleName("预计消耗 2.5 积分");
+    await expect(estimate).not.toContainText(/预计消耗|积分/);
 
     const preferenceTrigger = page.getByRole("button", { name: "生成参数：生成参数" });
     const preferencePopover = page.locator(".ant-popover").last();
     await openComposerPopover(preferenceTrigger, preferencePopover);
     await preferencePopover.getByRole("tab", { name: "输出" }).click();
     await preferencePopover.getByRole("button", { name: "选择图片生成数量 3 份" }).click();
-    await expect(estimate).toHaveAttribute("aria-label", "预计消耗 7.5 积分");
+    await expect(estimate).toHaveAccessibleName("预计消耗 7.5 积分");
+    await expect(estimate).not.toContainText(/预计消耗|积分/);
     await expectNoHorizontalOverflow(page, `${test.info().project.name} creative credit estimate`);
     const [indicatorRect, sendRect] = await Promise.all([estimate.evaluate((element) => element.getBoundingClientRect().toJSON()), page.getByRole("button", { name: "发送" }).evaluate((element) => element.getBoundingClientRect().toJSON())]);
     expect(indicatorRect.right).toBeLessThanOrEqual(sendRect.left);
