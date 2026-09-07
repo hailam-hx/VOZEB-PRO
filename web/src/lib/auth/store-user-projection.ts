@@ -1,5 +1,6 @@
 import { decimal } from "@/lib/billing/decimal";
 import type { AuthenticatedUserRecord, UserSummaryRecord } from "@/lib/server/database";
+import { userAvatarUrl } from "@/lib/user-avatar";
 
 import type { AuthDatabase, PublicUser, PublicUserSummary, StoredUser } from "./store-types";
 
@@ -53,7 +54,7 @@ function buildPublicUser(user: StoredUser | AuthenticatedUserRecord["user"], hel
         email: user.email,
         displayName: user.displayName,
         bio: user.bio,
-        avatarUrl: user.avatarStorageKey ? `/api/profile/avatar/${user.id}` : undefined,
+        avatarUrl: user.avatarStorageKey ? userAvatarUrl(user.id, user.updatedAt) : undefined,
         role: user.role,
         adminPermissions: user.adminPermissions,
         status: user.status,

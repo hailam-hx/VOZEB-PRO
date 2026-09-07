@@ -374,6 +374,37 @@ async function selectComposerPopoverOption(trigger: Locator, popover: Locator, o
     await verify();
 }
 
+test("workspace account avatar uses the implemented media route", async ({ page, request }) => {
+    const imageBuffer = readFileSync("public/generation-smoke.webp");
+    const upload = await request.post("/api/auth/avatar", {
+        multipart: {
+            avatar: {
+                name: "account-avatar.webp",
+                mimeType: "image/webp",
+                buffer: imageBuffer,
+            },
+        },
+    });
+    expect(upload.ok(), await upload.text()).toBe(true);
+    const payload = (await upload.json()) as { data: { user: { avatarUrl?: string } } };
+    const avatarUrl = payload.data.user.avatarUrl;
+    expect(avatarUrl).toMatch(/^\/api\/public\/users\/[^/]+\/avatar\?v=/);
+
+    const avatarResponse = await request.get(avatarUrl!);
+    expect(avatarResponse.ok(), await avatarResponse.text()).toBe(true);
+    expect(avatarResponse.headers()["content-type"]).toBe("image/webp");
+
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    const avatar = page.locator(".app-account-action img");
+    await expect(avatar).toHaveAttribute("src", avatarUrl!);
+    await expect.poll(() => avatar.evaluate((element) => (element as HTMLImageElement).complete && (element as HTMLImageElement).naturalWidth > 0)).toBe(true);
+
+    await page.locator(".app-account-action").click();
+    const menuAvatar = page.locator(".account-menu-dropdown img").first();
+    await expect(menuAvatar).toHaveAttribute("src", avatarUrl!);
+    await expect.poll(() => menuAvatar.evaluate((element) => (element as HTMLImageElement).complete && (element as HTMLImageElement).naturalWidth > 0)).toBe(true);
+});
+
 test("creative composer controls return to a neutral palette after selection", async ({ page }) => {
     const readPalette = (selector: Locator) =>
         selector.evaluate((element) => {
