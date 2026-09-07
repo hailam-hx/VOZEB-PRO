@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { builtInSiteCopy, localizeBuiltInSiteCopy } from "@/i18n/site-copy";
-import { HOME_NAVIGATION, type HomeNavigationItem } from "./home-data";
+import { HOME_NAVIGATION, HOME_PRODUCT_NAVIGATION, type HomeNavigationItem } from "./home-data";
 import { useHomeActions } from "./home-actions";
 import styles from "./home.module.css";
 
@@ -41,8 +41,8 @@ export function HomeFooter() {
         (item): item is { label: string; href: string } => Boolean(item),
     );
     const navigationGroups: Array<{ title: string; items: readonly HomeNavigationItem[] }> = [
-        { title: t("footerProduct"), items: HOME_NAVIGATION },
-        { title: t("footerPlatform"), items: [{ translationKey: "announcementCenter", href: "/announcements", action: "link" }] },
+        { title: t("footerProduct"), items: HOME_PRODUCT_NAVIGATION },
+        { title: t("footerPlatform"), items: [...HOME_NAVIGATION, { translationKey: "announcementCenter", href: "/announcements", action: "link" }] },
     ];
 
     return (

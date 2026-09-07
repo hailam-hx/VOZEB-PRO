@@ -1,0 +1,833 @@
+.container,
+.narrowContainer {
+    margin: 0 auto;
+    max-width: 1380px;
+    padding-inline: 32px;
+    position: relative;
+}
+
+.narrowContainer {
+    max-width: 940px;
+}
+
+.hero {
+    min-height: 680px;
+    overflow: hidden;
+    padding: 34px 0 88px;
+    position: relative;
+}
+
+.heroGlow,
+.finalCtaGlow {
+    background: radial-gradient(circle, color-mix(in srgb, var(--home-primary-start) 38%, transparent), transparent 70%);
+    filter: blur(10px);
+    height: 640px;
+    pointer-events: none;
+    position: absolute;
+    right: -160px;
+    top: -190px;
+    width: 640px;
+}
+
+.breadcrumb {
+    align-items: center;
+    color: var(--home-muted);
+    display: flex;
+    font-size: 13px;
+    gap: 9px;
+    margin-bottom: 64px;
+}
+
+.breadcrumb a {
+    color: inherit;
+}
+
+.breadcrumb a:hover {
+    color: var(--home-text);
+}
+
+.heroGrid {
+    align-items: center;
+    display: grid;
+    gap: clamp(56px, 8vw, 120px);
+    grid-template-columns: minmax(0, 1.08fr) minmax(390px, 0.92fr);
+}
+
+.heroCopy {
+    min-width: 0;
+}
+
+.eyebrow {
+    background: linear-gradient(110deg, #276cff, #8a45ef);
+    background-clip: text;
+    color: transparent;
+    font-size: 12px;
+    font-weight: 820;
+    letter-spacing: 0.12em;
+    margin: 0;
+}
+
+.hero h1 {
+    color: var(--home-text);
+    font-size: clamp(46px, 5.2vw, 76px);
+    font-weight: 820;
+    letter-spacing: -0.045em;
+    line-height: 1.04;
+    margin: 20px 0 0;
+    max-width: 850px;
+}
+
+.heroDescription {
+    color: var(--home-muted);
+    font-size: 18px;
+    line-height: 1.75;
+    margin: 28px 0 0;
+    max-width: 760px;
+}
+
+.heroNote {
+    align-items: flex-start;
+    color: var(--home-text);
+    display: flex;
+    font-size: 14px;
+    gap: 10px;
+    line-height: 1.65;
+    margin: 24px 0 0;
+    max-width: 700px;
+}
+
+.heroNote svg {
+    background: color-mix(in srgb, #4e73ff 12%, transparent);
+    border-radius: 50%;
+    color: #526eff;
+    flex: 0 0 auto;
+    height: 22px;
+    padding: 5px;
+    width: 22px;
+}
+
+.keywordList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 30px;
+}
+
+.keywordList span {
+    background: color-mix(in srgb, var(--home-surface-strong) 84%, #5870ff 7%);
+    border: 1px solid var(--home-border);
+    border-radius: 999px;
+    color: var(--home-muted);
+    font-size: 12px;
+    padding: 7px 11px;
+}
+
+.heroActions {
+    min-width: 0;
+}
+
+.promptCard,
+.workspaceCard {
+    background: color-mix(in srgb, var(--home-surface-strong) 92%, transparent);
+    border: 1px solid var(--home-card-border);
+    border-radius: 22px;
+    box-shadow: var(--home-shadow);
+    padding: 24px;
+}
+
+.promptCardHeader {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.promptCardHeader > span,
+.workspaceIcon {
+    align-items: center;
+    background: linear-gradient(135deg, color-mix(in srgb, #3472ff 18%, transparent), color-mix(in srgb, #8b45ef 20%, transparent));
+    border: 1px solid color-mix(in srgb, #6374ff 25%, transparent);
+    border-radius: 12px;
+    color: #6175ff;
+    display: flex;
+    flex: 0 0 auto;
+    height: 44px;
+    justify-content: center;
+    width: 44px;
+}
+
+.promptCardHeader svg,
+.workspaceIcon svg {
+    height: 20px;
+    width: 20px;
+}
+
+.promptCardHeader strong {
+    color: var(--home-text);
+    display: block;
+    font-size: 15px;
+}
+
+.promptCardHeader small,
+.promptCard > small,
+.workspaceCard small {
+    color: var(--home-muted);
+    display: block;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.promptCardHeader small {
+    margin-top: 3px;
+}
+
+.promptCard label {
+    color: var(--home-text);
+    display: block;
+    font-size: 13px;
+    font-weight: 670;
+    margin-bottom: 9px;
+}
+
+.promptCard textarea {
+    background: color-mix(in srgb, var(--home-surface) 82%, transparent);
+    border: 1px solid var(--home-control-border);
+    border-radius: 14px;
+    color: var(--home-text);
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.65;
+    min-height: 152px;
+    padding: 14px;
+    resize: vertical;
+    width: 100%;
+}
+
+.promptCard textarea::placeholder {
+    color: color-mix(in srgb, var(--home-muted) 82%, transparent);
+}
+
+.promptCard textarea:focus {
+    border-color: #6374ff;
+}
+
+.promptExamples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 12px 0 18px;
+}
+
+.promptExamples button {
+    background: transparent;
+    border: 1px solid var(--home-border);
+    border-radius: 999px;
+    color: var(--home-muted);
+    cursor: pointer;
+    font-size: 11px;
+    min-height: 32px;
+    padding: 6px 10px;
+}
+
+.promptExamples button:hover {
+    background: color-mix(in srgb, var(--home-text) 6%, transparent);
+    color: var(--home-text);
+}
+
+.primaryCta,
+.compactCta {
+    align-items: center;
+    background: linear-gradient(125deg, var(--home-primary-start), var(--home-primary-end));
+    border: 0;
+    border-radius: 12px;
+    box-shadow: 0 11px 28px color-mix(in srgb, var(--home-glow) 58%, transparent);
+    color: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 14px;
+    font-weight: 720;
+    gap: 8px;
+    justify-content: center;
+    min-height: 48px;
+    padding: 0 20px;
+    transition:
+        opacity 160ms ease,
+        transform 160ms ease;
+}
+
+.primaryCta {
+    width: 100%;
+}
+
+.primaryCta:hover,
+.compactCta:hover {
+    opacity: 0.92;
+    transform: translateY(-1px);
+}
+
+.primaryCta svg,
+.compactCta svg {
+    height: 16px;
+    width: 16px;
+}
+
+.promptCard > small,
+.workspaceCard small {
+    margin-top: 12px;
+    text-align: center;
+}
+
+.workspaceCard {
+    padding: 34px;
+}
+
+.workspaceIcon {
+    height: 52px;
+    width: 52px;
+}
+
+.workspaceCard h2 {
+    color: var(--home-text);
+    font-size: 25px;
+    line-height: 1.3;
+    margin: 28px 0 0;
+}
+
+.workspaceCard > p {
+    color: var(--home-muted);
+    font-size: 14px;
+    line-height: 1.7;
+    margin: 14px 0 26px;
+}
+
+.compactCta {
+    min-height: 50px;
+    padding-inline: 24px;
+}
+
+.showcase,
+.section {
+    padding: 100px 0;
+}
+
+.showcase {
+    background: color-mix(in srgb, var(--home-surface-strong) 72%, transparent);
+    border-block: 1px solid var(--home-border);
+}
+
+.sectionHeading {
+    margin: 0 auto 46px;
+    max-width: 820px;
+    text-align: center;
+}
+
+.sectionHeading h2,
+.finalCta h2 {
+    color: var(--home-text);
+    font-size: clamp(32px, 4vw, 48px);
+    font-weight: 790;
+    letter-spacing: -0.035em;
+    line-height: 1.12;
+    margin: 15px 0 0;
+}
+
+.sectionHeading > p:last-child {
+    color: var(--home-muted);
+    font-size: 16px;
+    line-height: 1.75;
+    margin: 18px auto 0;
+    max-width: 720px;
+}
+
+.visualFrame {
+    background: var(--home-surface-strong);
+    border: 1px solid var(--home-card-border);
+    border-radius: 22px;
+    box-shadow: 0 30px 90px color-mix(in srgb, var(--home-glow) 32%, transparent);
+    margin-top: 52px;
+    overflow: hidden;
+}
+
+.visualBar {
+    align-items: center;
+    border-bottom: 1px solid var(--home-border);
+    display: flex;
+    gap: 7px;
+    height: 42px;
+    padding-inline: 16px;
+}
+
+.visualBar span {
+    background: color-mix(in srgb, var(--home-muted) 32%, transparent);
+    border-radius: 50%;
+    height: 8px;
+    width: 8px;
+}
+
+.visualBar strong {
+    color: var(--home-muted);
+    font-size: 11px;
+    font-weight: 650;
+    margin-left: auto;
+}
+
+.visualImage {
+    display: block;
+    height: auto;
+    width: 100%;
+}
+
+.cardGrid {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.infoCard {
+    background: var(--home-surface);
+    border: 1px solid var(--home-border);
+    border-radius: 18px;
+    min-height: 230px;
+    padding: 28px;
+    transition:
+        border-color 180ms ease,
+        transform 180ms ease;
+}
+
+.infoCard:hover {
+    border-color: color-mix(in srgb, #5870ff 55%, var(--home-border));
+    transform: translateY(-3px);
+}
+
+.cardIndex {
+    color: #6175ff;
+    font-size: 13px;
+    font-weight: 780;
+}
+
+.infoCard h3,
+.capabilityGrid h3,
+.stepsList h3,
+.relatedGrid h3 {
+    color: var(--home-text);
+    font-weight: 730;
+}
+
+.infoCard h3 {
+    font-size: 20px;
+    margin: 42px 0 0;
+}
+
+.infoCard p,
+.capabilityGrid p,
+.stepsList p,
+.relatedGrid p {
+    color: var(--home-muted);
+    line-height: 1.7;
+}
+
+.infoCard p {
+    font-size: 14px;
+    margin: 12px 0 0;
+}
+
+.stepsSection,
+.faqSection {
+    background: color-mix(in srgb, var(--home-surface-strong) 66%, transparent);
+    border-block: 1px solid var(--home-border);
+}
+
+.stepsList {
+    display: grid;
+    gap: 0;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.stepsList li {
+    border-top: 1px solid var(--home-border);
+    display: grid;
+    gap: 18px;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 28px 30px 8px 0;
+    position: relative;
+}
+
+.stepsList li:not(:last-child)::after {
+    background: var(--home-border);
+    content: "";
+    height: 1px;
+    position: absolute;
+    right: 0;
+    top: -1px;
+    width: 22px;
+}
+
+.stepsList li > span {
+    align-items: center;
+    background: linear-gradient(135deg, var(--home-primary-start), var(--home-primary-end));
+    border-radius: 50%;
+    color: #fff;
+    display: flex;
+    font-size: 13px;
+    font-weight: 780;
+    height: 32px;
+    justify-content: center;
+    width: 32px;
+}
+
+.stepsList h3 {
+    font-size: 17px;
+    margin: 4px 0 0;
+}
+
+.stepsList p {
+    font-size: 13px;
+    margin: 10px 0 0;
+}
+
+.capabilityGrid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.capabilityGrid article {
+    align-items: flex-start;
+    background: var(--home-surface);
+    border: 1px solid var(--home-border);
+    border-radius: 16px;
+    display: flex;
+    gap: 16px;
+    min-height: 128px;
+    padding: 24px;
+}
+
+.capabilityGrid article > span {
+    align-items: center;
+    background: color-mix(in srgb, #5870ff 13%, transparent);
+    border-radius: 10px;
+    color: #5870ff;
+    display: flex;
+    flex: 0 0 auto;
+    height: 38px;
+    justify-content: center;
+    width: 38px;
+}
+
+.capabilityGrid svg {
+    height: 18px;
+    width: 18px;
+}
+
+.capabilityGrid h3 {
+    font-size: 17px;
+    margin: 1px 0 0;
+}
+
+.capabilityGrid p {
+    font-size: 13px;
+    margin: 8px 0 0;
+}
+
+.faqList {
+    display: grid;
+    gap: 12px;
+}
+
+.faqList details {
+    background: var(--home-surface);
+    border: 1px solid var(--home-border);
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+.faqList summary {
+    align-items: center;
+    color: var(--home-text);
+    cursor: pointer;
+    display: flex;
+    font-size: 16px;
+    font-weight: 680;
+    gap: 18px;
+    justify-content: space-between;
+    list-style: none;
+    min-height: 68px;
+    padding: 18px 22px;
+}
+
+.faqList summary::-webkit-details-marker {
+    display: none;
+}
+
+.faqList summary svg {
+    color: var(--home-muted);
+    flex: 0 0 auto;
+    height: 18px;
+    transition: transform 180ms ease;
+    width: 18px;
+}
+
+.faqList details[open] summary svg {
+    transform: rotate(180deg);
+}
+
+.faqList details > p {
+    border-top: 1px solid var(--home-border);
+    color: var(--home-muted);
+    font-size: 14px;
+    line-height: 1.75;
+    margin: 0;
+    padding: 18px 22px 22px;
+}
+
+.relatedGrid {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.relatedGrid > a {
+    background: var(--home-surface);
+    border: 1px solid var(--home-border);
+    border-radius: 18px;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    min-height: 280px;
+    padding: 28px;
+    transition:
+        border-color 180ms ease,
+        transform 180ms ease;
+}
+
+.relatedGrid > a:hover {
+    border-color: color-mix(in srgb, #5870ff 58%, var(--home-border));
+    transform: translateY(-3px);
+}
+
+.relatedGrid > a > span {
+    color: #6175ff;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+}
+
+.relatedGrid h3 {
+    font-size: 20px;
+    line-height: 1.35;
+    margin: 20px 0 0;
+}
+
+.relatedGrid p {
+    display: -webkit-box;
+    font-size: 13px;
+    margin: 12px 0 24px;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+}
+
+.relatedGrid strong {
+    align-items: center;
+    color: #5870ff;
+    display: flex;
+    font-size: 13px;
+    gap: 7px;
+    margin-top: auto;
+}
+
+.relatedGrid strong svg {
+    height: 15px;
+    width: 15px;
+}
+
+.finalCta {
+    background: linear-gradient(125deg, color-mix(in srgb, #2f6cff 13%, var(--home-surface-strong)), color-mix(in srgb, #8a45ef 17%, var(--home-surface-strong)));
+    border-block: 1px solid var(--home-border);
+    overflow: hidden;
+    padding: 104px 28px;
+    position: relative;
+    text-align: center;
+}
+
+.finalCta > div:last-child {
+    margin: 0 auto;
+    max-width: 820px;
+    position: relative;
+}
+
+.finalCtaGlow {
+    left: 50%;
+    right: auto;
+    top: -350px;
+    transform: translateX(-50%);
+}
+
+.finalCta > div > p:not(.eyebrow) {
+    color: var(--home-muted);
+    font-size: 16px;
+    line-height: 1.7;
+    margin: 18px auto 0;
+    max-width: 680px;
+}
+
+.finalCtaAction {
+    margin-top: 30px;
+}
+
+@media (max-width: 1080px) {
+    .heroGrid {
+        gap: 48px;
+        grid-template-columns: minmax(0, 1fr) minmax(340px, 0.8fr);
+    }
+
+    .cardGrid,
+    .stepsList {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .stepsList {
+        gap: 24px;
+    }
+}
+
+@media (max-width: 767px) {
+    .container,
+    .narrowContainer {
+        padding-inline: 14px;
+    }
+
+    .hero {
+        min-height: 0;
+        padding: 22px 0 64px;
+    }
+
+    .breadcrumb {
+        margin-bottom: 42px;
+    }
+
+    .heroGrid {
+        gap: 38px;
+        grid-template-columns: 1fr;
+    }
+
+    .promptCard,
+    .workspaceCard {
+        border-radius: 16px;
+        padding: 20px;
+    }
+
+    .promptCard textarea {
+        min-height: 132px;
+    }
+
+    .hero h1 {
+        font-size: clamp(39px, 12vw, 54px);
+    }
+
+    .heroDescription {
+        font-size: 16px;
+        line-height: 1.68;
+        margin-top: 22px;
+    }
+
+    .keywordList {
+        margin-top: 24px;
+    }
+
+    .showcase,
+    .section {
+        padding: 72px 0;
+    }
+
+    .sectionHeading {
+        margin-bottom: 32px;
+        text-align: left;
+    }
+
+    .sectionHeading h2,
+    .finalCta h2 {
+        font-size: 32px;
+    }
+
+    .sectionHeading > p:last-child {
+        font-size: 14px;
+    }
+
+    .visualFrame {
+        border-radius: 14px;
+        margin-top: 34px;
+    }
+
+    .visualBar {
+        height: 34px;
+    }
+
+    .cardGrid,
+    .stepsList,
+    .capabilityGrid,
+    .relatedGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .infoCard {
+        min-height: 0;
+        padding: 22px;
+    }
+
+    .infoCard h3 {
+        margin-top: 24px;
+    }
+
+    .stepsList {
+        gap: 0;
+    }
+
+    .stepsList li {
+        padding: 22px 0;
+    }
+
+    .stepsList li:first-child {
+        padding-top: 4px;
+    }
+
+    .capabilityGrid article {
+        min-height: 0;
+        padding: 20px;
+    }
+
+    .faqList summary {
+        font-size: 15px;
+        min-height: 64px;
+        padding: 16px 18px;
+    }
+
+    .faqList details > p {
+        padding: 16px 18px 20px;
+    }
+
+    .relatedGrid > a {
+        min-height: 230px;
+        padding: 24px;
+    }
+
+    .finalCta {
+        padding: 74px 14px;
+        text-align: left;
+    }
+
+    .compactCta {
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .infoCard,
+    .relatedGrid > a,
+    .faqList summary svg {
+        transition: none;
+    }
+}

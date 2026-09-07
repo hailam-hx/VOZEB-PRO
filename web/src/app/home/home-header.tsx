@@ -2,14 +2,14 @@
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Menu, X } from "lucide-react";
+import { ArrowRight, ChevronDown, Menu, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { HOME_NAVIGATION, type HomeNavigationItem } from "./home-data";
+import { HOME_NAVIGATION, HOME_PRODUCT_NAVIGATION, type HomeNavigationItem } from "./home-data";
 import { useHomeActions } from "./home-actions";
 import styles from "./home.module.css";
 
@@ -18,7 +18,7 @@ export function HomeHeader() {
     const common = useTranslations("common");
     const [mobileOpen, setMobileOpen] = useState(false);
     const [navIndicator, setNavIndicator] = useState({ left: 0, width: 0, visible: false });
-    const navItemRefs = useRef<(HTMLAnchorElement | HTMLButtonElement | null)[]>([]);
+    const navItemRefs = useRef<(HTMLElement | null)[]>([]);
     const hoveredNavIndex = useRef<number | null>(null);
     const { authenticated, site, openLogin, openTopUp, openProtectedPath } = useHomeActions();
     const theme = useThemeStore((state) => state.theme);
@@ -27,7 +27,10 @@ export function HomeHeader() {
     const moveNavIndicator = useCallback((index: number) => {
         const item = navItemRefs.current[index];
         if (!item) return;
-        setNavIndicator({ left: item.offsetLeft, width: item.offsetWidth, visible: true });
+        const navigation = item.closest("nav");
+        const itemBounds = item.getBoundingClientRect();
+        const navigationBounds = navigation?.getBoundingClientRect();
+        setNavIndicator({ left: navigationBounds ? itemBounds.left - navigationBounds.left : item.offsetLeft, width: itemBounds.width, visible: true });
     }, []);
 
     const hideNavIndicator = useCallback(() => {
@@ -71,18 +74,38 @@ export function HomeHeader() {
                     }}
                 >
                     <span className={styles.navGlassIndicator} data-testid="home-nav-glass" aria-hidden="true" style={{ left: navIndicator.left, opacity: navIndicator.visible ? 1 : 0, width: navIndicator.width }} />
+                    <details className={styles.productMenu} onPointerEnter={() => trackNavItem(0)}>
+                        <summary
+                            ref={(node) => {
+                                navItemRefs.current[0] = node;
+                            }}
+                            className={styles.navLink}
+                            onFocus={() => trackNavItem(0)}
+                        >
+                            {t("products")}
+                            <ChevronDown aria-hidden="true" />
+                        </summary>
+                        <div className={styles.productMenuPanel} data-testid="home-product-menu">
+                            {HOME_PRODUCT_NAVIGATION.map((item) => (
+                                <Link key={item.href} href={item.href}>
+                                    <span>{t(item.translationKey)}</span>
+                                    <ArrowRight aria-hidden="true" />
+                                </Link>
+                            ))}
+                        </div>
+                    </details>
                     {HOME_NAVIGATION.map((item, index) =>
                         item.action !== "link" ? (
                             <button
                                 key={item.href}
                                 ref={(node) => {
-                                    navItemRefs.current[index] = node;
+                                    navItemRefs.current[index + 1] = node;
                                 }}
                                 type="button"
                                 className={styles.navLink}
                                 onClick={() => activate(item)}
-                                onPointerEnter={() => trackNavItem(index)}
-                                onFocus={() => trackNavItem(index)}
+                                onPointerEnter={() => trackNavItem(index + 1)}
+                                onFocus={() => trackNavItem(index + 1)}
                             >
                                 {t(item.translationKey)}
                             </button>
@@ -90,12 +113,12 @@ export function HomeHeader() {
                             <Link
                                 key={item.href}
                                 ref={(node) => {
-                                    navItemRefs.current[index] = node;
+                                    navItemRefs.current[index + 1] = node;
                                 }}
                                 href={item.href}
                                 className={styles.navLink}
-                                onPointerEnter={() => trackNavItem(index)}
-                                onFocus={() => trackNavItem(index)}
+                                onPointerEnter={() => trackNavItem(index + 1)}
+                                onFocus={() => trackNavItem(index + 1)}
                             >
                                 {t(item.translationKey)}
                             </Link>
@@ -124,6 +147,15 @@ export function HomeHeader() {
 
             {mobileOpen ? (
                 <nav id="home-mobile-menu" className={styles.mobileNav} aria-label={t("mobileNavigation")}>
+                    <div className={styles.mobileProductGroup}>
+                        <span>{t("products")}</span>
+                        {HOME_PRODUCT_NAVIGATION.map((item) => (
+                            <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)}>
+                                {t(item.translationKey)}
+                                <ArrowRight aria-hidden="true" />
+                            </Link>
+                        ))}
+                    </div>
                     {HOME_NAVIGATION.map((item) =>
                         item.action !== "link" ? (
                             <button key={item.href} type="button" onClick={() => activate(item)}>

@@ -202,6 +202,72 @@
     color: #5268ff;
 }
 
+.productMenu {
+    position: relative;
+    z-index: 2;
+}
+
+.productMenu summary {
+    gap: 7px;
+    list-style: none;
+}
+
+.productMenu summary::-webkit-details-marker {
+    display: none;
+}
+
+.productMenu summary svg {
+    height: 14px;
+    transition: transform 160ms ease;
+    width: 14px;
+}
+
+.productMenu[open] summary svg {
+    transform: rotate(180deg);
+}
+
+.productMenuPanel {
+    background: color-mix(in srgb, var(--home-surface-strong) 94%, transparent);
+    border: 1px solid var(--home-border);
+    border-radius: 16px;
+    box-shadow: 0 22px 60px color-mix(in srgb, var(--home-glow) 26%, rgba(0, 0, 0, 0.08));
+    display: grid;
+    gap: 6px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    left: 50%;
+    min-width: 410px;
+    padding: 10px;
+    position: absolute;
+    top: calc(100% + 12px);
+    transform: translateX(-50%);
+    backdrop-filter: blur(22px);
+}
+
+.productMenuPanel a {
+    align-items: center;
+    border-radius: 10px;
+    color: var(--home-text);
+    display: flex;
+    font-size: 13px;
+    font-weight: 630;
+    gap: 12px;
+    justify-content: space-between;
+    min-height: 46px;
+    padding: 9px 11px;
+}
+
+.productMenuPanel a:hover,
+.productMenuPanel a:focus-visible {
+    background: color-mix(in srgb, var(--home-text) 7%, transparent);
+    color: #6175ff;
+}
+
+.productMenuPanel svg {
+    flex: 0 0 auto;
+    height: 14px;
+    width: 14px;
+}
+
 .headerActions {
     align-items: center;
     display: flex;
@@ -271,6 +337,10 @@
 
 .mobileMenuButton,
 .mobileNav {
+    display: none;
+}
+
+.mobileProductGroup {
     display: none;
 }
 
@@ -986,6 +1056,40 @@
         right: 0;
         top: 66px;
         backdrop-filter: blur(20px);
+        max-height: calc(100dvh - 66px);
+        overflow-y: auto;
+        scrollbar-width: none;
+    }
+    .mobileNav::-webkit-scrollbar {
+        display: none;
+    }
+    .mobileProductGroup {
+        border-bottom: 1px solid var(--home-border);
+        display: grid;
+        gap: 2px;
+        margin-bottom: 5px;
+        padding-bottom: 8px;
+    }
+    .mobileProductGroup > span {
+        color: var(--home-muted);
+        font-size: 11px;
+        font-weight: 760;
+        letter-spacing: 0.08em;
+        padding: 10px 10px 5px;
+        text-transform: uppercase;
+    }
+    .mobileProductGroup > a {
+        align-items: center;
+        border-radius: 8px;
+        color: var(--home-text);
+        display: flex;
+        font-size: 14px;
+        justify-content: space-between;
+        min-height: 42px;
+        padding: 0 10px;
+    }
+    .mobileProductGroup > a:hover {
+        background: color-mix(in srgb, var(--home-text) 6%, transparent);
     }
     .mobileNav > a,
     .mobileNav > button {
@@ -1050,6 +1154,7 @@
     .mobileNav {
         padding-inline: 14px;
         top: 62px;
+        max-height: calc(100dvh - 62px);
     }
     .contentBand {
         border-radius: 18px 18px 0 0;

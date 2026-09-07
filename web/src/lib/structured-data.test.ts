@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCreativeWorkStructuredData, buildWebsiteStructuredData, serializeStructuredData } from "./structured-data";
+import { buildCreativeWorkStructuredData, buildSeoLandingStructuredData, buildWebsiteStructuredData, serializeStructuredData } from "./structured-data";
 
 describe("structured data", () => {
     it("builds the public website identity with its configured logo", () => {
@@ -23,6 +23,39 @@ describe("structured data", () => {
 
         expect(serialized).not.toContain("<");
         expect(JSON.parse(serialized)).toEqual({ description: '</script><script>alert("x")</script>' });
+    });
+
+    it("builds WebPage and BreadcrumbList data for a Vietnamese SEO landing", () => {
+        const data = buildSeoLandingStructuredData({
+            url: "https://hotx-ai.com/ai-image-generator",
+            websiteId: "https://hotx-ai.com/#website",
+            title: "Tạo ảnh AI online từ văn bản và ảnh | HOTX AI",
+            description: "Tạo ảnh AI từ mô tả tiếng Việt.",
+            breadcrumbName: "Tạo ảnh AI",
+            imageUrl: "https://hotx-ai.com/seo/hotx-create-workspace.webp",
+        });
+
+        expect(data).toMatchObject({
+            "@context": "https://schema.org",
+            "@graph": [
+                {
+                    "@type": "WebPage",
+                    "@id": "https://hotx-ai.com/ai-image-generator#webpage",
+                    inLanguage: "vi",
+                    isPartOf: { "@id": "https://hotx-ai.com/#website" },
+                    primaryImageOfPage: { url: "https://hotx-ai.com/seo/hotx-create-workspace.webp" },
+                },
+                {
+                    "@type": "BreadcrumbList",
+                    itemListElement: [
+                        { position: 1, name: "Trang chủ", item: "https://hotx-ai.com/" },
+                        { position: 2, name: "Tạo ảnh AI", item: "https://hotx-ai.com/ai-image-generator" },
+                    ],
+                },
+            ],
+        });
+        expect(JSON.parse(serializeStructuredData(data))).toEqual(data);
+        expect(JSON.stringify(data)).not.toMatch(/FAQPage|SoftwareApplication/);
     });
 
     it("only exposes the approved CreativeWork fields for public works", () => {

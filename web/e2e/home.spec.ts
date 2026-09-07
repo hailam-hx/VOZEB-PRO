@@ -63,10 +63,13 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     const headerNavigation = page.getByRole("navigation", { name: "官网主导航" });
     if (testInfo.project.name === "chromium") {
         await expect(headerNavigation).toBeVisible();
-        await expect(headerNavigation.getByRole("button", { name: "创作 Agent" })).toHaveCount(1);
-        await expect(headerNavigation.getByRole("button", { name: "短剧制作" })).toHaveCount(1);
+        const products = headerNavigation.getByText("产品", { exact: true });
+        await expect(products).toBeVisible();
+        await products.click();
+        await expect(page.getByTestId("home-product-menu").getByRole("link")).toHaveCount(6);
+        await products.click();
         await expect(headerNavigation.getByRole("link", { name: "作品广场" })).toHaveCount(1);
-        await expect(headerNavigation.getByRole("button", { name: "积分充值" })).toHaveCount(1);
+        await expect(headerNavigation.getByRole("button", { name: "价格方案" })).toHaveCount(1);
         await expect(headerNavigation.getByText("图片工作台", { exact: true })).toHaveCount(0);
         await expect(headerNavigation.getByText("视频工作台", { exact: true })).toHaveCount(0);
         await page
@@ -77,8 +80,8 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         await page.getByRole("button", { name: "Close" }).click();
 
         const navGlass = page.getByTestId("home-nav-glass");
-        const firstNavItem = headerNavigation.getByRole("button", { name: "创作 Agent" });
-        const lastNavItem = headerNavigation.getByRole("button", { name: "积分充值" });
+        const firstNavItem = products;
+        const lastNavItem = headerNavigation.getByRole("button", { name: "价格方案" });
         await firstNavItem.hover();
         await expect(navGlass).toHaveCSS("opacity", "1");
         await expect.poll(() => centerOffset(navGlass, firstNavItem)).toBeLessThanOrEqual(1);
@@ -95,10 +98,12 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         await menuButton.click();
         const mobileNavigation = page.getByRole("navigation", { name: "移动端导航" });
         await expect(mobileNavigation).toBeVisible();
-        await expect(mobileNavigation.getByRole("button", { name: "创作 Agent" })).toHaveCount(1);
-        await expect(mobileNavigation.getByRole("button", { name: "短剧制作" })).toHaveCount(1);
+        await expect(mobileNavigation.getByText("产品", { exact: true })).toBeVisible();
+        for (const product of ["AI 图片生成", "AI 视频生成", "AI 语音生成", "AI 声音克隆", "AI 短剧制作", "AI Agent"]) {
+            await expect(mobileNavigation.getByRole("link", { name: product })).toBeVisible();
+        }
         await expect(mobileNavigation.getByRole("link", { name: "作品广场" })).toHaveCount(1);
-        await expect(mobileNavigation.getByRole("button", { name: "积分充值" })).toHaveCount(1);
+        await expect(mobileNavigation.getByRole("button", { name: "价格方案" })).toHaveCount(1);
         await page.getByRole("button", { name: "关闭导航菜单" }).click();
         await expect(mobileNavigation).toHaveCount(0);
     }

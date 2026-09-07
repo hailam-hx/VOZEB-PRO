@@ -29,6 +29,7 @@ describe("site metadata routes", () => {
         const rules = Array.isArray(result.rules) ? result.rules[0] : result.rules;
 
         expect(rules.disallow).toEqual(expect.arrayContaining(["/api/", "/admin", "/create", "/canvas", "/drama"]));
+        expect(rules.allow).toEqual(expect.arrayContaining(["/ai-image-generator", "/ai-video-generator", "/ai-voice-generator", "/voice-cloning", "/ai-short-drama", "/ai-agent"]));
         expect(result.sitemap).toBe("https://example.com/sitemap.xml");
     });
 
@@ -39,6 +40,12 @@ describe("site metadata routes", () => {
             "https://example.com/announcements",
             "https://example.com/terms",
             "https://example.com/privacy",
+            "https://example.com/ai-image-generator",
+            "https://example.com/ai-video-generator",
+            "https://example.com/ai-voice-generator",
+            "https://example.com/voice-cloning",
+            "https://example.com/ai-short-drama",
+            "https://example.com/ai-agent",
             "https://example.com/share/public-work",
         ]);
     });

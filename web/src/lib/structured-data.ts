@@ -19,6 +19,15 @@ type CreativeWorkStructuredDataInput = {
     imageUrl?: string;
 };
 
+type SeoLandingStructuredDataInput = {
+    url: string;
+    websiteId: string;
+    title: string;
+    description: string;
+    breadcrumbName: string;
+    imageUrl?: string;
+};
+
 export function serializeStructuredData(value: unknown) {
     return JSON.stringify(value).replace(/</g, "\\u003c");
 }
@@ -30,15 +39,40 @@ export function buildWebsiteStructuredData(input: WebsiteStructuredDataInput) {
         "@id": `${input.url}#website`,
         url: input.url,
         name: input.name,
-        ...(input.alternateName?.length
-            ? { alternateName: input.alternateName }
-            : {}),
+        ...(input.alternateName?.length ? { alternateName: input.alternateName } : {}),
         description: input.description,
         publisher: {
             "@type": "Organization",
             name: input.name,
             logo: { "@type": "ImageObject", url: input.logoUrl },
         },
+    };
+}
+
+export function buildSeoLandingStructuredData(input: SeoLandingStructuredDataInput) {
+    const homeUrl = new URL("/", input.url).toString();
+    return {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "WebPage",
+                "@id": `${input.url}#webpage`,
+                url: input.url,
+                name: input.title,
+                description: input.description,
+                inLanguage: "vi",
+                isPartOf: { "@id": input.websiteId },
+                ...(input.imageUrl ? { primaryImageOfPage: { "@type": "ImageObject", url: input.imageUrl } } : {}),
+            },
+            {
+                "@type": "BreadcrumbList",
+                "@id": `${input.url}#breadcrumb`,
+                itemListElement: [
+                    { "@type": "ListItem", position: 1, name: "Trang chủ", item: homeUrl },
+                    { "@type": "ListItem", position: 2, name: input.breadcrumbName, item: input.url },
+                ],
+            },
+        ],
     };
 }
 

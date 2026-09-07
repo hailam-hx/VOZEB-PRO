@@ -16,16 +16,23 @@ export type HomeSiteSettings = {
 };
 
 export type HomeNavigationItem = {
-    translationKey: "createAgent" | "shortDrama" | "gallery" | "pricing" | "announcementCenter";
+    translationKey: "createAgent" | "shortDrama" | "gallery" | "pricing" | "announcementCenter" | "productImage" | "productVideo" | "productVoice" | "productVoiceCloning" | "productShortDrama" | "productAgent";
     href: string;
     action: "link" | "protected" | "billing";
 };
 
 export const HOME_NAVIGATION = [
-    { translationKey: "createAgent", href: "/create", action: "protected" },
-    { translationKey: "shortDrama", href: "/drama", action: "protected" },
     { translationKey: "gallery", href: "/gallery", action: "link" },
     { translationKey: "pricing", href: "/billing", action: "billing" },
+] as const satisfies readonly HomeNavigationItem[];
+
+export const HOME_PRODUCT_NAVIGATION = [
+    { translationKey: "productImage", href: "/ai-image-generator", action: "link" },
+    { translationKey: "productVideo", href: "/ai-video-generator", action: "link" },
+    { translationKey: "productVoice", href: "/ai-voice-generator", action: "link" },
+    { translationKey: "productVoiceCloning", href: "/voice-cloning", action: "link" },
+    { translationKey: "productShortDrama", href: "/ai-short-drama", action: "link" },
+    { translationKey: "productAgent", href: "/ai-agent", action: "link" },
 ] as const satisfies readonly HomeNavigationItem[];
 
 export const HOME_CREATION_MODES = [
