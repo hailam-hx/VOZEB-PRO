@@ -4,6 +4,8 @@ import { SEO_LANDING_SLUGS } from "@/app/seo-landings/seo-landing-data";
 import { absoluteSiteUrl, siteMetadataBase } from "@/lib/server/site-metadata";
 import { listPublicWorkSitemapEntries } from "@/lib/server/work-governance-service";
 
+export const dynamic = "force-dynamic";
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const base = siteMetadataBase();
     const publicPaths = ["/", "/gallery", "/announcements", "/terms", "/privacy", ...SEO_LANDING_SLUGS.map((slug) => `/${slug}`)] as const;

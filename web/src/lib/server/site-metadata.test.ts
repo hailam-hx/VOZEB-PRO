@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
-import { browserIconHref } from "./site-metadata";
+import { browserIconHref, resolveSiteMetadataBase } from "./site-metadata";
 
 describe("site metadata", () => {
+    it("resolves the public site URL from the runtime environment object", () => {
+        expect(resolveSiteMetadataBase({ NEXT_PUBLIC_SITE_URL: "https://hotx-ai.com" })).toEqual(new URL("https://hotx-ai.com"));
+    });
+
     it("keeps the bundled browser icon on the same origin", () => {
         expect(browserIconHref(DEFAULT_SITE_SETTINGS)).toBe("/icon.svg");
     });

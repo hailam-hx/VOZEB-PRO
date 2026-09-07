@@ -3,6 +3,8 @@ import type { MetadataRoute } from "next";
 import { SEO_LANDING_SLUGS } from "@/app/seo-landings/seo-landing-data";
 import { absoluteSiteUrl, siteMetadataBase } from "@/lib/server/site-metadata";
 
+export const dynamic = "force-dynamic";
+
 export default function robots(): MetadataRoute.Robots {
     const base = siteMetadataBase();
     return {

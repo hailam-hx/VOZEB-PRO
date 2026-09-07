@@ -27,12 +27,24 @@ export function invalidatePublicSiteSettings() {
 }
 
 export function siteMetadataBase() {
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+    return resolveSiteMetadataBase(process.env);
+}
+
+export function resolveSiteMetadataBase(environment: Readonly<Record<string, string | undefined>>) {
+    const configuredSiteUrl = runtimeEnvironmentValue(environment, "NEXT_PUBLIC_SITE_URL");
+    const vercelUrl = runtimeEnvironmentValue(environment, "VERCEL_URL");
+    const siteUrl = configuredSiteUrl || (vercelUrl ? `https://${vercelUrl}` : "http://localhost:3000");
     try {
         return new URL(siteUrl);
     } catch {
         return new URL("http://localhost:3000");
     }
+}
+
+function runtimeEnvironmentValue(environment: Readonly<Record<string, string | undefined>>, name: string) {
+    // Keep public URLs runtime-configurable in standalone images instead of letting Next inline build-time values.
+    const value = Reflect.get(environment, name);
+    return typeof value === "string" ? value.trim() : "";
 }
 
 export function absoluteSiteUrl(value: string, base = siteMetadataBase()) {
