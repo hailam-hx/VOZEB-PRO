@@ -17,6 +17,7 @@ describe("SeoLandingContent", () => {
         expect(html).toContain('data-seo-section="steps"');
         expect(html).toContain('data-seo-section="capabilities"');
         expect(html).toContain('data-seo-section="faq"');
+        expect(html).toContain(`Câu hỏi thường gặp về ${definition.primaryKeyword}`);
         expect(html).toContain('data-seo-section="related"');
         expect(html.match(/<details/g)).toHaveLength(definition.faqs.length);
         for (const related of definition.related) expect(html).toContain(`href="/${related}"`);

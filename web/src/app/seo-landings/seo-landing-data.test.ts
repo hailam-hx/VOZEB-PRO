@@ -24,6 +24,63 @@ describe("SEO landing definitions", () => {
         }
     });
 
+    it("uses the approved search-intent copy for every landing page", () => {
+        expect(SEO_LANDING_DEFINITIONS["ai-image-generator"]).toMatchObject({
+            secondaryKeywords: ["trình tạo ảnh AI", "tạo ảnh AI online", "tạo ảnh từ văn bản", "tạo ảnh từ ảnh", "AI image generator", "text to image"],
+            h1: "Tạo ảnh AI online từ văn bản và ảnh tham chiếu",
+            description: "Tạo ảnh AI online từ mô tả tiếng Việt hoặc ảnh tham chiếu. Tạo ảnh sản phẩm, quảng cáo và nội dung sáng tạo trong cùng workspace HOTX AI.",
+            showcaseTitle: "Tạo ảnh AI từ văn bản và ảnh tham chiếu",
+            useCasesTitle: "Ứng dụng của trình tạo ảnh AI",
+            stepsTitle: "Cách tạo ảnh AI online với HOTX AI",
+            capabilitiesTitle: "Tính năng của trình tạo ảnh AI",
+        });
+        expect(SEO_LANDING_DEFINITIONS["ai-video-generator"]).toMatchObject({
+            secondaryKeywords: ["trình tạo video AI", "tạo video từ văn bản", "tạo video từ ảnh", "AI video generator", "text to video", "image to video"],
+            description: "Tạo video AI từ văn bản hoặc hình ảnh cho quảng cáo, TikTok và Reels. Tạo video từ ảnh, text-to-video và image-to-video trên HOTX AI.",
+            showcaseTitle: "Tạo video AI từ văn bản và hình ảnh",
+            useCasesTitle: "Tạo video AI cho quảng cáo, TikTok và Reels",
+            stepsTitle: "Cách tạo video AI online",
+            capabilitiesTitle: "Tính năng của trình tạo video AI",
+        });
+        expect(SEO_LANDING_DEFINITIONS["ai-voice-generator"]).toMatchObject({
+            secondaryKeywords: ["giọng đọc AI", "chuyển văn bản thành giọng nói", "text to speech tiếng Việt", "AI voice generator", "lồng tiếng AI"],
+            description: "Chuyển văn bản thành giọng nói AI cho video, quảng cáo, podcast và đào tạo. Tạo giọng đọc AI, nghe trực tiếp và tải tệp trên HOTX AI.",
+            showcaseTitle: "Chuyển văn bản thành giọng nói AI",
+            useCasesTitle: "Tạo giọng đọc AI cho video và nội dung",
+            stepsTitle: "Cách tạo giọng nói AI",
+            capabilitiesTitle: "Tính năng tạo giọng nói AI",
+        });
+        expect(SEO_LANDING_DEFINITIONS["voice-cloning"]).toMatchObject({
+            secondaryKeywords: ["clone giọng nói", "voice cloning", "AI voice clone", "sao chép giọng nói", "nhân bản giọng nói online"],
+            title: "Nhân bản giọng nói AI từ mẫu giọng | HOTX AI",
+            description: "Nhân bản giọng nói AI từ mẫu âm thanh mà bạn có quyền sử dụng. Tạo và quản lý hồ sơ giọng để dùng cho nội dung được cho phép trên HOTX AI.",
+            showcaseTitle: "Nhân bản giọng nói AI hoạt động như thế nào?",
+            useCasesTitle: "Ứng dụng của voice cloning",
+            stepsTitle: "Cách clone giọng nói từ mẫu âm thanh",
+            capabilitiesTitle: "Tính năng nhân bản giọng nói AI",
+        });
+        expect(SEO_LANDING_DEFINITIONS["ai-short-drama"]).toMatchObject({
+            secondaryKeywords: ["làm phim bằng AI", "tạo phim bằng AI", "AI làm phim", "tạo kịch bản AI", "tạo video AI từ kịch bản", "AI short drama"],
+            title: "Tạo phim ngắn AI từ kịch bản đến video | HOTX AI",
+            h1: "Tạo phim ngắn AI từ kịch bản đến cảnh quay",
+            description: "Tạo phim ngắn AI theo dự án: xây dựng kịch bản, nhân vật, storyboard và tạo từng cảnh quay trong một quy trình sản xuất trên HOTX AI.",
+            showcaseTitle: "Tạo phim ngắn AI từ kịch bản đến video",
+            useCasesTitle: "Ứng dụng của AI trong sản xuất phim ngắn",
+            stepsTitle: "Làm phim bằng AI theo từng bước",
+            capabilitiesTitle: "Tính năng workspace phim ngắn AI",
+        });
+        expect(SEO_LANDING_DEFINITIONS["ai-agent"]).toMatchObject({
+            secondaryKeywords: ["AI Agent Việt Nam", "AI Agent sáng tạo nội dung", "AI Agent tạo nội dung", "trợ lý AI", "AI Agent đa phương tiện", "AI automation"],
+            h1: "AI Agent sáng tạo nội dung bằng hình ảnh, video và âm thanh",
+            description: "AI Agent hỗ trợ biến brief tiếng Việt thành hình ảnh, video và âm thanh. Tự động chọn quy trình và năng lực phù hợp trong cùng workspace HOTX AI.",
+            showcaseTitle: "AI Agent là gì và HOTX AI hỗ trợ những gì?",
+            useCasesTitle: "Ứng dụng AI Agent trong marketing và sáng tạo nội dung",
+            stepsTitle: "AI Agent sáng tạo nội dung hoạt động như thế nào?",
+            capabilitiesTitle: "Tính năng của AI Agent",
+        });
+        expect(JSON.stringify(SEO_LANDING_DEFINITIONS).toLowerCase()).not.toContain("nhanh");
+    });
+
     it("maps every CTA to the approved product destination", () => {
         expect(SEO_LANDING_DEFINITIONS["ai-image-generator"].cta).toMatchObject({ kind: "create", mode: "image" });
         expect(SEO_LANDING_DEFINITIONS["ai-video-generator"].cta).toMatchObject({ kind: "create", mode: "video" });

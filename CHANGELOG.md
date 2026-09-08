@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- [SEO] 优化 6 个越南语产品落地页的搜索意图文案：补充自然的越南语与英文长尾关键词，收敛 title、description、H1、H2 和 FAQ，并按产品能力保留真实、无速度承诺的表达。
 - [SEO] 新增 6 个越南语产品落地页，覆盖 AI 图片、视频、语音、声音克隆、短剧与 Agent；补齐真实工作区 CTA、产品导航、canonical、社交 metadata、结构化数据、robots、sitemap 和桌面/移动浅深主题回归。
 - [SEO] 修复 Docker 镜像构建时把 `NEXT_PUBLIC_SITE_URL` 的 localhost 默认值固化进 sitemap 与 robots；两条 metadata route 改为运行时生成，并通过动态环境读取保持本地开发与正式域名各自正确。
 

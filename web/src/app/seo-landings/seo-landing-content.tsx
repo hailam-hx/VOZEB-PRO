@@ -113,7 +113,7 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
 
             <section className={`${styles.section} ${styles.faqSection}`} data-seo-section="faq" aria-labelledby="seo-faq-title">
                 <div className={styles.narrowContainer}>
-                    <SectionHeading eyebrow="CÂU HỎI THƯỜNG GẶP" title={`Hiểu rõ hơn về ${definition.primaryKeyword}`} id="seo-faq-title" />
+                    <SectionHeading eyebrow="CÂU HỎI THƯỜNG GẶP" title={`Câu hỏi thường gặp về ${definition.primaryKeyword}`} id="seo-faq-title" />
                     <div className={styles.faqList}>
                         {definition.faqs.map((faq) => (
                             <details key={faq.question}>
