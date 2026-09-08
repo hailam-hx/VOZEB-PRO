@@ -34,19 +34,19 @@ describe("site metadata routes", () => {
     });
 
     it("publishes only crawlable public pages and approved works", async () => {
-        expect((await sitemap()).map((entry) => entry.url)).toEqual([
-            "https://example.com/",
-            "https://example.com/gallery",
-            "https://example.com/announcements",
-            "https://example.com/terms",
-            "https://example.com/privacy",
-            "https://example.com/ai-image-generator",
-            "https://example.com/ai-video-generator",
-            "https://example.com/ai-voice-generator",
-            "https://example.com/voice-cloning",
-            "https://example.com/ai-short-drama",
-            "https://example.com/ai-agent",
-            "https://example.com/share/public-work",
+        expect((await sitemap()).map(({ url, priority }) => ({ url, priority }))).toEqual([
+            { url: "https://example.com/", priority: 1 },
+            { url: "https://example.com/ai-image-generator", priority: 0.9 },
+            { url: "https://example.com/ai-video-generator", priority: 0.9 },
+            { url: "https://example.com/ai-voice-generator", priority: 0.9 },
+            { url: "https://example.com/voice-cloning", priority: 0.9 },
+            { url: "https://example.com/ai-short-drama", priority: 0.8 },
+            { url: "https://example.com/ai-agent", priority: 0.8 },
+            { url: "https://example.com/gallery", priority: 0.8 },
+            { url: "https://example.com/announcements", priority: 0.5 },
+            { url: "https://example.com/terms", priority: 0.3 },
+            { url: "https://example.com/privacy", priority: 0.3 },
+            { url: "https://example.com/share/public-work", priority: 0.6 },
         ]);
     });
 

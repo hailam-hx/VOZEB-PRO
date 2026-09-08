@@ -144,6 +144,34 @@ test("signed-out CTA opens authentication and preserves its create destination",
     }
 });
 
+test("sitemap publishes the approved static URL priorities", async ({ page }) => {
+    const response = await page.goto("/sitemap.xml", { waitUntil: "domcontentloaded" });
+    expect(response?.status()).toBe(200);
+    const xml = await response!.text();
+    const entries = await page.evaluate((source) => {
+        const document = new DOMParser().parseFromString(source, "application/xml");
+        return Array.from(document.querySelectorAll("url")).map((entry) => ({
+            path: new URL(entry.querySelector("loc")?.textContent || "").pathname,
+            priority: Number(entry.querySelector("priority")?.textContent),
+        }));
+    }, xml);
+    const staticPaths = new Set(["/", ...landings.map(({ slug }) => `/${slug}`), "/gallery", "/announcements", "/terms", "/privacy"]);
+
+    expect(entries.filter(({ path }) => staticPaths.has(path))).toEqual([
+        { path: "/", priority: 1 },
+        { path: "/ai-image-generator", priority: 0.9 },
+        { path: "/ai-video-generator", priority: 0.9 },
+        { path: "/ai-voice-generator", priority: 0.9 },
+        { path: "/voice-cloning", priority: 0.9 },
+        { path: "/ai-short-drama", priority: 0.8 },
+        { path: "/ai-agent", priority: 0.8 },
+        { path: "/gallery", priority: 0.8 },
+        { path: "/announcements", priority: 0.5 },
+        { path: "/terms", priority: 0.3 },
+        { path: "/privacy", priority: 0.3 },
+    ]);
+});
+
 async function verifyProductMenu(page: Page, projectName: string) {
     if (projectName === "chromium") {
         const navigation = page.getByRole("navigation", { name: "Điều hướng chính" });
