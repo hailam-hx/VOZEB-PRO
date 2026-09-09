@@ -8,6 +8,7 @@ const expectedDescription = "HOTX AI là nền tảng sáng tạo AI giúp bạn
 
 const mocks = vi.hoisted(() => ({
     getPublicSiteSettings: vi.fn(),
+    getInstallStatus: vi.fn(async () => ({ ready: true })),
     headers: vi.fn(async () => new Headers({ "x-vozeb-pathname": "/" })),
     getLocale: vi.fn(async () => "vi"),
     getTranslations: vi.fn(async () => (key: string) => {
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/headers", () => ({ headers: mocks.headers }));
+vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.getInstallStatus }));
 vi.mock("next-intl/server", () => ({
     getLocale: mocks.getLocale,
     getMessages: vi.fn(),
@@ -33,7 +35,7 @@ vi.mock("@/lib/server/site-metadata", () => ({
 }));
 
 import { generateMetadata as generateRootMetadata } from "./layout";
-import { generateMetadata as generateHomepageMetadata } from "./page";
+import HomePage, { generateMetadata as generateHomepageMetadata } from "./page";
 
 describe("homepage metadata", () => {
     beforeEach(() => {
@@ -51,15 +53,16 @@ describe("homepage metadata", () => {
         const metadata = await generateHomepageMetadata();
 
         expect(metadata).toMatchObject({
+            metadataBase: null,
             description: expectedDescription,
-            alternates: { canonical: "/" },
+            alternates: { canonical: "https://hotx-ai.com/" },
             openGraph: {
                 type: "website",
-                url: "/",
+                url: "https://hotx-ai.com/",
                 description: expectedDescription,
                 images: [
                     {
-                        url: "/seo/hotx-ai-og.webp",
+                        url: "https://hotx-ai.com/seo/hotx-ai-og.webp",
                         width: 1200,
                         height: 630,
                         alt: "HOTX AI – Nền tảng sáng tạo AI cho ảnh, video, giọng nói và AI Agent",
@@ -69,9 +72,15 @@ describe("homepage metadata", () => {
             twitter: {
                 card: "summary_large_image",
                 description: expectedDescription,
-                images: ["/seo/hotx-ai-og.webp"],
+                images: ["https://hotx-ai.com/seo/hotx-ai-og.webp"],
             },
         });
+    });
+
+    it("passes the localized SEO description into the homepage client state", async () => {
+        const homepage = await HomePage();
+
+        expect(homepage.props.initialSite.seoDescription).toBe(expectedDescription);
     });
 
     it("keeps homepage social metadata out of the root layout", async () => {

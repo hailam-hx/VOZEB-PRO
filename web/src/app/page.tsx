@@ -7,7 +7,7 @@ import { defaultLocale, isAppLocale } from "@/i18n/config";
 import { effectiveLocale, localeMetadata } from "@/i18n/runtime";
 import { builtInSiteCopy, localizeBuiltInSiteCopy, localizeHomepageSeoDescription } from "@/i18n/site-copy";
 import { getInstallStatus } from "@/lib/server/install-status";
-import { getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
+import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { HomeActionsProvider } from "./home/home-actions";
 import { HomeAgentHero } from "./home/home-agent-hero";
 import { HomeCta, HomeFooter } from "./home/home-footer";
@@ -25,20 +25,22 @@ export async function generateMetadata(): Promise<Metadata> {
     const title = site.seoTitle || site.title;
     const description = localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription"));
     const keywords = localizeBuiltInSiteCopy(site.seoKeywords, builtInSiteCopy.seoKeywords, homeT("footerDefaultKeywords"));
-    const socialImage = { url: "/seo/hotx-ai-og.webp", width: 1200, height: 630, alt: homeT("socialImageAlt") };
+    const base = siteMetadataBase();
+    const canonical = absoluteSiteUrl("/", base);
+    const socialImage = { url: absoluteSiteUrl("/seo/hotx-ai-og.webp", base), width: 1200, height: 630, alt: homeT("socialImageAlt") };
 
     return {
-        metadataBase: siteMetadataBase(),
+        metadataBase: null,
         title,
         description,
-        alternates: { canonical: "/" },
+        alternates: { canonical },
         keywords: keywords
             .split(/[,，]/)
             .map((keyword) => keyword.trim())
             .filter(Boolean),
         openGraph: {
             type: "website",
-            url: "/",
+            url: canonical,
             title,
             description,
             siteName: site.title,
@@ -55,11 +57,12 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function HomePage() {
-    const [install, site] = await Promise.all([getInstallStatus(), getPublicSiteSettings()]);
+    const [install, site, homeT] = await Promise.all([getInstallStatus(), getPublicSiteSettings(), getTranslations("home")]);
     if (!install.ready) redirect("/install");
+    const initialSite = { ...site, seoDescription: localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription")) };
 
     return (
-        <HomeActionsProvider initialSite={site}>
+        <HomeActionsProvider initialSite={initialSite}>
             <main className={`app-scroll-page ${styles.root}`}>
                 <HomeHeader />
                 <HomeAgentHero />

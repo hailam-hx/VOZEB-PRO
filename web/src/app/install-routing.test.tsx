@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next-intl/server", () => ({ getTranslations: vi.fn(async () => (key: string) => key) }));
 vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.getInstallStatus }));
 vi.mock("@/lib/server/site-metadata", () => ({ getPublicSiteSettings: mocks.getPublicSiteSettings }));
 vi.mock("./install/install-scroll-unlock", () => ({ InstallScrollUnlock: () => null }));

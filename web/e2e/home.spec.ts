@@ -45,7 +45,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     expect(socialImageResponse.ok()).toBe(true);
     expect(socialImageResponse.headers()["content-type"]).toContain("image/webp");
     const metadata = await page.evaluate(() => ({
-        canonical: document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href,
+        canonical: document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.getAttribute("href"),
         openGraphUrl: document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.content,
         openGraphImage: document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.content,
         openGraphImageWidth: document.querySelector<HTMLMetaElement>('meta[property="og:image:width"]')?.content,
@@ -54,7 +54,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         twitterCard: document.querySelector<HTMLMetaElement>('meta[name="twitter:card"]')?.content,
     }));
     expect(metadata.canonical).toBe(new URL("/", page.url()).toString());
-    expect(new URL(metadata.openGraphUrl!).href).toBe(metadata.canonical);
+    expect(metadata.openGraphUrl).toBe(metadata.canonical);
     expect(new URL(metadata.openGraphImage!).pathname).toBe("/seo/hotx-ai-og.webp");
     expect(metadata.openGraphImageWidth).toBe("1200");
     expect(metadata.openGraphImageHeight).toBe("630");

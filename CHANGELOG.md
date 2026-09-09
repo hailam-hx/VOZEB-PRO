@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- [SEO] 统一首页 canonical、`og:url` 与结构化数据的根地址为带结尾斜杠的绝对 URL，并让传入首页客户端状态的 `seoDescription` 与已本地化的 metadata description 保持一致，同时保留后台显式自定义文案。
 - [SEO] 完善 HOTX AI 首页内容 SEO：新增带上下文的 6 项创作工具内链，H1 明确品牌与 AI 内容创作平台主题，收敛越南语 description 和未验证的强声明，并统一 canonical、Open Graph、Twitter 与 Organization Schema；1200×630 OG 图使用 HOTX 官方 Logo，vozeb.com 友情链接显示为 VOZEB。
 - [SEO] 调整 sitemap 静态页面顺序与权重：首页为 1.0，核心图片/视频/语音/声音克隆页为 0.9，短剧、Agent 与作品广场为 0.8，公告为 0.5，条款和隐私为 0.3；公开作品条目继续保持 0.6。
 - [SEO] 优化 6 个越南语产品落地页的搜索意图文案：补充自然的越南语与英文长尾关键词，收敛 title、description、H1、H2 和 FAQ，并按产品能力保留真实、无速度承诺的表达。
