@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { isAppLocale } from "@/i18n/config";
 import type { LocalizedPageProps } from "@/i18n/seo-page";
-import { NextIntlClientProvider } from "next-intl";
+import { SeoLocaleProvider } from "@/i18n/locale-provider";
 import { getTranslations } from "next-intl/server";
 import { loadMessages } from "@/i18n/messages";
 import { getSeoPagePath } from "@/i18n/routing";
@@ -23,9 +23,9 @@ export default async function LocalizedLayout({ children, params }: LocalizedPag
         logoUrl: absoluteSiteUrl(site.logoUrl || "/logo.svg", base),
     });
     return (
-        <NextIntlClientProvider locale={locale} messages={loadMessages(locale)}>
+        <SeoLocaleProvider locale={locale} messages={loadMessages(locale)}>
             <script id="website-json-ld" type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(structuredData) }} />
             {children}
-        </NextIntlClientProvider>
+        </SeoLocaleProvider>
     );
 }

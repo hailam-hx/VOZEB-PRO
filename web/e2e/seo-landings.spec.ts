@@ -434,6 +434,42 @@ test("SEO language switcher keeps the same page and fits desktop and mobile", as
     }
 });
 
+for (const destination of ["gallery", "create"] as const) {
+    test(`SEO language persists through a real ${destination} link or CTA before reload`, async ({ page, context }) => {
+        await page.goto(destination === "gallery" ? "/en" : "/en/ai-image-generator");
+        await page.getByRole("button", { name: "Change language" }).click();
+        await page.getByRole("menuitem").filter({ hasText: "简体中文" }).click();
+        await expect(page).toHaveURL(destination === "gallery" ? /\/zh-cn$/ : /\/zh-cn\/ai-image-generator$/);
+        await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+        await expect.poll(async () => (await context.cookies()).find((cookie) => cookie.name === "vozeb-pro-locale")?.value).toBe("zh-CN");
+        const documentStart = await page.evaluate(() => performance.timeOrigin);
+
+        if (destination === "gallery") await page.getByRole("link", { name: "作品广场", exact: true }).last().click();
+        else await page.getByRole("button", { name: "开始 AI 生图", exact: true }).first().click();
+
+        await expect(page).toHaveURL(new RegExp(`/${destination}(?:#.*)?$`));
+        await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+        if (destination === "gallery") {
+            await expect(page.getByRole("heading", { name: "灵感发现", exact: true })).toBeVisible();
+            await expect(page.getByPlaceholder("搜索标题、说明或提示词")).toBeVisible();
+        } else {
+            await expect(page.getByRole("button", { name: "切换语言" })).toBeVisible();
+            await expect(page.getByPlaceholder("输入你的创作想法、脚本或画面要求")).toBeVisible();
+        }
+        expect((await context.cookies()).find((cookie) => cookie.name === "vozeb-pro-locale")?.value).toBe("zh-CN");
+        expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentStart);
+        if (destination === "create") {
+            await page.getByPlaceholder("输入你的创作想法、脚本或画面要求").fill("Keep the draft after leaving SEO");
+            await page.getByRole("button", { name: "切换语言" }).click();
+            await page.getByRole("menuitem").filter({ hasText: "English" }).click();
+            await expect(page.locator("html")).toHaveAttribute("lang", "en");
+            await expect(page.getByPlaceholder("Enter an idea, script, or visual requirements")).toHaveValue("Keep the draft after leaving SEO");
+            expect((await context.cookies()).find((cookie) => cookie.name === "vozeb-pro-locale")?.value).toBe("en");
+            expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentStart);
+        }
+    });
+}
+
 test("sitemap has exactly 27 localized SEO entries without xhtml alternatives", async ({ request }) => {
     const response = await request.get("/sitemap.xml");
     const xml = await response.text();

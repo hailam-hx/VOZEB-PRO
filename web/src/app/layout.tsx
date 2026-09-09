@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import { NextIntlClientProvider } from "next-intl";
-import { getLocale, getMessages, getTranslations } from "next-intl/server";
+import { LocaleProvider } from "@/i18n/locale-provider";
+import { getLocale, getMessages, getTimeZone, getTranslations } from "next-intl/server";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
 import { WebsiteStructuredData } from "@/components/layout/website-structured-data";
@@ -51,7 +51,7 @@ export default async function RootLayout({
 }: Readonly<{
     children: React.ReactNode;
 }>) {
-    const [site, requestHeaders, requestedLocale, messages] = await Promise.all([getPublicSiteSettings(), headers(), getLocale(), getMessages()]);
+    const [site, requestHeaders, requestedLocale, messages, timeZone] = await Promise.all([getPublicSiteSettings(), headers(), getLocale(), getMessages(), getTimeZone()]);
     const nonce = requestHeaders.get("x-nonce") || undefined;
     const selectedLocale = isAppLocale(requestedLocale) ? requestedLocale : defaultLocale;
     const locale = effectiveLocale(selectedLocale, requestHeaders.get("x-vozeb-pathname") || "/");
@@ -82,11 +82,11 @@ export default async function RootLayout({
                 }}
             >
                 <WebsiteStructuredData json={serializeStructuredData(websiteStructuredData)} nonce={nonce} />
-                <NextIntlClientProvider locale={selectedLocale} messages={messages}>
+                <LocaleProvider locale={selectedLocale} messages={messages} timeZone={timeZone}>
                     <AntdRegistry>
                         <AppProviders>{children}</AppProviders>
                     </AntdRegistry>
-                </NextIntlClientProvider>
+                </LocaleProvider>
             </body>
         </html>
     );
