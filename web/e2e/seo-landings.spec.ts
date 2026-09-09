@@ -165,10 +165,10 @@ test("sitemap publishes the approved static URL priorities", async ({ page }) =>
         { path: "/voice-cloning", priority: 0.9 },
         { path: "/ai-short-drama", priority: 0.8 },
         { path: "/ai-agent", priority: 0.8 },
-        { path: "/gallery", priority: 0.8 },
-        { path: "/announcements", priority: 0.5 },
         { path: "/terms", priority: 0.3 },
         { path: "/privacy", priority: 0.3 },
+        { path: "/gallery", priority: 0.8 },
+        { path: "/announcements", priority: 0.5 },
     ]);
 });
 
@@ -211,3 +211,238 @@ function collectBrowserErrors(page: Page) {
     });
     return errors;
 }
+
+const translatedLandings = {
+    vi: [
+        {
+            slug: "ai-image-generator",
+            title: "Tạo ảnh AI online từ văn bản và ảnh | HOTX AI",
+            h1: "Tạo ảnh AI online từ văn bản và ảnh tham chiếu",
+            description: "Tạo ảnh AI online từ mô tả tiếng Việt hoặc ảnh tham chiếu. Tạo ảnh sản phẩm, quảng cáo và nội dung sáng tạo trong cùng workspace HOTX AI.",
+        },
+        {
+            slug: "ai-video-generator",
+            title: "Tạo video AI từ văn bản và hình ảnh | HOTX AI",
+            h1: "Tạo video AI từ văn bản và hình ảnh",
+            description: "Tạo video AI từ văn bản hoặc hình ảnh cho quảng cáo, TikTok và Reels. Tạo video từ ảnh, text-to-video và image-to-video trên HOTX AI.",
+        },
+        {
+            slug: "ai-voice-generator",
+            title: "Tạo giọng nói AI từ văn bản | HOTX AI",
+            h1: "Tạo giọng nói AI tự nhiên từ văn bản",
+            description: "Chuyển văn bản thành giọng nói AI cho video, quảng cáo, podcast và đào tạo. Tạo giọng đọc AI, nghe trực tiếp và tải tệp trên HOTX AI.",
+        },
+        {
+            slug: "voice-cloning",
+            title: "Nhân bản giọng nói AI từ mẫu giọng | HOTX AI",
+            h1: "Nhân bản giọng nói AI từ mẫu thu của bạn",
+            description: "Nhân bản giọng nói AI từ mẫu âm thanh mà bạn có quyền sử dụng. Tạo và quản lý hồ sơ giọng để dùng cho nội dung được cho phép trên HOTX AI.",
+        },
+        {
+            slug: "ai-short-drama",
+            title: "Tạo phim ngắn AI từ kịch bản đến video | HOTX AI",
+            h1: "Tạo phim ngắn AI từ kịch bản đến cảnh quay",
+            description: "Tạo phim ngắn AI theo dự án: xây dựng kịch bản, nhân vật, storyboard và tạo từng cảnh quay trong một quy trình sản xuất trên HOTX AI.",
+        },
+        {
+            slug: "ai-agent",
+            title: "AI Agent sáng tạo nội dung đa phương tiện | HOTX AI",
+            h1: "AI Agent sáng tạo nội dung bằng hình ảnh, video và âm thanh",
+            description: "AI Agent hỗ trợ biến brief tiếng Việt thành hình ảnh, video và âm thanh. Tự động chọn quy trình và năng lực phù hợp trong cùng workspace HOTX AI.",
+        },
+    ],
+    en: [
+        {
+            slug: "ai-image-generator",
+            title: "Create AI images online from text and images | HOTX AI",
+            h1: "Create AI images online from text and reference images",
+            description: "Create AI images online from Vietnamese descriptions or reference images. Make product images, advertising visuals and creative content in the HOTX AI workspace.",
+        },
+        {
+            slug: "ai-video-generator",
+            title: "Create AI videos from text and images | HOTX AI",
+            h1: "Create AI videos from text and images",
+            description: "Create AI videos from text or images for advertising, TikTok and Reels. Explore image-to-video and text-to-video in HOTX AI.",
+        },
+        {
+            slug: "ai-voice-generator",
+            title: "Generate AI voices from text | HOTX AI",
+            h1: "Generate natural AI speech from text",
+            description: "Turn text into AI speech for videos, ads, podcasts and training. Generate narration, listen and download files in HOTX AI.",
+        },
+        {
+            slug: "voice-cloning",
+            title: "Clone an AI voice from a recording | HOTX AI",
+            h1: "Clone an AI voice from your own recording",
+            description: "Clone an AI voice from audio you have permission to use. Create and manage voice profiles for authorized content in HOTX AI.",
+        },
+        {
+            slug: "ai-short-drama",
+            title: "Create AI short films from script to video | HOTX AI",
+            h1: "Create AI short films from script to shots",
+            description: "Create AI short films by project: develop scripts, characters, storyboards and individual shots in one HOTX AI production workflow.",
+        },
+        {
+            slug: "ai-agent",
+            title: "AI Agent for multimedia content creation | HOTX AI",
+            h1: "AI Agent for creating images, videos and audio",
+            description: "AI Agent helps turn Vietnamese briefs into images, videos and audio. Select suitable workflows and capabilities within the HOTX AI workspace.",
+        },
+    ],
+    "zh-CN": [
+        {
+            slug: "ai-image-generator",
+            title: "从文字与图片在线生成 AI 图片 | HOTX AI",
+            h1: "从文字与参考图在线生成 AI 图片",
+            description: "根据越南语描述或参考图在线生成 AI 图片。在 HOTX AI 工作区中制作产品图、广告图和创意内容。",
+        },
+        {
+            slug: "ai-video-generator",
+            title: "从文字与图片生成 AI 视频 | HOTX AI",
+            h1: "从文字与图片生成 AI 视频",
+            description: "从文字或图片生成用于广告、TikTok 和 Reels 的 AI 视频。在 HOTX AI 中使用图生视频与文生视频。",
+        },
+        {
+            slug: "ai-voice-generator",
+            title: "从文字生成 AI 语音 | HOTX AI",
+            h1: "从文字生成自然的 AI 语音",
+            description: "将文字转为用于视频、广告、播客和培训的 AI 语音。在 HOTX AI 中生成朗读、直接试听并下载文件。",
+        },
+        {
+            slug: "voice-cloning",
+            title: "根据录音样本克隆 AI 声音 | HOTX AI",
+            h1: "根据自己的录音样本克隆 AI 声音",
+            description: "使用你有权使用的音频样本克隆 AI 声音。在 HOTX AI 中创建和管理声音档案，用于获授权的内容。",
+        },
+        {
+            slug: "ai-short-drama",
+            title: "从剧本到视频制作 AI 短片 | HOTX AI",
+            h1: "从剧本到镜头制作 AI 短片",
+            description: "按项目制作 AI 短片，在 HOTX AI 的统一生产流程中构建剧本、角色、分镜并生成各个镜头。",
+        },
+        {
+            slug: "ai-agent",
+            title: "用于多媒体内容创作的 AI Agent | HOTX AI",
+            h1: "使用 AI Agent 创作图片、视频和音频",
+            description: "AI Agent 协助将越南语需求转为图片、视频和音频，在 HOTX AI 工作区中选择合适的流程与能力。",
+        },
+    ],
+} as const;
+const publicCopy = {
+    vi: { home: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI", terms: "Điều khoản dịch vụ", privacy: "Chính sách quyền riêng tư" },
+    en: { home: "HOTX AI – A platform for AI content creation", terms: "Terms of Service", privacy: "Privacy Policy" },
+    "zh-CN": { home: "HOTX AI – 一站式 AI 内容创作平台", terms: "服务条款", privacy: "隐私政策" },
+} as const;
+
+test("all 27 published URLs have localized SSR SEO independent of cookie and browser language", async ({ page, context }) => {
+    test.setTimeout(240_000);
+    await context.setExtraHTTPHeaders({ "Accept-Language": "fr-FR,en;q=0.9" });
+    for (const locale of ["vi", "en", "zh-CN"] as const) {
+        const prefix = locale === "en" ? "/en" : locale === "zh-CN" ? "/zh-cn" : "";
+        const pages = [{ slug: "", h1: publicCopy[locale].home }, ...translatedLandings[locale], { slug: "terms", h1: publicCopy[locale].terms }, { slug: "privacy", h1: publicCopy[locale].privacy }];
+        for (const item of pages) {
+            await context.addCookies([{ name: "vozeb-pro-locale", value: locale === "en" ? "zh-CN" : "en", url: String(test.info().project.use.baseURL) }]);
+            const suffix = item.slug ? "/" + item.slug : "";
+            const path = prefix + suffix || "/";
+            const response = await page.goto(path, { waitUntil: "domcontentloaded" });
+            expect(response?.status(), path).toBe(200);
+            const html = await response!.text();
+            expect(html).toMatch(/<h1[\s>]/);
+            expect(html).toMatch(/<link[^>]*rel="canonical"/);
+            await expect(page.locator("html")).toHaveAttribute("lang", locale);
+            await expect(page.locator("h1")).toHaveCount(1);
+            await expect(page.getByRole("heading", { level: 1, name: item.h1 })).toBeVisible();
+            const title = await page.title();
+            expect(title.trim()).not.toBe("");
+            if ("title" in item) await expect(page).toHaveTitle(item.title);
+            else if (item.slug) expect(title).toBe(item.h1);
+            else if (locale === "en") expect(title).toContain("AI image, video and voice creation");
+            else if (locale === "zh-CN") expect(title).toContain("AI 图片、视频与语音创作");
+            const description = await page.locator('meta[name="description"]').getAttribute("content");
+            expect(description?.trim()).toBeTruthy();
+            if ("description" in item) expect(description).toBe(item.description);
+            const canonical = new URL(path, String(test.info().project.use.baseURL)).toString();
+            await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", canonical);
+            const alternates = await page.locator('link[rel="alternate"][hreflang]').evaluateAll((nodes) => Object.fromEntries(nodes.map((node) => [node.getAttribute("hreflang"), node.getAttribute("href")])));
+            const base = String(test.info().project.use.baseURL);
+            expect(alternates).toEqual({
+                vi: new URL(suffix || "/", base).toString(),
+                en: new URL("/en" + suffix, base).toString(),
+                "zh-Hans": new URL("/zh-cn" + suffix, base).toString(),
+                "x-default": new URL(suffix || "/", base).toString(),
+            });
+            await expect(page.locator('meta[property="og:url"]')).toHaveAttribute("content", canonical);
+            await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", title);
+            await expect(page.locator('meta[property="og:description"]')).toHaveAttribute("content", description!);
+            await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute("content", locale === "vi" ? "vi_VN" : locale === "en" ? "en_US" : "zh_CN");
+            await expect(page.locator('meta[name="twitter:title"]')).toHaveAttribute("content", title);
+            await expect(page.locator('meta[name="twitter:description"]')).toHaveAttribute("content", description!);
+            await expect(page.locator('meta[property="og:image"]')).toHaveAttribute("content", /^https?:\/\//);
+            const imageAlt = await page.locator('meta[property="og:image:alt"]').getAttribute("content");
+            expect(imageAlt?.trim()).toBeTruthy();
+            await expect(page.locator('meta[name="twitter:image:alt"]')).toHaveAttribute("content", imageAlt!);
+            const website = JSON.parse((await page.locator("#website-json-ld").textContent())!);
+            expect(website).toMatchObject({ url: new URL(prefix || "/", base).toString(), inLanguage: locale });
+            if (item.slug) {
+                const data = JSON.parse((await page.locator(item.slug === "terms" || item.slug === "privacy" ? "#seo-page-json-ld" : "#seo-landing-json-ld").textContent())!);
+                const webpage = data["@graph"]?.[0] || data;
+                expect(webpage).toMatchObject({ url: canonical, inLanguage: locale, description });
+            }
+            await expectNoHorizontalOverflow(page, path);
+        }
+    }
+});
+
+test("VI aliases redirect and localized workspace or invalid locale routes stay excluded", async ({ request }) => {
+    for (const suffix of ["", "/ai-image-generator", "/ai-video-generator", "/ai-voice-generator", "/voice-cloning", "/ai-short-drama", "/ai-agent", "/terms", "/privacy"]) {
+        const response = await request.get("/vi" + suffix + "?source=locale", { maxRedirects: 0 });
+        expect(response.status()).toBe(308);
+        const location = new URL(response.headers().location, String(test.info().project.use.baseURL));
+        expect(location.pathname).toBe(suffix || "/");
+        expect(location.search).toBe("?source=locale");
+    }
+    for (const prefix of ["/en", "/zh-cn", "/vi"])
+        for (const path of ["/create", "/canvas", "/drama", "/gallery", "/admin", "/share/example", "/api/auth/session"]) {
+            expect((await request.get(prefix + path)).status(), prefix + path).toBe(404);
+        }
+    for (const path of ["/fr/terms", "/fr/privacy", "/fr/ai-agent", "/fr", "/en/unpublished"]) expect((await request.get(path)).status(), path).toBe(404);
+});
+
+test("SEO language switcher keeps the same page and fits desktop and mobile", async ({ page }) => {
+    for (const slug of ["", "/ai-image-generator", "/terms", "/privacy"]) {
+        await page.goto("/en" + slug);
+        await page.getByRole("button", { name: "Change language" }).click();
+        const menu = page.getByRole("menu");
+        await expect(menu).toBeVisible();
+        const rect = await menu.boundingBox();
+        expect(rect!.x).toBeGreaterThanOrEqual(0);
+        expect(rect!.x + rect!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+        await page.getByRole("menuitem", { name: "简体中文" }).click();
+        await expect(page).toHaveURL(new URL("/zh-cn" + slug, String(test.info().project.use.baseURL)).toString());
+        await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+        const chineseHeading = slug === "/terms" ? "服务条款" : slug === "/privacy" ? "隐私政策" : slug === "/ai-image-generator" ? "从文字与参考图在线生成 AI 图片" : "HOTX AI – 一站式 AI 内容创作平台";
+        await expect(page.getByRole("heading", { level: 1, name: chineseHeading })).toBeVisible();
+        await expect(page.locator("#website-json-ld")).toHaveCount(1);
+        expect(JSON.parse((await page.locator("#website-json-ld").textContent())!)).toMatchObject({ inLanguage: "zh-CN", url: new URL("/zh-cn", String(test.info().project.use.baseURL)).toString() });
+        await page.getByRole("button", { name: "切换语言" }).click();
+        await page.getByRole("menuitem", { name: "Tiếng Việt" }).click();
+        await expect(page).toHaveURL(new URL(slug || "/", String(test.info().project.use.baseURL)).toString());
+        await expect(page.locator("html")).toHaveAttribute("lang", "vi");
+        const vietnameseHeading =
+            slug === "/terms" ? "Điều khoản dịch vụ" : slug === "/privacy" ? "Chính sách quyền riêng tư" : slug === "/ai-image-generator" ? "Tạo ảnh AI online từ văn bản và ảnh tham chiếu" : "HOTX AI – Nền tảng sáng tạo nội dung bằng AI";
+        await expect(page.getByRole("heading", { level: 1, name: vietnameseHeading })).toBeVisible();
+    }
+});
+
+test("sitemap has exactly 27 localized SEO entries without xhtml alternatives", async ({ request }) => {
+    const response = await request.get("/sitemap.xml");
+    const xml = await response.text();
+    const paths = [...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map((match) => new URL(match[1]).pathname);
+    const expected = ["", "/en", "/zh-cn"].flatMap((prefix) => ["", ...landings.map((item) => "/" + item.slug), "/terms", "/privacy"].map((suffix) => prefix + suffix || "/"));
+    expect(expected).toHaveLength(27);
+    expect(paths.filter((path) => expected.includes(path)).sort()).toEqual(expected.sort());
+    expect(new Set(paths).size).toBe(paths.length);
+    expect(paths.filter((path) => path === "/gallery")).toHaveLength(1);
+    expect(paths.filter((path) => path === "/announcements")).toHaveLength(1);
+    expect(xml).not.toMatch(/xhtml:link|hreflang/);
+});

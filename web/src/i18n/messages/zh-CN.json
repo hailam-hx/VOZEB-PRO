@@ -212,6 +212,7 @@
         "resetSuccess": "密码已重置，请登录"
     },
     "home": {
+        "metadataTitle": "{site} - AI 图片、视频与语音创作",
         "home": "首页",
         "mainNavigation": "官网主导航",
         "mobileNavigation": "移动端导航",

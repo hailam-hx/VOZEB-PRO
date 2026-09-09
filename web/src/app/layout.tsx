@@ -4,6 +4,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages, getTranslations } from "next-intl/server";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
+import { WebsiteStructuredData } from "@/components/layout/website-structured-data";
 import { defaultLocale, isAppLocale } from "@/i18n/config";
 import { effectiveLocale, localeMetadata } from "@/i18n/runtime";
 import { builtInSiteCopy, localizeBuiltInSiteCopy, localizeHomepageSeoDescription } from "@/i18n/site-copy";
@@ -54,15 +55,15 @@ export default async function RootLayout({
     const nonce = requestHeaders.get("x-nonce") || undefined;
     const selectedLocale = isAppLocale(requestedLocale) ? requestedLocale : defaultLocale;
     const locale = effectiveLocale(selectedLocale, requestHeaders.get("x-vozeb-pathname") || "/");
+    const iconHref = browserIconHref(site);
     const homeT = await getTranslations({ locale, namespace: "home" });
     const base = siteMetadataBase();
-    const iconHref = browserIconHref(site);
-    const websiteUrl = absoluteSiteUrl("/", base);
     const websiteStructuredData = buildWebsiteStructuredData({
         name: site.title,
         alternateName: ["HOTXAI"],
+        locale,
         description: localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription")),
-        url: websiteUrl,
+        url: absoluteSiteUrl("/", base),
         logoUrl: absoluteSiteUrl(site.logoUrl || "/logo.svg", base),
     });
 
@@ -80,7 +81,7 @@ export default async function RootLayout({
                     fontFamily: '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif',
                 }}
             >
-                <script id="website-json-ld" nonce={nonce} suppressHydrationWarning type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(websiteStructuredData) }} />
+                <WebsiteStructuredData json={serializeStructuredData(websiteStructuredData)} nonce={nonce} />
                 <NextIntlClientProvider locale={selectedLocale} messages={messages}>
                     <AntdRegistry>
                         <AppProviders>{children}</AppProviders>

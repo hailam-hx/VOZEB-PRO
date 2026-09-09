@@ -3,7 +3,8 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, ChevronDown, Menu, X } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { getLocalizedSeoHref } from "@/i18n/routing";
+import { useLocale, useTranslations } from "next-intl";
 
 import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { SiteLogo } from "@/components/layout/site-logo";
@@ -14,6 +15,7 @@ import { useHomeActions } from "./home-actions";
 import styles from "./home.module.css";
 
 export function HomeHeader() {
+    const locale = useLocale();
     const t = useTranslations("home");
     const common = useTranslations("common");
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -60,7 +62,7 @@ export function HomeHeader() {
     return (
         <header className={styles.header}>
             <div className={styles.headerInner}>
-                <Link href="/" className={styles.brand} aria-label={`${site.title} ${t("home")}`}>
+                <Link href={getLocalizedSeoHref("/", locale) || "#"} className={styles.brand} aria-label={`${site.title} ${t("home")}`}>
                     <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
                     <span>{site.title}</span>
                 </Link>
@@ -86,8 +88,8 @@ export function HomeHeader() {
                             <ChevronDown aria-hidden="true" />
                         </summary>
                         <div className={styles.productMenuPanel} data-testid="home-product-menu">
-                            {HOME_PRODUCT_NAVIGATION.map((item) => (
-                                <Link key={item.href} href={item.href}>
+                            {HOME_PRODUCT_NAVIGATION.filter((item) => getLocalizedSeoHref(item.href, locale)).map((item) => (
+                                <Link key={item.href} href={getLocalizedSeoHref(item.href, locale)!}>
                                     <span>{t(item.translationKey)}</span>
                                     <ArrowRight aria-hidden="true" />
                                 </Link>
@@ -115,7 +117,7 @@ export function HomeHeader() {
                                 ref={(node) => {
                                     navItemRefs.current[index + 1] = node;
                                 }}
-                                href={item.href}
+                                href={getLocalizedSeoHref(item.href, locale)!}
                                 className={styles.navLink}
                                 onPointerEnter={() => trackNavItem(index + 1)}
                                 onFocus={() => trackNavItem(index + 1)}
@@ -149,8 +151,8 @@ export function HomeHeader() {
                 <nav id="home-mobile-menu" className={styles.mobileNav} aria-label={t("mobileNavigation")}>
                     <div className={styles.mobileProductGroup}>
                         <span>{t("products")}</span>
-                        {HOME_PRODUCT_NAVIGATION.map((item) => (
-                            <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)}>
+                        {HOME_PRODUCT_NAVIGATION.filter((item) => getLocalizedSeoHref(item.href, locale)).map((item) => (
+                            <Link key={item.href} href={getLocalizedSeoHref(item.href, locale)!} onClick={() => setMobileOpen(false)}>
                                 {t(item.translationKey)}
                                 <ArrowRight aria-hidden="true" />
                             </Link>
@@ -163,7 +165,7 @@ export function HomeHeader() {
                                 <ArrowRight aria-hidden="true" />
                             </button>
                         ) : (
-                            <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)}>
+                            <Link key={item.href} href={getLocalizedSeoHref(item.href, locale)!} onClick={() => setMobileOpen(false)}>
                                 {t(item.translationKey)}
                                 <ArrowRight aria-hidden="true" />
                             </Link>

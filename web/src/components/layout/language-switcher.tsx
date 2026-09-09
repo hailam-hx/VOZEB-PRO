@@ -6,7 +6,9 @@ import type { MenuProps } from "antd";
 import { App, Dropdown } from "antd";
 import { Check, Globe2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useRouter as useLocalizedRouter } from "@/i18n/navigation";
+import { matchSeoRoute, isSeoPagePublished, seoPublicationRegistry } from "@/i18n/routing";
 
 import { setLocalePreference } from "@/i18n/actions";
 import { appLocales, defaultLocale, isAppLocale, localeMetadata } from "@/i18n/config";
@@ -25,19 +27,24 @@ export function LanguageSwitcher({ className, style, rootClassName, onOpen }: La
     const t = useTranslations("common");
     const { message } = App.useApp();
     const router = useRouter();
+    const localizedRouter = useLocalizedRouter();
+    const pathname = usePathname();
+    const seoRoute = pathname ? matchSeoRoute(pathname) : null;
     const [open, setOpen] = useState(false);
     const [pending, startTransition] = useTransition();
-    const items: MenuProps["items"] = appLocales.map((itemLocale) => ({
-        key: itemLocale,
-        label: (
-            <span className="flex min-w-32 items-center justify-between gap-4">
-                <span>{localeMetadata[itemLocale].label}</span>
-                <span className="grid size-4 place-items-center text-[#5965ff]" aria-hidden="true">
-                    {itemLocale === locale ? <Check className="size-4" /> : null}
+    const items: MenuProps["items"] = appLocales
+        .filter((itemLocale) => !seoRoute || isSeoPagePublished(seoRoute.pageId, itemLocale))
+        .map((itemLocale) => ({
+            key: itemLocale,
+            label: (
+                <span className="flex min-w-32 items-center justify-between gap-4">
+                    <span>{localeMetadata[itemLocale].label}</span>
+                    <span className="grid size-4 place-items-center text-[#5965ff]" aria-hidden="true">
+                        {itemLocale === locale ? <Check className="size-4" /> : null}
+                    </span>
                 </span>
-            </span>
-        ),
-    }));
+            ),
+        }));
 
     const changeLocale: MenuProps["onClick"] = ({ key }) => {
         if (!isAppLocale(key) || key === locale) {
@@ -47,8 +54,11 @@ export function LanguageSwitcher({ className, style, rootClassName, onOpen }: La
         setOpen(false);
         startTransition(async () => {
             try {
-                await setLocalePreference(key);
-                router.refresh();
+                if (seoRoute) localizedRouter.replace(seoPublicationRegistry[seoRoute.pageId].internalPath, { locale: key });
+                else {
+                    await setLocalePreference(key);
+                    router.refresh();
+                }
             } catch {
                 message.error(t("languageChangeFailed"));
             }

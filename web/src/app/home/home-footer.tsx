@@ -3,7 +3,8 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { ArrowRight, Mail, Send } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { getLocalizedSeoHref } from "@/i18n/routing";
+import { useLocale, useTranslations } from "next-intl";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { builtInSiteCopy, localizeBuiltInSiteCopy } from "@/i18n/site-copy";
@@ -30,13 +31,14 @@ export function HomeCta() {
 }
 
 export function HomeFooter() {
+    const locale = useLocale();
     const t = useTranslations("home");
     const publicT = useTranslations("public");
     const { site, openTopUp, openProtectedPath } = useHomeActions();
     const friendLinks = site.friendLinks.filter((item) => item.enabled && item.label.trim() && item.url.trim());
     const socials = Object.entries(site.socials).filter(([, item]) => item.enabled && item.label.trim() && item.url.trim());
     const copyright = site.footerCopyright?.trim();
-    const description = localizeBuiltInSiteCopy(site.seoDescription, builtInSiteCopy.seoDescription, t("footerDefaultDescription"));
+    const description = locale === "vi" ? localizeBuiltInSiteCopy(site.seoDescription, builtInSiteCopy.seoDescription, t("footerDefaultDescription")) : t("footerDefaultDescription");
     const policies = [site.privacyUrl?.trim() ? { label: publicT("privacyLabel"), href: site.privacyUrl.trim() } : null, site.termsUrl?.trim() ? { label: publicT("termsLabel"), href: site.termsUrl.trim() } : null].filter(
         (item): item is { label: string; href: string } => Boolean(item),
     );
@@ -49,7 +51,7 @@ export function HomeFooter() {
         <footer className={styles.footer}>
             <div className={styles.footerGrid}>
                 <div className={styles.footerBrand}>
-                    <Link href="/" className={styles.footerLogo}>
+                    <Link href={getLocalizedSeoHref("/", locale) || "#"} className={styles.footerLogo}>
                         <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
                         <span>{site.title}</span>
                     </Link>
@@ -71,21 +73,23 @@ export function HomeFooter() {
                 <div className={styles.footerNavigation}>
                     {navigationGroups.map((group) => (
                         <FooterColumn key={group.title} title={group.title}>
-                            {group.items.map((item) =>
-                                item.action === "protected" ? (
-                                    <button key={item.href} type="button" onClick={() => openProtectedPath(item.href)}>
-                                        {t(item.translationKey)}
-                                    </button>
-                                ) : item.action === "billing" ? (
-                                    <button key={item.href} type="button" onClick={openTopUp}>
-                                        {t(item.translationKey)}
-                                    </button>
-                                ) : (
-                                    <Link key={item.href} href={item.href}>
-                                        {t(item.translationKey)}
-                                    </Link>
-                                ),
-                            )}
+                            {group.items
+                                .filter((item) => getLocalizedSeoHref(item.href, locale))
+                                .map((item) =>
+                                    item.action === "protected" ? (
+                                        <button key={item.href} type="button" onClick={() => openProtectedPath(item.href)}>
+                                            {t(item.translationKey)}
+                                        </button>
+                                    ) : item.action === "billing" ? (
+                                        <button key={item.href} type="button" onClick={openTopUp}>
+                                            {t(item.translationKey)}
+                                        </button>
+                                    ) : (
+                                        <Link key={item.href} href={getLocalizedSeoHref(item.href, locale)!}>
+                                            {t(item.translationKey)}
+                                        </Link>
+                                    ),
+                                )}
                         </FooterColumn>
                     ))}
                     {friendLinks.length ? (
@@ -104,11 +108,13 @@ export function HomeFooter() {
                     {copyright ? <span>{copyright}</span> : null}
                     {policies.length ? (
                         <div>
-                            {policies.map((item) => (
-                                <a key={item.label} href={item.href} target={externalTarget(item.href)} rel={externalTarget(item.href) ? "noreferrer" : undefined}>
-                                    {item.label}
-                                </a>
-                            ))}
+                            {policies
+                                .filter((item) => getLocalizedSeoHref(item.href, locale))
+                                .map((item) => (
+                                    <a key={item.label} href={getLocalizedSeoHref(item.href, locale)!} target={externalTarget(item.href)} rel={externalTarget(item.href) ? "noreferrer" : undefined}>
+                                        {item.label}
+                                    </a>
+                                ))}
                         </div>
                     ) : null}
                 </div>

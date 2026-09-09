@@ -35,7 +35,8 @@ vi.mock("@/lib/server/site-metadata", () => ({
 }));
 
 import { generateMetadata as generateRootMetadata } from "./layout";
-import HomePage, { generateMetadata as generateHomepageMetadata } from "./page";
+import LocalizedLayout from "./[locale]/layout";
+import HomePage, { generateMetadata as generateHomepageMetadata } from "./[locale]/page";
 
 describe("homepage metadata", () => {
     beforeEach(() => {
@@ -49,8 +50,14 @@ describe("homepage metadata", () => {
         });
     });
 
+    it("uses the explicit EN route for self canonical despite a VI request locale", async () => {
+        const metadata = await generateHomepageMetadata({ params: Promise.resolve({ locale: "en" }) });
+        expect(metadata.alternates).toMatchObject({ canonical: "https://hotx-ai.com/en", languages: { vi: "https://hotx-ai.com/", en: "https://hotx-ai.com/en", "zh-Hans": "https://hotx-ai.com/zh-cn", "x-default": "https://hotx-ai.com/" } });
+        expect(metadata.openGraph).toMatchObject({ locale: "en_US" });
+    });
+
     it("publishes the canonical URL and a dedicated large social image", async () => {
-        const metadata = await generateHomepageMetadata();
+        const metadata = await generateHomepageMetadata({ params: Promise.resolve({ locale: "vi" }) });
 
         expect(metadata).toMatchObject({
             metadataBase: null,
@@ -72,15 +79,28 @@ describe("homepage metadata", () => {
             twitter: {
                 card: "summary_large_image",
                 description: expectedDescription,
-                images: ["https://hotx-ai.com/seo/hotx-ai-og.webp"],
+                images: [{ url: "https://hotx-ai.com/seo/hotx-ai-og.webp", alt: "HOTX AI – Nền tảng sáng tạo AI cho ảnh, video, giọng nói và AI Agent", width: 1200, height: 630 }],
             },
         });
     });
 
     it("passes the localized SEO description into the homepage client state", async () => {
-        const homepage = await HomePage();
+        const homepage = await HomePage({ params: Promise.resolve({ locale: "vi" }) });
 
         expect(homepage.props.initialSite.seoDescription).toBe(expectedDescription);
+    });
+
+    it("does not put scalar Vietnamese copy into an English homepage state", async () => {
+        mocks.getPublicSiteSettings.mockResolvedValueOnce({ title: "HOTX AI", seoDescription: "Nội dung tùy chỉnh tiếng Việt" });
+        mocks.getTranslations.mockResolvedValueOnce((key: string) => (key === "metadataDescription" ? "An English creation platform description." : key));
+        const homepage = await HomePage({ params: Promise.resolve({ locale: "en" }) });
+        expect(homepage.props.initialSite.seoDescription).toBe("An English creation platform description.");
+    });
+
+    it("uses the locale layout identity in Website JSON-LD", async () => {
+        const layout = await LocalizedLayout({ children: null, params: Promise.resolve({ locale: "en" }) });
+        const data = JSON.parse(layout.props.children[0].props.dangerouslySetInnerHTML.__html);
+        expect(data).toMatchObject({ url: "https://hotx-ai.com/en", "@id": "https://hotx-ai.com/en#website", inLanguage: "en" });
     });
 
     it("keeps homepage social metadata out of the root layout", async () => {
@@ -106,7 +126,7 @@ describe("homepage metadata", () => {
             seoKeywords: "custom,keywords",
         });
 
-        const metadata = await generateHomepageMetadata();
+        const metadata = await generateHomepageMetadata({ params: Promise.resolve({ locale: "vi" }) });
 
         expect(metadata.description).toBe("Custom homepage description");
         expect(metadata.openGraph?.description).toBe("Custom homepage description");
@@ -121,6 +141,6 @@ describe("homepage metadata", () => {
             seoKeywords: "HOTX AI,AI Agent",
         });
 
-        expect((await generateHomepageMetadata()).description).toBe(expectedDescription);
+        expect((await generateHomepageMetadata({ params: Promise.resolve({ locale: "vi" }) })).description).toBe(expectedDescription);
     });
 });

@@ -34,7 +34,15 @@ describe("site metadata routes", () => {
     });
 
     it("publishes only crawlable public pages and approved works", async () => {
-        expect((await sitemap()).map(({ url, priority }) => ({ url, priority }))).toEqual([
+        const entries = await sitemap();
+        expect(entries).toHaveLength(30);
+        expect(new Set(entries.map((entry) => entry.url)).size).toBe(30);
+        expect(entries.every((entry) => !entry.alternates)).toBe(true);
+        for (const prefix of ["/en", "/zh-cn"]) {
+            for (const path of ["", "/ai-image-generator", "/ai-video-generator", "/ai-voice-generator", "/voice-cloning", "/ai-short-drama", "/ai-agent", "/terms", "/privacy"])
+                expect(entries).toContainEqual(expect.objectContaining({ url: `https://example.com${prefix}${path}` }));
+        }
+        expect(entries.filter((entry) => !new URL(entry.url).pathname.startsWith("/en") && !new URL(entry.url).pathname.startsWith("/zh-cn")).map(({ url, priority }) => ({ url, priority }))).toEqual([
             { url: "https://example.com/", priority: 1 },
             { url: "https://example.com/ai-image-generator", priority: 0.9 },
             { url: "https://example.com/ai-video-generator", priority: 0.9 },
@@ -42,10 +50,10 @@ describe("site metadata routes", () => {
             { url: "https://example.com/voice-cloning", priority: 0.9 },
             { url: "https://example.com/ai-short-drama", priority: 0.8 },
             { url: "https://example.com/ai-agent", priority: 0.8 },
-            { url: "https://example.com/gallery", priority: 0.8 },
-            { url: "https://example.com/announcements", priority: 0.5 },
             { url: "https://example.com/terms", priority: 0.3 },
             { url: "https://example.com/privacy", priority: 0.3 },
+            { url: "https://example.com/gallery", priority: 0.8 },
+            { url: "https://example.com/announcements", priority: 0.5 },
             { url: "https://example.com/share/public-work", priority: 0.6 },
         ]);
     });

@@ -217,6 +217,7 @@
         "resetSuccess": "Mật khẩu đã được đặt lại. Vui lòng đăng nhập."
     },
     "home": {
+        "metadataTitle": "{site} - Nền tảng tạo ảnh, video và giọng nói bằng AI",
         "home": "Trang chủ",
         "mainNavigation": "Điều hướng chính",
         "mobileNavigation": "Điều hướng di động",

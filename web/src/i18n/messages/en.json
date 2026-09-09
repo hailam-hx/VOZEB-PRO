@@ -217,6 +217,7 @@
         "resetSuccess": "Password reset. Please log in."
     },
     "home": {
+        "metadataTitle": "{site} - AI image, video and voice creation",
         "home": "Home",
         "mainNavigation": "Main navigation",
         "mobileNavigation": "Mobile navigation",

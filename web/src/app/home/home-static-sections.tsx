@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Bot, Clapperboard, Cloud, Grid2X2, History, Image as ImageIcon, Layers3, Mic2, Network, PencilLine, Rocket, Share2, Video, Volume2 } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { getLocalizedSeoHref } from "@/i18n/routing";
+import { useLocale, useTranslations } from "next-intl";
 
 import { HOME_ADVANTAGES, HOME_PRODUCT_NAVIGATION, HOME_STEPS } from "./home-data";
 import styles from "./home.module.css";
@@ -10,15 +11,16 @@ const advantageIcons = { layers: Layers3, network: Network, history: History, cl
 const productIcons = { image: ImageIcon, video: Video, voice: Volume2, voiceCloning: Mic2, shortDrama: Clapperboard, agent: Bot } as const;
 
 export function HomeProductsSection() {
+    const locale = useLocale();
     const t = useTranslations("home");
     return (
         <section className={styles.section} aria-labelledby="home-products-title" data-testid="home-products">
             <SectionHeading id="home-products-title" title={t("productsSectionTitle")} subtitle={t("productsSectionSubtitle")} />
             <div className={styles.productsGrid}>
-                {HOME_PRODUCT_NAVIGATION.map((product) => {
+                {HOME_PRODUCT_NAVIGATION.filter((product) => getLocalizedSeoHref(product.href, locale)).map((product) => {
                     const Icon = productIcons[product.icon];
                     return (
-                        <Link key={product.href} href={product.href} className={styles.productCard}>
+                        <Link key={product.href} href={getLocalizedSeoHref(product.href, locale)!} className={styles.productCard}>
                             <span className={styles.productIcon}>
                                 <Icon aria-hidden="true" />
                             </span>

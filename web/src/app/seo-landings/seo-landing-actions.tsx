@@ -5,9 +5,12 @@ import { ArrowRight, Sparkles } from "lucide-react";
 
 import { useHomeActions } from "@/app/home/home-actions";
 import type { SeoLandingDefinition } from "./seo-landing-data";
+import type { AppLocale } from "@/i18n/config";
+import { landingUi } from "./content/ui";
 import styles from "./seo-landing.module.css";
 
-export function SeoLandingActions({ definition, compact = false }: { definition: SeoLandingDefinition; compact?: boolean }) {
+export function SeoLandingActions({ definition, compact = false, locale = "vi" }: { definition: SeoLandingDefinition; compact?: boolean; locale?: AppLocale }) {
+    const t = landingUi[locale];
     const { openProtectedPath, startCreating } = useHomeActions();
     const [prompt, setPrompt] = useState("");
 
@@ -38,13 +41,13 @@ export function SeoLandingActions({ definition, compact = false }: { definition:
                 <span className={styles.workspaceIcon} aria-hidden="true">
                     <Sparkles />
                 </span>
-                <h2>{definition.slug === "voice-cloning" ? "Quản lý hồ sơ giọng trong workspace riêng" : "Bắt đầu trong workspace sản xuất phim ngắn"}</h2>
-                <p>{definition.slug === "voice-cloning" ? "Tải mẫu, xác nhận quyền sử dụng và theo dõi trạng thái sau khi đăng nhập." : "Tạo dự án, tổ chức tài sản và phát triển từng tập trong cùng một quy trình."}</p>
+                <h2>{definition.slug === "voice-cloning" ? t.voiceTitle : t.dramaTitle}</h2>
+                <p>{definition.slug === "voice-cloning" ? t.voiceDescription : t.dramaDescription}</p>
                 <button type="button" className={styles.primaryCta} onClick={openDestination} data-testid="seo-primary-cta">
                     {definition.cta.label}
                     <ArrowRight aria-hidden="true" />
                 </button>
-                {definition.slug === "voice-cloning" ? <small>Không sử dụng mẫu giọng nếu chưa có sự đồng ý phù hợp.</small> : null}
+                {definition.slug === "voice-cloning" ? <small>{t.consent}</small> : null}
             </div>
         );
     }
@@ -56,13 +59,13 @@ export function SeoLandingActions({ definition, compact = false }: { definition:
                     <Sparkles />
                 </span>
                 <div>
-                    <strong>Bắt đầu từ một brief</strong>
-                    <small>HOTX AI sẽ mở đúng chế độ sáng tạo</small>
+                    <strong>{t.brief}</strong>
+                    <small>{t.mode}</small>
                 </div>
             </div>
             <label htmlFor={`seo-prompt-${definition.slug}`}>{definition.prompt.label}</label>
             <textarea id={`seo-prompt-${definition.slug}`} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={definition.prompt.placeholder} rows={6} />
-            <div className={styles.promptExamples} aria-label="Gợi ý nhanh">
+            <div className={styles.promptExamples} aria-label={t.suggestions}>
                 {definition.prompt.examples.map((example) => (
                     <button key={example} type="button" onClick={() => setPrompt(example)}>
                         {example}
@@ -73,7 +76,7 @@ export function SeoLandingActions({ definition, compact = false }: { definition:
                 {definition.cta.label}
                 <ArrowRight aria-hidden="true" />
             </button>
-            <small>Bạn có thể chỉnh sửa brief và thêm tài liệu tham chiếu sau khi vào workspace.</small>
+            <small>{t.edit}</small>
         </form>
     );
 }

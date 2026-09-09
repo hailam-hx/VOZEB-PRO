@@ -9,14 +9,14 @@ describe("SEO landing metadata", () => {
         const metadata = buildSeoLandingMetadata(definition, new URL("https://hotx-ai.com"), "HOTX AI");
 
         expect(metadata).toMatchObject({
-            metadataBase: new URL("https://hotx-ai.com"),
+            metadataBase: null,
             title: definition.title,
             description: definition.description,
-            alternates: { canonical: "/ai-image-generator" },
+            alternates: { canonical: "https://hotx-ai.com/ai-image-generator" },
             robots: { index: true, follow: true },
             openGraph: {
                 type: "website",
-                url: "/ai-image-generator",
+                url: "https://hotx-ai.com/ai-image-generator",
                 title: definition.title,
                 description: definition.description,
                 siteName: "HOTX AI",
@@ -29,6 +29,6 @@ describe("SEO landing metadata", () => {
             },
         });
         expect(metadata.keywords).toEqual([definition.primaryKeyword, ...definition.secondaryKeywords]);
-        expect(metadata.openGraph?.images).toEqual([{ url: definition.visual.src, alt: definition.visual.alt, width: definition.visual.width, height: definition.visual.height }]);
+        expect(metadata.openGraph?.images).toEqual([{ url: `https://hotx-ai.com${definition.visual.src}`, alt: definition.visual.alt, width: definition.visual.width, height: definition.visual.height }]);
     });
 });

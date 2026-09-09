@@ -4,17 +4,21 @@ import Link from "next/link";
 import { ArrowRight, Check, ChevronDown } from "lucide-react";
 
 import type { SeoLandingDefinition } from "./seo-landing-data";
-import { SEO_LANDING_DEFINITIONS } from "./seo-landing-data";
+import { getSeoLandingDefinition } from "./seo-landing-data";
+import { getSeoPagePath } from "@/i18n/routing";
+import type { AppLocale } from "@/i18n/config";
+import { landingUi } from "./content/ui";
 import styles from "./seo-landing.module.css";
 
-export function SeoLandingContent({ definition, actions, finalAction }: { definition: SeoLandingDefinition; actions: ReactNode; finalAction?: ReactNode }) {
+export function SeoLandingContent({ definition, actions, finalAction, locale = "vi" }: { definition: SeoLandingDefinition; actions: ReactNode; finalAction?: ReactNode; locale?: AppLocale }) {
+    const t = landingUi[locale];
     return (
         <>
             <section className={styles.hero} aria-labelledby="seo-landing-title">
                 <div className={styles.heroGlow} aria-hidden="true" />
                 <div className={styles.container}>
-                    <nav className={styles.breadcrumb} aria-label="Đường dẫn trang">
-                        <Link href="/">Trang chủ</Link>
+                    <nav className={styles.breadcrumb} aria-label={t.breadcrumb}>
+                        {getSeoPagePath("home", locale) ? <Link href={getSeoPagePath("home", locale)!}>{t.home}</Link> : null}
                         <span aria-hidden="true">/</span>
                         <span aria-current="page">{definition.primaryKeyword}</span>
                     </nav>
@@ -27,7 +31,7 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
                                 <Check aria-hidden="true" />
                                 {definition.heroNote}
                             </p>
-                            <div className={styles.keywordList} aria-label="Chủ đề liên quan">
+                            <div className={styles.keywordList} aria-label={t.topics}>
                                 {definition.secondaryKeywords.map((keyword) => (
                                     <span key={keyword}>{keyword}</span>
                                 ))}
@@ -40,7 +44,7 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
 
             <section className={styles.showcase} data-seo-section="showcase" aria-labelledby="seo-showcase-title">
                 <div className={styles.container}>
-                    <SectionHeading eyebrow="WORKSPACE THỰC TẾ" title={definition.showcaseTitle} description={definition.showcaseDescription} id="seo-showcase-title" />
+                    <SectionHeading eyebrow={t.workspace} title={definition.showcaseTitle} description={definition.showcaseDescription} id="seo-showcase-title" />
                     <div className={styles.visualFrame}>
                         <div className={styles.visualBar} aria-hidden="true">
                             <span />
@@ -62,7 +66,7 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
 
             <section className={styles.section} data-seo-section="use-cases" aria-labelledby="seo-use-cases-title">
                 <div className={styles.container}>
-                    <SectionHeading eyebrow="ỨNG DỤNG" title={definition.useCasesTitle} description={definition.useCasesDescription} id="seo-use-cases-title" />
+                    <SectionHeading eyebrow={t.uses} title={definition.useCasesTitle} description={definition.useCasesDescription} id="seo-use-cases-title" />
                     <div className={styles.cardGrid}>
                         {definition.useCases.map((item, index) => (
                             <article key={item.title} className={styles.infoCard}>
@@ -77,7 +81,7 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
 
             <section className={`${styles.section} ${styles.stepsSection}`} data-seo-section="steps" aria-labelledby="seo-steps-title">
                 <div className={styles.container}>
-                    <SectionHeading eyebrow="CÁCH SỬ DỤNG" title={definition.stepsTitle} description={definition.stepsDescription} id="seo-steps-title" />
+                    <SectionHeading eyebrow={t.steps} title={definition.stepsTitle} description={definition.stepsDescription} id="seo-steps-title" />
                     <ol className={styles.stepsList}>
                         {definition.steps.map((step, index) => (
                             <li key={step.title}>
@@ -94,7 +98,7 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
 
             <section className={styles.section} data-seo-section="capabilities" aria-labelledby="seo-capabilities-title">
                 <div className={styles.container}>
-                    <SectionHeading eyebrow="NĂNG LỰC THỰC TẾ" title={definition.capabilitiesTitle} description={definition.capabilitiesDescription} id="seo-capabilities-title" />
+                    <SectionHeading eyebrow={t.capabilities} title={definition.capabilitiesTitle} description={definition.capabilitiesDescription} id="seo-capabilities-title" />
                     <div className={styles.capabilityGrid}>
                         {definition.capabilities.map((capability) => (
                             <article key={capability.title}>
@@ -113,7 +117,7 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
 
             <section className={`${styles.section} ${styles.faqSection}`} data-seo-section="faq" aria-labelledby="seo-faq-title">
                 <div className={styles.narrowContainer}>
-                    <SectionHeading eyebrow="CÂU HỎI THƯỜNG GẶP" title={`Câu hỏi thường gặp về ${definition.primaryKeyword}`} id="seo-faq-title" />
+                    <SectionHeading eyebrow={t.faq} title={`${t.faqTitle} ${definition.primaryKeyword}`} id="seo-faq-title" />
                     <div className={styles.faqList}>
                         {definition.faqs.map((faq) => (
                             <details key={faq.question}>
@@ -130,17 +134,19 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
 
             <section className={styles.section} data-seo-section="related" aria-labelledby="seo-related-title">
                 <div className={styles.container}>
-                    <SectionHeading eyebrow="CÔNG CỤ LIÊN QUAN" title="Tiếp tục quy trình sáng tạo của bạn" id="seo-related-title" />
+                    <SectionHeading eyebrow={t.related} title={t.relatedTitle} id="seo-related-title" />
                     <div className={styles.relatedGrid}>
                         {definition.related.map((slug) => {
-                            const related = SEO_LANDING_DEFINITIONS[slug];
+                            const related = getSeoLandingDefinition(slug, locale);
+                            const href = getSeoPagePath(slug, locale);
+                            if (!related || !href) return null;
                             return (
-                                <Link key={slug} href={`/${slug}`}>
+                                <Link key={slug} href={href}>
                                     <span>{related.eyebrow}</span>
                                     <h3>{related.h1}</h3>
                                     <p>{related.description}</p>
                                     <strong>
-                                        Khám phá công cụ <ArrowRight aria-hidden="true" />
+                                        {t.explore} <ArrowRight aria-hidden="true" />
                                     </strong>
                                 </Link>
                             );
@@ -152,7 +158,7 @@ export function SeoLandingContent({ definition, actions, finalAction }: { defini
             <section className={styles.finalCta} aria-labelledby="seo-final-cta-title">
                 <div className={styles.finalCtaGlow} aria-hidden="true" />
                 <div>
-                    <p className={styles.eyebrow}>BẮT ĐẦU VỚI HOTX AI</p>
+                    <p className={styles.eyebrow}>{t.start}</p>
                     <h2 id="seo-final-cta-title">{definition.finalCtaTitle}</h2>
                     <p>{definition.finalCtaDescription}</p>
                     <div className={styles.finalCtaAction}>{finalAction ?? actions}</div>

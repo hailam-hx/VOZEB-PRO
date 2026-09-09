@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const localeCookie = "vozeb-pro-locale";
 
-test("detects supported browser languages and falls back to Vietnamese", async ({ browser }, testInfo) => {
+test("keeps the unprefixed homepage Vietnamese regardless of browser language", async ({ browser }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Browser language detection only needs one desktop browser project");
     const baseURL = String(testInfo.project.use.baseURL);
     const cases = [
@@ -16,14 +16,14 @@ test("detects supported browser languages and falls back to Vietnamese", async (
         const context = await browser.newContext({ baseURL, locale: item.browserLocale });
         const page = await context.newPage();
         await page.goto("/");
-        await expect(page.locator("html")).toHaveAttribute("lang", item.htmlLang);
-        await expect(page.getByRole("heading", { level: 1, name: item.heading })).toBeVisible();
+        await expect(page.locator("html")).toHaveAttribute("lang", "vi");
+        await expect(page.getByRole("heading", { level: 1, name: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" })).toBeVisible();
         await context.close();
     }
 });
 
 test("switching language preserves the current URL and in-memory draft", async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== "chromium", "The desktop project covers state preservation");
+    await page.context().addCookies([{ name: localeCookie, value: "zh-CN", url: String(testInfo.project.use.baseURL) }]);
     await page.goto("/create");
     const draft = "Giữ nguyên bản nháp khi đổi ngôn ngữ";
     const composer = page.getByPlaceholder("输入你的创作想法、脚本或画面要求");
@@ -39,9 +39,9 @@ test("switching language preserves the current URL and in-memory draft", async (
     await expect.poll(async () => (await page.context().cookies()).find((cookie) => cookie.name === localeCookie)?.value).toBe("en");
 
     await page.goto("/");
-    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await expect(page.locator("html")).toHaveAttribute("lang", "vi");
     await page.reload();
-    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await expect(page.locator("html")).toHaveAttribute("lang", "vi");
 });
 
 test("admin remains Chinese without changing the user language cookie", async ({ page }, testInfo) => {
@@ -79,7 +79,7 @@ test("language menu remains inside a 390px viewport", async ({ page }, testInfo)
     test.skip(testInfo.project.name !== "chromium", "Dedicated mobile projects cover both target widths");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
-    await page.getByRole("button", { name: "切换语言" }).click();
+    await page.getByRole("button", { name: "Đổi ngôn ngữ" }).click();
     const menu = page.getByRole("menu");
     await expect(menu).toBeVisible();
     const bounds = await menu.boundingBox();

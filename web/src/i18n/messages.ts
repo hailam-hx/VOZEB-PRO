@@ -20,5 +20,18 @@ function mergeMessages(fallback: AbstractIntlMessages, messages: AbstractIntlMes
 }
 
 export function loadMessages(locale: AppLocale): AbstractIntlMessages {
-    return locale === "vi" ? vi : mergeMessages(vi, catalogs[locale]);
+    const messages = catalogs[locale];
+    for (const namespace of ["home", "public"] as const) assertCompleteCatalog(vi[namespace], messages[namespace], namespace);
+    return locale === "vi" ? vi : mergeMessages(vi, messages);
+}
+
+function assertCompleteCatalog(reference: AbstractIntlMessages, messages: AbstractIntlMessages, path: string) {
+    for (const [key, value] of Object.entries(reference)) {
+        const translated = messages?.[key];
+        const keyPath = `${path}.${key}`;
+        if (typeof value === "object") {
+            if (!translated || typeof translated !== "object") throw new Error(`Missing published translation: ${keyPath}`);
+            assertCompleteCatalog(value, translated, keyPath);
+        } else if (typeof translated !== "string" || !translated.trim()) throw new Error(`Missing published translation: ${keyPath}`);
+    }
 }

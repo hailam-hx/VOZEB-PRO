@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+it("takes the published SEO URL locale over a stale provider locale during navigation", () => {
+    expect(effectiveLocale("en", "/zh-cn/terms")).toBe("zh-CN");
+    expect(effectiveLocale("en", "/terms")).toBe("vi");
+    expect(effectiveLocale("vi", "/en/privacy")).toBe("en");
+    expect(effectiveLocale("en", "/create")).toBe("en");
+});
+
 import { antLocales, effectiveLocale, localeMetadata } from "@/i18n/runtime";
 
 describe("locale runtime mappings", () => {

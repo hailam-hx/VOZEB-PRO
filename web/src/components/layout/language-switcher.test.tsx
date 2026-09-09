@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { renderWithI18n } from "@/test/render-with-i18n";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/create", useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("@/i18n/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock("@/i18n/actions", () => ({ setLocalePreference: vi.fn() }));
 
 describe("LanguageSwitcher", () => {

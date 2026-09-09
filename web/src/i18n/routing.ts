@@ -123,3 +123,8 @@ function normalizeSeoPathname(pathname: string) {
 function isSeoPageId(value: unknown): value is SeoPageId {
     return seoPageIds.includes(value as SeoPageId);
 }
+
+export function getLocalizedSeoHref(href: string, locale: string): string | null {
+    const route = matchSeoRoute(href);
+    return route && isAppLocale(locale) ? getSeoPagePath(route.pageId, locale) : href;
+}

@@ -3,34 +3,65 @@ import Link from "next/link";
 import { ArrowLeft, Database, Eye, FileDown, MailCheck, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 
-import { getPublicSiteSettings } from "@/lib/server/site-metadata";
+import { getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
+import { requireSeoPageLocale, type LocalizedPageProps } from "@/i18n/seo-page";
+import { getSeoPagePath } from "@/i18n/routing";
+import { buildLocalizedSeoMetadata } from "@/i18n/seo-metadata";
+import { LanguageSwitcher } from "@/components/layout/language-switcher";
+import { serializeStructuredData } from "@/lib/structured-data";
 
 const highlightIcons = [Eye, Sparkles, FileDown] as const;
 const sectionParagraphCounts = [4, 2, 3, 2, 2, 3, 3] as const;
 
-export async function generateMetadata(): Promise<Metadata> {
-    const [site, t] = await Promise.all([getPublicSiteSettings(), getTranslations("public.privacy")]);
-    return {
+export async function generateMetadata({ params }: LocalizedPageProps): Promise<Metadata> {
+    const locale = requireSeoPageLocale("privacy", (await params).locale);
+    const [site, t] = await Promise.all([getPublicSiteSettings(), getTranslations({ locale, namespace: "public.privacy" })]);
+    return buildLocalizedSeoMetadata({
+        pageId: "privacy",
+        locale,
+        base: siteMetadataBase(),
+        siteName: site.title,
         title: t("title"),
         description: t("metadataDescription", { site: site.title }),
-        alternates: { canonical: "/privacy" },
-    };
+        keywords: [t("title"), site.title],
+        image: { src: "/seo/hotx-ai-og.webp", width: 1200, height: 630, alt: t("title") },
+    });
 }
 
-export default async function PrivacyPage() {
-    const [site, t] = await Promise.all([getPublicSiteSettings(), getTranslations("public.privacy")]);
+export default async function PrivacyPage({ params }: LocalizedPageProps) {
+    const locale = requireSeoPageLocale("privacy", (await params).locale);
+    const [site, t] = await Promise.all([getPublicSiteSettings(), getTranslations({ locale, namespace: "public.privacy" })]);
     const highlights = highlightIcons.map((icon, index) => ({ icon, title: t(`highlights.${index}.title`), body: t(`highlights.${index}.body`) }));
     const sections = sectionParagraphCounts.map((count, index) => ({ title: t(`sections.${index}.title`), paragraphs: Array.from({ length: count }, (_, paragraph) => t(`sections.${index}.paragraphs.${paragraph}`)) }));
     return (
         <main className="app-scroll-page bg-[#f7f8fa] text-stone-800 dark:bg-[#0f1114] dark:text-stone-200">
+            <script
+                id="seo-page-json-ld"
+                type="application/ld+json"
+                dangerouslySetInnerHTML={{
+                    __html: serializeStructuredData({
+                        "@context": "https://schema.org",
+                        "@type": "WebPage",
+                        url: new URL(getSeoPagePath("privacy", locale)!, siteMetadataBase()).toString(),
+                        name: t("title"),
+                        description: t("metadataDescription", { site: site.title }),
+                        inLanguage: locale,
+                    }),
+                }}
+            />
             <div className="mx-auto w-full max-w-5xl px-4 py-5 sm:px-8 sm:py-8">
-                <Link
-                    href="/"
-                    className="inline-flex h-9 items-center gap-2 rounded-full border border-stone-200 bg-white px-3.5 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-700 dark:border-white/10 dark:bg-white/5 dark:text-stone-200 dark:hover:border-emerald-500/50 dark:hover:text-emerald-200"
-                >
-                    <ArrowLeft className="size-4" />
-                    {t("backHome")}
-                </Link>
+                <div className="flex items-center justify-between gap-3">
+                    {getSeoPagePath("home", locale) ? (
+                        <Link
+                            href={getSeoPagePath("home", locale)!}
+                            className="inline-flex h-9 items-center gap-2 rounded-full border border-stone-200 bg-white px-3.5 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-700 dark:border-white/10 dark:bg-white/5 dark:text-stone-200 dark:hover:border-emerald-500/50 dark:hover:text-emerald-200"
+                        >
+                            <ArrowLeft className="size-4" />
+                            {t("backHome")}
+                        </Link>
+                    ) : null}
+                    <LanguageSwitcher className="inline-flex size-9 items-center justify-center rounded-full border border-current/20 text-inherit hover:bg-current/10 disabled:opacity-50" />
+                </div>
 
                 <article className="mt-5 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,.08)] dark:border-white/10 dark:bg-[#15181c] dark:shadow-black/30">
                     <header className="bg-[#101211] px-5 py-8 text-white sm:px-9 sm:py-10">

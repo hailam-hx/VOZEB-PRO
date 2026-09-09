@@ -1,8 +1,11 @@
 import type { MetadataRoute } from "next";
 
-import { SEO_LANDING_SLUGS, type SeoLandingSlug } from "@/app/seo-landings/seo-landing-data";
+import { type SeoLandingSlug } from "@/app/seo-landings/seo-landing-data";
 import { absoluteSiteUrl, siteMetadataBase } from "@/lib/server/site-metadata";
 import { listPublicWorkSitemapEntries } from "@/lib/server/work-governance-service";
+
+import { appLocales } from "@/i18n/config";
+import { seoPageIds, getSeoPagePath } from "@/i18n/routing";
 
 export const dynamic = "force-dynamic";
 
@@ -18,12 +21,21 @@ const landingPriorities: Record<SeoLandingSlug, number> = {
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const base = siteMetadataBase();
     const staticPages: Array<{ path: string; changeFrequency: MetadataRoute.Sitemap[number]["changeFrequency"]; priority: number }> = [
-        { path: "/", changeFrequency: "daily", priority: 1 },
-        ...SEO_LANDING_SLUGS.map((slug) => ({ path: `/${slug}`, changeFrequency: "weekly" as const, priority: landingPriorities[slug] })),
+        ...seoPageIds.flatMap((pageId) =>
+            appLocales.flatMap((locale) => {
+                const path = getSeoPagePath(pageId, locale);
+                if (!path) return [];
+                return [
+                    {
+                        path,
+                        changeFrequency: pageId === "home" ? ("daily" as const) : pageId === "terms" || pageId === "privacy" ? ("yearly" as const) : ("weekly" as const),
+                        priority: pageId === "home" ? 1 : pageId === "terms" || pageId === "privacy" ? 0.3 : landingPriorities[pageId],
+                    },
+                ];
+            }),
+        ),
         { path: "/gallery", changeFrequency: "daily", priority: 0.8 },
         { path: "/announcements", changeFrequency: "weekly", priority: 0.5 },
-        { path: "/terms", changeFrequency: "yearly", priority: 0.3 },
-        { path: "/privacy", changeFrequency: "yearly", priority: 0.3 },
     ];
     const staticEntries: MetadataRoute.Sitemap = staticPages.map(({ path, changeFrequency, priority }) => ({
         url: absoluteSiteUrl(path, base),

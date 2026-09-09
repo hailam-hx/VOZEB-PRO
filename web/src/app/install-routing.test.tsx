@@ -6,14 +6,14 @@ const mocks = vi.hoisted(() => ({
     redirect: vi.fn(),
 }));
 
-vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next/navigation", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/navigation")>()), redirect: mocks.redirect }));
 vi.mock("next-intl/server", () => ({ getTranslations: vi.fn(async () => (key: string) => key) }));
 vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.getInstallStatus }));
 vi.mock("@/lib/server/site-metadata", () => ({ getPublicSiteSettings: mocks.getPublicSiteSettings }));
 vi.mock("./install/install-scroll-unlock", () => ({ InstallScrollUnlock: () => null }));
 vi.mock("./install/install-wizard", () => ({ InstallWizard: () => null }));
 
-import HomePage from "./page";
+import HomePage from "./[locale]/page";
 import InstallPage from "./install/page";
 
 describe("installation page routing", () => {
@@ -37,14 +37,14 @@ describe("installation page routing", () => {
     it("redirects the homepage to installation until setup is complete", async () => {
         mocks.getInstallStatus.mockResolvedValue({ ready: false });
 
-        await expect(HomePage()).rejects.toThrow("redirect:/install");
+        await expect(HomePage({ params: Promise.resolve({ locale: "vi" }) })).rejects.toThrow("redirect:/install");
         expect(mocks.redirect).toHaveBeenCalledWith("/install");
     });
 
     it("renders the homepage after setup is complete", async () => {
         mocks.getInstallStatus.mockResolvedValue({ ready: true });
 
-        await expect(HomePage()).resolves.toBeTruthy();
+        await expect(HomePage({ params: Promise.resolve({ locale: "vi" }) })).resolves.toBeTruthy();
         expect(mocks.redirect).not.toHaveBeenCalled();
     });
 

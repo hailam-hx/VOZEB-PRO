@@ -1,4 +1,5 @@
 type WebsiteStructuredDataInput = {
+    locale?: string;
     name: string;
     alternateName?: string[];
     description: string;
@@ -20,6 +21,9 @@ type CreativeWorkStructuredDataInput = {
 };
 
 type SeoLandingStructuredDataInput = {
+    locale?: string;
+    homeUrl?: string;
+    homeName?: string;
     url: string;
     websiteId: string;
     title: string;
@@ -39,6 +43,7 @@ export function buildWebsiteStructuredData(input: WebsiteStructuredDataInput) {
         "@id": `${input.url}#website`,
         url: input.url,
         name: input.name,
+        ...(input.locale ? { inLanguage: input.locale } : {}),
         ...(input.alternateName?.length ? { alternateName: input.alternateName } : {}),
         description: input.description,
         publisher: {
@@ -52,7 +57,7 @@ export function buildWebsiteStructuredData(input: WebsiteStructuredDataInput) {
 }
 
 export function buildSeoLandingStructuredData(input: SeoLandingStructuredDataInput) {
-    const homeUrl = new URL("/", input.url).toString();
+    const homeUrl = input.homeUrl || new URL("/", input.url).toString();
     return {
         "@context": "https://schema.org",
         "@graph": [
@@ -62,7 +67,7 @@ export function buildSeoLandingStructuredData(input: SeoLandingStructuredDataInp
                 url: input.url,
                 name: input.title,
                 description: input.description,
-                inLanguage: "vi",
+                inLanguage: input.locale || "vi",
                 isPartOf: { "@id": input.websiteId },
                 ...(input.imageUrl ? { primaryImageOfPage: { "@type": "ImageObject", url: input.imageUrl } } : {}),
             },
@@ -70,7 +75,7 @@ export function buildSeoLandingStructuredData(input: SeoLandingStructuredDataInp
                 "@type": "BreadcrumbList",
                 "@id": `${input.url}#breadcrumb`,
                 itemListElement: [
-                    { "@type": "ListItem", position: 1, name: "Trang chủ", item: homeUrl },
+                    { "@type": "ListItem", position: 1, name: input.homeName || "Trang chủ", item: homeUrl },
                     { "@type": "ListItem", position: 2, name: input.breadcrumbName, item: input.url },
                 ],
             },
