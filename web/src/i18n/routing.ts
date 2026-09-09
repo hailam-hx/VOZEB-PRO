@@ -5,6 +5,7 @@ import { appLocales, defaultLocale, isAppLocale, localeCookieName, resolveLocale
 export const seoPageIds = ["home", "ai-image-generator", "ai-video-generator", "ai-voice-generator", "voice-cloning", "ai-short-drama", "ai-agent", "terms", "privacy"] as const;
 
 export type SeoPageId = (typeof seoPageIds)[number];
+export type SeoHreflang = "vi" | "en" | "zh-Hans" | "x-default";
 
 export type SeoPagePublication<Path extends string = string> = {
     internalPath: Path;
@@ -51,7 +52,7 @@ export const routing = defineRouting({
     pathnames: routingPathnames,
 });
 
-const hrefLangByLocale = { vi: "vi", en: "en", "zh-CN": "zh-Hans" } as const satisfies Record<AppLocale, string>;
+const hrefLangByLocale = { vi: "vi", en: "en", "zh-CN": "zh-Hans" } as const satisfies Record<AppLocale, Exclude<SeoHreflang, "x-default">>;
 
 export function createSeoPublicationHelpers(registry: SeoPublicationRegistry) {
     function isPublished(pageId: SeoPageId, locale: AppLocale): boolean {
@@ -65,8 +66,8 @@ export function createSeoPublicationHelpers(registry: SeoPublicationRegistry) {
         return pathname === "/" ? prefix || "/" : `${prefix}${pathname}`;
     }
 
-    function getAlternates(pageId: SeoPageId, base: URL): Partial<Record<(typeof hrefLangByLocale)[AppLocale] | "x-default", string>> {
-        const alternates: Record<string, string> = {};
+    function getAlternates(pageId: SeoPageId, base: URL): Partial<Record<SeoHreflang, string>> {
+        const alternates: Partial<Record<SeoHreflang, string>> = {};
         for (const locale of appLocales) {
             const pathname = getPagePath(pageId, locale);
             if (pathname) alternates[hrefLangByLocale[locale]] = new URL(pathname, base).toString();
@@ -89,7 +90,7 @@ export function getSeoPagePath(pageId: SeoPageId, locale: AppLocale) {
     return seoPublicationHelpers.getSeoPagePath(pageId, locale);
 }
 
-export function getPublishedSeoAlternates(pageId: SeoPageId, base: URL) {
+export function getPublishedSeoAlternates(pageId: SeoPageId, base: URL): Partial<Record<SeoHreflang, string>> {
     return seoPublicationHelpers.getPublishedSeoAlternates(pageId, base);
 }
 

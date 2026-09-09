@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+import { seoPublicationRegistry } from "@/i18n/routing";
+
 import { proxy } from "./proxy";
 
 describe("application proxy security", () => {
@@ -67,7 +69,38 @@ describe("application proxy security", () => {
         expect(response.headers.get("content-security-policy")).toContain("script-src 'self' 'nonce-");
     });
 
-    it.each(["/vi/gallery", "/en/share/work", "/zh-cn/u/creator", "/en/create", "/zh-cn/admin", "/fr/terms", "/en/terms/extra"])("returns 404 without localizing invalid or excluded route %s", (pathname) => {
+    it.each(["/u/privacy", "/share/terms", "/canvas/privacy", "/drama/terms"])("preserves nonlocalized dynamic route ownership for %s", (pathname) => {
+        const response = proxy(new NextRequest(`https://app.example.com${pathname}`));
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("x-middleware-request-x-vozeb-pathname")).toBe(pathname);
+        expect(response.headers.get("x-middleware-request-x-next-intl-locale")).toBeNull();
+    });
+
+    it("leaves unknown locale prefixes to their owning page or the Next.js router", () => {
+        const response = proxy(new NextRequest("https://app.example.com/fr/terms"));
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("x-middleware-request-x-vozeb-pathname")).toBe("/fr/terms");
+        expect(response.headers.get("x-middleware-request-x-next-intl-locale")).toBeNull();
+    });
+
+    it("returns 404 for a known SEO route whose locale pair is unpublished", () => {
+        const originallyPublished = seoPublicationRegistry.terms.published.en;
+        seoPublicationRegistry.terms.published.en = false;
+
+        try {
+            const response = proxy(new NextRequest("https://app.example.com/en/terms"));
+
+            expect(response.status).toBe(404);
+            expect(response.headers.get("x-middleware-request-x-next-intl-locale")).toBeNull();
+            expect(response.headers.get("content-security-policy")).toContain("script-src 'self' 'nonce-");
+        } finally {
+            seoPublicationRegistry.terms.published.en = originallyPublished;
+        }
+    });
+
+    it.each(["/vi/gallery", "/en/share/work", "/zh-cn/u/creator", "/en/create", "/zh-cn/admin", "/en/terms/extra"])("returns 404 without localizing invalid or excluded route %s", (pathname) => {
         const response = proxy(new NextRequest(`https://app.example.com${pathname}`));
 
         expect(response.status).toBe(404);

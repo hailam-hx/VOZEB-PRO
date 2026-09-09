@@ -72,9 +72,8 @@ function securedResponse(response: NextResponse, contentSecurityPolicy: string) 
 }
 
 function isInvalidLocalizedSeoRoute(pathname: string) {
-    const segments = pathname.split("/").filter(Boolean);
-    if (["vi", "en", "zh-cn"].includes(segments[0]?.toLowerCase())) return true;
-    return segments.length > 1 && matchSeoRoute(`/${segments.slice(1).join("/")}`) !== null;
+    const localePrefix = pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+    return ["vi", "en", "zh-cn"].includes(localePrefix);
 }
 
 function buildContentSecurityPolicy(nonce: string) {
