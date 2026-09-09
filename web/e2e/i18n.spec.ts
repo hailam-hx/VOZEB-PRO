@@ -2,6 +2,39 @@ import { expect, test } from "@playwright/test";
 
 const localeCookie = "vozeb-pro-locale";
 
+test("registration opens legal documents in the selected language without prefixing registration", async ({ browser }, testInfo) => {
+    const baseURL = String(testInfo.project.use.baseURL);
+    for (const locale of ["en", "zh-CN"] as const) {
+        const context = await browser.newContext({ baseURL, locale, viewport: testInfo.project.use.viewport || undefined, storageState: { cookies: [], origins: [] } });
+        await context.addCookies([{ name: localeCookie, value: locale, url: baseURL }]);
+        const page = await context.newPage();
+        try {
+            await page.goto("/register");
+            await expect(page).toHaveURL(`${baseURL}/register`);
+            await expect(page.locator("html")).toHaveAttribute("lang", locale);
+            for (const document of [
+                { slug: "terms", link: locale === "en" ? "Terms of service" : "服务条款", heading: locale === "en" ? "Terms of Service" : "服务条款" },
+                { slug: "privacy", link: locale === "en" ? "Privacy policy" : "隐私政策", heading: locale === "en" ? "Privacy Policy" : "隐私政策" },
+            ]) {
+                const href = `/${locale === "en" ? "en" : "zh-cn"}/${document.slug}`;
+                const link = page.getByRole("link", { name: document.link, exact: true });
+                await expect(link).toHaveAttribute("href", href);
+                const popupPromise = page.waitForEvent("popup");
+                await link.click();
+                const popup = await popupPromise;
+                await popup.waitForLoadState("domcontentloaded");
+                await expect(popup).toHaveURL(`${baseURL}${href}`);
+                await expect(popup.locator("html")).toHaveAttribute("lang", locale);
+                await expect(popup.getByRole("heading", { level: 1, name: document.heading, exact: true })).toBeVisible();
+                await popup.close();
+            }
+            await expect(page).toHaveURL(`${baseURL}/register`);
+        } finally {
+            await context.close();
+        }
+    }
+});
+
 test("keeps the unprefixed homepage Vietnamese regardless of browser language", async ({ browser }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Browser language detection only needs one desktop browser project");
     const baseURL = String(testInfo.project.use.baseURL);

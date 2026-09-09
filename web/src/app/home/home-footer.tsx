@@ -36,6 +36,13 @@ export function HomeFooter() {
     const t = useTranslations("home");
     const publicT = useTranslations("public");
     const { site, openTopUp, openProtectedPath } = useHomeActions();
+    const homeHref = getLocalizedSeoHref("/", locale);
+    const brand = (
+        <>
+            <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
+            <span>{site.title}</span>
+        </>
+    );
     const friendLinks = site.friendLinks.filter((item) => item.enabled && item.label.trim() && item.url.trim());
     const socials = Object.entries(site.socials).filter(([, item]) => item.enabled && item.label.trim() && item.url.trim());
     const copyright = site.footerCopyright?.trim();
@@ -52,10 +59,13 @@ export function HomeFooter() {
         <footer className={styles.footer}>
             <div className={styles.footerGrid}>
                 <div className={styles.footerBrand}>
-                    <Link href={getLocalizedSeoHref("/", locale) || "#"} className={styles.footerLogo}>
-                        <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
-                        <span>{site.title}</span>
-                    </Link>
+                    {homeHref ? (
+                        <Link href={homeHref} className={styles.footerLogo}>
+                            {brand}
+                        </Link>
+                    ) : (
+                        <div className={styles.footerLogo}>{brand}</div>
+                    )}
                     {description ? <p>{description}</p> : null}
                     {socials.length ? (
                         <div className={styles.footerSocials}>

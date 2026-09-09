@@ -23,6 +23,13 @@ export function HomeHeader() {
     const navItemRefs = useRef<(HTMLElement | null)[]>([]);
     const hoveredNavIndex = useRef<number | null>(null);
     const { authenticated, site, openLogin, openTopUp, openProtectedPath } = useHomeActions();
+    const homeHref = getLocalizedSeoHref("/", locale);
+    const brand = (
+        <>
+            <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
+            <span>{site.title}</span>
+        </>
+    );
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
 
@@ -62,10 +69,13 @@ export function HomeHeader() {
     return (
         <header className={styles.header}>
             <div className={styles.headerInner}>
-                <Link href={getLocalizedSeoHref("/", locale) || "#"} className={styles.brand} aria-label={`${site.title} ${t("home")}`}>
-                    <SiteLogo logoUrl={site.logoUrl} className={styles.brandLogo} />
-                    <span>{site.title}</span>
-                </Link>
+                {homeHref ? (
+                    <Link href={homeHref} className={styles.brand} aria-label={`${site.title} ${t("home")}`}>
+                        {brand}
+                    </Link>
+                ) : (
+                    <div className={styles.brand}>{brand}</div>
+                )}
 
                 <nav
                     className={styles.desktopNav}

@@ -4,11 +4,12 @@ import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, ShieldCheck, UserRound } from "lucide-react";
 import { App, Button, Checkbox, Input } from "antd";
 
 import { SiteLogo } from "@/components/layout/site-logo";
+import { getLocalizedSeoHref } from "@/i18n/routing";
 import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { type LocalUser, useUserStore } from "@/stores/use-user-store";
@@ -48,10 +49,12 @@ export function AuthForm({
     inviteError,
 }: AuthFormProps) {
     const t = useTranslations("auth");
+    const locale = useLocale();
     const router = useRouter();
     const { message } = App.useApp();
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
     const siteTitle = resolveSiteTitle(site.title);
+    const [termsHref, privacyHref] = [site.termsUrl?.trim() ? site.termsUrl : "/terms", site.privacyUrl?.trim() ? site.privacyUrl : "/privacy"].map((href) => (href === "/terms" || href === "/privacy" ? getLocalizedSeoHref(href, locale) : href));
     const setUser = useUserStore((state) => state.setUser);
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
@@ -280,13 +283,21 @@ export function AuthForm({
                     <Checkbox checked={policyAccepted} disabled={submitting || disabled} onChange={(event) => setPolicyAccepted(event.target.checked)}>
                         <span className="text-sm leading-6 text-stone-600 dark:text-stone-300">
                             {t("policyPrefix")}
-                            <a className="mx-1 font-medium text-stone-950 hover:underline dark:text-white" href={site.termsUrl || "/terms"} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-                                {t("terms")}
-                            </a>
+                            {termsHref ? (
+                                <a className="mx-1 font-medium text-stone-950 hover:underline dark:text-white" href={termsHref} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                    {t("terms")}
+                                </a>
+                            ) : (
+                                <span className="mx-1 font-medium text-stone-950 dark:text-white">{t("terms")}</span>
+                            )}
                             {t("and")}
-                            <a className="ml-1 font-medium text-stone-950 hover:underline dark:text-white" href={site.privacyUrl || "/privacy"} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-                                {t("privacy")}
-                            </a>
+                            {privacyHref ? (
+                                <a className="ml-1 font-medium text-stone-950 hover:underline dark:text-white" href={privacyHref} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                    {t("privacy")}
+                                </a>
+                            ) : (
+                                <span className="ml-1 font-medium text-stone-950 dark:text-white">{t("privacy")}</span>
+                            )}
                         </span>
                     </Checkbox>
                 ) : null}
