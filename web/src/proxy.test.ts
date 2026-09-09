@@ -39,6 +39,40 @@ describe("application proxy security", () => {
 
         expect(response.headers.get("x-middleware-request-x-vozeb-pathname")).toBe("/create");
     });
+
+    it("composes next-intl only for published SEO routes while preserving security headers", () => {
+        const localized = proxy(new NextRequest("https://app.example.com/en/terms", { headers: { cookie: "vozeb-pro-locale=zh-CN" } }));
+
+        expect(localized.status).toBe(200);
+        expect(localized.headers.get("x-middleware-request-x-next-intl-locale")).toBe("en");
+        expect(localized.headers.get("x-middleware-request-x-vozeb-pathname")).toBe("/en/terms");
+        expect(localized.headers.get("content-security-policy")).toContain("script-src 'self' 'nonce-");
+        expect(localized.headers.get("link")).toBeNull();
+
+        const vietnamese = proxy(new NextRequest("https://app.example.com/terms"));
+        expect(vietnamese.headers.get("x-middleware-request-x-next-intl-locale")).toBe("vi");
+        expect(vietnamese.headers.get("x-middleware-rewrite")).toBe("https://app.example.com/vi/terms");
+
+        const excluded = proxy(new NextRequest("https://app.example.com/en/gallery"));
+        expect(excluded.status).toBe(404);
+        expect(excluded.headers.get("x-middleware-request-x-next-intl-locale")).toBeNull();
+        expect(excluded.headers.get("content-security-policy")).toContain("script-src 'self' 'nonce-");
+    });
+
+    it("permanently redirects valid Vietnamese-prefixed SEO URLs without dropping the query", () => {
+        const response = proxy(new NextRequest("https://app.example.com/vi/ai-agent?source=legacy&campaign=launch"));
+
+        expect(response.status).toBe(308);
+        expect(response.headers.get("location")).toBe("https://app.example.com/ai-agent?source=legacy&campaign=launch");
+        expect(response.headers.get("content-security-policy")).toContain("script-src 'self' 'nonce-");
+    });
+
+    it.each(["/vi/gallery", "/en/share/work", "/zh-cn/u/creator", "/en/create", "/zh-cn/admin", "/fr/terms", "/en/terms/extra"])("returns 404 without localizing invalid or excluded route %s", (pathname) => {
+        const response = proxy(new NextRequest(`https://app.example.com${pathname}`));
+
+        expect(response.status).toBe(404);
+        expect(response.headers.get("x-middleware-request-x-next-intl-locale")).toBeNull();
+    });
 });
 
 function writeRequest(headers: Record<string, string>) {

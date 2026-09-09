@@ -49,12 +49,15 @@ function isWellFormedLocale(locale: string) {
 }
 
 export function resolveLocale({
+    routeLocale,
     cookieLocale,
     acceptLanguage,
 }: {
+    routeLocale?: AppLocale | null;
     cookieLocale?: string | null;
     acceptLanguage?: string | null;
 } = {}): AppLocale {
+    if (isAppLocale(routeLocale)) return routeLocale;
     if (isAppLocale(cookieLocale)) return cookieLocale;
 
     const requested = new Negotiator({ headers: { "accept-language": acceptLanguage || "" } }).languages().map(normalizeBrowserLocale).filter(isWellFormedLocale);

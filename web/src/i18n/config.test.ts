@@ -7,6 +7,10 @@ describe("application locale resolution", () => {
         expect(resolveLocale({ cookieLocale: "en", acceptLanguage: "zh-CN,zh;q=0.9" })).toBe("en");
     });
 
+    it("prefers an explicit SEO route locale over the cookie and Accept-Language", () => {
+        expect(resolveLocale({ routeLocale: "en", cookieLocale: "zh-CN", acceptLanguage: "vi-VN,vi;q=0.9" })).toBe("en");
+    });
+
     it.each([
         ["vi-VN,vi;q=0.9", "vi"],
         ["en-GB,en;q=0.9", "en"],

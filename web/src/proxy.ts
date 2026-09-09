@@ -1,5 +1,10 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import createMiddleware from "next-intl/middleware";
+
+import { getSeoPagePath, matchSeoRoute, routing } from "@/i18n/routing";
 import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
+
+const intlMiddleware = createMiddleware(routing);
 
 export function proxy(request: NextRequest) {
     const nonce = crypto.randomUUID().replaceAll("-", "");
@@ -9,23 +14,35 @@ export function proxy(request: NextRequest) {
     requestHeaders.set("x-vozeb-pathname", request.nextUrl.pathname);
     requestHeaders.set("content-security-policy", contentSecurityPolicy);
 
-    if (!request.nextUrl.pathname.startsWith("/api/") || request.nextUrl.pathname.startsWith("/api/billing/webhooks/") || ["GET", "HEAD", "OPTIONS"].includes(request.method)) {
-        return securedNextResponse(requestHeaders, contentSecurityPolicy);
-    }
+    if (request.nextUrl.pathname.startsWith("/api/") && !request.nextUrl.pathname.startsWith("/api/billing/webhooks/") && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+        const requestOrigin = publicRequestOrigin(request);
+        const origin = request.headers.get("origin");
+        if (origin && origin !== requestOrigin) return securedJsonResponse({ error: "跨站请求已被拦截" }, 403, contentSecurityPolicy);
 
-    const requestOrigin = publicRequestOrigin(request);
-    const origin = request.headers.get("origin");
-    if (origin && origin !== requestOrigin) return securedJsonResponse({ error: "跨站请求已被拦截" }, 403, contentSecurityPolicy);
-
-    const referer = request.headers.get("referer");
-    if (referer) {
-        try {
-            if (new URL(referer).origin !== requestOrigin) return securedJsonResponse({ error: "跨站请求已被拦截" }, 403, contentSecurityPolicy);
-        } catch {
-            return securedJsonResponse({ error: "请求来源无效" }, 403, contentSecurityPolicy);
+        const referer = request.headers.get("referer");
+        if (referer) {
+            try {
+                if (new URL(referer).origin !== requestOrigin) return securedJsonResponse({ error: "跨站请求已被拦截" }, 403, contentSecurityPolicy);
+            } catch {
+                return securedJsonResponse({ error: "请求来源无效" }, 403, contentSecurityPolicy);
+            }
         }
     }
 
+    if (request.nextUrl.pathname.startsWith("/api/")) return securedNextResponse(requestHeaders, contentSecurityPolicy);
+
+    const seoRoute = matchSeoRoute(request.nextUrl.pathname);
+    if (seoRoute) {
+        if (!seoRoute.published) return securedNotFoundResponse(contentSecurityPolicy);
+        if (seoRoute.locale === "vi" && seoRoute.explicitPrefix) {
+            const redirectUrl = request.nextUrl.clone();
+            redirectUrl.pathname = getSeoPagePath(seoRoute.pageId, "vi") || "/";
+            return securedResponse(NextResponse.redirect(redirectUrl, 308), contentSecurityPolicy);
+        }
+        return securedResponse(intlMiddleware(new NextRequest(request, { headers: requestHeaders })), contentSecurityPolicy);
+    }
+
+    if (isInvalidLocalizedSeoRoute(request.nextUrl.pathname)) return securedNotFoundResponse(contentSecurityPolicy);
     return securedNextResponse(requestHeaders, contentSecurityPolicy);
 }
 
@@ -43,6 +60,21 @@ function securedJsonResponse(body: unknown, status: number, contentSecurityPolic
     const response = NextResponse.json(body, { status });
     response.headers.set("Content-Security-Policy", contentSecurityPolicy);
     return response;
+}
+
+function securedNotFoundResponse(contentSecurityPolicy: string) {
+    return securedResponse(new NextResponse(null, { status: 404 }), contentSecurityPolicy);
+}
+
+function securedResponse(response: NextResponse, contentSecurityPolicy: string) {
+    response.headers.set("Content-Security-Policy", contentSecurityPolicy);
+    return response;
+}
+
+function isInvalidLocalizedSeoRoute(pathname: string) {
+    const segments = pathname.split("/").filter(Boolean);
+    if (["vi", "en", "zh-cn"].includes(segments[0]?.toLowerCase())) return true;
+    return segments.length > 1 && matchSeoRoute(`/${segments.slice(1).join("/")}`) !== null;
 }
 
 function buildContentSecurityPolicy(nonce: string) {
