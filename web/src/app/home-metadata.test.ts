@@ -1,146 +1,64 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
+import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store-foundation";
 
-import { builtInSiteCopy } from "@/i18n/site-copy";
-
-const expectedDescription = "HOTX AI là nền tảng sáng tạo AI giúp bạn tạo ảnh, video, giọng nói, nhân bản giọng nói và sử dụng AI Agent trong một quy trình thống nhất.";
-
-const mocks = vi.hoisted(() => ({
-    getPublicSiteSettings: vi.fn(),
-    getInstallStatus: vi.fn(async () => ({ ready: true })),
-    headers: vi.fn(async () => new Headers({ "x-vozeb-pathname": "/" })),
-    getLocale: vi.fn(async () => "vi"),
-    getTranslations: vi.fn(async () => (key: string) => {
-        if (key === "metadataDescription") return expectedDescription;
-        if (key === "socialImageAlt") return "HOTX AI – Nền tảng sáng tạo AI cho ảnh, video, giọng nói và AI Agent";
-        if (key === "footerDefaultDescription") return "Mô tả footer cũ";
-        if (key === "footerDefaultKeywords") return "HOTX AI,tạo ảnh AI,tạo video AI";
-        return key;
-    }),
-}));
-
+const seo = {
+    vi: { title: "Tiêu đề tùy chỉnh", description: "Mô tả tùy chỉnh", keywords: "ảnh,video" },
+    en: { title: "Custom English title", description: "Custom English description", keywords: "image,video" },
+    "zh-CN": { title: "自定义中文标题", description: "自定义中文描述", keywords: "图片,视频" },
+};
+const mocks = vi.hoisted(() => ({ getPublicSiteSettings: vi.fn(), getLocale: vi.fn(async () => "vi"), headers: vi.fn(async () => new Headers({ "x-vozeb-pathname": "/" })) }));
 vi.mock("next/headers", () => ({ headers: mocks.headers }));
-vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.getInstallStatus }));
-vi.mock("next-intl/server", () => ({
-    getLocale: mocks.getLocale,
-    getMessages: vi.fn(),
-    getTranslations: mocks.getTranslations,
-}));
+vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: vi.fn(async () => ({ ready: true })) }));
+vi.mock("next-intl/server", () => ({ getLocale: mocks.getLocale, getMessages: vi.fn(), getTranslations: vi.fn(async () => (key: string) => key) }));
 vi.mock("@/lib/server/site-metadata", () => ({
     getPublicSiteSettings: mocks.getPublicSiteSettings,
     siteMetadataBase: () => new URL("https://hotx-ai.com"),
     absoluteSiteUrl: (value: string, base = new URL("https://hotx-ai.com")) => new URL(value, base).toString(),
     browserIconHref: () => "/icon.svg",
 }));
-
 import { generateMetadata as generateRootMetadata } from "./layout";
 import LocalizedLayout from "./[locale]/layout";
-import HomePage, { generateMetadata as generateHomepageMetadata } from "./[locale]/page";
+import HomePage, { generateMetadata } from "./[locale]/page";
 
 describe("homepage metadata", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getPublicSiteSettings.mockResolvedValue({
-            title: "HOTX AI",
-            logoUrl: "/logo.svg",
-            seoTitle: "HOTX AI - Nền tảng tạo ảnh, video và giọng nói bằng AI",
-            seoDescription: builtInSiteCopy.seoDescription,
-            seoKeywords: builtInSiteCopy.seoKeywords,
+        mocks.getPublicSiteSettings.mockResolvedValue({ ...DEFAULT_SITE_SETTINGS, title: "HOTX AI", seo });
+    });
+    for (const [locale, path, ogLocale] of [
+        ["vi", "/", "vi_VN"],
+        ["en", "/en", "en_US"],
+        ["zh-CN", "/zh-cn", "zh_CN"],
+    ] as const) {
+        it(`reads only ${locale} SEO for metadata, initial state and Website JSON-LD`, async () => {
+            const params = Promise.resolve({ locale });
+            const metadata = await generateMetadata({ params });
+            expect(metadata).toMatchObject({
+                title: seo[locale].title,
+                description: seo[locale].description,
+                keywords: seo[locale].keywords.split(","),
+                alternates: { canonical: `https://hotx-ai.com${path}` },
+                openGraph: { title: seo[locale].title, description: seo[locale].description, locale: ogLocale, images: [{ url: "https://hotx-ai.com/seo/hotx-ai-og.webp", width: 1200, height: 630 }] },
+                twitter: { card: "summary_large_image", title: seo[locale].title, description: seo[locale].description },
+            });
+            expect(metadata.alternates?.languages).toEqual({ vi: "https://hotx-ai.com/", en: "https://hotx-ai.com/en", "zh-Hans": "https://hotx-ai.com/zh-cn", "x-default": "https://hotx-ai.com/" });
+            const homepage = await HomePage({ params });
+            expect(homepage.props.initialSite.seo[locale]).toEqual(seo[locale]);
+            const layout = await LocalizedLayout({ children: null, params });
+            const data = JSON.parse(layout.props.children[0].props.dangerouslySetInnerHTML.__html);
+            expect(data).toMatchObject({ url: `https://hotx-ai.com${path}`, "@id": `https://hotx-ai.com${path}#website`, inLanguage: locale, description: seo[locale].description });
         });
-    });
-
-    it("uses the explicit EN route for self canonical despite a VI request locale", async () => {
-        const metadata = await generateHomepageMetadata({ params: Promise.resolve({ locale: "en" }) });
-        expect(metadata.alternates).toMatchObject({ canonical: "https://hotx-ai.com/en", languages: { vi: "https://hotx-ai.com/", en: "https://hotx-ai.com/en", "zh-Hans": "https://hotx-ai.com/zh-cn", "x-default": "https://hotx-ai.com/" } });
-        expect(metadata.openGraph).toMatchObject({ locale: "en_US" });
-    });
-
-    it("publishes the canonical URL and a dedicated large social image", async () => {
-        const metadata = await generateHomepageMetadata({ params: Promise.resolve({ locale: "vi" }) });
-
-        expect(metadata).toMatchObject({
-            metadataBase: null,
-            description: expectedDescription,
-            alternates: { canonical: "https://hotx-ai.com/" },
-            openGraph: {
-                type: "website",
-                url: "https://hotx-ai.com/",
-                description: expectedDescription,
-                images: [
-                    {
-                        url: "https://hotx-ai.com/seo/hotx-ai-og.webp",
-                        width: 1200,
-                        height: 630,
-                        alt: "HOTX AI – Nền tảng sáng tạo AI cho ảnh, video, giọng nói và AI Agent",
-                    },
-                ],
-            },
-            twitter: {
-                card: "summary_large_image",
-                description: expectedDescription,
-                images: [{ url: "https://hotx-ai.com/seo/hotx-ai-og.webp", alt: "HOTX AI – Nền tảng sáng tạo AI cho ảnh, video, giọng nói và AI Agent", width: 1200, height: 630 }],
-            },
-        });
-    });
-
-    it("passes the localized SEO description into the homepage client state", async () => {
-        const homepage = await HomePage({ params: Promise.resolve({ locale: "vi" }) });
-
-        expect(homepage.props.initialSite.seoDescription).toBe(expectedDescription);
-    });
-
-    it("does not put scalar Vietnamese copy into an English homepage state", async () => {
-        mocks.getPublicSiteSettings.mockResolvedValueOnce({ title: "HOTX AI", seoDescription: "Nội dung tùy chỉnh tiếng Việt" });
-        mocks.getTranslations.mockResolvedValueOnce((key: string) => (key === "metadataDescription" ? "An English creation platform description." : key));
-        const homepage = await HomePage({ params: Promise.resolve({ locale: "en" }) });
-        expect(homepage.props.initialSite.seoDescription).toBe("An English creation platform description.");
-    });
-
-    it("uses the locale layout identity in Website JSON-LD", async () => {
-        const layout = await LocalizedLayout({ children: null, params: Promise.resolve({ locale: "en" }) });
-        const data = JSON.parse(layout.props.children[0].props.dangerouslySetInnerHTML.__html);
-        expect(data).toMatchObject({ url: "https://hotx-ai.com/en", "@id": "https://hotx-ai.com/en#website", inLanguage: "en" });
-    });
-
+    }
     it("keeps homepage social metadata out of the root layout", async () => {
         const metadata = await generateRootMetadata();
-
+        expect(metadata).toMatchObject({ title: seo.vi.title, description: seo.vi.description });
         expect(metadata.alternates).toBeUndefined();
         expect(metadata.openGraph).toBeUndefined();
         expect(metadata.twitter).toBeUndefined();
     });
-
-    it("ships the social image as a 1200 by 630 WebP asset", async () => {
-        const image = await sharp(fileURLToPath(new URL("../../public/seo/hotx-ai-og.webp", import.meta.url))).metadata();
-
-        expect(image).toMatchObject({ width: 1200, height: 630, format: "webp" });
-    });
-
-    it("preserves a genuinely customized SEO description", async () => {
-        mocks.getPublicSiteSettings.mockResolvedValueOnce({
-            title: "HOTX AI",
-            logoUrl: "/logo.svg",
-            seoTitle: "Custom title",
-            seoDescription: "Custom homepage description",
-            seoKeywords: "custom,keywords",
-        });
-
-        const metadata = await generateHomepageMetadata({ params: Promise.resolve({ locale: "vi" }) });
-
-        expect(metadata.description).toBe("Custom homepage description");
-        expect(metadata.openGraph?.description).toBe("Custom homepage description");
-    });
-
-    it("replaces the previous bundled Vietnamese homepage description", async () => {
-        mocks.getPublicSiteSettings.mockResolvedValueOnce({
-            title: "HOTX AI",
-            logoUrl: "/logo.svg",
-            seoTitle: "HOTX AI - Nền tảng tạo ảnh, video và giọng nói bằng AI",
-            seoDescription: "HOTX AI là nền tảng sáng tạo nội dung bằng AI, hỗ trợ tạo ảnh, tạo video, giọng nói AI, nhân bản giọng nói, AI Agent, video ngắn và canvas sáng tạo trong một nền tảng duy nhất.",
-            seoKeywords: "HOTX AI,AI Agent",
-        });
-
-        expect((await generateHomepageMetadata({ params: Promise.resolve({ locale: "vi" }) })).description).toBe(expectedDescription);
+    it("ships a 1200 by 630 WebP social image", async () => {
+        expect(await sharp(fileURLToPath(new URL("../../public/seo/hotx-ai-og.webp", import.meta.url))).metadata()).toMatchObject({ width: 1200, height: 630, format: "webp" });
     });
 });

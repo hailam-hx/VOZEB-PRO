@@ -1,13 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { LocaleProvider } from "@/i18n/locale-provider";
-import { getLocale, getMessages, getTimeZone, getTranslations } from "next-intl/server";
+import { getLocale, getMessages, getTimeZone } from "next-intl/server";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
 import { WebsiteStructuredData } from "@/components/layout/website-structured-data";
 import { defaultLocale, isAppLocale } from "@/i18n/config";
 import { effectiveLocale, localeMetadata } from "@/i18n/runtime";
-import { builtInSiteCopy, localizeBuiltInSiteCopy, localizeHomepageSeoDescription } from "@/i18n/site-copy";
 import { appStorageKey } from "@/lib/storage-keys";
 import { absoluteSiteUrl, browserIconHref, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { buildWebsiteStructuredData, serializeStructuredData } from "@/lib/structured-data";
@@ -30,11 +29,8 @@ export const viewport: Viewport = {
 export async function generateMetadata(): Promise<Metadata> {
     const [site, requestedLocale, requestHeaders] = await Promise.all([getPublicSiteSettings(), getLocale(), headers()]);
     const locale = effectiveLocale(isAppLocale(requestedLocale) ? requestedLocale : defaultLocale, requestHeaders.get("x-vozeb-pathname") || "/");
-    const homeT = await getTranslations({ locale, namespace: "home" });
     const base = siteMetadataBase();
-    const title = site.seoTitle || site.title;
-    const description = localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription"));
-    const keywords = localizeBuiltInSiteCopy(site.seoKeywords, builtInSiteCopy.seoKeywords, homeT("footerDefaultKeywords"));
+    const { title, description, keywords } = site.seo[locale];
     return {
         metadataBase: base,
         title,
@@ -56,13 +52,12 @@ export default async function RootLayout({
     const selectedLocale = isAppLocale(requestedLocale) ? requestedLocale : defaultLocale;
     const locale = effectiveLocale(selectedLocale, requestHeaders.get("x-vozeb-pathname") || "/");
     const iconHref = browserIconHref(site);
-    const homeT = await getTranslations({ locale, namespace: "home" });
     const base = siteMetadataBase();
     const websiteStructuredData = buildWebsiteStructuredData({
         name: site.title,
         alternateName: ["HOTXAI"],
         locale,
-        description: localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription")),
+        description: site.seo[locale].description,
         url: absoluteSiteUrl("/", base),
         logoUrl: absoluteSiteUrl(site.logoUrl || "/logo.svg", base),
     });

@@ -1,3 +1,4 @@
+import { DEFAULT_LOCALIZED_SEO } from "@/i18n/site-copy";
 import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image";
 import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
@@ -82,9 +83,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
     title: "VOZEB PRO",
     logoUrl: "/logo.svg",
     iconUrl: "/icon.svg",
-    seoTitle: "VOZEB PRO",
-    seoDescription: "面向 Agent、图片、视频、画布与短剧生产的一体化 AI 创作工作台",
-    seoKeywords: "VOZEB PRO,AI Agent,AI 绘图,AI 视频,画布,短剧,提示词库,素材管理",
+    seo: DEFAULT_LOCALIZED_SEO,
     footerCopyright: "© 2026 VOZEB PRO. All rights reserved.",
     termsUrl: "/terms",
     termsVersion: "1.0",

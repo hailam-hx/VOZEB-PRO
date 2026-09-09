@@ -22,7 +22,7 @@ describe("installation page routing", () => {
         mocks.getPublicSiteSettings.mockResolvedValue({
             title: "VOZEB PRO",
             logoUrl: "/logo.svg",
-            seoDescription: "",
+            seo: {},
             footerCopyright: "",
             privacyUrl: "",
             termsUrl: "",

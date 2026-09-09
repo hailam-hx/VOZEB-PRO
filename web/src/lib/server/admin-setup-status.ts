@@ -54,7 +54,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
     const paymentProviders = paymentConfig.providers.filter((provider) => provider.ready && provider.id !== "manual").map((provider) => provider.name);
     const databaseProvider = getDatabaseProvider();
     const hasPostgres = databaseProvider === "postgres" && Boolean(getPostgresConnectionString());
-    const siteReady = Boolean(settings.site.title.trim() && settings.site.logoUrl.trim() && settings.site.seoTitle.trim() && settings.site.seoDescription.trim() && settings.site.termsUrl.trim() && settings.site.privacyUrl.trim());
+    const siteReady = Boolean(settings.site.title.trim() && settings.site.logoUrl.trim() && Object.values(settings.site.seo).every((seo) => seo.title.trim() && seo.description.trim()) && settings.site.termsUrl.trim() && settings.site.privacyUrl.trim());
     const channelModels = new Set(settings.systemChannels.flatMap((channel) => channel.models).filter(Boolean));
     const channelReady = enabledChannels > 0 && channelModels.size > 0;
     const defaultModelsReady = Boolean(settings.defaultModels.textModel || settings.defaultModels.imageModel || settings.defaultModels.videoModel);
@@ -73,7 +73,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
             href: "/admin?section=site",
             actionLabel: "配置站点",
             accent: "blue",
-            facts: [settings.site.title || "未设置站点名", settings.site.logoUrl ? "Logo 已设置" : "Logo 未设置", settings.site.seoDescription ? "SEO 摘要已填写" : "SEO 摘要未填写"],
+            facts: [settings.site.title || "未设置站点名", settings.site.logoUrl ? "Logo 已设置" : "Logo 未设置", Object.values(settings.site.seo).every((seo) => seo.description.trim()) ? "SEO 摘要已填写" : "SEO 摘要未填写"],
         },
         {
             id: "models",

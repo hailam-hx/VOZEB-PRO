@@ -354,14 +354,25 @@ export function normalizeDataLifecycle(settings: Partial<DataLifecycleSettings> 
 
 export function normalizeSiteSettings(settings: Partial<SiteSettings> | undefined): SiteSettings {
     const title = normalizeText(settings?.title, DEFAULT_SITE_SETTINGS.title, 40);
-    const seoTitle = normalizeBrandDefault(settings?.seoTitle, DEFAULT_SITE_SETTINGS.seoTitle, title, title, 72);
     return {
         title,
         logoUrl: normalizeLogoUrl(settings?.logoUrl),
         iconUrl: normalizeSiteIconUrl(settings?.iconUrl),
-        seoTitle,
-        seoDescription: normalizeText(settings?.seoDescription, DEFAULT_SITE_SETTINGS.seoDescription, 180),
-        seoKeywords: normalizeBrandDefault(settings?.seoKeywords, DEFAULT_SITE_SETTINGS.seoKeywords, title, DEFAULT_SITE_SETTINGS.seoKeywords.replace(DEFAULT_SITE_SETTINGS.title, title), 240),
+        seo: Object.fromEntries(
+            Object.entries(DEFAULT_SITE_SETTINGS.seo).map(([locale, defaults]) => {
+                const entry = settings?.seo?.[locale as keyof SiteSettings["seo"]];
+                return [
+                    locale,
+                    Object.fromEntries(
+                        Object.entries({ title: 72, description: 180, keywords: 240 }).map(([field, limit]) => {
+                            const key = field as keyof typeof defaults;
+                            const value = entry?.[key];
+                            return [key, (typeof value === "string" && value.trim() ? value.trim() : defaults[key]).slice(0, limit)];
+                        }),
+                    ),
+                ];
+            }),
+        ) as SiteSettings["seo"],
         footerCopyright: normalizeBrandDefault(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, title, DEFAULT_SITE_SETTINGS.footerCopyright.replace(DEFAULT_SITE_SETTINGS.title, title), 120),
         termsUrl: normalizeLinkUrl(settings?.termsUrl, DEFAULT_SITE_SETTINGS.termsUrl),
         termsVersion: normalizeText(settings?.termsVersion, DEFAULT_SITE_SETTINGS.termsVersion, 80),
@@ -458,8 +469,6 @@ export function normalizeText(value: unknown, fallback: string, maxLength: numbe
 }
 
 export function repairKnownMojibakeText(value: string) {
-    if (value.includes("VOZEB PRO") && value.includes("AI") && !value.includes("绘图") && value.includes(",")) return DEFAULT_SITE_SETTINGS.seoKeywords;
-    if (value.includes("VOZEB PRO") && value.includes("AI") && !value.includes("工作台")) return DEFAULT_SITE_SETTINGS.seoDescription;
     if (value.includes("2026 VOZEB PRO") && !value.startsWith("©")) return "© 2026 VOZEB PRO. All rights reserved.";
     if (value.startsWith("QQ ") && !value.includes("邮箱")) return "QQ 邮箱";
     return repairUtf8MojibakeText(value);

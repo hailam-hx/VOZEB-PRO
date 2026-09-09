@@ -470,6 +470,82 @@ for (const destination of ["gallery", "create"] as const) {
     });
 }
 
+test("admin localized SEO persists immediately across tabs, refresh, session and home metadata", async ({ page, request }) => {
+    const original = (await (await request.get("/api/admin/settings")).json()).settings.site;
+    const entries = [
+        { tab: "VI", locale: "vi", path: "/", title: "Tiêu đề thử nghiệm", description: "Mô tả tiếng Việt riêng biệt", keywords: "ảnh,video" },
+        { tab: "EN", locale: "en", path: "/en", title: "English SEO test title", description: "Independent English SEO description", keywords: "image,voice" },
+        { tab: "简体中文", locale: "zh-CN", path: "/zh-cn", title: "中文 SEO 测试标题", description: "独立中文 SEO 描述", keywords: "图片,语音" },
+    ];
+    try {
+        for (const entry of entries) await request.get(entry.path);
+        await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        for (const entry of entries) {
+            await page.getByRole("tab", { name: entry.tab, exact: true }).click();
+            await page.getByRole("textbox", { name: "SEO 标题", exact: true }).fill(entry.title);
+            await page.getByRole("textbox", { name: "SEO 描述", exact: true }).fill(entry.description);
+            await page.getByRole("textbox", { name: "SEO 关键词", exact: true }).fill(entry.keywords);
+            await expect(page.getByText(entry.title, { exact: true })).toBeVisible();
+            await expect(page.locator("p").filter({ hasText: entry.description })).toBeVisible();
+            await expectNoHorizontalOverflow(page, "admin SEO " + entry.locale);
+        }
+        const response = page.waitForResponse((response) => response.url().endsWith("/api/admin/settings") && response.request().method() === "PATCH");
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        expect((await response).ok()).toBe(true);
+        const expected = Object.fromEntries(entries.map(({ locale, title, description, keywords }) => [locale, { title, description, keywords }]));
+        expect((await (await request.get("/api/admin/settings")).json()).settings.site.seo).toEqual(expected);
+        expect((await (await request.get("/api/auth/session")).json()).settings.site.seo).toEqual(expected);
+        await page.reload();
+        for (const entry of entries) {
+            await page.getByRole("tab", { name: entry.tab, exact: true }).click();
+            await expect(page.getByRole("textbox", { name: "SEO 标题", exact: true })).toHaveValue(entry.title);
+            await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue(entry.description);
+            await expect(page.getByRole("textbox", { name: "SEO 关键词", exact: true })).toHaveValue(entry.keywords);
+        }
+        for (const entry of entries) {
+            await page.goto(entry.path);
+            expect(await page.title()).toBe(entry.title);
+            await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", entry.description);
+            await expect(page.locator('meta[name="keywords"]')).toHaveAttribute("content", entry.keywords);
+            await expect(page.locator("footer p").filter({ hasText: entry.description })).toBeVisible();
+            expect(JSON.parse((await page.locator("#website-json-ld").textContent())!).description).toBe(entry.description);
+        }
+        await page.goto("/admin?section=site");
+        await page.getByRole("tab", { name: "EN", exact: true }).click();
+        await page.getByRole("textbox", { name: "SEO 标题", exact: true }).fill("");
+        await page.getByRole("textbox", { name: "SEO 描述", exact: true }).fill("");
+        await page.getByRole("textbox", { name: "SEO 关键词", exact: true }).fill("");
+        const clearedResponse = page.waitForResponse((response) => response.url().endsWith("/api/admin/settings") && response.request().method() === "PATCH");
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        expect((await clearedResponse).ok()).toBe(true);
+        const cleared = (await (await request.get("/api/admin/settings")).json()).settings.site.seo;
+        expect(cleared.en.description).toContain("AI creation platform");
+        expect(cleared.vi).toEqual(expected.vi);
+        expect(cleared["zh-CN"]).toEqual(expected["zh-CN"]);
+        await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue(cleared.en.description);
+        await page.reload();
+        await page.getByRole("tab", { name: "EN", exact: true }).click();
+        await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue(cleared.en.description);
+        for (const theme of ["light", "dark"]) {
+            await page.evaluate((theme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme }, version: 0 })), theme);
+            await page.reload({ waitUntil: "domcontentloaded" });
+            await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+            await page.getByRole("tab", { name: "EN", exact: true }).click();
+            await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue(cleared.en.description);
+            const bounds = await page.getByRole("textbox", { name: "SEO 描述", exact: true }).boundingBox();
+            expect(bounds!.width).toBeGreaterThan(0);
+            expect(bounds!.x).toBeGreaterThanOrEqual(0);
+            expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+            await expectNoHorizontalOverflow(page, "admin SEO " + theme);
+            await page.getByRole("tab", { name: "EN", exact: true }).scrollIntoViewIfNeeded();
+            await page.screenshot({ path: test.info().outputPath("admin-seo-" + theme + ".png") });
+        }
+    } finally {
+        expect((await request.patch("/api/admin/settings", { data: { site: original } })).ok()).toBe(true);
+    }
+});
+
 test("sitemap has exactly 27 localized SEO entries without xhtml alternatives", async ({ request }) => {
     const response = await request.get("/sitemap.xml");
     const xml = await response.text();

@@ -5,7 +5,6 @@ import { getTranslations } from "next-intl/server";
 import { requireSeoPageLocale, type LocalizedPageProps } from "@/i18n/seo-page";
 import { getSeoPagePath, getPublishedSeoAlternates } from "@/i18n/routing";
 import { localeMetadata } from "@/i18n/config";
-import { builtInSiteCopy, localizeBuiltInSiteCopy, localizeHomepageSeoDescription } from "@/i18n/site-copy";
 import { getInstallStatus } from "@/lib/server/install-status";
 import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { HomeActionsProvider } from "@/app/home/home-actions";
@@ -22,9 +21,7 @@ export async function generateMetadata({ params }: LocalizedPageProps): Promise<
     const locale = requireSeoPageLocale("home", (await params).locale);
     const site = await getPublicSiteSettings();
     const homeT = await getTranslations({ locale, namespace: "home" });
-    const title = locale === "vi" ? site.seoTitle || site.title : homeT("metadataTitle", { site: site.title });
-    const description = locale === "vi" ? localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription")) : homeT("metadataDescription");
-    const keywords = locale === "vi" ? localizeBuiltInSiteCopy(site.seoKeywords, builtInSiteCopy.seoKeywords, homeT("footerDefaultKeywords")) : homeT("footerDefaultKeywords");
+    const { title, description, keywords } = site.seo[locale];
     const base = siteMetadataBase();
     const canonical = absoluteSiteUrl(getSeoPagePath("home", locale)!, base);
     const socialImage = { url: absoluteSiteUrl("/seo/hotx-ai-og.webp", base), width: 1200, height: 630, alt: homeT("socialImageAlt") };
@@ -57,13 +54,12 @@ export async function generateMetadata({ params }: LocalizedPageProps): Promise<
 }
 
 export default async function HomePage({ params }: LocalizedPageProps) {
-    const locale = requireSeoPageLocale("home", (await params).locale);
-    const [install, site, homeT] = await Promise.all([getInstallStatus(), getPublicSiteSettings(), getTranslations({ locale, namespace: "home" })]);
+    requireSeoPageLocale("home", (await params).locale);
+    const [install, site] = await Promise.all([getInstallStatus(), getPublicSiteSettings()]);
     if (!install.ready) redirect("/install");
-    const initialSite = { ...site, seoDescription: locale === "vi" ? localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription")) : homeT("metadataDescription") };
 
     return (
-        <HomeActionsProvider initialSite={initialSite}>
+        <HomeActionsProvider initialSite={site}>
             <main className={`app-scroll-page ${styles.root}`}>
                 <HomeHeader />
                 <HomeAgentHero />

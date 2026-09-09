@@ -1,3 +1,5 @@
+import type { AppLocale } from "@/i18n/config";
+
 export type UserRole = "admin" | "user";
 export type UserStatus = "active" | "disabled";
 export type { AdminPermission } from "@/lib/admin-permissions";
@@ -287,13 +289,13 @@ export type AnnouncementPage = {
     pageSize: number;
 };
 
+export type LocalizedSeoSettings = Record<AppLocale, { title: string; description: string; keywords: string }>;
+
 export type SiteSettings = {
     title: string;
     logoUrl: string;
     iconUrl: string;
-    seoTitle: string;
-    seoDescription: string;
-    seoKeywords: string;
+    seo: LocalizedSeoSettings;
     footerCopyright: string;
     termsUrl: string;
     termsVersion: string;

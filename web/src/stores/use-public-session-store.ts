@@ -1,5 +1,6 @@
 "use client";
 
+import type { LocalizedSeoSettings } from "@/lib/auth/store-types";
 import { create } from "zustand";
 
 import { resolveSiteTitle } from "@/lib/site-brand";
@@ -10,7 +11,7 @@ export type PublicSiteSettings = {
     title: string;
     logoUrl: string;
     iconUrl?: string;
-    seoDescription?: string;
+    seo?: LocalizedSeoSettings;
     footerCopyright?: string;
     termsUrl?: string;
     termsVersion?: string;

@@ -107,7 +107,7 @@ export function serializePublicSettings(settings: AuthSettings) {
             title: settings.site.title,
             logoUrl: settings.site.logoUrl,
             iconUrl: settings.site.iconUrl,
-            seoDescription: settings.site.seoDescription,
+            seo: settings.site.seo,
             footerCopyright: settings.site.footerCopyright,
             termsUrl: settings.site.termsUrl,
             termsVersion: settings.site.termsVersion,

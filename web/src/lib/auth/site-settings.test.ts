@@ -33,8 +33,6 @@ describe("site settings", () => {
 
         expect(settings).toMatchObject({
             title: "无限创作",
-            seoTitle: "无限创作",
-            seoKeywords: expect.stringContaining("无限创作"),
             footerCopyright: expect.stringContaining("无限创作"),
         });
         expect(settings.friendLinks).toContainEqual(expect.objectContaining({ id: "vozeb-pro-home", label: "VOZEB" }));
@@ -44,13 +42,12 @@ describe("site settings", () => {
         const settings = normalizeSiteSettings({
             ...DEFAULT_SITE_SETTINGS,
             title: "无限创作",
-            seoTitle: "独立 SEO 标题",
-            seoKeywords: "自定义,关键词",
+            seo: { ...DEFAULT_SITE_SETTINGS.seo, "zh-CN": { title: "独立 SEO 标题", description: "独立描述", keywords: "自定义,关键词" } },
             footerCopyright: "© 独立运营主体",
             friendLinks: [{ id: "vozeb-pro-home", label: "官方网站", url: "https://www.vozeb.com/", enabled: true }],
         });
 
-        expect(settings).toMatchObject({ seoTitle: "独立 SEO 标题", seoKeywords: "自定义,关键词", footerCopyright: "© 独立运营主体" });
+        expect(settings).toMatchObject({ seo: { "zh-CN": { title: "独立 SEO 标题", keywords: "自定义,关键词" } }, footerCopyright: "© 独立运营主体" });
         expect(settings.friendLinks[0]?.label).toBe("官方网站");
     });
 

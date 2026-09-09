@@ -25,7 +25,7 @@ export function SiteLogoPreview({ logoUrl }: { logoUrl: string }) {
 export function SiteSettingStatus({ site }: { site: AuthSettings["site"] }) {
     const enabledSocialCount = siteSocialItems.filter((item) => site.socials[item.key]?.enabled && site.socials[item.key]?.url.trim()).length;
     const enabledFriendLinkCount = (site.friendLinks || []).filter((link) => link.enabled && link.label.trim() && link.url.trim()).length;
-    const seoReady = Boolean((site.seoTitle || site.title).trim() && site.seoDescription.trim());
+    const seoReady = Object.values(site.seo).every((seo) => seo.title.trim() && seo.description.trim());
 
     return (
         <div className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm shadow-stone-200/40 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20">

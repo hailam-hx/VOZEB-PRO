@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { ArrowRight, Mail, Send } from "lucide-react";
+import type { AppLocale } from "@/i18n/config";
 import { getLocalizedSeoHref } from "@/i18n/routing";
 import { useLocale, useTranslations } from "next-intl";
 
@@ -38,7 +39,7 @@ export function HomeFooter() {
     const friendLinks = site.friendLinks.filter((item) => item.enabled && item.label.trim() && item.url.trim());
     const socials = Object.entries(site.socials).filter(([, item]) => item.enabled && item.label.trim() && item.url.trim());
     const copyright = site.footerCopyright?.trim();
-    const description = locale === "vi" ? localizeBuiltInSiteCopy(site.seoDescription, builtInSiteCopy.seoDescription, t("footerDefaultDescription")) : t("footerDefaultDescription");
+    const description = site.seo[locale as AppLocale].description;
     const policies = [site.privacyUrl?.trim() ? { label: publicT("privacyLabel"), href: site.privacyUrl.trim() } : null, site.termsUrl?.trim() ? { label: publicT("termsLabel"), href: site.termsUrl.trim() } : null].filter(
         (item): item is { label: string; href: string } => Boolean(item),
     );

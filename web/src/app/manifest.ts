@@ -7,10 +7,10 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
     return {
         name: site.title,
         short_name: site.title.slice(0, 16),
-        description: site.seoDescription,
+        description: site.seo.vi.description,
         start_url: "/",
         display: "standalone",
-        lang: "zh-CN",
+        lang: "vi",
         background_color: "#ffffff",
         theme_color: "#111111",
         icons: [{ src: "/favicon.ico", sizes: "any", purpose: "any" }],

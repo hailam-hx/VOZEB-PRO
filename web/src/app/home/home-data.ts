@@ -1,4 +1,4 @@
-import type { SiteFriendLink, SiteSocialSettings } from "@/lib/auth/store-types";
+import type { LocalizedSeoSettings, SiteFriendLink, SiteSocialSettings } from "@/lib/auth/store-types";
 import type { CreateAgentMode } from "@/lib/create-agent-prompt";
 import { WORK_CATEGORIES } from "@/lib/work-publication-options";
 import { workCategoryMessageKeys } from "@/i18n/display-keys";
@@ -7,7 +7,7 @@ import type { PublicGalleryItem } from "@/services/api/work-governance";
 export type HomeSiteSettings = {
     title: string;
     logoUrl: string;
-    seoDescription: string;
+    seo: LocalizedSeoSettings;
     footerCopyright: string;
     termsUrl: string;
     privacyUrl: string;

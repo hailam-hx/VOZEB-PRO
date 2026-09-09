@@ -20,7 +20,7 @@ import { GET as favicon } from "./api/site-icon/route";
 describe("site metadata routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getPublicSiteSettings.mockResolvedValue({ title: "自定义站点", iconUrl: "https://cdn.example.com/favicon.ico", seoDescription: "站点摘要" });
+        mocks.getPublicSiteSettings.mockResolvedValue({ title: "自定义站点", iconUrl: "https://cdn.example.com/favicon.ico", seo: { vi: { description: "站点摘要" } } });
         mocks.listPublicWorkSitemapEntries.mockResolvedValue([{ slug: "public-work", updatedAt: "2026-07-27T00:00:00.000Z" }]);
     });
 

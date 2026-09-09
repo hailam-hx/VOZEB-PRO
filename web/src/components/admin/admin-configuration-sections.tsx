@@ -6,14 +6,24 @@ import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { buildAdminSettingsPatch, resolveAdminSettingsAccess } from "@/components/admin/admin-settings-access";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { Button, Input, InputNumber, Switch, Tag } from "antd";
+import { Button, Input, InputNumber, Switch, Tabs, Tag } from "antd";
+import { useState } from "react";
+import type { AppLocale } from "@/i18n/config";
+import { DEFAULT_LOCALIZED_SEO } from "@/i18n/site-copy";
 import { Database, Globe2, Image as ImageIcon, Mail, Plus, Save, Search, Send, SlidersHorizontal, Sparkles, Trash2, Upload, UserCog } from "lucide-react";
 
 import { SettingsAnchorItem, SettingsStatusTile } from "./admin-dashboard-elements";
 import type { AdminDashboardController } from "./use-admin-dashboard-controller";
 
 export function AdminSiteSection({ controller }: { controller: AdminDashboardController }) {
+    const [seoLocale, setSeoLocale] = useState<AppLocale>("vi");
     const { logoInputRef, iconInputRef, settings, settingsLoading, activeSection, saveSettings, updateSiteSetting, getLatestSiteSettings, updateSiteSocialSetting, addFriendLink, updateFriendLink, deleteFriendLink } = controller;
+    const seo = settings.site.seo[seoLocale];
+    const seoDefaults = DEFAULT_LOCALIZED_SEO[seoLocale];
+    const updateSeo = (key: keyof typeof seo, value: string) => {
+        const current = getLatestSiteSettings().seo;
+        updateSiteSetting("seo", { ...current, [seoLocale]: { ...current[seoLocale], [key]: value } });
+    };
     if (activeSection !== "site") return null;
     return (
         <Panel>
@@ -57,20 +67,25 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
 
                         <div className="border-t border-stone-200 pt-5 dark:border-stone-800">
                             <SectionTitle icon={<Search className="size-4" />} title="SEO 信息" />
+                            <Tabs
+                                activeKey={seoLocale}
+                                onChange={(key) => setSeoLocale(key as AppLocale)}
+                                items={[
+                                    { key: "vi", label: "VI" },
+                                    { key: "en", label: "EN" },
+                                    { key: "zh-CN", label: "简体中文" },
+                                ]}
+                            />
+                            <p className="text-xs text-stone-500 dark:text-stone-400">仅用于对应语言首页；留空后使用该语言的内置默认值。</p>
                             <div className="mt-4 space-y-4">
                                 <LabeledControl label="SEO 标题">
-                                    <Input value={settings.site.seoTitle} maxLength={72} placeholder={settings.site.title} onChange={(event) => updateSiteSetting("seoTitle", event.target.value)} />
+                                    <Input value={seo.title} maxLength={72} placeholder={seoDefaults.title} onChange={(event) => updateSeo("title", event.target.value)} />
                                 </LabeledControl>
                                 <LabeledControl label="SEO 描述">
-                                    <Input.TextArea value={settings.site.seoDescription} maxLength={180} rows={4} placeholder="用于搜索结果和社交分享摘要" onChange={(event) => updateSiteSetting("seoDescription", event.target.value)} />
+                                    <Input.TextArea value={seo.description} maxLength={180} rows={4} placeholder={seoDefaults.description} onChange={(event) => updateSeo("description", event.target.value)} />
                                 </LabeledControl>
                                 <LabeledControl label="SEO 关键词">
-                                    <Input
-                                        value={settings.site.seoKeywords}
-                                        maxLength={240}
-                                        placeholder={`${settings.site.title || "网站名称"},AI Agent,AI 绘图,AI 视频,画布,短剧`}
-                                        onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)}
-                                    />
+                                    <Input value={seo.keywords} maxLength={240} placeholder={seoDefaults.keywords} onChange={(event) => updateSeo("keywords", event.target.value)} />
                                 </LabeledControl>
                             </div>
                         </div>
@@ -173,8 +188,8 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                 </div>
                             </div>
                             <div className="mt-6 border-t border-stone-200 pt-4 dark:border-white/10">
-                                <div className="text-base font-semibold">{settings.site.seoTitle || settings.site.title}</div>
-                                <p className="mt-2 line-clamp-3 text-sm leading-6 text-stone-500 dark:text-stone-400">{settings.site.seoDescription}</p>
+                                <div className="text-base font-semibold">{seo.title.trim() || seoDefaults.title}</div>
+                                <p className="mt-2 line-clamp-3 text-sm leading-6 text-stone-500 dark:text-stone-400">{seo.description.trim() || seoDefaults.description}</p>
                             </div>
                         </div>
                     </div>
