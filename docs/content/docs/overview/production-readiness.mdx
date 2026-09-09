@@ -144,7 +144,8 @@ PostgreSQL 在线扣费已使用定向的用户余额、有效冻结、用量、
 
 ## 容易遗漏的上线控制项
 
-- **公开 SEO 验收**：越南语产品落地页部署后逐页检查 HTTP 200、服务端正文、唯一 H1、canonical、Open Graph/Twitter、`WebPage + BreadcrumbList` JSON-LD、robots 和 sitemap 的正式域名一致性；重新提交 sitemap 并按 URL 跟踪 Search Console 索引状态、查询、展示、点击与 CTR。代码存在 metadata 不等于页面已经被收录，也不能据此承诺固定排名；GA4/GTM 是否接入应作为独立隐私与运营决策。
+- **公开 SEO 验收**：生产 Web 运行环境必须设置唯一、公开 HTTPS `NEXT_PUBLIC_SITE_URL`；它是 canonical、Open Graph URL、JSON-LD URL、robots 和 sitemap 的绝对域名来源，不能依赖 `localhost`、构建期环境或未验证的部署平台回退。部署后逐页检查 9 个发布页面（首页、6 个产品页、条款、隐私）在 VI 无前缀、`/en`、`/zh-cn` 三种 URL 的 HTTP 200、服务端正文、唯一 H1、当前语言 metadata、绝对 self-canonical、Open Graph/Twitter、页面 JSON-LD 和 `vi`/`en`/`zh-Hans`/VI `x-default` hreflang；有效 `/vi` SEO URL 必须以保留查询串的 308 跳到 VI canonical。未知或未发布 locale/page，以及带 `/vi`、`/en`、`/zh-cn` 前缀的非 SEO 路径必须是 404，不能把 gallery、announcements、share、creator/UGC、workspace、admin 或 API 暴露为本地化页面。确认 sitemap 恰有 27 个本地化 SEO URL、既有非本地化公开 URL 没有重复且 sitemap 不输出 hreflang alternates，然后重新提交 sitemap、执行代表性 URL Inspection/索引请求，并按 locale/page 跟踪 Search Console 的索引状态、查询、展示、点击和 CTR。代码测试或 metadata 存在不等于已收录，也不能承诺固定排名；GA4/GTM 是否接入仍是独立隐私与运营决策。
+
 以下事项经常不在“功能已完成”清单中，但会直接影响商业上线后的安全、成本和售后责任：
 
 - **管理员高风险保护**：TOTP MFA、登录环境变化提醒、本人登录记录、13 项职责权限和后台成功/失败审计已提供技术能力；支付、用户、设置、密钥、存储和备份按用户要求取消逐次密码/MFA 复核。上线前仍须为生产管理员真实验证登录 MFA、身份验证器丢失恢复、Session 撤销、越权拒绝、异常登录处置和审计记录，并由负责人确定短会话、双人审批、紧急访问和定期权限复核规则。

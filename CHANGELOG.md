@@ -2,12 +2,9 @@
 
 ## Unreleased
 
-- [SEO] 统一首页 canonical、`og:url` 与结构化数据的根地址为带结尾斜杠的绝对 URL，并让传入首页客户端状态的 `seoDescription` 与已本地化的 metadata description 保持一致，同时保留后台显式自定义文案。
-- [SEO] 完善 HOTX AI 首页内容 SEO：新增带上下文的 6 项创作工具内链，H1 明确品牌与 AI 内容创作平台主题，收敛越南语 description 和未验证的强声明，并统一 canonical、Open Graph、Twitter 与 Organization Schema；1200×630 OG 图使用 HOTX 官方 Logo，vozeb.com 友情链接显示为 VOZEB。
-- [SEO] 调整 sitemap 静态页面顺序与权重：首页为 1.0，核心图片/视频/语音/声音克隆页为 0.9，短剧、Agent 与作品广场为 0.8，公告为 0.5，条款和隐私为 0.3；公开作品条目继续保持 0.6。
-- [SEO] 优化 6 个越南语产品落地页的搜索意图文案：补充自然的越南语与英文长尾关键词，收敛 title、description、H1、H2 和 FAQ，并按产品能力保留真实、无速度承诺的表达。
-- [SEO] 新增 6 个越南语产品落地页，覆盖 AI 图片、视频、语音、声音克隆、短剧与 Agent；补齐真实工作区 CTA、产品导航、canonical、社交 metadata、结构化数据、robots、sitemap 和桌面/移动浅深主题回归。
-- [SEO] 修复 Docker 镜像构建时把 `NEXT_PUBLIC_SITE_URL` 的 localhost 默认值固化进 sitemap 与 robots；两条 metadata route 改为运行时生成，并通过动态环境读取保持本地开发与正式域名各自正确。
+- [SEO] 将首页、6 个产品落地页、服务条款和隐私政策发布为越南语、英语和简体中文共 27 个公开 URL；越南语保持无前缀 canonical，英语使用 `/en`，简体中文使用 `/zh-cn`。有效的 `/vi/*` SEO 旧址会以保留查询串的 `308` 跳回越南语 canonical，其他带 locale 前缀的非 SEO 路由不会被本地化。
+- [SEO] 每个已发布页面输出当前语言的绝对 canonical、Open Graph/Twitter、结构化数据与双向 hreflang；简体中文使用 `zh-Hans`，`x-default` 始终指向越南语。sitemap 只列出 27 个本地化 SEO URL 及既有非本地化公开 URL，不写 sitemap hreflang alternates。
+- [SEO] 首页 SEO 设置改为 `site.seo` 的 `vi`、`en`、`zh-CN` 三语言 title/description/keywords 记录，后台可分别编辑和预览；产品落地页 metadata 继续由代码维护。生产部署必须在运行时配置公网正式域名 `NEXT_PUBLIC_SITE_URL`，供 canonical、robots 与 sitemap 生成绝对 URL。
 
 ## v0.0.6
 

@@ -5,9 +5,25 @@ description: VOZEB PRO 当前版本需要人工或真实环境确认的事项
 
 # 待测试
 
-- HOTX AI 首页已补充主内容区的 6 项创作工具介绍和对应 SEO 落地页链接，H1 改为明确品牌与 AI 内容创作平台主题；越南语 metadata description 已收敛为约 138 字符，并与 canonical `/`、`og:url`、1200×630 WebP 大图、`summary_large_image` 和 WebSite/Organization URL、ID 保持一致。首页 canonical 与 `og:url` 现在通过运行时正式域名输出完全相同、带结尾斜杠的绝对 URL，传给客户端的 `initialSite.seoDescription` 也复用同一套默认/旧文案本地化规则，同时保留后台显式自定义 description。Open Graph 图使用用户提供的 HOTX 官方 Logo；首页不再展示“100+ 模板”“长任务不中断”“企业级存储”等未验证强声明，vozeb.com 友情链接固定显示为 `VOZEB`，显式自定义标签仍保留。专项 Vitest 31 项、完整 Vitest 564 个文件/2769 项、TypeScript、ESLint、Prettier 和 70 路由生产构建已通过；完整 Playwright 在桌面、390px、430px 共 167 项通过、27 项按环境或项目互斥范围跳过，并验证 6 卡片、三语 H1、metadata、OG 图片响应、子页面 metadata 隔离、浅深主题和无横向溢出。仍需部署后在 `https://hotx-ai.com/` 确认正式 HTML、社交抓取缓存和分享预览已刷新；本轮未凭空替换未验证的企业邮箱，也未改动站点其他 Logo 配置。
-- sitemap 静态 URL 已按产品优先级重新排序：首页 `1.0`，图片/视频/语音/声音克隆页 `0.9`，短剧/Agent/作品广场 `0.8`，公告 `0.5`，条款与隐私 `0.3`；公开作品 `/share/*` 继续为 `0.6`。自动化测试覆盖 URL 顺序、精确 priority 和运行时站点域名，仍需部署后在 `https://hotx-ai.com/sitemap.xml` 确认生产 XML 已刷新。
-- 已新增 6 个越南语 SEO 落地页：`/ai-image-generator`、`/ai-video-generator`、`/ai-voice-generator`、`/voice-cloning`、`/ai-short-drama`、`/ai-agent`。页面共享类型化配置和 Server Component 布局，但分别提供独立 title、description、H1、关键词、应用场景、使用步骤、实际能力、FAQ、三项相关工具及真实工作区 CTA；关键词、H1/H2、description 与 FAQ 已按越南语搜索意图补充 image/video/voice generator、voice cloning、短剧和 Agent 的自然长尾词，同时保留真实能力描述且不加入速度承诺。图片、视频、音频和 Agent 可把越南语草稿带入 `/create`，声音克隆和短剧只进入现有 `/voices`、`/drama` 工作区。公开 Header 已用“产品”菜单链接全部 6 页，Footer、canonical、index/follow、Open Graph、Twitter、`WebPage + BreadcrumbList` JSON-LD、robots 和 sitemap 使用同一 allowlist。sitemap 与 robots 已改为运行时读取公开站点地址，避免 Docker 构建阶段把 localhost 固化进生产 XML/TXT；使用 localhost 构建后再以 `NEXT_PUBLIC_SITE_URL=https://hotx-ai.com` 启动 standalone 的回归已确认全部 `<loc>` 和 `Sitemap:` 正确。专项 SEO Vitest 现为 30 项通过；完整 Web 单元/集成测试 563 个文件、2759 项通过，TypeScript、ESLint、Prettier 和生产构建通过；Playwright 已在桌面、390px、430px 的浅深主题生成 36 张截图并验证 SSR、单 H1、metadata、JSON-LD、FAQ、图片加载、菜单键盘/鼠标/移动交互、未登录保留目标、登录后真实路由、未知 slug 404、无控制台错误和无横向溢出。仍需部署后确认 6 个生产 URL 返回 200、HTML/canonical/OG、robots 与 sitemap 均指向正式域名，然后重新提交 sitemap、请求索引并按 URL 跟踪 Search Console 的索引状态、查询、展示、点击和 CTR；本轮没有加入 GA4、GTM 或排名承诺。
+- 多语言 SEO 实现已由同一发布注册表限定为 9 个页面、3 个 locale；越南语 canonical 不带前缀，英语为 `/en`，简体中文为 `/zh-cn`：
+
+| 页面          | VI                    | EN                       | 简体中文                    |
+| ------------- | --------------------- | ------------------------ | --------------------------- |
+| 首页          | `/`                   | `/en`                    | `/zh-cn`                    |
+| AI 图片生成器 | `/ai-image-generator` | `/en/ai-image-generator` | `/zh-cn/ai-image-generator` |
+| AI 视频生成器 | `/ai-video-generator` | `/en/ai-video-generator` | `/zh-cn/ai-video-generator` |
+| AI 语音生成器 | `/ai-voice-generator` | `/en/ai-voice-generator` | `/zh-cn/ai-voice-generator` |
+| 声音克隆      | `/voice-cloning`      | `/en/voice-cloning`      | `/zh-cn/voice-cloning`      |
+| AI 短剧       | `/ai-short-drama`     | `/en/ai-short-drama`     | `/zh-cn/ai-short-drama`     |
+| AI Agent      | `/ai-agent`           | `/en/ai-agent`           | `/zh-cn/ai-agent`           |
+| 服务条款      | `/terms`              | `/en/terms`              | `/zh-cn/terms`              |
+| 隐私政策      | `/privacy`            | `/en/privacy`            | `/zh-cn/privacy`            |
+
+有效的 `/vi` 对应 URL 以保留完整查询串的 `308` 跳转至上表 VI canonical；未知 locale/page、未发布 locale/page，以及 `/vi`、`/en`、`/zh-cn` 前缀下的 gallery、announcements、share、creator/UGC、workspace、admin 和 API 等非 SEO 路径均不属于发布范围并返回 404。未加 locale 前缀的既有非 SEO 路径保持原有 cookie/header 语言协商，不能因为共享语言目录而被本地化。
+
+- 每个已发布页面已按当前 locale 生成绝对 self-canonical、title、description、keywords、Open Graph/Twitter 与 JSON-LD；hreflang 只输出已发布的 `vi`、`en`、`zh-Hans`，并以 VI URL 作为 `x-default`。sitemap 由相同注册表生成 27 个本地化 SEO 条目，保留 `/gallery`、`/announcements` 和每个公开 `/share/*` 的单个非本地化条目，不含 sitemap hreflang alternates；robots 允许这些已发布 URL。任务 2/3 的定向单元测试和受控生产构建 Playwright 已覆盖 27 个 URL、`/vi` 308、排除路径、语言切换/离开 SEO 子树、sitemap，以及桌面、390px、430px 的后台首页 SEO 回写。此记录不替代最终 `check:release`、全量 E2E、真实 PostgreSQL、正式部署或 Search Console 验收。
+- 首页 SEO 持久化为 `app_settings.site` JSONB（文件 Provider 使用同一对象）的 `seo` 三语言记录：`vi`、`en`、`zh-CN` 均含 `title`、`description`、`keywords`。后台仅编辑和预览首页的 VI/EN/简体中文值，字段上限为 72/180/240；空值只回退本 locale 的内置默认值，绝不跨语言取值。首页 metadata、页脚和 WebSite JSON-LD 只读取当前 locale；6 个产品落地页的 metadata 仍是代码维护，后台站点设置不会覆盖它们。旧的标量 SEO 记录已不再是当前契约。
+- 待生产确认：必须在运行时设置唯一、公开 HTTPS `NEXT_PUBLIC_SITE_URL`，再以正式响应检查全部 27 个 URL、canonical/hreflang/robots/sitemap 和社交抓取；在 Search Console 重新提交 sitemap、完成代表 URL 的 URL Inspection 与索引请求，并持续记录按 locale/page 划分的索引、查询、展示、点击和 CTR。代码或本地浏览器结果不能证明爬虫已收录，也不构成排名承诺。
 - `/create` 输入框的预计积分已统一收敛为“积分图标 + 数值”，桌面端不再显示“预计消耗”和“积分”冗余文案，中文、英文和越南文使用相同紧凑结果；智能规划中和暂不可估算状态继续保留对应可访问说明。专项组件测试已覆盖三种语言，Playwright 已在桌面、390px、430px 验证 `2.5 → 7.5` 动态更新、冗余文案不存在且输入区无横向溢出；仍需部署后在 `hotx-ai.com/create` 刷新确认生产静态资源已更新。
 - 登录用户头像 URL 已从不存在的 `/api/profile/avatar/:id` 修正为带用户更新时间版本参数的 `/api/public/users/:id/avatar`，避免工作区顶部和账户菜单请求 HTML 404 并显示破图；专项单元测试已覆盖 Session 用户投影，Playwright 已在桌面、390px、430px 使用真实头像上传、WebP 读取与图片固有宽度验证完成回归。仍需部署后在 `hotx-ai.com` 使用当前账号刷新页面，确认生产数据库中的头像登记与媒体文件一致。
 - `/create` 的 `@` 对话资产选择器现在会同时显示已保存资产与本轮尚未发送的本地草稿附件；上传图片后无需先创建会话或上传服务器即可选为 `@图片1`，空列表提示不会再遮住输入区，并且本地草稿与已保存资产会按用户选择顺序保持稳定别名。专项组件与状态测试 16 项通过，Playwright 已在桌面、390px、430px 覆盖“本地预览 → `@` 引用 → 保持零会话/零资产上传”，仍需用户在实际创作输入中确认素材引用顺序符合预期。
