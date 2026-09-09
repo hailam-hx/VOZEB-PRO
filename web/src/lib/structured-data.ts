@@ -43,7 +43,9 @@ export function buildWebsiteStructuredData(input: WebsiteStructuredDataInput) {
         description: input.description,
         publisher: {
             "@type": "Organization",
+            "@id": `${input.url}#organization`,
             name: input.name,
+            url: input.url,
             logo: { "@type": "ImageObject", url: input.logoUrl },
         },
     };

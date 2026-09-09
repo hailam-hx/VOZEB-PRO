@@ -26,8 +26,40 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) });
     });
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { level: 1, name: "一个入口 完成所有 AI 创作" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "HOTX AI – 一站式 AI 内容创作平台" })).toBeVisible();
     await expect(page.locator("h1")).toHaveCount(1);
+    await expect(page.getByRole("heading", { level: 2, name: "HOTX AI 创作工具" })).toBeVisible();
+    const productSection = page.getByTestId("home-products");
+    await expect(productSection.getByRole("link")).toHaveCount(6);
+    await expect(productSection.getByText("通过越南语描述或参考图生成图片，用于营销、商品与创意内容。")).toBeVisible();
+    const productLayout = await productSection.getByRole("link").evaluateAll((links) => ({
+        columnCount: new Set(links.map((link) => Math.round(link.getBoundingClientRect().left))).size,
+        allInsideViewport: links.every((link) => {
+            const bounds = link.getBoundingClientRect();
+            return bounds.left >= 0 && bounds.right <= document.documentElement.clientWidth;
+        }),
+    }));
+    expect(productLayout.columnCount).toBe(testInfo.project.name.startsWith("mobile-") ? 1 : 3);
+    expect(productLayout.allInsideViewport).toBe(true);
+    const socialImageResponse = await page.request.get("/seo/hotx-ai-og.webp");
+    expect(socialImageResponse.ok()).toBe(true);
+    expect(socialImageResponse.headers()["content-type"]).toContain("image/webp");
+    const metadata = await page.evaluate(() => ({
+        canonical: document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href,
+        openGraphUrl: document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.content,
+        openGraphImage: document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.content,
+        openGraphImageWidth: document.querySelector<HTMLMetaElement>('meta[property="og:image:width"]')?.content,
+        openGraphImageHeight: document.querySelector<HTMLMetaElement>('meta[property="og:image:height"]')?.content,
+        openGraphImageAlt: document.querySelector<HTMLMetaElement>('meta[property="og:image:alt"]')?.content,
+        twitterCard: document.querySelector<HTMLMetaElement>('meta[name="twitter:card"]')?.content,
+    }));
+    expect(metadata.canonical).toBe(new URL("/", page.url()).toString());
+    expect(new URL(metadata.openGraphUrl!).href).toBe(metadata.canonical);
+    expect(new URL(metadata.openGraphImage!).pathname).toBe("/seo/hotx-ai-og.webp");
+    expect(metadata.openGraphImageWidth).toBe("1200");
+    expect(metadata.openGraphImageHeight).toBe("630");
+    expect(metadata.openGraphImageAlt).toBe("HOTX AI – 面向图片、视频、语音与 AI Agent 的创作平台");
+    expect(metadata.twitterCard).toBe("summary_large_image");
     await expect(page.getByText("核心能力", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("home-agent-card")).toHaveCount(1);
     await expect(page.getByTestId("home-agent-halo").locator("[data-halo-ring]")).toHaveCount(4);
@@ -215,6 +247,13 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         expect(sendStyle.color).toBe("rgb(255, 255, 255)");
     }
     expect(await homepageDomState(page)).toEqual(beforeTheme);
+    await expectNoHorizontalOverflow(page);
+
+    await page.goto("/privacy", { waitUntil: "domcontentloaded" });
+    const privacyCanonical = await page.locator('link[rel="canonical"]').evaluate((element: HTMLLinkElement) => element.href);
+    expect(privacyCanonical).toBe(new URL("/privacy", page.url()).toString());
+    await expect(page.locator('meta[property="og:url"]')).toHaveCount(0);
+    await expect(page.locator('meta[property="og:image"][content$="/seo/hotx-ai-og.webp"]')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     expect(browserErrors).toEqual([]);
     await context.close();

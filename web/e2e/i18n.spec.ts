@@ -6,10 +6,10 @@ test("detects supported browser languages and falls back to Vietnamese", async (
     test.skip(testInfo.project.name !== "chromium", "Browser language detection only needs one desktop browser project");
     const baseURL = String(testInfo.project.use.baseURL);
     const cases = [
-        { browserLocale: "en-US", htmlLang: "en", heading: "One place for every kind of AI creation" },
-        { browserLocale: "vi-VN", htmlLang: "vi", heading: "Một lối vào cho mọi sáng tạo AI" },
-        { browserLocale: "zh-TW", htmlLang: "zh-CN", heading: "一个入口 完成所有 AI 创作" },
-        { browserLocale: "fr-FR", htmlLang: "vi", heading: "Một lối vào cho mọi sáng tạo AI" },
+        { browserLocale: "en-US", htmlLang: "en", heading: "HOTX AI – A platform for AI content creation" },
+        { browserLocale: "vi-VN", htmlLang: "vi", heading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" },
+        { browserLocale: "zh-TW", htmlLang: "zh-CN", heading: "HOTX AI – 一站式 AI 内容创作平台" },
+        { browserLocale: "fr-FR", htmlLang: "vi", heading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" },
     ] as const;
 
     for (const item of cases) {

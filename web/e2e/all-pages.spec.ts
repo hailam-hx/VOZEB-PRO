@@ -24,7 +24,7 @@ test("all authenticated pages reach their real routes and stay usable", async ({
     test.setTimeout(360_000);
     const fixtures = await createPageFixtures(request, testInfo.project.use.viewport?.width || 1280);
     const routes: RouteCase[] = [
-        { path: "/", readyHeading: "一个入口 完成所有 AI 创作" },
+        { path: "/", readyHeading: "HOTX AI – 一站式 AI 内容创作平台" },
         { path: "/gallery", readyHeading: "灵感发现" },
         { path: "/community", readyHeading: "灵感发现" },
         { path: "/announcements", readyHeading: "公告" },
@@ -80,7 +80,7 @@ test("signed-out, legal, installation and invalid public detail routes fail safe
         const theme = testInfo.project.name === "mobile-430" ? "dark" : "light";
         await page.addInitScript((nextTheme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: nextTheme }, version: 0 })), theme);
         const routes: RouteCase[] = [
-            { path: "/", readyHeading: "一个入口 完成所有 AI 创作" },
+            { path: "/", readyHeading: "HOTX AI – 一站式 AI 内容创作平台" },
             { path: "/login", readyHeading: "登录 VOZEB PRO" },
             { path: "/register", readyHeading: "注册 VOZEB PRO" },
             { path: "/forgot-password", readyHeading: "重置密码" },

@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { HomeAdvantagesSection, HomeStepsSection } from "./home-static-sections";
+import { HomeAdvantagesSection, HomeProductsSection, HomeStepsSection } from "./home-static-sections";
+import { HOME_PRODUCT_NAVIGATION } from "./home-data";
 import { renderWithI18n } from "@/test/render-with-i18n";
 
 describe("home page translations", () => {
     it.each([
-        ["vi", "Bốn bước đơn giản để biến ý tưởng thành hiện thực", "Hơn 100 mẫu sáng tạo"],
-        ["en", "Four simple steps from idea to reality", "100+ creative templates"],
-        ["zh-CN", "简单四步，创意即刻落地", "100+ 创作模板"],
+        ["vi", "Bốn bước đơn giản để biến ý tưởng thành hiện thực", "Thư viện prompt sáng tạo"],
+        ["en", "Four simple steps from idea to reality", "Creative prompt library"],
+        ["zh-CN", "简单四步，创意即刻落地", "创作提示词库"],
     ] as const)("renders core sections in %s", (locale, steps, advantage) => {
         const html = renderWithI18n(
             <>
@@ -19,5 +20,34 @@ describe("home page translations", () => {
 
         expect(html).toContain(steps);
         expect(html).toContain(advantage);
+    });
+
+    it("defines SEO descriptions and icons for all six public product links", () => {
+        expect(
+            HOME_PRODUCT_NAVIGATION.map((item) => ({
+                href: item.href,
+                descriptionKey: "descriptionKey" in item ? item.descriptionKey : undefined,
+                icon: "icon" in item ? item.icon : undefined,
+            })),
+        ).toEqual([
+            { href: "/ai-image-generator", descriptionKey: "productImageDescription", icon: "image" },
+            { href: "/ai-video-generator", descriptionKey: "productVideoDescription", icon: "video" },
+            { href: "/ai-voice-generator", descriptionKey: "productVoiceDescription", icon: "voice" },
+            { href: "/voice-cloning", descriptionKey: "productVoiceCloningDescription", icon: "voiceCloning" },
+            { href: "/ai-short-drama", descriptionKey: "productShortDramaDescription", icon: "shortDrama" },
+            { href: "/ai-agent", descriptionKey: "productAgentDescription", icon: "agent" },
+        ]);
+    });
+
+    it.each([
+        ["vi", "Công cụ sáng tạo AI trên HOTX AI", "Tạo hình ảnh từ mô tả tiếng Việt hoặc ảnh tham chiếu cho marketing, sản phẩm và nội dung sáng tạo."],
+        ["en", "AI creation tools on HOTX AI", "Create images from Vietnamese prompts or reference images for marketing, products, and creative content."],
+        ["zh-CN", "HOTX AI 创作工具", "通过越南语描述或参考图生成图片，用于营销、商品与创意内容。"],
+    ] as const)("renders six contextual product links in %s", (locale, title, description) => {
+        const html = renderWithI18n(<HomeProductsSection />, locale);
+
+        expect(html).toContain(title);
+        expect(html).toContain(description);
+        expect((html.match(/href="\/(?:ai-image-generator|ai-video-generator|ai-voice-generator|voice-cloning|ai-short-drama|ai-agent)"/g) || []).length).toBe(6);
     });
 });

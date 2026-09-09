@@ -37,7 +37,7 @@ describe("site settings", () => {
             seoKeywords: expect.stringContaining("无限创作"),
             footerCopyright: expect.stringContaining("无限创作"),
         });
-        expect(settings.friendLinks).toContainEqual(expect.objectContaining({ id: "vozeb-pro-home", label: "无限创作" }));
+        expect(settings.friendLinks).toContainEqual(expect.objectContaining({ id: "vozeb-pro-home", label: "VOZEB" }));
     });
 
     it("preserves explicitly customized brand copy when the title changes", () => {

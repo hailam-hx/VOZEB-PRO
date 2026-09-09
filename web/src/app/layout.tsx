@@ -6,7 +6,7 @@ import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
 import { defaultLocale, isAppLocale } from "@/i18n/config";
 import { effectiveLocale, localeMetadata } from "@/i18n/runtime";
-import { builtInSiteCopy, localizeBuiltInSiteCopy } from "@/i18n/site-copy";
+import { builtInSiteCopy, localizeBuiltInSiteCopy, localizeHomepageSeoDescription } from "@/i18n/site-copy";
 import { appStorageKey } from "@/lib/storage-keys";
 import { absoluteSiteUrl, browserIconHref, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { buildWebsiteStructuredData, serializeStructuredData } from "@/lib/structured-data";
@@ -31,33 +31,17 @@ export async function generateMetadata(): Promise<Metadata> {
     const locale = effectiveLocale(isAppLocale(requestedLocale) ? requestedLocale : defaultLocale, requestHeaders.get("x-vozeb-pathname") || "/");
     const homeT = await getTranslations({ locale, namespace: "home" });
     const base = siteMetadataBase();
-    const logoUrl = absoluteSiteUrl(site.logoUrl || "/logo.svg", base);
     const title = site.seoTitle || site.title;
-    const description = localizeBuiltInSiteCopy(site.seoDescription, builtInSiteCopy.seoDescription, homeT("footerDefaultDescription"));
+    const description = localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription"));
     const keywords = localizeBuiltInSiteCopy(site.seoKeywords, builtInSiteCopy.seoKeywords, homeT("footerDefaultKeywords"));
     return {
         metadataBase: base,
         title,
         description,
-        alternates: { canonical: "/" },
         keywords: keywords
             .split(/[,，]/)
             .map((keyword) => keyword.trim())
             .filter(Boolean),
-        openGraph: {
-            type: "website",
-            title,
-            description,
-            siteName: site.title,
-            images: logoUrl ? [{ url: logoUrl }] : undefined,
-            locale: localeMetadata[locale].openGraphLocale,
-        },
-        twitter: {
-            card: "summary",
-            title,
-            description,
-            images: logoUrl ? [logoUrl] : undefined,
-        },
     };
 }
 
@@ -77,7 +61,7 @@ export default async function RootLayout({
     const websiteStructuredData = buildWebsiteStructuredData({
         name: site.title,
         alternateName: ["HOTXAI"],
-        description: localizeBuiltInSiteCopy(site.seoDescription, builtInSiteCopy.seoDescription, homeT("footerDefaultDescription")),
+        description: localizeHomepageSeoDescription(site.seoDescription, homeT("metadataDescription")),
         url: websiteUrl,
         logoUrl: absoluteSiteUrl(site.logoUrl || "/logo.svg", base),
     });

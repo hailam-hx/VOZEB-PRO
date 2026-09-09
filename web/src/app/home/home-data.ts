@@ -21,19 +21,24 @@ export type HomeNavigationItem = {
     action: "link" | "protected" | "billing";
 };
 
+export type HomeProductNavigationItem = HomeNavigationItem & {
+    descriptionKey: "productImageDescription" | "productVideoDescription" | "productVoiceDescription" | "productVoiceCloningDescription" | "productShortDramaDescription" | "productAgentDescription";
+    icon: "image" | "video" | "voice" | "voiceCloning" | "shortDrama" | "agent";
+};
+
 export const HOME_NAVIGATION = [
     { translationKey: "gallery", href: "/gallery", action: "link" },
     { translationKey: "pricing", href: "/billing", action: "billing" },
 ] as const satisfies readonly HomeNavigationItem[];
 
 export const HOME_PRODUCT_NAVIGATION = [
-    { translationKey: "productImage", href: "/ai-image-generator", action: "link" },
-    { translationKey: "productVideo", href: "/ai-video-generator", action: "link" },
-    { translationKey: "productVoice", href: "/ai-voice-generator", action: "link" },
-    { translationKey: "productVoiceCloning", href: "/voice-cloning", action: "link" },
-    { translationKey: "productShortDrama", href: "/ai-short-drama", action: "link" },
-    { translationKey: "productAgent", href: "/ai-agent", action: "link" },
-] as const satisfies readonly HomeNavigationItem[];
+    { translationKey: "productImage", descriptionKey: "productImageDescription", href: "/ai-image-generator", action: "link", icon: "image" },
+    { translationKey: "productVideo", descriptionKey: "productVideoDescription", href: "/ai-video-generator", action: "link", icon: "video" },
+    { translationKey: "productVoice", descriptionKey: "productVoiceDescription", href: "/ai-voice-generator", action: "link", icon: "voice" },
+    { translationKey: "productVoiceCloning", descriptionKey: "productVoiceCloningDescription", href: "/voice-cloning", action: "link", icon: "voiceCloning" },
+    { translationKey: "productShortDrama", descriptionKey: "productShortDramaDescription", href: "/ai-short-drama", action: "link", icon: "shortDrama" },
+    { translationKey: "productAgent", descriptionKey: "productAgentDescription", href: "/ai-agent", action: "link", icon: "agent" },
+] as const satisfies readonly HomeProductNavigationItem[];
 
 export const HOME_CREATION_MODES = [
     {

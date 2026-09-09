@@ -5,7 +5,14 @@ export const builtInSiteCopy = {
     qqGroupLabel: "VOZEB 开源交流 QQ 群",
 } as const;
 
+const previousHomepageSeoDescriptions = ["HOTX AI là nền tảng sáng tạo nội dung bằng AI, hỗ trợ tạo ảnh, tạo video, giọng nói AI, nhân bản giọng nói, AI Agent, video ngắn và canvas sáng tạo trong một nền tảng duy nhất."] as const;
+
 export function localizeBuiltInSiteCopy(value: string, builtInValue: string, localizedValue: string) {
     const normalized = value.trim();
     return normalized === builtInValue ? localizedValue : normalized;
+}
+
+export function localizeHomepageSeoDescription(value: string, localizedValue: string) {
+    const normalized = value.trim();
+    return normalized === builtInSiteCopy.seoDescription || previousHomepageSeoDescriptions.includes(normalized as (typeof previousHomepageSeoDescriptions)[number]) ? localizedValue : normalized;
 }

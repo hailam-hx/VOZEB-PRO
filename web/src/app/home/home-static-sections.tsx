@@ -1,11 +1,39 @@
-import { Cloud, Grid2X2, History, Layers3, Network, PencilLine, Rocket, Share2 } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Bot, Clapperboard, Cloud, Grid2X2, History, Image as ImageIcon, Layers3, Mic2, Network, PencilLine, Rocket, Share2, Video, Volume2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-import { HOME_ADVANTAGES, HOME_STEPS } from "./home-data";
+import { HOME_ADVANTAGES, HOME_PRODUCT_NAVIGATION, HOME_STEPS } from "./home-data";
 import styles from "./home.module.css";
 
 const stepIcons = { grid: Grid2X2, edit: PencilLine, rocket: Rocket, share: Share2 } as const;
 const advantageIcons = { layers: Layers3, network: Network, history: History, cloud: Cloud } as const;
+const productIcons = { image: ImageIcon, video: Video, voice: Volume2, voiceCloning: Mic2, shortDrama: Clapperboard, agent: Bot } as const;
+
+export function HomeProductsSection() {
+    const t = useTranslations("home");
+    return (
+        <section className={styles.section} aria-labelledby="home-products-title" data-testid="home-products">
+            <SectionHeading id="home-products-title" title={t("productsSectionTitle")} subtitle={t("productsSectionSubtitle")} />
+            <div className={styles.productsGrid}>
+                {HOME_PRODUCT_NAVIGATION.map((product) => {
+                    const Icon = productIcons[product.icon];
+                    return (
+                        <Link key={product.href} href={product.href} className={styles.productCard}>
+                            <span className={styles.productIcon}>
+                                <Icon aria-hidden="true" />
+                            </span>
+                            <div>
+                                <h3>{t(product.translationKey)}</h3>
+                                <p>{t(product.descriptionKey)}</p>
+                            </div>
+                            <ArrowRight className={styles.productArrow} aria-hidden="true" />
+                        </Link>
+                    );
+                })}
+            </div>
+        </section>
+    );
+}
 
 export function HomeStepsSection() {
     const t = useTranslations("home");

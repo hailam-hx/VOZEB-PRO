@@ -14,7 +14,13 @@ describe("structured data", () => {
         ).toMatchObject({
             "@type": "WebSite",
             "@id": "https://example.com/#website",
-            publisher: { "@type": "Organization", logo: { url: "https://example.com/logo.svg" } },
+            publisher: {
+                "@type": "Organization",
+                "@id": "https://example.com/#organization",
+                name: "无限进化",
+                url: "https://example.com/",
+                logo: { url: "https://example.com/logo.svg" },
+            },
         });
     });
 
