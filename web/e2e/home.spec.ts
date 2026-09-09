@@ -25,7 +25,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         galleryRequest = route.request().url();
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) });
     });
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { level: 1, name: "HOTX AI – 一站式 AI 内容创作平台" })).toBeVisible();
     await expect(page.locator("h1")).toHaveCount(1);
     await expect(page.getByRole("heading", { level: 2, name: "HOTX AI 创作工具" })).toBeVisible();
@@ -47,14 +47,16 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     const metadata = await page.evaluate(() => ({
         canonical: document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.getAttribute("href"),
         openGraphUrl: document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.content,
+        openGraphLocale: document.querySelector<HTMLMetaElement>('meta[property="og:locale"]')?.content,
         openGraphImage: document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.content,
         openGraphImageWidth: document.querySelector<HTMLMetaElement>('meta[property="og:image:width"]')?.content,
         openGraphImageHeight: document.querySelector<HTMLMetaElement>('meta[property="og:image:height"]')?.content,
         openGraphImageAlt: document.querySelector<HTMLMetaElement>('meta[property="og:image:alt"]')?.content,
         twitterCard: document.querySelector<HTMLMetaElement>('meta[name="twitter:card"]')?.content,
     }));
-    expect(metadata.canonical).toBe(new URL("/", page.url()).toString());
+    expect(metadata.canonical).toBe(new URL("/zh-cn", page.url()).toString());
     expect(metadata.openGraphUrl).toBe(metadata.canonical);
+    expect(metadata.openGraphLocale).toBe("zh_CN");
     expect(new URL(metadata.openGraphImage!).pathname).toBe("/seo/hotx-ai-og.webp");
     expect(metadata.openGraphImageWidth).toBe("1200");
     expect(metadata.openGraphImageHeight).toBe("630");
@@ -89,7 +91,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     const galleryPreview = page.getByRole("dialog");
     await expect(galleryPreview.getByRole("img", { name: "首页公开作品 1" })).toBeVisible();
     await galleryPreview.getByRole("button", { name: "Close" }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/zh-cn$/);
     await expect(page.locator("header").getByRole("button", { name: "登录", exact: true })).toHaveCount(0);
     await expect(page.getByText("登录后使用 AI 创作", { exact: true })).toHaveCount(0);
     const headerNavigation = page.getByRole("navigation", { name: "官网主导航" });
@@ -222,7 +224,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     const videoPreview = page.getByRole("dialog");
     await expect(videoPreview.locator("video")).toBeVisible();
     await videoPreview.getByRole("button", { name: "Close" }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/zh-cn$/);
     await page.getByRole("tab", { name: "短剧", exact: true }).click();
     await expect(page.getByTestId("home-public-gallery").locator("article")).toHaveCount(2);
     const brandTab = page.getByRole("tab", { name: "品牌内容", exact: true });
@@ -249,11 +251,18 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     expect(await homepageDomState(page)).toEqual(beforeTheme);
     await expectNoHorizontalOverflow(page);
 
-    await page.goto("/privacy", { waitUntil: "domcontentloaded" });
+    await page.goto("/zh-cn/privacy", { waitUntil: "domcontentloaded" });
     const privacyCanonical = await page.locator('link[rel="canonical"]').evaluate((element: HTMLLinkElement) => element.href);
-    expect(privacyCanonical).toBe(new URL("/privacy", page.url()).toString());
-    await expect(page.locator('meta[property="og:url"]')).toHaveCount(0);
-    await expect(page.locator('meta[property="og:image"][content$="/seo/hotx-ai-og.webp"]')).toHaveCount(0);
+    expect(privacyCanonical).toBe(new URL("/zh-cn/privacy", page.url()).toString());
+    await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+    await expect(page.getByRole("heading", { level: 1, name: "隐私政策", exact: true })).toBeVisible();
+    await expect(page.locator('meta[property="og:url"]')).toHaveAttribute("content", privacyCanonical);
+    await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute("content", "zh_CN");
+    await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", "隐私政策");
+    await expect(page.locator('meta[property="og:image"]')).toHaveAttribute("content", new URL("/seo/hotx-ai-og.webp", page.url()).toString());
+    await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
+    await expect(page.locator('meta[name="twitter:title"]')).toHaveAttribute("content", "隐私政策");
+    expect(JSON.parse((await page.locator("#seo-page-json-ld").textContent())!)).toMatchObject({ "@type": "WebPage", url: privacyCanonical, inLanguage: "zh-CN", name: "隐私政策" });
     await expectNoHorizontalOverflow(page);
     expect(browserErrors).toEqual([]);
     await context.close();
@@ -261,7 +270,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
 
 test("signed-in homepage restores the selected creation mode and prompt", async ({ page }, testInfo) => {
     await page.route("**/api/public/gallery?**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) }));
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
     const createEntry = page.locator("header").getByRole("button", { name: "开始创作", exact: true });
     if (testInfo.project.name === "chromium") await expect(createEntry).toBeVisible();
     else await expect(createEntry).toHaveCount(0);
@@ -282,7 +291,7 @@ test("homepage gallery hides internal service errors from visitors", async ({ pa
             body: JSON.stringify({ code: 409, data: null, msg: "作品广场需要启用 PostgreSQL 数据库" }),
         }),
     );
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
 
     await expect(page.getByRole("heading", { name: "作品暂时无法加载" })).toBeVisible();
     await expect(page.getByText("请稍后重试，或刷新页面后再试。")).toBeVisible();
@@ -292,7 +301,7 @@ test("homepage gallery hides internal service errors from visitors", async ({ pa
 
 test("homepage hero stays centered and responsive", async ({ page }, testInfo) => {
     await page.route("**/api/public/gallery?**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) }));
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
     const geometry = await page.evaluate(() => {
         const viewportWidth = document.documentElement.clientWidth;
         const title = document.querySelector("h1")!.getBoundingClientRect();
@@ -456,7 +465,7 @@ async function mobileFooterDomState(page: Page) {
         const navigationRects = navigations.map((navigation) => navigation.getBoundingClientRect());
         const productItems = Array.from(navigations[0].querySelectorAll<HTMLElement>("a, button")).map((item) => item.getBoundingClientRect());
         const social = footer.querySelector<HTMLElement>('a[aria-label="邮箱联系"]');
-        const footerLogo = footer.querySelector<HTMLElement>('a[href="/"]');
+        const footerLogo = footer.querySelector<HTMLElement>('a[href="/zh-cn"]');
         const firstPolicy = footer.querySelector<HTMLElement>('[data-testid="home-footer-bottom"] a');
         const footerRect = footer.getBoundingClientRect();
         return {
