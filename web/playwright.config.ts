@@ -59,7 +59,7 @@ export default defineConfig({
             env: { ...process.env, VOZEB_PRO_PAYMENT_FIXTURE_PORT: String(paymentFixturePort) },
         },
         {
-            command: `pnpm --dir ../docs exec next dev -p ${docsPort}`,
+            command: `pnpm --dir ../docs exec next dev -H 127.0.0.1 -p ${docsPort}`,
             url: docsBaseURL,
             timeout: 120_000,
             reuseExistingServer: false,

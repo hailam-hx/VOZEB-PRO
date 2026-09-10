@@ -106,6 +106,27 @@ test("HOTX AI branding stays visible, square, and within each release viewport",
     const signedOutPage = await signedOutContext.newPage();
     const docsContext = await browser.newContext({ locale: "zh-CN", viewport: testInfo.project.use.viewport || undefined, storageState: { cookies: [], origins: [] } });
     const docsPage = await docsContext.newPage();
+    const docsDevResourceFailures: string[] = [];
+    const isDocsDevResource = (url: string) => {
+        const resource = new URL(url);
+        return resource.origin === DOCS_URL && resource.pathname.startsWith("/_next/");
+    };
+    docsPage.on("response", (response) => {
+        if (response.status() >= 400 && isDocsDevResource(response.url())) {
+            docsDevResourceFailures.push(`HTTP ${response.status()} ${response.url()}`);
+        }
+    });
+    docsPage.on("requestfailed", (request) => {
+        if (isDocsDevResource(request.url())) {
+            docsDevResourceFailures.push(`request failed ${request.failure()?.errorText || "unknown"} ${request.url()}`);
+        }
+    });
+    docsPage.on("console", (message) => {
+        const text = message.text();
+        if (message.type() === "error" && text.includes(DOCS_URL) && text.includes("/_next/")) {
+            docsDevResourceFailures.push(`console error ${text}`);
+        }
+    });
     try {
         for (const route of BRAND_ROUTES) {
             const routePage = route === "/login" || route === "/register" ? signedOutPage : page;
@@ -143,7 +164,7 @@ test("HOTX AI branding stays visible, square, and within each release viewport",
             await expectNoHorizontalOverflow(routePage, `${testInfo.project.name} ${route} HOTX AI branding`);
         }
 
-        await docsPage.goto(DOCS_URL, { waitUntil: "domcontentloaded" });
+        await docsPage.goto(DOCS_URL, { waitUntil: "networkidle" });
         await expect(docsPage.getByText("HOTX AI", { exact: true }).and(docsPage.locator(":visible")).first(), `${testInfo.project.name} docs HOTX AI text`).toBeVisible();
         const docsLogo = docsPage.locator('img[src="/hx-favicon.png"]').and(docsPage.locator(":visible")).first();
         await expect(docsLogo, `${testInfo.project.name} docs HOTX AI logo`).toBeVisible();
@@ -169,6 +190,7 @@ test("HOTX AI branding stays visible, square, and within each release viewport",
             objectFit: "contain",
         });
         await expectNoHorizontalOverflow(docsPage, `${testInfo.project.name} docs HOTX AI branding`);
+        expect(docsDevResourceFailures, `${testInfo.project.name} docs same-origin dev resources`).toEqual([]);
     } finally {
         await Promise.all([signedOutContext.close(), docsContext.close()]);
     }
