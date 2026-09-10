@@ -3,7 +3,9 @@ import type { MetadataRoute } from "next";
 import { source } from "@/lib/source";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3001").replace(/\/+$/, "");
+  const baseUrl = (
+    process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3001"
+  ).replace(/\/+$/, "");
   return [
     {
       url: `${baseUrl}/`,

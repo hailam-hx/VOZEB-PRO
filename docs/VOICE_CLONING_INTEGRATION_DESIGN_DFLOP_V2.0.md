@@ -334,7 +334,7 @@ web/src/lib/billing/pricing.ts
 Đã có:
 
 ```ts
-BillableCapability = "text" | "image" | "video" | "audio"
+BillableCapability = "text" | "image" | "video" | "audio";
 ```
 
 và dimension:
@@ -968,11 +968,11 @@ GET /audio/voices/{id}
 
 Mapping:
 
-| Dflop | HOTX AI task | Voice Profile |
-|---|---|---|
-| `pending` | `running` | `pending` |
-| `ready` | `success` | `ready` |
-| `failed` | `error` | `failed` |
+| Dflop     | HOTX AI task | Voice Profile |
+| --------- | ------------ | ------------- |
+| `pending` | `running`    | `pending`     |
+| `ready`   | `success`    | `ready`       |
+| `failed`  | `error`      | `failed`      |
 
 Polling interval đề xuất:
 
@@ -1249,7 +1249,7 @@ input <= 5000 characters
 Trong source hiện tại `/api/audio-tasks` đang cắt:
 
 ```ts
-prompt.slice(0, 20_000)
+prompt.slice(0, 20_000);
 ```
 
 Điều này không phù hợp Dflop `voice-tts-pro`.
@@ -1389,8 +1389,8 @@ Usage:
 normalizeBillableUsage({
   capability: "audio",
   source: "request",
-  request: 1
-})
+  request: 1,
+});
 ```
 
 Logical model đề xuất:
@@ -2188,80 +2188,80 @@ Không tự đổi sang preset voice.
 
 ## 44.1 Voice profile API
 
-| ID | Test | Expected |
-|---|---|---|
-| VC-001 | unauthenticated create | 401 |
-| VC-002 | consent false | 400 |
-| VC-003 | sample <5s | 400, no billing |
-| VC-004 | sample >180s | 400, no billing |
-| VC-005 | valid sample | profile pending |
-| VC-006 | duplicate same clientRequestId | same profile/task |
-| VC-007 | user reads another user's voice | 404/403 |
-| VC-008 | rename own voice | success |
-| VC-009 | delete own voice | provider delete + local deleted |
+| ID     | Test                            | Expected                        |
+| ------ | ------------------------------- | ------------------------------- |
+| VC-001 | unauthenticated create          | 401                             |
+| VC-002 | consent false                   | 400                             |
+| VC-003 | sample <5s                      | 400, no billing                 |
+| VC-004 | sample >180s                    | 400, no billing                 |
+| VC-005 | valid sample                    | profile pending                 |
+| VC-006 | duplicate same clientRequestId  | same profile/task               |
+| VC-007 | user reads another user's voice | 404/403                         |
+| VC-008 | rename own voice                | success                         |
+| VC-009 | delete own voice                | provider delete + local deleted |
 
 ---
 
 ## 44.2 Dflop clone runtime
 
-| ID | Test | Expected |
-|---|---|---|
-| VC-101 | request mapping | `{name,audio_url,async:true}` only |
-| VC-102 | canonical endpoint | `/audio/voices` |
-| VC-103 | idempotency retry | same key |
-| VC-104 | `pending` | poll scheduled |
-| VC-105 | `ready` | profile ready + settle |
-| VC-106 | `failed` | profile failed + refund |
-| VC-107 | 409 in-flight | retry same key |
-| VC-108 | 402 upstream | provider-service error, no double charge |
-| VC-109 | capture x-gateway-trace | stored in attempt metadata |
+| ID     | Test                    | Expected                                 |
+| ------ | ----------------------- | ---------------------------------------- |
+| VC-101 | request mapping         | `{name,audio_url,async:true}` only       |
+| VC-102 | canonical endpoint      | `/audio/voices`                          |
+| VC-103 | idempotency retry       | same key                                 |
+| VC-104 | `pending`               | poll scheduled                           |
+| VC-105 | `ready`                 | profile ready + settle                   |
+| VC-106 | `failed`                | profile failed + refund                  |
+| VC-107 | 409 in-flight           | retry same key                           |
+| VC-108 | 402 upstream            | provider-service error, no double charge |
+| VC-109 | capture x-gateway-trace | stored in attempt metadata               |
 
 ---
 
 ## 44.3 TTS cloned voice
 
-| ID | Test | Expected |
-|---|---|---|
-| TTS-201 | ready voice owned by user | accepted |
-| TTS-202 | voice belongs to another user | reject |
-| TTS-203 | pending voice | reject |
-| TTS-204 | failed voice | reject |
-| TTS-205 | candidate same channel | accepted |
-| TTS-206 | candidate different channel | removed |
-| TTS-207 | no matching channel | explicit unavailable error |
-| TTS-208 | input 5001 chars | local reject |
-| TTS-209 | request uses raw providerVoiceId | internal only |
-| TTS-210 | async Dflop success | audio saved to HOTX AI storage |
-| TTS-211 | Dflop failed | points refunded |
-| TTS-212 | cloned speed | sent |
-| TTS-213 | Dflop preset speed | hidden/not sent by UI policy |
-| TTS-214 | Dflop output format | MP3 only |
+| ID      | Test                             | Expected                       |
+| ------- | -------------------------------- | ------------------------------ |
+| TTS-201 | ready voice owned by user        | accepted                       |
+| TTS-202 | voice belongs to another user    | reject                         |
+| TTS-203 | pending voice                    | reject                         |
+| TTS-204 | failed voice                     | reject                         |
+| TTS-205 | candidate same channel           | accepted                       |
+| TTS-206 | candidate different channel      | removed                        |
+| TTS-207 | no matching channel              | explicit unavailable error     |
+| TTS-208 | input 5001 chars                 | local reject                   |
+| TTS-209 | request uses raw providerVoiceId | internal only                  |
+| TTS-210 | async Dflop success              | audio saved to HOTX AI storage |
+| TTS-211 | Dflop failed                     | points refunded                |
+| TTS-212 | cloned speed                     | sent                           |
+| TTS-213 | Dflop preset speed               | hidden/not sent by UI policy   |
+| TTS-214 | Dflop output format              | MP3 only                       |
 
 ---
 
 ## 44.4 Billing
 
-| ID | Test | Expected |
-|---|---|---|
-| BILL-301 | clone estimate | request rate card |
-| BILL-302 | clone duplicate idempotency | one charge |
-| BILL-303 | clone failed | 0 final charge/refund |
-| BILL-304 | TTS 100 chars | characters rate card |
-| BILL-305 | long TTS reserve | based on request characters |
+| ID       | Test                          | Expected                                 |
+| -------- | ----------------------------- | ---------------------------------------- |
+| BILL-301 | clone estimate                | request rate card                        |
+| BILL-302 | clone duplicate idempotency   | one charge                               |
+| BILL-303 | clone failed                  | 0 final charge/refund                    |
+| BILL-304 | TTS 100 chars                 | characters rate card                     |
+| BILL-305 | long TTS reserve              | based on request characters              |
 | BILL-306 | upstream provider cost absent | HOTX AI sale pricing still deterministic |
 
 ---
 
 ## 44.5 UI
 
-| ID | Test | Expected |
-|---|---|---|
-| UI-401 | Dflop model selected | Dflop presets shown |
-| UI-402 | cloned ready voice | appears under 我的声音 |
-| UI-403 | pending clone | not selectable for TTS |
-| UI-404 | clone selected | speed control enabled |
-| UI-405 | Dflop preset selected | speed hidden/disabled |
-| UI-406 | Dflop TTS | format fixed MP3 |
+| ID     | Test                       | Expected                        |
+| ------ | -------------------------- | ------------------------------- |
+| UI-401 | Dflop model selected       | Dflop presets shown             |
+| UI-402 | cloned ready voice         | appears under 我的声音          |
+| UI-403 | pending clone              | not selectable for TTS          |
+| UI-404 | clone selected             | speed control enabled           |
+| UI-405 | Dflop preset selected      | speed hidden/disabled           |
+| UI-406 | Dflop TTS                  | format fixed MP3                |
 | UI-407 | delete voice used by drama | safe warning/reference handling |
 
 ---
@@ -2332,19 +2332,19 @@ admin clone moderation
 
 Bản v1 giả định MiniMax là provider clone trực tiếp. Sau khi đối chiếu Dflop, kiến trúc được sửa như sau:
 
-| V1 | V2 |
-|---|---|
-| MiniMax adapter | Dflop native media API |
-| MiniMax upload/clone contract | Dflop `audio_url` clone contract |
-| 10s–5min sample | **Dflop: 5s–3min** |
-| provider-generated/custom `voice_id` logic | Dflop trả voice resource `id` |
-| clone endpoint provider-specific MiniMax | `/v1/audio/voices` |
-| TTS provider adapter MiniMax | `/v1/audio/speech`, `voice-tts-pro` |
-| static/preset assumption | Dflop `GET /v1/audio/voices` dynamic presets |
+| V1                                             | V2                                                 |
+| ---------------------------------------------- | -------------------------------------------------- |
+| MiniMax adapter                                | Dflop native media API                             |
+| MiniMax upload/clone contract                  | Dflop `audio_url` clone contract                   |
+| 10s–5min sample                                | **Dflop: 5s–3min**                                 |
+| provider-generated/custom `voice_id` logic     | Dflop trả voice resource `id`                      |
+| clone endpoint provider-specific MiniMax       | `/v1/audio/voices`                                 |
+| TTS provider adapter MiniMax                   | `/v1/audio/speech`, `voice-tts-pro`                |
+| static/preset assumption                       | Dflop `GET /v1/audio/voices` dynamic presets       |
 | clone binding multi-provider table immediately | single VoiceProfile + pinned Dflop channel for MVP |
-| custom `voice_clone` pricing concept | reuse `audio` + `request` pricing dimension |
-| generic output formats | Dflop TTS fixed MP3 according to current docs |
-| generic 20k audio prompt | Dflop TTS max 5000 characters |
+| custom `voice_clone` pricing concept           | reuse `audio` + `request` pricing dimension        |
+| generic output formats                         | Dflop TTS fixed MP3 according to current docs      |
+| generic 20k audio prompt                       | Dflop TTS max 5000 characters                      |
 
 ---
 

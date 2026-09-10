@@ -9,7 +9,11 @@ export function baseOptions(): BaseLayoutProps {
     nav: {
       title: (
         <span className="inline-flex items-center gap-2 font-semibold">
-          <img src="/hx-favicon.png" alt={appName} className="h-6 w-6 object-contain" />
+          <img
+            src="/hx-favicon.png"
+            alt={appName}
+            className="h-6 w-6 object-contain"
+          />
           <span>{appName}</span>
         </span>
       ),

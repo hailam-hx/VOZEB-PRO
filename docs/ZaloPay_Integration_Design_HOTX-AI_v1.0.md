@@ -120,12 +120,7 @@ Mở rộng logical provider type:
 
 ```ts
 type PaymentProviderId =
-  | "stripe"
-  | "alipay"
-  | "wechat"
-  | "payply"
-  | "zalopay"
-  | "manual";
+  "stripe" | "alipay" | "wechat" | "payply" | "zalopay" | "manual";
 ```
 
 ZaloPay không được bypass:
@@ -294,19 +289,19 @@ Provider phải dùng đúng amount đã được quote/order snapshot xác nh�
 
 ## 7. Mapping dữ liệu HOTX AI ↔ ZaloPay
 
-| HOTX AI | ZaloPay | Ghi chú |
-|---|---|---|
-| `provider` | `zalopay` | Provider ID nội bộ |
-| `order.id` | `embed_data.vozebProOrderId` | Liên kết callback/query với local order |
-| `order.orderNo` | `embed_data.vozebProOrderNo` | Dùng kiểm tra chéo |
-| `providerOrderId` | `app_trans_id` | ID giao dịch phía merchant/ZaloPay |
-| `providerPaymentId` | `zp_trans_id` | ID giao dịch ZaloPay sau thanh toán |
-| `payableNativeAmount` | `amount` | VND integer |
-| `currency` | VND | Cố định cho Top-up V1 |
-| `currencyExponent` | 0 | VND |
-| checkout URL | `order_url` | Redirect URL |
-| checkout QR | `qr_code` | Có thể dùng cho desktop |
-| paid time | `server_time` | Chuẩn hóa sang ISO timestamp |
+| HOTX AI               | ZaloPay                      | Ghi chú                                 |
+| --------------------- | ---------------------------- | --------------------------------------- |
+| `provider`            | `zalopay`                    | Provider ID nội bộ                      |
+| `order.id`            | `embed_data.vozebProOrderId` | Liên kết callback/query với local order |
+| `order.orderNo`       | `embed_data.vozebProOrderNo` | Dùng kiểm tra chéo                      |
+| `providerOrderId`     | `app_trans_id`               | ID giao dịch phía merchant/ZaloPay      |
+| `providerPaymentId`   | `zp_trans_id`                | ID giao dịch ZaloPay sau thanh toán     |
+| `payableNativeAmount` | `amount`                     | VND integer                             |
+| `currency`            | VND                          | Cố định cho Top-up V1                   |
+| `currencyExponent`    | 0                            | VND                                     |
+| checkout URL          | `order_url`                  | Redirect URL                            |
+| checkout QR           | `qr_code`                    | Có thể dùng cho desktop                 |
+| paid time             | `server_time`                | Chuẩn hóa sang ISO timestamp            |
 
 ---
 
@@ -980,17 +975,17 @@ ZaloPay
 
 Các field khuyến nghị:
 
-| Field | Loại | Required | Secret | Ghi chú |
-|---|---|---:|---:|---|
-| `environment` | select | yes | no | Sandbox / Production |
-| `appId` | text | yes | no | ZaloPay App ID |
-| `key1` | secret | yes | yes | Create/Query signing key theo contract |
-| `key2` | secret | yes | yes | Callback verification key |
-| `callbackUrl` | URL | optional | no | mặc định `/api/billing/webhooks/zalopay` |
-| `redirectUrl` | URL | optional | no | mặc định `/billing/success` |
-| `preferredPaymentMethods` | text/select | optional | no | chỉ khi business cần giới hạn phương thức |
-| `apiBase` | URL | optional/advanced | no | override endpoint |
-| `subAppId` | text | optional | no | chỉ dùng khi merchant contract yêu cầu |
+| Field                     | Loại        |          Required | Secret | Ghi chú                                   |
+| ------------------------- | ----------- | ----------------: | -----: | ----------------------------------------- |
+| `environment`             | select      |               yes |     no | Sandbox / Production                      |
+| `appId`                   | text        |               yes |     no | ZaloPay App ID                            |
+| `key1`                    | secret      |               yes |    yes | Create/Query signing key theo contract    |
+| `key2`                    | secret      |               yes |    yes | Callback verification key                 |
+| `callbackUrl`             | URL         |          optional |     no | mặc định `/api/billing/webhooks/zalopay`  |
+| `redirectUrl`             | URL         |          optional |     no | mặc định `/billing/success`               |
+| `preferredPaymentMethods` | text/select |          optional |     no | chỉ khi business cần giới hạn phương thức |
+| `apiBase`                 | URL         | optional/advanced |     no | override endpoint                         |
+| `subAppId`                | text        |          optional |     no | chỉ dùng khi merchant contract yêu cầu    |
 
 UI không hiển thị lại secret sau khi save.
 
@@ -1492,23 +1487,23 @@ Tên chính xác phải do Codex xác nhận sau khi inspect repo.
 
 Implementation được coi là phù hợp thiết kế khi các invariant sau đạt được:
 
-| Scenario | Expected |
-|---|---|
-| Tạo order ZaloPay sandbox | Nhận checkout URL hợp lệ |
-| ZaloPay trả QR | Generic checkout có thể giữ `qrContent` |
-| Callback Key2 hợp lệ | Có thể settle order |
-| Callback Key2 sai | Không settle |
-| Callback amount khác DB | Không settle |
-| Callback local order sai | Không settle |
-| Callback lặp lại | Chỉ cấp credits một lần |
-| Query thành công trước callback | Chỉ cấp credits một lần |
-| Callback đến sau Query | Không cấp lần hai |
-| Redirect success giả | Không cấp credits |
-| User đóng browser sau payment | Callback vẫn có thể settle |
-| Callback bị mất | Query Order có thể recover |
-| Local cancel + external paid | Không để mất tiền nhưng không có đường reconciliation |
-| Missing provider config | Checkout bị chặn an toàn |
-| Secret config | Không lộ ra client/log |
+| Scenario                        | Expected                                              |
+| ------------------------------- | ----------------------------------------------------- |
+| Tạo order ZaloPay sandbox       | Nhận checkout URL hợp lệ                              |
+| ZaloPay trả QR                  | Generic checkout có thể giữ `qrContent`               |
+| Callback Key2 hợp lệ            | Có thể settle order                                   |
+| Callback Key2 sai               | Không settle                                          |
+| Callback amount khác DB         | Không settle                                          |
+| Callback local order sai        | Không settle                                          |
+| Callback lặp lại                | Chỉ cấp credits một lần                               |
+| Query thành công trước callback | Chỉ cấp credits một lần                               |
+| Callback đến sau Query          | Không cấp lần hai                                     |
+| Redirect success giả            | Không cấp credits                                     |
+| User đóng browser sau payment   | Callback vẫn có thể settle                            |
+| Callback bị mất                 | Query Order có thể recover                            |
+| Local cancel + external paid    | Không để mất tiền nhưng không có đường reconciliation |
+| Missing provider config         | Checkout bị chặn an toàn                              |
+| Secret config                   | Không lộ ra client/log                                |
 
 ---
 
