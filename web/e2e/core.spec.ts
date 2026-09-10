@@ -372,6 +372,25 @@ test("legacy image and video routes hand off to the unified creative Agent", asy
     }
 });
 
+test("request nonce does not produce a JSON-LD hydration mismatch", async ({ page }) => {
+    const consoleErrors: string[] = [];
+    const onConsole = (message: { type(): string; text(): string }) => {
+        if (message.type() === "error") consoleErrors.push(message.text());
+    };
+    page.on("console", onConsole);
+
+    try {
+        await page.goto("/gallery", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#website-json-ld")).toHaveCount(1);
+        await page.waitForLoadState("networkidle");
+
+        const nonceHydrationWarnings = consoleErrors.filter((message) => message.includes("WebsiteStructuredData") && message.includes("nonce")).map(() => "WebsiteStructuredData nonce hydration mismatch");
+        expect(nonceHydrationWarnings).toEqual([]);
+    } finally {
+        page.off("console", onConsole);
+    }
+});
+
 test("audio task stores a valid audio result", async ({ request }) => {
     const created = await request.post("/api/audio-tasks", {
         data: { config: { model: "e2e-audio", voiceSelection: { type: "preset", voiceId: "alloy" }, format: "wav" }, prompt: "audio fixture", source: "agent", context: { clientRequestId: `e2e-audio:${randomUUID()}` } },

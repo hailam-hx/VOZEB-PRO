@@ -5,10 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SITE_SETTINGS } from "./store-foundation";
 import { normalizeSiteSettings } from "./store-normalizers";
 import { getAuthSettings, getFreshAuthSettings, setAuthSettings } from "./store-settings-actions";
-import { getPublicSiteSettings } from "@/lib/server/site-metadata";
+import { getPublicSiteSettings, SITE_SETTINGS_CACHE_TAG } from "@/lib/server/site-metadata";
 import { serializePublicSettings } from "./session";
 
-vi.mock("next/cache", () => ({ unstable_cache: (read: () => Promise<unknown>) => read, revalidateTag: vi.fn() }));
+const cacheMocks = vi.hoisted(() => ({ revalidateTag: vi.fn() }));
+vi.mock("next/cache", () => ({ unstable_cache: (read: () => Promise<unknown>) => read, revalidateTag: cacheMocks.revalidateTag }));
 
 vi.mock("./session", async (importOriginal) => ({ ...(await importOriginal<typeof import("./session")>()), getCurrentUser: vi.fn(async () => ({ id: "seo-admin", role: "admin", status: "active", adminPermissions: ["system.manage"] })) }));
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: () => ({ id: "seo-admin" }), safeRecordAuditLog: vi.fn() }));
@@ -69,8 +70,10 @@ describe("localized SEO settings", () => {
             const original = (await getFreshAuthSettings()).site;
             try {
                 await getPublicSiteSettings();
+                cacheMocks.revalidateTag.mockClear();
                 const response = await PATCH(new Request("http://localhost/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ site: { ...DEFAULT_SITE_SETTINGS, seo } }) }));
                 expect(response.status).toBe(200);
+                expect(cacheMocks.revalidateTag).toHaveBeenCalledWith(SITE_SETTINGS_CACHE_TAG, { expire: 0 });
                 expect((await response.json()).settings.site.seo).toEqual(seo);
                 expect((await (await GET()).json()).settings.site.seo).toEqual(seo);
                 expect((await getAuthSettings()).site.seo).toEqual(seo);

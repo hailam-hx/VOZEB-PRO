@@ -23,7 +23,7 @@ export function getPublicSiteSettings() {
 
 export function invalidatePublicSiteSettings() {
     try {
-        revalidateTag(SITE_SETTINGS_CACHE_TAG, "max");
+        revalidateTag(SITE_SETTINGS_CACHE_TAG, { expire: 0 });
     } catch {}
 }
 

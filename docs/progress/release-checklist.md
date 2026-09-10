@@ -10,6 +10,12 @@ pnpm run check:release
 
 该命令会检查 Prettier、TypeScript、隔离生产构建、补丁空白，以及 `.data`、`.next`、`node_modules` 等运行时文件是否被误提交。
 
+## 2026-09-10 HOTX AI 品牌发布证据
+
+- Web Vitest：579 个文件通过、6 个跳过；2,845 项通过、16 项跳过。TypeScript、ESLint、Prettier 与生产构建通过。
+- Playwright：桌面、390px、430px 依次执行，197 项通过、25 项项目/环境跳过、0 项失败。覆盖品牌 Logo、三语首页与 27 个 SEO URL、登录/注册、`/create`、后台站点设置和页面横向溢出；Logo 已验证可见、固有宽高非零且相等，并使用 `object-contain`。
+- 发布阻断项：`pnpm run check:release` 的依赖审计报告 11 项既有 advisory（2 critical、3 high、6 moderate）。本轮未升级依赖；应在获批升级后重新执行发布检查。
+
 ## 手动页面检查
 
 - 桌面端：首页、统一创作 Agent、画布、短剧、声音管理、提示词库、素材库、管理员后台。

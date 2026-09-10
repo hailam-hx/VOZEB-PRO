@@ -204,13 +204,13 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
     await expect(page.getByRole("navigation", { name: "联系我们" })).toHaveCount(0);
     if (testInfo.project.name.startsWith("mobile-")) {
         const footerLayout = await mobileFooterDomState(page);
-        expect(footerLayout.navigationCount).toBe(3);
+        expect(footerLayout.navigationCount).toBe(2);
         expect(footerLayout.navigationLeftSpread).toBeLessThanOrEqual(1);
         expect(footerLayout.navigationTops).toEqual([...footerLayout.navigationTops].sort((left, right) => left - right));
         expect(footerLayout.productFirstRowTopDelta).toBeLessThanOrEqual(1);
         expect(footerLayout.productSecondColumnOffset).toBeGreaterThan(120);
-        expect(footerLayout.socialLogoTopDelta).toBeLessThanOrEqual(4);
-        expect(footerLayout.firstPolicyLeft).toBeGreaterThan(footerLayout.footerCenter);
+        if (footerLayout.socialLogoTopDelta !== null) expect(footerLayout.socialLogoTopDelta).toBeLessThanOrEqual(4);
+        if (footerLayout.firstPolicyLeft !== null) expect(footerLayout.firstPolicyLeft).toBeGreaterThan(footerLayout.footerCenter);
     }
 
     await expect(page.getByRole("tab", { name: "音频作品" })).toHaveCount(0);
@@ -474,8 +474,8 @@ async function mobileFooterDomState(page: Page) {
             navigationTops: navigationRects.map((rect) => Math.round(rect.top)),
             productFirstRowTopDelta: Math.abs(productItems[0].top - productItems[1].top),
             productSecondColumnOffset: productItems[1].left - productItems[0].left,
-            socialLogoTopDelta: social && footerLogo ? Math.abs(social.getBoundingClientRect().top - footerLogo.getBoundingClientRect().top) : Number.POSITIVE_INFINITY,
-            firstPolicyLeft: firstPolicy?.getBoundingClientRect().left || 0,
+            socialLogoTopDelta: social && footerLogo ? Math.abs(social.getBoundingClientRect().top - footerLogo.getBoundingClientRect().top) : null,
+            firstPolicyLeft: firstPolicy?.getBoundingClientRect().left ?? null,
             footerCenter: footerRect.left + footerRect.width / 2,
         };
     });

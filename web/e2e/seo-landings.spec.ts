@@ -333,63 +333,86 @@ const publicCopy = {
     en: { home: "HOTX AI – A platform for AI content creation", terms: "Terms of Service", privacy: "Privacy Policy" },
     "zh-CN": { home: "HOTX AI – 一站式 AI 内容创作平台", terms: "服务条款", privacy: "隐私政策" },
 } as const;
+const configuredSeo = {
+    vi: {
+        title: "HOTX AI - Nền tảng tạo ảnh, video và giọng nói bằng AI",
+        description: "HOTX AI là nền tảng sáng tạo AI giúp bạn tạo ảnh, video và giọng nói trong một quy trình thống nhất.",
+        keywords: "HOTX AI,AI Agent,hình ảnh AI,video AI",
+    },
+    en: {
+        title: "HOTX AI - AI image, video and voice creation",
+        description: "HOTX AI is a unified AI creation platform for images, video and voice.",
+        keywords: "HOTX AI,AI Agent,AI image,AI video",
+    },
+    "zh-CN": {
+        title: "HOTX AI - AI 图片、视频与语音创作",
+        description: "HOTX AI 是统一的 AI 图片、视频与语音创作平台。",
+        keywords: "HOTX AI,AI Agent,AI 绘图,AI 视频",
+    },
+} as const;
 
-test("all 27 published URLs have localized SSR SEO independent of cookie and browser language", async ({ page, context }) => {
+test("all 27 published URLs have localized SSR SEO independent of cookie and browser language", async ({ page, context, request }) => {
     test.setTimeout(240_000);
-    await context.setExtraHTTPHeaders({ "Accept-Language": "fr-FR,en;q=0.9" });
-    for (const locale of ["vi", "en", "zh-CN"] as const) {
-        const prefix = locale === "en" ? "/en" : locale === "zh-CN" ? "/zh-cn" : "";
-        const pages = [{ slug: "", h1: publicCopy[locale].home }, ...translatedLandings[locale], { slug: "terms", h1: publicCopy[locale].terms }, { slug: "privacy", h1: publicCopy[locale].privacy }];
-        for (const item of pages) {
-            await context.addCookies([{ name: "vozeb-pro-locale", value: locale === "en" ? "zh-CN" : "en", url: String(test.info().project.use.baseURL) }]);
-            const suffix = item.slug ? "/" + item.slug : "";
-            const path = prefix + suffix || "/";
-            const response = await page.goto(path, { waitUntil: "domcontentloaded" });
-            expect(response?.status(), path).toBe(200);
-            const html = await response!.text();
-            expect(html).toMatch(/<h1[\s>]/);
-            expect(html).toMatch(/<link[^>]*rel="canonical"/);
-            await expect(page.locator("html")).toHaveAttribute("lang", locale);
-            await expect(page.locator("h1")).toHaveCount(1);
-            await expect(page.getByRole("heading", { level: 1, name: item.h1 })).toBeVisible();
-            const title = await page.title();
-            expect(title.trim()).not.toBe("");
-            if ("title" in item) await expect(page).toHaveTitle(item.title);
-            else if (item.slug) expect(title).toBe(item.h1);
-            else if (locale === "en") expect(title).toContain("AI image, video and voice creation");
-            else if (locale === "zh-CN") expect(title).toContain("AI 图片、视频与语音创作");
-            const description = await page.locator('meta[name="description"]').getAttribute("content");
-            expect(description?.trim()).toBeTruthy();
-            if ("description" in item) expect(description).toBe(item.description);
-            const canonical = new URL(path, String(test.info().project.use.baseURL)).toString();
-            await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", canonical);
-            const alternates = await page.locator('link[rel="alternate"][hreflang]').evaluateAll((nodes) => Object.fromEntries(nodes.map((node) => [node.getAttribute("hreflang"), node.getAttribute("href")])));
-            const base = String(test.info().project.use.baseURL);
-            expect(alternates).toEqual({
-                vi: new URL(suffix || "/", base).toString(),
-                en: new URL("/en" + suffix, base).toString(),
-                "zh-Hans": new URL("/zh-cn" + suffix, base).toString(),
-                "x-default": new URL(suffix || "/", base).toString(),
-            });
-            await expect(page.locator('meta[property="og:url"]')).toHaveAttribute("content", canonical);
-            await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", title);
-            await expect(page.locator('meta[property="og:description"]')).toHaveAttribute("content", description!);
-            await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute("content", locale === "vi" ? "vi_VN" : locale === "en" ? "en_US" : "zh_CN");
-            await expect(page.locator('meta[name="twitter:title"]')).toHaveAttribute("content", title);
-            await expect(page.locator('meta[name="twitter:description"]')).toHaveAttribute("content", description!);
-            await expect(page.locator('meta[property="og:image"]')).toHaveAttribute("content", /^https?:\/\//);
-            const imageAlt = await page.locator('meta[property="og:image:alt"]').getAttribute("content");
-            expect(imageAlt?.trim()).toBeTruthy();
-            await expect(page.locator('meta[name="twitter:image:alt"]')).toHaveAttribute("content", imageAlt!);
-            const website = JSON.parse((await page.locator("#website-json-ld").textContent())!);
-            expect(website).toMatchObject({ url: new URL(prefix || "/", base).toString(), inLanguage: locale });
-            if (item.slug) {
-                const data = JSON.parse((await page.locator(item.slug === "terms" || item.slug === "privacy" ? "#seo-page-json-ld" : "#seo-landing-json-ld").textContent())!);
-                const webpage = data["@graph"]?.[0] || data;
-                expect(webpage).toMatchObject({ url: canonical, inLanguage: locale, description });
+    const original = (await (await request.get("/api/admin/settings")).json()).settings.site;
+    try {
+        expect((await request.patch("/api/admin/settings", { data: { site: { ...original, seo: configuredSeo } } })).ok()).toBe(true);
+        await context.setExtraHTTPHeaders({ "Accept-Language": "fr-FR,en;q=0.9" });
+        for (const locale of ["vi", "en", "zh-CN"] as const) {
+            const prefix = locale === "en" ? "/en" : locale === "zh-CN" ? "/zh-cn" : "";
+            const pages = [{ slug: "", h1: publicCopy[locale].home }, ...translatedLandings[locale], { slug: "terms", h1: publicCopy[locale].terms }, { slug: "privacy", h1: publicCopy[locale].privacy }];
+            for (const item of pages) {
+                await context.addCookies([{ name: "vozeb-pro-locale", value: locale === "en" ? "zh-CN" : "en", url: String(test.info().project.use.baseURL) }]);
+                const suffix = item.slug ? "/" + item.slug : "";
+                const path = prefix + suffix || "/";
+                const response = await page.goto(path, { waitUntil: "domcontentloaded" });
+                expect(response?.status(), path).toBe(200);
+                const html = await response!.text();
+                expect(html).toMatch(/<h1[\s>]/);
+                expect(html).toMatch(/<link[^>]*rel="canonical"/);
+                await expect(page.locator("html")).toHaveAttribute("lang", locale);
+                await expect(page.locator("h1")).toHaveCount(1);
+                await expect(page.getByRole("heading", { level: 1, name: item.h1 })).toBeVisible();
+                const title = await page.title();
+                expect(title.trim()).not.toBe("");
+                if ("title" in item) await expect(page).toHaveTitle(item.title);
+                else if (item.slug) expect(title).toBe(item.h1);
+                else if (locale === "en") expect(title).toContain("AI image, video and voice creation");
+                else if (locale === "zh-CN") expect(title).toContain("AI 图片、视频与语音创作");
+                const description = await page.locator('meta[name="description"]').getAttribute("content");
+                expect(description?.trim()).toBeTruthy();
+                if ("description" in item) expect(description).toBe(item.description);
+                const canonical = new URL(path, String(test.info().project.use.baseURL)).toString();
+                await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", canonical);
+                const alternates = await page.locator('link[rel="alternate"][hreflang]').evaluateAll((nodes) => Object.fromEntries(nodes.map((node) => [node.getAttribute("hreflang"), node.getAttribute("href")])));
+                const base = String(test.info().project.use.baseURL);
+                expect(alternates).toEqual({
+                    vi: new URL(suffix || "/", base).toString(),
+                    en: new URL("/en" + suffix, base).toString(),
+                    "zh-Hans": new URL("/zh-cn" + suffix, base).toString(),
+                    "x-default": new URL(suffix || "/", base).toString(),
+                });
+                await expect(page.locator('meta[property="og:url"]')).toHaveAttribute("content", canonical);
+                await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", title);
+                await expect(page.locator('meta[property="og:description"]')).toHaveAttribute("content", description!);
+                await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute("content", locale === "vi" ? "vi_VN" : locale === "en" ? "en_US" : "zh_CN");
+                await expect(page.locator('meta[name="twitter:title"]')).toHaveAttribute("content", title);
+                await expect(page.locator('meta[name="twitter:description"]')).toHaveAttribute("content", description!);
+                await expect(page.locator('meta[property="og:image"]')).toHaveAttribute("content", /^https?:\/\//);
+                const imageAlt = await page.locator('meta[property="og:image:alt"]').getAttribute("content");
+                expect(imageAlt?.trim()).toBeTruthy();
+                await expect(page.locator('meta[name="twitter:image:alt"]')).toHaveAttribute("content", imageAlt!);
+                const website = JSON.parse((await page.locator("#website-json-ld").textContent())!);
+                expect(website).toMatchObject({ url: new URL(prefix || "/", base).toString(), inLanguage: locale });
+                if (item.slug) {
+                    const data = JSON.parse((await page.locator(item.slug === "terms" || item.slug === "privacy" ? "#seo-page-json-ld" : "#seo-landing-json-ld").textContent())!);
+                    const webpage = data["@graph"]?.[0] || data;
+                    expect(webpage).toMatchObject({ url: canonical, inLanguage: locale, description });
+                }
+                await expectNoHorizontalOverflow(page, path);
             }
-            await expectNoHorizontalOverflow(page, path);
         }
+    } finally {
+        expect((await request.patch("/api/admin/settings", { data: { site: original } })).ok()).toBe(true);
     }
 });
 
@@ -520,19 +543,29 @@ test("admin localized SEO persists immediately across tabs, refresh, session and
         await page.getByRole("button", { name: "保存网站设置" }).click();
         expect((await clearedResponse).ok()).toBe(true);
         const cleared = (await (await request.get("/api/admin/settings")).json()).settings.site.seo;
-        expect(cleared.en.description).toContain("AI creation platform");
+        expect(cleared.en).toEqual({ title: "", description: "", keywords: "" });
         expect(cleared.vi).toEqual(expected.vi);
         expect(cleared["zh-CN"]).toEqual(expected["zh-CN"]);
-        await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue(cleared.en.description);
+        expect((await (await request.get("/api/auth/session")).json()).settings.site.seo.en).toEqual(cleared.en);
+        await expect(page.getByRole("textbox", { name: "SEO 标题", exact: true })).toHaveValue("");
+        await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue("");
+        await expect(page.getByRole("textbox", { name: "SEO 关键词", exact: true })).toHaveValue("");
         await page.reload();
         await page.getByRole("tab", { name: "EN", exact: true }).click();
-        await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue(cleared.en.description);
+        await expect(page.getByRole("textbox", { name: "SEO 标题", exact: true })).toHaveValue("");
+        await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue("");
+        await expect(page.getByRole("textbox", { name: "SEO 关键词", exact: true })).toHaveValue("");
+        await page.goto("/en");
+        expect(await page.title()).toBe("HOTX AI");
+        await expect(page.locator('meta[name="description"]')).toHaveCount(0);
+        await expect(page.locator('meta[name="keywords"]')).toHaveCount(0);
+        await page.goto("/admin?section=site");
         for (const theme of ["light", "dark"]) {
             await page.evaluate((theme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme }, version: 0 })), theme);
             await page.reload({ waitUntil: "domcontentloaded" });
             await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
             await page.getByRole("tab", { name: "EN", exact: true }).click();
-            await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue(cleared.en.description);
+            await expect(page.getByRole("textbox", { name: "SEO 描述", exact: true })).toHaveValue("");
             const bounds = await page.getByRole("textbox", { name: "SEO 描述", exact: true }).boundingBox();
             expect(bounds!.width).toBeGreaterThan(0);
             expect(bounds!.x).toBeGreaterThanOrEqual(0);

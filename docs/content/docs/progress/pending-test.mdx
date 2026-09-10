@@ -5,6 +5,8 @@ description: HOTX AI 当前版本需要人工或真实环境确认的事项
 
 # 待测试
 
+- 2026-09-10 HOTX AI 品牌发布复核已完成：`web` 全量 Vitest 为 579 个文件通过、6 个按环境跳过，2,845 项通过、16 项跳过；TypeScript、ESLint、Prettier 和生产构建通过。Playwright 在桌面、390px、430px 顺序运行，197 项通过、25 项按项目/环境跳过、0 项失败，覆盖 `/`、`/en`、`/zh-cn`、登录/注册、`/create`、后台站点设置、27 个公开 SEO URL、品牌 Logo 的可见性、正方形固有尺寸、`object-contain` 和无横向溢出。后台保存后的首个 SSR 请求立即读取三语 SEO；空 EN SEO 只保留 HOTX AI 身份标题且不输出 description/keywords。`pnpm run check:release` 仍被既有依赖审计阻断：11 项 advisory（2 critical、3 high、6 moderate；含 Next.js、sharp、js-yaml、Tiptap、Vitest、Hono 等），本轮未改依赖，需单独获批升级后复核。
+
 - 多语言 SEO 实现已由同一发布注册表限定为 9 个页面、3 个 locale；越南语 canonical 不带前缀，英语为 `/en`，简体中文为 `/zh-cn`：
 
 | 页面          | VI                    | EN                       | 简体中文                    |

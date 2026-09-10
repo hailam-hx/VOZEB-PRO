@@ -16,6 +16,7 @@ const FILE_PROVIDER_LIMITATIONS = new Map([
     ["/api/admin/billing/summary", 501],
     ["/api/admin/billing/top-up-presets", 501],
 ]);
+const BRAND_ROUTES = ["/", "/en", "/zh-cn", "/login", "/register", "/create", "/admin?section=site"] as const;
 
 type RouteCase = { path: string; expectedPath?: RegExp; expectedStatus?: number; readyHeading?: string; readyText?: string | RegExp };
 type ApiFailure = { path: string; status: number; body: string };
@@ -96,6 +97,50 @@ test("signed-out, legal, installation and invalid public detail routes fail safe
         for (const route of routes) await verifyRoute(page, route, `${testInfo.project.name} signed-out`);
     } finally {
         await context.close();
+    }
+});
+
+test("HOTX AI branding stays visible, square, and within each release viewport", async ({ browser, page }, testInfo) => {
+    const signedOutContext = await browser.newContext({ baseURL: BASE_URL, locale: "zh-CN", viewport: testInfo.project.use.viewport || undefined, storageState: { cookies: [], origins: [] } });
+    const signedOutPage = await signedOutContext.newPage();
+    try {
+        for (const route of BRAND_ROUTES) {
+            const routePage = route === "/login" || route === "/register" ? signedOutPage : page;
+            await routePage.goto(route, { waitUntil: "domcontentloaded" });
+            if (route === "/create" && testInfo.project.name.startsWith("mobile-")) {
+                const openNavigation = routePage.getByRole("button", { name: "打开导航菜单" });
+                await expect(openNavigation).toBeVisible();
+                await openNavigation.click();
+            }
+            await expect(routePage.getByText("HOTX AI", { exact: true }).and(routePage.locator(":visible")).first(), `${testInfo.project.name} ${route} HOTX AI text`).toBeVisible();
+
+            const logo = routePage.locator('img[src="/hx-favicon.png"]').and(routePage.locator(":visible")).first();
+            await expect(logo, `${testInfo.project.name} ${route} HOTX AI logo`).toBeVisible();
+            await expect(logo).toHaveClass(/object-contain/);
+            await expect(routePage.getByText("VOZEB PRO", { exact: true }), `${testInfo.project.name} ${route} legacy product text`).toHaveCount(0);
+            await expect(routePage.getByText("VOZEB 开源交流 QQ 群", { exact: true }), `${testInfo.project.name} ${route} legacy community text`).toHaveCount(0);
+            expect(
+                await logo.evaluate((image) => {
+                    const { width, height } = image.getBoundingClientRect();
+                    const { naturalHeight, naturalWidth } = image as HTMLImageElement;
+                    return {
+                        hasLayoutSize: width > 0 && height > 0,
+                        hasIntrinsicSize: naturalWidth > 0 && naturalHeight > 0,
+                        intrinsicIsSquare: naturalWidth === naturalHeight,
+                        objectFit: getComputedStyle(image).objectFit,
+                    };
+                }),
+                `${testInfo.project.name} ${route} HOTX AI logo geometry`,
+            ).toEqual({
+                hasLayoutSize: true,
+                hasIntrinsicSize: true,
+                intrinsicIsSquare: true,
+                objectFit: "contain",
+            });
+            await expectNoHorizontalOverflow(routePage, `${testInfo.project.name} ${route} HOTX AI branding`);
+        }
+    } finally {
+        await signedOutContext.close();
     }
 });
 
