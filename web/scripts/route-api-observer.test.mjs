@@ -5,12 +5,6 @@ import { describe, expect, it } from "vitest";
 import { observeRouteApi } from "../e2e/route-api-observer";
 
 const origin = "http://localhost:3100";
-function createPage() {
-    const page = new EventEmitter();
-    const frame = {};
-    page.mainFrame = () => frame;
-    return page;
-}
 function deferred() {
     let resolve;
     const promise = new Promise((done) => {
@@ -20,35 +14,37 @@ function deferred() {
 }
 
 function apiRequest(path, resourceType = "fetch") {
-    const headers = deferred();
+    const finished = deferred();
     const body = deferred();
-    const request = { url: () => origin + path, resourceType: () => resourceType, response: () => headers.promise };
-    const response = { request: () => request, url: request.url, status: () => 500, finished: () => body.promise.then(() => null), text: () => body.promise };
-    return { request, response, headers, body };
+    const request = { url: () => origin + path, resourceType: () => resourceType };
+    const response = { request: () => request, status: () => 500, finished: () => finished.promise, text: () => body.promise };
+    return { request, response, finished, body };
 }
 
-describe("route API observer", () => {
-    it("ignores a previous route's delayed response", async () => {
-        const page = createPage();
-        const previous = apiRequest("/api/admin/billing/orders");
-        page.emit("request", previous.request);
+describe("fresh-page API observer", () => {
+    it("collects only the owned page's requests and responses without navigation state", async () => {
+        const previousPage = new EventEmitter();
+        const page = new EventEmitter();
         const observer = observeRouteApi(page, origin);
-        page.emit("framenavigated", page.mainFrame());
         try {
-            page.emit("response", previous.response);
-            previous.headers.resolve(previous.response);
-            previous.body.resolve("previous route failure");
+            const previous = apiRequest("/api/admin/billing/orders");
+            previousPage.emit("request", previous.request);
+            previousPage.emit("response", previous.response);
+            const current = apiRequest("/api/admin/referrals");
+            page.emit("request", current.request);
+            page.emit("response", current.response);
+            current.finished.resolve(null);
+            current.body.resolve("current page failure");
             await observer.settle();
-            expect(observer.failures).toEqual([]);
+            expect(observer.failures).toEqual([{ path: "/api/admin/referrals", status: 500, body: "current page failure" }]);
         } finally {
             observer.dispose();
         }
     });
 
-    it("waits for a current route's delayed response body and records its failure", async () => {
-        const page = createPage();
+    it("waits for current response headers, completion, and failure body", async () => {
+        const page = new EventEmitter();
         const observer = observeRouteApi(page, origin);
-        page.emit("framenavigated", page.mainFrame());
         const current = apiRequest("/api/admin/billing/top-up-presets");
         try {
             page.emit("request", current.request);
@@ -59,52 +55,85 @@ describe("route API observer", () => {
             await setImmediate();
             expect(settled).toBe(false);
             page.emit("response", current.response);
-            current.headers.resolve(current.response);
+            current.finished.resolve(null);
             await setImmediate();
             expect(settled).toBe(false);
-            current.body.resolve("current route failure");
+            current.body.resolve("current page failure");
             await completion;
-            expect(observer.failures).toEqual([{ path: "/api/admin/billing/top-up-presets", status: 500, body: "current route failure" }]);
+            expect(observer.failures).toEqual([{ path: "/api/admin/billing/top-up-presets", status: 500, body: "current page failure" }]);
         } finally {
             observer.dispose();
         }
     });
 
-    it("does not wait for long-lived EventSource requests", async () => {
-        const page = createPage();
+    it.each(["net::ERR_CONNECTION_RESET", "net::ERR_ABORTED"])("settles never-response requests and reports %s", async (errorText) => {
+        const page = new EventEmitter();
         const observer = observeRouteApi(page, origin);
-        page.emit("framenavigated", page.mainFrame());
+        const current = apiRequest("/api/auth/session");
+        current.request.failure = () => ({ errorText });
         try {
-            page.emit("request", apiRequest("/api/agent/runs/run/events", "eventsource").request);
-            await observer.settle();
-            expect(observer.failures).toEqual([]);
-        } finally {
-            observer.dispose();
-        }
-    });
-
-    it("does not wait for old-document requests started before the target navigation commits", async () => {
-        const page = createPage();
-        const observer = observeRouteApi(page, origin);
-        try {
-            page.emit("request", apiRequest("/api/public/gallery").request);
-            page.emit("framenavigated", {});
-            page.emit("request", apiRequest("/api/announcements").request);
-            page.emit("framenavigated", page.mainFrame());
-            const current = apiRequest("/api/admin/billing/summary");
             page.emit("request", current.request);
-            current.headers.resolve(current.response);
-            current.body.resolve("current route failure");
+            const completion = observer.settle();
+            page.emit("requestfailed", current.request);
+            await completion;
+            expect(observer.failures).toEqual([{ path: "/api/auth/session", status: 0, body: errorText }]);
+        } finally {
+            observer.dispose();
+        }
+    });
+
+    it("preserves the HTTP failure status when its body is unavailable", async () => {
+        const page = new EventEmitter();
+        const observer = observeRouteApi(page, origin);
+        const current = apiRequest("/api/auth/session");
+        current.response.text = async () => {
+            throw new Error("response body unavailable");
+        };
+        try {
+            page.emit("request", current.request);
+            page.emit("response", current.response);
+            current.finished.resolve(null);
+            await observer.settle();
+            expect(observer.failures).toEqual([{ path: "/api/auth/session", status: 500, body: "response body unavailable" }]);
+        } finally {
+            observer.dispose();
+        }
+    });
+
+    it("includes requests started while previously observed requests are settling", async () => {
+        const page = new EventEmitter();
+        const observer = observeRouteApi(page, origin);
+        const first = apiRequest("/api/announcements");
+        first.response.status = () => 200;
+        const second = apiRequest("/api/auth/session");
+        try {
+            page.emit("request", first.request);
             let settled = false;
             const completion = observer.settle().then(() => {
                 settled = true;
             });
+            page.emit("response", first.response);
+            page.emit("request", second.request);
+            first.finished.resolve(null);
             await setImmediate();
-            expect(settled).toBe(true);
+            expect(settled).toBe(false);
+            page.emit("response", second.response);
+            second.finished.resolve(null);
+            second.body.resolve("late failure");
             await completion;
-            expect(observer.failures).toEqual([{ path: "/api/admin/billing/summary", status: 500, body: "current route failure" }]);
+            expect(observer.failures).toEqual([{ path: "/api/auth/session", status: 500, body: "late failure" }]);
         } finally {
             observer.dispose();
         }
+    });
+
+    it("excludes long-lived EventSource streams and detaches listeners on disposal", async () => {
+        const page = new EventEmitter();
+        const observer = observeRouteApi(page, origin);
+        page.emit("request", apiRequest("/api/agent/runs/run/events", "eventsource").request);
+        await observer.settle();
+        observer.dispose();
+        expect(page.eventNames()).toEqual([]);
+        expect(observer.failures).toEqual([]);
     });
 });

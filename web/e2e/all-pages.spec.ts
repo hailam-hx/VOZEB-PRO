@@ -72,10 +72,10 @@ test("every administrator section renders its server-backed surface", async ({ p
             page,
             {
                 path: section === "overview" ? "/admin" : `/admin?section=${section}`,
-                ready: async () => {
-                    await expect(page.locator("[data-hydrated='true']")).toBeVisible();
-                    await expect(page.locator("h1").first()).toBeVisible();
-                    await expect(page.getByText("正在加载分区...", { exact: true })).toHaveCount(0);
+                ready: async (routePage) => {
+                    await expect(routePage.locator("[data-hydrated='true']")).toBeVisible();
+                    await expect(routePage.locator("h1").first()).toBeVisible();
+                    await expect(routePage.getByText("正在加载分区...", { exact: true })).toHaveCount(0);
                 },
             },
             `${testInfo.project.name} admin ${section}`,
@@ -89,7 +89,7 @@ test("signed-out, legal, installation and invalid public detail routes fail safe
     const page = await context.newPage();
     try {
         const theme = testInfo.project.name === "mobile-430" ? "dark" : "light";
-        await page.addInitScript((nextTheme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: nextTheme }, version: 0 })), theme);
+        await context.addInitScript((nextTheme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: nextTheme }, version: 0 })), theme);
         const routes: RouteCase[] = [
             { path: "/", readyHeading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" },
             { path: "/login", readyHeading: "Đăng nhập HOTX AI" },
@@ -233,7 +233,8 @@ async function setTheme(page: Page, theme: "light" | "dark") {
     await page.evaluate((nextTheme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: nextTheme }, version: 0 })), theme);
 }
 
-async function verifyRoute(page: Page, route: RouteCase, label: string) {
+async function verifyRoute(contextPage: Page, route: RouteCase, label: string) {
+    const page = await contextPage.context().newPage();
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];
     const api = observeRouteApi(page, BASE_URL);
@@ -271,6 +272,7 @@ async function verifyRoute(page: Page, route: RouteCase, label: string) {
         page.off("pageerror", onPageError);
         page.off("console", onConsole);
         api.dispose();
+        await page.close();
     }
 }
 
