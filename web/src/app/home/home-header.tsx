@@ -22,7 +22,7 @@ export function HomeHeader() {
     const [navIndicator, setNavIndicator] = useState({ left: 0, width: 0, visible: false });
     const navItemRefs = useRef<(HTMLElement | null)[]>([]);
     const hoveredNavIndex = useRef<number | null>(null);
-    const { authenticated, site, openLogin, openTopUp, openProtectedPath } = useHomeActions();
+    const { authenticated, site, openTopUp, openProtectedPath } = useHomeActions();
     const homeHref = getLocalizedSeoHref("/", locale);
     const brand = (
         <>
@@ -141,7 +141,7 @@ export function HomeHeader() {
                 <div className={styles.headerActions}>
                     <LanguageSwitcher className={styles.languageButton} />
                     <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} className={styles.themeButton} aria-label={theme === "dark" ? common("themeLight") : common("themeDark")} />
-                    <button type="button" className={styles.primarySmallButton} onClick={() => (authenticated ? openProtectedPath("/create") : openLogin("/create"))}>
+                    <button type="button" className={styles.primarySmallButton} onClick={() => openProtectedPath("/create")}>
                         {authenticated ? t("startCreating") : t("tryNow")}
                     </button>
                     <button

@@ -123,6 +123,30 @@ test("signed-in CTA entries open the real create mode or workspace", async ({ pa
     }
 });
 
+test("signed-in voice CTA waits for session hydration before protecting its destination", async ({ page }) => {
+    let releaseSession!: () => void;
+    const sessionReleased = new Promise<void>((resolve) => {
+        releaseSession = resolve;
+    });
+    let sessionRequested!: () => void;
+    const sessionRequestStarted = new Promise<void>((resolve) => {
+        sessionRequested = resolve;
+    });
+    await page.route("**/api/auth/session", async (route) => {
+        const response = await route.fetch();
+        sessionRequested();
+        await sessionReleased;
+        await route.fulfill({ response });
+    });
+
+    await page.goto("/voice-cloning", { waitUntil: "domcontentloaded" });
+    await sessionRequestStarted;
+    await page.getByTestId("seo-primary-cta").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    releaseSession();
+    await expect(page).toHaveURL(/\/voices(?:\?|$)/);
+});
+
 test("signed-out CTA opens authentication and preserves its create destination", async ({ browser }, testInfo) => {
     const context = await browser.newContext({ baseURL: String(testInfo.project.use.baseURL), locale: "vi-VN", storageState: { cookies: [], origins: [] }, viewport: testInfo.project.use.viewport || undefined });
     await context.addCookies([{ name: "vozeb-pro-locale", value: "vi", url: String(testInfo.project.use.baseURL) }]);

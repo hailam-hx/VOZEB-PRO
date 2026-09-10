@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Modal } from "antd";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -8,7 +8,7 @@ import { useTranslations } from "next-intl";
 import { AuthForm } from "@/components/auth/auth-form";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { createAgentPromptHref, type CreateAgentMode } from "@/lib/create-agent-prompt";
-import { usePublicSessionStore } from "@/stores/use-public-session-store";
+import { loadPublicSession, usePublicSessionStore } from "@/stores/use-public-session-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { HomeSiteSettings } from "./home-data";
 import { DEFAULT_SITE_LOGO_URL, resolveSiteTitle } from "@/lib/site-brand";
@@ -30,6 +30,8 @@ export function HomeActionsProvider({ initialSite, children }: { initialSite: Ho
     const router = useRouter();
     const [authOpen, setAuthOpen] = useState(false);
     const [authNextPath, setAuthNextPath] = useState("/create");
+    const mounted = useRef(true);
+    const protectedActionVersion = useRef(0);
     const user = useUserStore((state) => state.user);
     const session = usePublicSessionStore((state) => state.payload);
     const sessionReady = usePublicSessionStore((state) => state.ready);
@@ -47,13 +49,33 @@ export function HomeActionsProvider({ initialSite, children }: { initialSite: Ho
     );
     const authenticated = sessionReady && Boolean(user);
 
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+        };
+    }, []);
+
     const openLogin = (nextPath = "/create") => {
         setAuthNextPath(nextPath);
         setAuthOpen(true);
     };
     const openProtectedPath = (path: string) => {
-        if (authenticated) router.push(path);
-        else openLogin(path);
+        const actionVersion = ++protectedActionVersion.current;
+        if (sessionReady) {
+            if (user) router.push(path);
+            else openLogin(path);
+            return;
+        }
+        void loadPublicSession()
+            .then((payload) => {
+                if (!mounted.current || actionVersion !== protectedActionVersion.current) return;
+                if (payload.user) router.push(path);
+                else openLogin(path);
+            })
+            .catch(() => {
+                if (mounted.current && actionVersion === protectedActionVersion.current) openLogin(path);
+            });
     };
     const startCreating = (prompt = "", mode: CreateAgentMode = "agent") => openProtectedPath(createAgentPromptHref(prompt, { source: "home", mode }));
 
