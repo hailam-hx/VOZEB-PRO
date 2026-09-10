@@ -33,6 +33,7 @@ vi.mock("@/lib/server/site-metadata", () => ({
 import { generateMetadata as generateRootMetadata } from "./layout";
 import LocalizedLayout from "./[locale]/layout";
 import HomePage, { generateMetadata } from "./[locale]/page";
+import manifest from "./manifest";
 
 describe("homepage metadata", () => {
     beforeEach(() => {
@@ -77,6 +78,10 @@ describe("homepage metadata", () => {
         expect(metadata.description).toBeUndefined();
         expect(metadata.keywords).toEqual([]);
         expect(metadata.openGraph).toMatchObject({ title: "HOTX AI" });
+    });
+    it("uses the normalized site title and omits a blank manifest description", async () => {
+        mocks.getPublicSiteSettings.mockResolvedValue({ ...DEFAULT_SITE_SETTINGS, title: "", seo: { ...DEFAULT_SITE_SETTINGS.seo, vi: { title: "", description: "", keywords: "" } } });
+        await expect(manifest()).resolves.toMatchObject({ name: "", short_name: "", description: undefined });
     });
     it("ships a 1200 by 630 WebP social image", async () => {
         expect(await sharp(fileURLToPath(new URL("../../public/seo/hotx-ai-og.webp", import.meta.url))).metadata()).toMatchObject({ width: 1200, height: 630, format: "webp" });
