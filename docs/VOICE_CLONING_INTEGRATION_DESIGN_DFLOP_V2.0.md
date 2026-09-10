@@ -1,6 +1,6 @@
 # HOTX AI — 声音克隆 (Voice Cloning) Integration Design v2.0
 
-**Project:** HOTX AI custom
+**Project:** HOTX AI custom  
 **Feature:** 声音克隆 / Voice Cloning  
 **Primary provider:** Dflop (`model.dflop.top` / `api.dflop.top`)  
 **Design version:** 2.0  
@@ -31,7 +31,7 @@ Thiết kế này **không gọi MiniMax trực tiếp**. Dflop được xem là
 
 Phương án được chọn:
 
-> **Voice Profile là tài nguyên của HOTX AI; Dflop Voice ID chỉ là binding upstream.**
+> **Voice Profile là tài nguyên của HOTX AI; Dflop Voice ID chỉ là binding upstream.**  
 > Clone sử dụng Dflop `/v1/audio/voices`; TTS sử dụng Dflop `/v1/audio/speech` với model `voice-tts-pro` và truyền cloned voice ID vào trường `voice`.
 
 Các quyết định chính:
@@ -405,7 +405,7 @@ Hiện tại dự án chưa có:
                │ voiceProfileId
                ▼
 ┌───────────────────────────────┐
-│        HOTX AI API             │
+│        HOTX AI API            │
 │                               │
 │ /api/voice-profiles           │
 │ /api/voice-profiles/:id       │

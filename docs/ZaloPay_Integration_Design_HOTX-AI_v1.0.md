@@ -2,7 +2,7 @@
 
 **Phiên bản:** 1.0  
 **Ngày:** 2026-09-03  
-**Dự án:** HOTX AI custom
+**Dự án:** HOTX AI custom  
 **Phạm vi tài liệu:** Thiết kế kiến trúc và contract tích hợp ZaloPay. Tài liệu này **không phải implementation plan** và không quy định thứ tự thực hiện công việc.
 
 ---
