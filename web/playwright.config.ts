@@ -4,6 +4,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.VOZEB_PRO_E2E_PORT || 3100);
 const baseURL = `http://127.0.0.1:${port}`;
+const docsPort = Number(process.env.VOZEB_PRO_DOCS_E2E_PORT || 3001);
+const docsBaseURL = `http://127.0.0.1:${docsPort}`;
 const protocolFixturePort = Number(process.env.VOZEB_PRO_PROTOCOL_FIXTURE_PORT || 4010);
 const paymentFixturePort = Number(process.env.VOZEB_PRO_PAYMENT_FIXTURE_PORT || 4020);
 const databaseUrl = process.env.VOZEB_PRO_E2E_DATABASE_URL?.trim() || "";
@@ -55,6 +57,13 @@ export default defineConfig({
             timeout: 30_000,
             reuseExistingServer: false,
             env: { ...process.env, VOZEB_PRO_PAYMENT_FIXTURE_PORT: String(paymentFixturePort) },
+        },
+        {
+            command: `pnpm --dir ../docs exec next dev -p ${docsPort}`,
+            url: docsBaseURL,
+            timeout: 120_000,
+            reuseExistingServer: false,
+            env: { ...process.env, NEXT_PUBLIC_SITE_URL: docsBaseURL },
         },
         {
             command: "pnpm run start",

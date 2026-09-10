@@ -350,12 +350,30 @@ const configuredSeo = {
         keywords: "HOTX AI,AI Agent,AI 绘图,AI 视频",
     },
 } as const;
+const baselineSeo = {
+    vi: { title: "Baseline VI SEO title", description: "Baseline VI SEO description", keywords: "baseline,vi" },
+    en: { title: "Baseline EN SEO title", description: "Baseline EN SEO description", keywords: "baseline,en" },
+    "zh-CN": { title: "Baseline 中文 SEO 标题", description: "Baseline 中文 SEO 描述", keywords: "baseline,中文" },
+} as const;
+
+type LocaleSeo = { title: string; description: string; keywords: string };
+
+async function expectHomeSeo(page: Page, seo: LocaleSeo) {
+    expect(await page.title()).toBe(seo.title);
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", seo.description);
+    await expect(page.locator('meta[name="keywords"]')).toHaveAttribute("content", seo.keywords);
+}
 
 test("all 27 published URLs have localized SSR SEO independent of cookie and browser language", async ({ page, context, request }) => {
     test.setTimeout(240_000);
     const original = (await (await request.get("/api/admin/settings")).json()).settings.site;
     try {
+        expect((await request.patch("/api/admin/settings", { data: { site: { ...original, seo: baselineSeo } } })).ok()).toBe(true);
+        await page.goto("/", { waitUntil: "domcontentloaded" });
+        await expectHomeSeo(page, baselineSeo.vi);
         expect((await request.patch("/api/admin/settings", { data: { site: { ...original, seo: configuredSeo } } })).ok()).toBe(true);
+        await page.goto("/", { waitUntil: "domcontentloaded" });
+        await expectHomeSeo(page, configuredSeo.vi);
         await context.setExtraHTTPHeaders({ "Accept-Language": "fr-FR,en;q=0.9" });
         for (const locale of ["vi", "en", "zh-CN"] as const) {
             const prefix = locale === "en" ? "/en" : locale === "zh-CN" ? "/zh-cn" : "";
@@ -374,13 +392,17 @@ test("all 27 published URLs have localized SSR SEO independent of cookie and bro
                 await expect(page.getByRole("heading", { level: 1, name: item.h1 })).toBeVisible();
                 const title = await page.title();
                 expect(title.trim()).not.toBe("");
-                if ("title" in item) await expect(page).toHaveTitle(item.title);
+                if (!item.slug) expect(title).toBe(configuredSeo[locale].title);
+                else if ("title" in item) await expect(page).toHaveTitle(item.title);
                 else if (item.slug) expect(title).toBe(item.h1);
                 else if (locale === "en") expect(title).toContain("AI image, video and voice creation");
                 else if (locale === "zh-CN") expect(title).toContain("AI 图片、视频与语音创作");
                 const description = await page.locator('meta[name="description"]').getAttribute("content");
                 expect(description?.trim()).toBeTruthy();
-                if ("description" in item) expect(description).toBe(item.description);
+                if (!item.slug) {
+                    expect(description).toBe(configuredSeo[locale].description);
+                    await expect(page.locator('meta[name="keywords"]')).toHaveAttribute("content", configuredSeo[locale].keywords);
+                } else if ("description" in item) expect(description).toBe(item.description);
                 const canonical = new URL(path, String(test.info().project.use.baseURL)).toString();
                 await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", canonical);
                 const alternates = await page.locator('link[rel="alternate"][hreflang]').evaluateAll((nodes) => Object.fromEntries(nodes.map((node) => [node.getAttribute("hreflang"), node.getAttribute("href")])));

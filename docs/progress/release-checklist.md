@@ -12,9 +12,12 @@ pnpm run check:release
 
 ## 2026-09-10 HOTX AI 品牌发布证据
 
-- Web Vitest：579 个文件通过、6 个跳过；2,845 项通过、16 项跳过。TypeScript、ESLint、Prettier 与生产构建通过。
-- Playwright：桌面、390px、430px 依次执行，197 项通过、25 项项目/环境跳过、0 项失败。覆盖品牌 Logo、三语首页与 27 个 SEO URL、登录/注册、`/create`、后台站点设置和页面横向溢出；Logo 已验证可见、固有宽高非零且相等，并使用 `object-contain`。
-- 发布阻断项：`pnpm run check:release` 的依赖审计报告 11 项既有 advisory（2 critical、3 high、6 moderate）。本轮未升级依赖；应在获批升级后重新执行发布检查。
+- `cd web && PATH=/opt/homebrew/bin:$PATH pnpm exec vitest run src/lib/auth/site-settings.test.ts src/lib/auth/localized-seo-settings.test.ts src/components/layout/site-logo.test.tsx src/app/site-brand-assets.test.ts src/app/site-metadata-routes.test.ts src/app/home-metadata.test.ts src/lib/server/site-metadata.test.ts src/lib/channel-protocol-registry.test.ts src/lib/server/agent-run-executor.test.ts scripts/disaster-recovery-core.test.mjs scripts/release-check.test.mjs`：exit 0，11 个文件、114 项通过、1 项跳过；缓存参数 RED（`"max"`）为 exit 1、1 项失败/3 项通过/1 项跳过，GREEN（`{ expire: 0 }`）为 exit 0、4 项通过/1 项跳过。
+- `cd web && PATH=/opt/homebrew/bin:$PATH pnpm run pree2e && PATH=/opt/homebrew/bin:$PATH pnpm exec playwright test e2e/all-pages.spec.ts --project=chromium --project=mobile-390 --project=mobile-430 --grep 'HOTX AI branding stays visible'`：exit 0，6 项通过；文档首页及 Web 主要入口均验证精确 HOTX AI、可见 `/hx-favicon.png`、非零正方形尺寸、`object-contain`、旧品牌/QQ 文案不存在和无横向溢出。
+- `cd web && PATH=/opt/homebrew/bin:$PATH pnpm run build && PATH=/opt/homebrew/bin:$PATH pnpm run pree2e && PATH=/opt/homebrew/bin:$PATH pnpm exec playwright test e2e/seo-landings.spec.ts --project=chromium --project=mobile-390 --project=mobile-430`：exit 0，36 项通过；三语 baseline metadata 已先通过 SSR 精确读取以填充缓存，PATCH configured fixture 后立即验证下一次 `/` SSR 及完整 27 URL。`e2e/home.spec.ts` 的 390px/430px 定向命令（每个 `pnpm` 均使用同一 `PATH`）exit 0，11 项通过。
+- `cd web && PATH=/opt/homebrew/bin:$PATH pnpm run test`：exit 0，579 个文件通过、6 个跳过，2,845 项通过、16 项跳过；`pnpm run typecheck`、`pnpm run lint`、`pnpm run format:check` 与 `pnpm run build` 均为 exit 0。`PATH=/opt/homebrew/bin:$PATH pnpm run pree2e && PATH=/opt/homebrew/bin:$PATH pnpm run e2e`：exit 0，197 项通过、25 项项目/环境跳过、0 项失败。
+- `cd docs && PATH=/opt/homebrew/bin:$PATH pnpm run types:check && pnpm run build`：均为 exit 0，构建 36 个静态页面。严格 UTF-8/乱码标记、补丁空白、旧 SVG/QQ 端点和产品品牌分类扫描通过；两份 PNG byte-identical，SHA-256 均为 `04e446e8cdb93484435f5b0aed0d2ac7869bf6f9145becb1af1543bb82a3ca19`。
+- 发布阻断项：`cd web && PATH=/opt/homebrew/bin:$PATH pnpm run check:release` 为 exit 1，唯一阻断为 11 项既有依赖 advisory（2 critical、3 high、6 moderate）；本轮未升级依赖，应在获批升级后重新执行发布检查。
 
 ## 手动页面检查
 

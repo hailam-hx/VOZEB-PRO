@@ -8,6 +8,7 @@ import { E2E_ADMIN } from "./support";
 
 const PROFILE_SECTIONS = ["overview", "profile", "billing", "orders", "points", "consume", "referrals", "security"] as const;
 const BASE_URL = `http://127.0.0.1:${Number(process.env.VOZEB_PRO_E2E_PORT || 3100)}`;
+const DOCS_URL = `http://127.0.0.1:${Number(process.env.VOZEB_PRO_DOCS_E2E_PORT || 3001)}`;
 const USES_POSTGRES = Boolean(process.env.VOZEB_PRO_E2E_DATABASE_URL?.trim());
 const FILE_PROVIDER_LIMITATIONS = new Map([
     ["/api/public/gallery", 409],
@@ -103,6 +104,8 @@ test("signed-out, legal, installation and invalid public detail routes fail safe
 test("HOTX AI branding stays visible, square, and within each release viewport", async ({ browser, page }, testInfo) => {
     const signedOutContext = await browser.newContext({ baseURL: BASE_URL, locale: "zh-CN", viewport: testInfo.project.use.viewport || undefined, storageState: { cookies: [], origins: [] } });
     const signedOutPage = await signedOutContext.newPage();
+    const docsContext = await browser.newContext({ locale: "zh-CN", viewport: testInfo.project.use.viewport || undefined, storageState: { cookies: [], origins: [] } });
+    const docsPage = await docsContext.newPage();
     try {
         for (const route of BRAND_ROUTES) {
             const routePage = route === "/login" || route === "/register" ? signedOutPage : page;
@@ -139,8 +142,35 @@ test("HOTX AI branding stays visible, square, and within each release viewport",
             });
             await expectNoHorizontalOverflow(routePage, `${testInfo.project.name} ${route} HOTX AI branding`);
         }
+
+        await docsPage.goto(DOCS_URL, { waitUntil: "domcontentloaded" });
+        await expect(docsPage.getByText("HOTX AI", { exact: true }).and(docsPage.locator(":visible")).first(), `${testInfo.project.name} docs HOTX AI text`).toBeVisible();
+        const docsLogo = docsPage.locator('img[src="/hx-favicon.png"]').and(docsPage.locator(":visible")).first();
+        await expect(docsLogo, `${testInfo.project.name} docs HOTX AI logo`).toBeVisible();
+        await expect(docsLogo).toHaveClass(/object-contain/);
+        await expect(docsPage.getByText("VOZEB PRO", { exact: true }), `${testInfo.project.name} docs legacy product text`).toHaveCount(0);
+        await expect(docsPage.getByText("VOZEB 开源交流 QQ 群", { exact: true }), `${testInfo.project.name} docs legacy community text`).toHaveCount(0);
+        expect(
+            await docsLogo.evaluate((image) => {
+                const { width, height } = image.getBoundingClientRect();
+                const { naturalHeight, naturalWidth } = image as HTMLImageElement;
+                return {
+                    hasLayoutSize: width > 0 && height > 0,
+                    hasIntrinsicSize: naturalWidth > 0 && naturalHeight > 0,
+                    intrinsicIsSquare: naturalWidth === naturalHeight,
+                    objectFit: getComputedStyle(image).objectFit,
+                };
+            }),
+            `${testInfo.project.name} docs HOTX AI logo geometry`,
+        ).toEqual({
+            hasLayoutSize: true,
+            hasIntrinsicSize: true,
+            intrinsicIsSquare: true,
+            objectFit: "contain",
+        });
+        await expectNoHorizontalOverflow(docsPage, `${testInfo.project.name} docs HOTX AI branding`);
     } finally {
-        await signedOutContext.close();
+        await Promise.all([signedOutContext.close(), docsContext.close()]);
     }
 });
 
