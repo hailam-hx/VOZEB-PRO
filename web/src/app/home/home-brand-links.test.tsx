@@ -37,7 +37,7 @@ describe("publication-aware Home brand", () => {
         const link = screen.getByText("Brand fixture").closest("a");
         expect(link?.getAttribute("href")).toBe("/en");
         const brandClass = link?.className;
-        const logoStyle = link?.querySelector('[aria-hidden="true"]')?.getAttribute("style");
+        const logoClass = link?.querySelector('img[src="/hx-favicon.png"]')?.getAttribute("class");
         published.unmount();
         seoPublicationRegistry.home.published.en = false;
         const unpublished = mount();
@@ -45,6 +45,6 @@ describe("publication-aware Home brand", () => {
         expect(brand?.closest("a")).toBeNull();
         expect(unpublished.container.querySelector('a[href="#"]')).toBeNull();
         expect(brand?.className).toBe(brandClass);
-        expect(brand?.querySelector('[aria-hidden="true"]')?.getAttribute("style")).toBe(logoStyle);
+        expect(brand?.querySelector('img[src="/hx-favicon.png"]')?.getAttribute("class")).toBe(logoClass);
     });
 });

@@ -2,24 +2,15 @@
 
 import { useState } from "react";
 
+import { DEFAULT_SITE_LOGO_URL } from "@/lib/site-brand";
 import { cn } from "@/lib/utils";
 
 export function SiteLogo({ logoUrl, className }: { logoUrl: string; className?: string }) {
-    const customLogoUrl = logoUrl.trim() && logoUrl !== "/logo.svg" ? logoUrl.trim() : "";
+    const configuredLogoUrl = logoUrl.trim() || DEFAULT_SITE_LOGO_URL;
     const [failedLogoUrl, setFailedLogoUrl] = useState("");
-
-    if (customLogoUrl && failedLogoUrl !== customLogoUrl) {
-        return <img src={customLogoUrl} alt="" className={cn("shrink-0 object-contain", className)} referrerPolicy="no-referrer" onError={() => setFailedLogoUrl(customLogoUrl)} />;
-    }
+    const source = failedLogoUrl === configuredLogoUrl ? DEFAULT_SITE_LOGO_URL : configuredLogoUrl;
 
     return (
-        <span
-            aria-hidden="true"
-            className={cn("shrink-0 bg-stone-950 dark:bg-white", className)}
-            style={{
-                mask: "url(/logo.svg) center / contain no-repeat",
-                WebkitMask: "url(/logo.svg) center / contain no-repeat",
-            }}
-        />
+        <img src={source} alt="" className={cn("shrink-0 object-contain", className)} referrerPolicy="no-referrer" onError={() => setFailedLogoUrl(configuredLogoUrl)} />
     );
 }

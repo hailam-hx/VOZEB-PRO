@@ -9,7 +9,7 @@ describe("structured data", () => {
                 name: "无限进化",
                 description: "视觉创作平台",
                 url: "https://example.com/",
-                logoUrl: "https://example.com/logo.svg",
+                logoUrl: "https://example.com/hx-favicon.png",
             }),
         ).toMatchObject({
             "@type": "WebSite",
@@ -19,7 +19,7 @@ describe("structured data", () => {
                 "@id": "https://example.com/#organization",
                 name: "无限进化",
                 url: "https://example.com/",
-                logo: { url: "https://example.com/logo.svg" },
+                logo: { url: "https://example.com/hx-favicon.png" },
             },
         });
     });

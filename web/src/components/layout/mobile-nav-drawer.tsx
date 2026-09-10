@@ -10,7 +10,7 @@ import { useTranslations } from "next-intl";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
-import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
+import { DEFAULT_SITE_LOGO_URL, DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 type MobileNavDrawerProps = {
@@ -24,7 +24,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
     const pathname = usePathname();
     const router = useRouter();
     const previousPathnameRef = useRef(pathname);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: DEFAULT_SITE_LOGO_URL };
     const siteTitle = resolveSiteTitle(site.title);
     const helpActive = pathname.startsWith("/help");
 

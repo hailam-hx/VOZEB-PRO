@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function mount(locale: "en" | "zh-CN", termsUrl?: string, privacyUrl?: string) {
-    applyPublicSiteSettings({ title: "Legal fixture", logoUrl: "/logo.svg", termsUrl, privacyUrl });
+    applyPublicSiteSettings({ title: "Legal fixture", logoUrl: "/hx-favicon.png", termsUrl, privacyUrl });
     return render(
         <LocaleProvider locale={locale} messages={loadMessages(locale)} timeZone="UTC">
             <App>

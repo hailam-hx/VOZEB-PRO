@@ -6,6 +6,7 @@ import { Mail, RefreshCw, Send } from "lucide-react";
 import { SectionTitle } from "@/components/admin/admin-settings-controls";
 import { SiteLogo } from "@/components/layout/site-logo";
 import type { AuthSettings, SiteSocialKey } from "@/lib/auth/store";
+import { DEFAULT_SITE_LOGO_URL } from "@/lib/site-brand";
 
 export const siteSocialItems: Array<{ key: SiteSocialKey; label: string; placeholder: string; icon: ReactNode }> = [
     { key: "email", label: "邮箱联系", placeholder: "name@example.com", icon: <Mail className="size-4" /> },
@@ -17,7 +18,7 @@ export const siteSocialItems: Array<{ key: SiteSocialKey; label: string; placeho
 export function SiteLogoPreview({ logoUrl }: { logoUrl: string }) {
     return (
         <span className="grid size-12 place-items-center rounded-md bg-stone-100 p-1 text-stone-950 dark:bg-white/10 dark:text-white">
-            <SiteLogo logoUrl={logoUrl || "/logo.svg"} className="size-10" />
+            <SiteLogo logoUrl={logoUrl || DEFAULT_SITE_LOGO_URL} className="size-10" />
         </span>
     );
 }

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 
 import { SiteLogo } from "@/components/layout/site-logo";
+import { DEFAULT_SITE_LOGO_URL } from "@/lib/site-brand";
 import { getPublicSiteSettings } from "@/lib/server/site-metadata";
 import { loadGallery, parseGalleryFilters } from "./gallery-data";
 import { GalleryPublishLink } from "./gallery-publish-link";
@@ -31,7 +32,7 @@ export default async function GalleryPage({ searchParams }: { searchParams: Gall
             <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur-xl">
                 <div className="mx-auto flex h-14 w-full max-w-7xl items-center justify-between gap-3 px-3 sm:h-16 sm:px-6">
                     <Link href="/" className="flex min-w-0 items-center gap-2.5 text-foreground" aria-label={site.title}>
-                        <SiteLogo logoUrl={site.logoUrl || "/logo.svg"} className="size-7 sm:size-8" />
+                        <SiteLogo logoUrl={site.logoUrl || DEFAULT_SITE_LOGO_URL} className="size-7 sm:size-8" />
                         <span className="truncate text-sm font-semibold sm:text-base">{site.title}</span>
                     </Link>
                     <div className="flex shrink-0 items-center gap-2">

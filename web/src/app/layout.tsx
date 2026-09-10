@@ -8,6 +8,7 @@ import { WebsiteStructuredData } from "@/components/layout/website-structured-da
 import { defaultLocale, isAppLocale } from "@/i18n/config";
 import { effectiveLocale, localeMetadata } from "@/i18n/runtime";
 import { appStorageKey } from "@/lib/storage-keys";
+import { DEFAULT_SITE_LOGO_URL } from "@/lib/site-brand";
 import { absoluteSiteUrl, browserIconHref, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { buildWebsiteStructuredData, serializeStructuredData } from "@/lib/structured-data";
 import "antd/dist/reset.css";
@@ -59,7 +60,7 @@ export default async function RootLayout({
         locale,
         description: site.seo[locale].description,
         url: absoluteSiteUrl("/", base),
-        logoUrl: absoluteSiteUrl(site.logoUrl || "/logo.svg", base),
+        logoUrl: absoluteSiteUrl(site.logoUrl || DEFAULT_SITE_LOGO_URL, base),
     });
 
     return (

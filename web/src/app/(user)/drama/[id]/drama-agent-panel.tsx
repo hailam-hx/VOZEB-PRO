@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
+import { DEFAULT_SITE_LOGO_URL } from "@/lib/site-brand";
 
 import type { AgentMediaDownload } from "@/components/agent/agent-media-download";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
@@ -165,7 +166,7 @@ function DramaAgentContent({
     const t = useTranslations("drama.agent");
     const { message, modal } = App.useApp();
     const replaceProject = useDramaStore((state) => state.replaceProject);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { logoUrl: DEFAULT_SITE_LOGO_URL };
     const { skills, skillsLoading, models } = useCreativeAgentOptions("drama");
     const [messages, setMessages] = useState<CreativeMessage[]>([]);
     const [assets, setAssets] = useState<CreativeAsset[]>([]);

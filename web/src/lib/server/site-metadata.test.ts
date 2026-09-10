@@ -22,7 +22,7 @@ describe("site metadata", () => {
     });
 
     it("does not send legacy reserved favicon paths back through a redirect", () => {
-        expect(browserIconHref({ iconUrl: "/favicon.ico", logoUrl: "/logo.svg" })).toBe("/logo.svg");
-        expect(browserIconHref({ iconUrl: "/api/site-icon", logoUrl: "/logo.svg" })).toBe("/logo.svg");
+        expect(browserIconHref({ iconUrl: "/favicon.ico", logoUrl: "/hx-favicon.png" })).toBe("/hx-favicon.png");
+        expect(browserIconHref({ iconUrl: "/api/site-icon", logoUrl: "/hx-favicon.png" })).toBe("/hx-favicon.png");
     });
 });

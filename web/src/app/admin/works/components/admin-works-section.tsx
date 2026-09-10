@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminAccountId, AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { DEFAULT_SITE_LOGO_URL } from "@/lib/site-brand";
 import { workStatusToneClass } from "@/lib/work-publication-status";
 import { setAdminWorkFeatured } from "@/services/api/work-governance";
 import {
@@ -479,7 +480,7 @@ function AdminWorkThumbnail({ work }: { work: WorkPublication }) {
     useEffect(() => setFailed(false), [url]);
     return (
         <div className="relative size-14 shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
-            <img src="/logo.svg" alt="" className="absolute inset-0 size-full object-contain p-3 opacity-45" />
+            <img src={DEFAULT_SITE_LOGO_URL} alt="" className="absolute inset-0 size-full object-contain p-3 opacity-45" />
             {!failed && url && asset?.mediaType === "video" ? <video src={url} muted playsInline preload="metadata" className="relative size-full object-cover" onError={() => setFailed(true)} /> : null}
             {!failed && imageUrl && asset?.mediaType === "image" ? <img src={imageUrl} alt={work.currentVersion?.title || "作品预览"} loading="lazy" className="relative size-full object-cover" onError={() => setFailed(true)} /> : null}
         </div>
@@ -528,7 +529,7 @@ function AdminWorkDetail({ work }: { work: WorkPublication }) {
         <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-[240px_minmax(0,1fr)]">
                 <div className="relative aspect-square overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
-                    <img src="/logo.svg" alt="" className="absolute inset-0 size-full object-contain p-16 opacity-40" />
+                    <img src={DEFAULT_SITE_LOGO_URL} alt="" className="absolute inset-0 size-full object-contain p-16 opacity-40" />
                     {url && asset?.mediaType === "video" ? <video src={url} controls playsInline preload="metadata" className="relative size-full object-contain" /> : null}
                     {imageUrl && asset?.mediaType === "image" ? <img src={imageUrl} alt={version.title} loading="lazy" className="relative size-full object-contain" /> : null}
                 </div>

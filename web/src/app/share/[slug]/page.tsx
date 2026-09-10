@@ -12,6 +12,7 @@ import { createAgentPromptHref } from "@/lib/create-agent-prompt";
 import { GalleryThemeToggle } from "@/app/gallery/gallery-theme-toggle";
 import { WorkPublicationServiceError, getPublicWorkPublication } from "@/lib/server/work-publication-service";
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { DEFAULT_SITE_LOGO_URL } from "@/lib/site-brand";
 import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { buildCreativeWorkStructuredData, serializeStructuredData } from "@/lib/structured-data";
 import { userAvatarFallback } from "@/lib/user-avatar";
@@ -42,7 +43,7 @@ export async function generateMetadata({ params }: SharePageProps): Promise<Meta
     const base = siteMetadataBase();
     const canonical = `/share/${encodeURIComponent(work.slug)}`;
     const cover = work.assets.find((asset) => asset.role === "cover" && asset.mediaType === "image") || work.assets.find((asset) => asset.mediaType === "image");
-    const imageUrl = absoluteSiteUrl(cover ? imagePreviewUrl(cover.url, 1920) : site.logoUrl || "/logo.svg", base);
+    const imageUrl = absoluteSiteUrl(cover ? imagePreviewUrl(cover.url, 1920) : site.logoUrl || DEFAULT_SITE_LOGO_URL, base);
     const description = work.description || t("metadataDescription", { author: work.authorName || "", category: work.category });
     const title = `${work.title} | ${site.title}`;
     return {
@@ -207,7 +208,7 @@ export default async function SharePage({ params }: SharePageProps) {
 
                 <footer className="mt-8 flex flex-col gap-4 border-t border-[#dfe3e8] pt-6 dark:border-[#2c3036] sm:mt-12 sm:flex-row sm:items-center sm:justify-between sm:pt-8">
                     <div className="flex min-w-0 items-center gap-3">
-                        <SiteLogo logoUrl={site.logoUrl || "/logo.svg"} className="size-9" />
+                        <SiteLogo logoUrl={site.logoUrl || DEFAULT_SITE_LOGO_URL} className="size-9" />
                         <div className="min-w-0">
                             <div className="truncate text-sm font-semibold">{site.title}</div>
                             <div className="mt-0.5 text-xs text-[#747d89] dark:text-[#939ca8]">{t("footerDescription")}</div>
@@ -231,7 +232,7 @@ function ShareHeader({ site }: { site: SiteSettings }) {
         <header className="sticky top-0 z-20 border-b border-[#e3e6ea] bg-white/95 backdrop-blur-xl dark:border-[#292d33] dark:bg-[#0f1114]/95">
             <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-3 px-3 sm:h-16 sm:px-6">
                 <Link href="/" className="flex min-w-0 items-center gap-2.5 text-[#20242a] dark:text-[#f3f5f7]" aria-label={site.title}>
-                    <SiteLogo logoUrl={site.logoUrl || "/logo.svg"} className="size-7 sm:size-8" />
+                    <SiteLogo logoUrl={site.logoUrl || DEFAULT_SITE_LOGO_URL} className="size-7 sm:size-8" />
                     <span className="truncate text-sm font-semibold sm:text-base">{site.title}</span>
                 </Link>
                 <GalleryThemeToggle />

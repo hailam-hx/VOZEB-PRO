@@ -10,7 +10,7 @@ import { App, Button, Checkbox, Input } from "antd";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { getLocalizedSeoHref } from "@/i18n/routing";
-import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
+import { DEFAULT_SITE_LOGO_URL, DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { type LocalUser, useUserStore } from "@/stores/use-user-store";
 import { cn } from "@/lib/utils";
@@ -52,7 +52,7 @@ export function AuthForm({
     const locale = useLocale();
     const router = useRouter();
     const { message } = App.useApp();
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: DEFAULT_SITE_LOGO_URL };
     const siteTitle = resolveSiteTitle(site.title);
     const [termsHref, privacyHref] = [site.termsUrl?.trim() ? site.termsUrl : "/terms", site.privacyUrl?.trim() ? site.privacyUrl : "/privacy"].map((href) => (href === "/terms" || href === "/privacy" ? getLocalizedSeoHref(href, locale) : href));
     const setUser = useUserStore((state) => state.setUser);

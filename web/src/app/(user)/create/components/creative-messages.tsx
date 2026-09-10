@@ -18,7 +18,7 @@ import { isCreativeProjectHandoff, type CreativeAsset, type CreativeMessage, typ
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
 import { userAvatarFallback } from "@/lib/user-avatar";
-import { DEFAULT_SITE_TITLE } from "@/lib/site-brand";
+import { DEFAULT_SITE_LOGO_URL, DEFAULT_SITE_TITLE } from "@/lib/site-brand";
 import type { AppLocale } from "@/i18n/config";
 import type { MaterializedCreativeProject } from "@/services/creative-project-handoff";
 import { getCreativeAgentRun, type CreativeAgentRun } from "@/services/api/creative";
@@ -68,7 +68,7 @@ export function CreativeMessages({
     const t = useTranslations("create");
     const { formatMessage } = useAgentMessageFormatter();
     const endRef = useRef<HTMLDivElement>(null);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: DEFAULT_SITE_LOGO_URL };
     const user = usePublicSessionStore((state) => state.payload?.user || null);
     const models = useCreativeAgentModels();
     const avatarUrl = user?.avatarUrl?.trim();
@@ -235,7 +235,7 @@ function CreativeMediaRound({
 }) {
     const t = useTranslations("create");
     const { formatMessage } = useAgentMessageFormatter();
-    const siteLogoUrl = usePublicSessionStore((state) => state.payload?.settings?.site?.logoUrl || "/logo.svg");
+    const siteLogoUrl = usePublicSessionStore((state) => state.payload?.settings?.site?.logoUrl || DEFAULT_SITE_LOGO_URL);
     const displayContent = assistantMessage.status === "failed" ? t("creationTaskFailed") : formatMessage(assistantMessage.content);
     const handoff = isCreativeProjectHandoff(assistantMessage.metadata.projectHandoff) ? assistantMessage.metadata.projectHandoff : null;
     const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
@@ -409,7 +409,7 @@ function CreativeAssistantAvatar({ logoUrl, className }: { logoUrl?: string; cla
             className={cn("grid size-11 shrink-0 place-items-center rounded-full border border-[#b9b5ff] bg-white text-[#615cff] shadow-[0_4px_14px_rgba(97,92,255,0.08)] dark:border-[#514b81] dark:bg-[#1d2025]", className)}
             aria-label={t("creativeAssistant")}
         >
-            <SiteLogo logoUrl={logoUrl || "/logo.svg"} className="size-6" />
+            <SiteLogo logoUrl={logoUrl || DEFAULT_SITE_LOGO_URL} className="size-6" />
         </span>
     );
 }

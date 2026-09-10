@@ -16,7 +16,7 @@ vi.mock("@/lib/server/site-metadata", () => ({
     getPublicSiteSettings: mocks.getPublicSiteSettings,
     siteMetadataBase: () => new URL("https://hotx-ai.com"),
     absoluteSiteUrl: (value: string, base = new URL("https://hotx-ai.com")) => new URL(value, base).toString(),
-    browserIconHref: () => "/icon.svg",
+    browserIconHref: () => "/hx-favicon.png",
 }));
 import { generateMetadata as generateRootMetadata } from "./layout";
 import LocalizedLayout from "./[locale]/layout";
