@@ -1,7 +1,7 @@
 "use client";
 
 import { App, Button, Checkbox, Drawer, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Tag } from "antd";
-import { AlertTriangle, GitBranch, Pencil, RefreshCw, Route, Search } from "lucide-react";
+import { AlertTriangle, GitBranch, Pencil, Plus, RefreshCw, Route, Search } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 
 import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
@@ -9,7 +9,7 @@ import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, Logical
 import { fullGenerationParametersPreset, normalizeGenerationParameters } from "@/lib/generation-parameters";
 import { generationParametersStatus } from "@/lib/generation-defaults-validation";
 import { validateGenerationParametersInput } from "@/lib/generation-parameters-admin-validation";
-import { capabilityLabel, isLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
+import { capabilityLabel, channelModelCapability, isLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 
 type Props = {
     channels: SystemModelChannel[];
@@ -38,6 +38,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [editingId, setEditingId] = useState("");
     const [draft, setDraft] = useState<LogicalModel | null>(null);
+    const [fallbackBindingKey, setFallbackBindingKey] = useState("");
     const [query, setQuery] = useState("");
     const [capabilityFilter, setCapabilityFilter] = useState<LogicalModelCapability | "all">("all");
     const deferredQuery = useDeferredValue(query.trim().toLowerCase());
@@ -51,11 +52,41 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
     const availableDefaultFields = defaultFields.filter(({ capability, audioOperation }) => logicalModels.some((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id, audioOperation)));
     const availableCapabilityOptions = capabilityOptions.filter(({ value }) => availableDefaultFields.some(({ capability }) => capability === value));
     const readyCount = availableDefaultFields.filter(({ capability, key, audioOperation }) => isLogicalModelResolvable(logicalModels, channels, capability, defaultModels[key], audioOperation)).length;
+    const fallbackBindingOptions = useMemo(() => {
+        if (!draft) return [];
+        const currentKeys = new Set(draft.bindings.map(physicalBindingKey));
+        return logicalModels.flatMap((model) => {
+            if (model.id === editingId || model.capability !== draft.capability) return [];
+            return model.bindings.flatMap((binding) => {
+                const channel = channels.find((item) => item.id === binding.channelId);
+                if (
+                    !channel ||
+                    currentKeys.has(physicalBindingKey(binding)) ||
+                    !channel.models.some((item) => normalizeUpstreamModel(item) === normalizeUpstreamModel(binding.upstreamModel)) ||
+                    channelModelCapability(channel, binding.upstreamModel) !== draft.capability
+                )
+                    return [];
+                return [{ value: physicalBindingKey(binding), label: `${model.name} · ${channel.name} / ${binding.upstreamModel}`, binding }];
+            });
+        });
+    }, [channels, draft, editingId, logicalModels]);
+    const selectedFallbackBinding = fallbackBindingOptions.find((option) => option.value === fallbackBindingKey);
 
     const openEdit = (model: LogicalModel) => {
         setEditingId(model.id);
         setDraft(cloneLogicalModel(model));
+        setFallbackBindingKey("");
         setDrawerOpen(true);
+    };
+
+    const addFallbackBinding = () => {
+        if (!selectedFallbackBinding) return;
+        setDraft((current) => {
+            if (!current || current.bindings.some((binding) => physicalBindingKey(binding) === selectedFallbackBinding.value)) return current;
+            const priority = current.bindings.reduce((highest, binding) => Math.max(highest, binding.priority), 0) + 1;
+            return { ...current, bindings: [...current.bindings, { ...cloneLogicalBinding(selectedFallbackBinding.binding), priority }] };
+        });
+        setFallbackBindingKey("");
     };
 
     const saveDraft = () => {
@@ -65,7 +96,12 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
             message.error("请填写前端展示昵称");
             return;
         }
-        const nextModels = logicalModels.map((model) => (model.id === editingId ? cloneLogicalModel({ ...draft, name }) : model));
+        const movedBindings = new Set(draft.bindings.map(physicalBindingKey));
+        const nextModels = logicalModels.flatMap((model) => {
+            if (model.id === editingId) return [cloneLogicalModel({ ...draft, name })];
+            const bindings = model.bindings.filter((binding) => !movedBindings.has(physicalBindingKey(binding)));
+            return bindings.length ? [{ ...model, bindings }] : [];
+        });
         onChange({ logicalModels: nextModels, defaultModels: normalizeDefaultModelsConfig(defaultModels, nextModels, channels) });
         setDrawerOpen(false);
         message.success("模型路由设置已更新，请保存渠道配置");
@@ -93,7 +129,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                             默认能力 {readyCount}/{availableDefaultFields.length} 可用
                         </Tag>
                     </div>
-                    <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">逻辑模型由渠道模型目录自动生成；同名上游模型跨渠道合并，前端昵称可独立设置。</p>
+                    <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">逻辑模型由渠道模型目录自动生成；管理员可组合同能力的物理模型作为备用路由，前端昵称可独立设置。</p>
                 </div>
                 <Button icon={<RefreshCw className="size-4" />} onClick={syncChannelModels}>
                     重新同步
@@ -133,7 +169,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                                         </div>
                                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                                             <span>ID：{model.id}</span>
-                                            <span>{model.bindings.length} 个同名渠道绑定</span>
+                                            <span>{model.bindings.length} 个渠道绑定</span>
                                             <span className={resolved ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>{resolved ? `${resolved.channel.name} / ${resolved.binding.upstreamModel}` : "当前无可用渠道"}</span>
                                         </div>
                                     </div>
@@ -222,8 +258,26 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                             </div>
                         </div>
                         <div className="mt-5">
-                            <h3 className="text-sm font-semibold text-stone-950 dark:text-stone-100">同名渠道绑定</h3>
-                            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">渠道与上游模型由目录自动同步；这里调整路由优先级、启停和能力档案。</p>
+                            <h3 className="text-sm font-semibold text-stone-950 dark:text-stone-100">渠道绑定</h3>
+                            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">目录同步会保留管理员分配；这里可添加同能力备用模型，并调整路由优先级、启停和能力档案。</p>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                                <Select
+                                    className="w-full"
+                                    aria-label="选择备用绑定"
+                                    allowClear
+                                    showSearch
+                                    optionFilterProp="label"
+                                    value={fallbackBindingKey || undefined}
+                                    placeholder={fallbackBindingOptions.length ? "选择已同步的物理模型" : "没有可添加的同能力模型"}
+                                    options={fallbackBindingOptions.map(({ value, label }) => ({ value, label }))}
+                                    onChange={(value) => setFallbackBindingKey(value || "")}
+                                />
+                                <Popconfirm title="移动物理模型绑定" description="确认后，该绑定会从原逻辑模型移入当前逻辑模型。" okText="确认移动" cancelText="取消" disabled={!selectedFallbackBinding} onConfirm={addFallbackBinding}>
+                                    <Button icon={<Plus className="size-4" />} disabled={!selectedFallbackBinding}>
+                                        添加备用绑定
+                                    </Button>
+                                </Popconfirm>
+                            </div>
                             <div className="mt-3 space-y-3">
                                 {draft.bindings.map((binding) => (
                                     <BindingEditor
@@ -640,29 +694,41 @@ function GenerationCapabilityEditor({
 function cloneLogicalModel(model: LogicalModel): LogicalModel {
     return {
         ...model,
-        bindings: model.bindings.map((binding) => ({
-            ...binding,
-            capabilityProfile: binding.capabilityProfile ? { ...binding.capabilityProfile } : undefined,
-            generationParameters: binding.generationParameters
-                ? {
-                      ...binding.generationParameters,
-                      referenceInputs: [...binding.generationParameters.referenceInputs],
-                      aspectRatios: [...binding.generationParameters.aspectRatios],
-                      pixelSizes: [...binding.generationParameters.pixelSizes],
-                      qualities: [...binding.generationParameters.qualities],
-                      resolutions: [...binding.generationParameters.resolutions],
-                      durationSeconds: [...binding.generationParameters.durationSeconds],
-                      videoReferenceModes: [...binding.generationParameters.videoReferenceModes],
-                      voices: [...binding.generationParameters.voices],
-                      formats: [...binding.generationParameters.formats],
-                      ...(binding.generationParameters.durationRange ? { durationRange: { ...binding.generationParameters.durationRange } } : {}),
-                      ...(binding.generationParameters.customDurationRange ? { customDurationRange: { ...binding.generationParameters.customDurationRange } } : {}),
-                      ...(binding.generationParameters.customBatchSizeRange ? { customBatchSizeRange: { ...binding.generationParameters.customBatchSizeRange } } : {}),
-                      ...(binding.generationParameters.speedRange ? { speedRange: { ...binding.generationParameters.speedRange } } : {}),
-                  }
-                : undefined,
-        })),
+        bindings: model.bindings.map(cloneLogicalBinding),
     };
+}
+
+function cloneLogicalBinding(binding: LogicalModelBinding): LogicalModelBinding {
+    return {
+        ...binding,
+        capabilityProfile: binding.capabilityProfile ? { ...binding.capabilityProfile } : undefined,
+        generationParameters: binding.generationParameters
+            ? {
+                  ...binding.generationParameters,
+                  referenceInputs: [...binding.generationParameters.referenceInputs],
+                  aspectRatios: [...binding.generationParameters.aspectRatios],
+                  pixelSizes: [...binding.generationParameters.pixelSizes],
+                  qualities: [...binding.generationParameters.qualities],
+                  resolutions: [...binding.generationParameters.resolutions],
+                  durationSeconds: [...binding.generationParameters.durationSeconds],
+                  videoReferenceModes: [...binding.generationParameters.videoReferenceModes],
+                  voices: [...binding.generationParameters.voices],
+                  formats: [...binding.generationParameters.formats],
+                  ...(binding.generationParameters.durationRange ? { durationRange: { ...binding.generationParameters.durationRange } } : {}),
+                  ...(binding.generationParameters.customDurationRange ? { customDurationRange: { ...binding.generationParameters.customDurationRange } } : {}),
+                  ...(binding.generationParameters.customBatchSizeRange ? { customBatchSizeRange: { ...binding.generationParameters.customBatchSizeRange } } : {}),
+                  ...(binding.generationParameters.speedRange ? { speedRange: { ...binding.generationParameters.speedRange } } : {}),
+              }
+            : undefined,
+    };
+}
+
+function physicalBindingKey(binding: Pick<LogicalModelBinding, "channelId" | "upstreamModel">) {
+    return JSON.stringify([binding.channelId, normalizeUpstreamModel(binding.upstreamModel)]);
+}
+
+function normalizeUpstreamModel(value: string) {
+    return value.trim().toLowerCase();
 }
 
 function logicalModelCapabilityStatus(model: LogicalModel) {

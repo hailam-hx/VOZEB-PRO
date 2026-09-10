@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { AuthInputError, getFreshAuthSettings, isAuthInputError, setAuthSettings, type AuthSettings, type SiteSocialKey, type SiteSocialSettings } from "@/lib/auth/store";
 import { normalizeSiteSocial } from "@/lib/auth/store-normalizers";
-import { modelRoutingValidationErrors, normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
+import { modelBindingAssignmentValidationErrors, modelRoutingValidationErrors, normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { mergeSystemChannelSecrets, serializeAdminSettingsForUser, systemChannelWebhookSecretValidationError } from "@/lib/server/admin-channel-config";
@@ -60,6 +60,8 @@ export async function PATCH(request: Request) {
                 .map((binding) => validateGenerationParametersInput(binding.generationParameters))
                 .find(Boolean);
             if (generationParametersError) throw new AuthInputError(generationParametersError);
+            const assignmentErrors = modelBindingAssignmentValidationErrors(sourceLogicalModels, channels);
+            if (assignmentErrors.length) throw new AuthInputError(assignmentErrors[0]);
             const logicalModels = synchronizeLogicalModelsWithChannels(sourceLogicalModels, channels);
             const defaultModels = { ...currentSettings.defaultModels, ...body.defaultModels };
             const normalizedDefaults = normalizeDefaultModelsConfig(defaultModels, logicalModels, channels);

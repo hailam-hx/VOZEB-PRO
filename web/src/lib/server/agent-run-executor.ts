@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { systemAiIdempotencyKey, systemAiUsageRequestFingerprint } from "@/lib/server/system-ai-billing";
 import { systemAiTextUsageContext } from "@/lib/server/generation-usage-context";
-import { getAgentRun, updateAgentRunById, type AgentRun } from "@/lib/server/agent-run-store";
+import { getAgentRun, updateAgentRunById, type AgentRun, type AgentRunPlannerAttempt } from "@/lib/server/agent-run-store";
 import { agentPlannerSystemPrompt, agentPlanReply, buildAgentPlannerInput, conversationFallbackReply, plannerAgentSkills, prioritizeAgentPlannerModels, selectAgentSkills, taskPlanSummary } from "@/lib/server/agent-run-surface-policy";
 import { getCreativeAssetsByIds, getCreativeConversationContext, listRecentCreativeMediaAssets } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
@@ -29,8 +29,7 @@ import {
 } from "./agent-run-execution";
 import { isExplicitProjectHandoffRequest, normalizeAgentProjectHandoff } from "./agent-run-project-handoff";
 import { normalizeCanvasPlanForSelection } from "./agent-run-task-input";
-import { GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
-import { rankTextPlanningCandidates, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
+import { preferredTextPlanningProtocol, rankTextPlanningCandidates, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
 import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 import { filterAgentPlannerModels } from "@/lib/server/agent-run-planning-profile";
 import { buildAgentRunPlannerAudit } from "@/lib/server/agent-run-audit";
@@ -132,33 +131,96 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 content: JSON.stringify(plannerContext.input),
             },
         ];
-        const businessRequestId = systemAiIdempotencyKey("agent-plan", run.userId, run.id);
+        const planningCycle = normalizedPlanningCycle(claimed.planningCycle);
+        let plannerAttempts = claimed.plannerAttempts || [];
+        const businessRequestId = systemAiIdempotencyKey("agent-plan", run.userId, run.id, String(planningCycle));
+        const interruptedAttempt = plannerAttempts.find((attempt) => attempt.planningCycle === planningCycle && (attempt.status === "running" || attempt.status === "succeeded" || attempt.requestAcceptance === "unknown"));
+        if (interruptedAttempt) {
+            const succeededWithoutPlan = interruptedAttempt.status === "succeeded";
+            if (interruptedAttempt.status === "running") {
+                plannerAttempts = finishPlannerAttempt(plannerAttempts, interruptedAttempt.attemptNo, {
+                    status: "failed",
+                    requestAcceptance: "unknown",
+                    error: "Agent 规划请求接收状态未知",
+                });
+                if (!(await updateAgentRunById(run.id, { plannerAttempts }, undefined, ["running"], executionId))) return;
+            }
+            await resolveSystemAiTextFailure({
+                userId: run.userId,
+                businessId: businessRequestId,
+                reason: succeededWithoutPlan ? "Agent 规划结果未完整持久化" : interruptedAttempt.error || "Agent 规划请求接收状态未知",
+                final: true,
+                currentAttempt: { attemptNumber: planningCycleAttemptNumber(plannerAttempts, interruptedAttempt.attemptNo), acceptance: succeededWithoutPlan ? "response" : "unknown" },
+            });
+            throw new TextPlanningRequestError(succeededWithoutPlan ? "Agent 规划结果未完整持久化" : interruptedAttempt.error || "Agent 规划请求接收状态未知", 502, false, succeededWithoutPlan ? "response" : "unknown");
+        }
         const requestFingerprint = systemAiUsageRequestFingerprint({ userId: run.userId, businessRequestId, logicalModel: model, capability: "text", payload: { input: planningInput, tool: agentPlanTool.name } });
         let plan: Awaited<ReturnType<typeof parseAgentPlanCall>> | undefined;
         let latestPlanningError: unknown;
         const rankedCandidates = rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })));
-        for (const [index, candidate] of rankedCandidates.entries()) {
-            const attemptNumber = index + 1;
+        for (const candidate of rankedCandidates) {
+            const previousAttempt = plannerAttempts.find((attempt) => attempt.planningCycle === planningCycle && samePlannerRoute(attempt, candidate));
+            if (previousAttempt?.status === "failed" && previousAttempt.requestAcceptance === "response") {
+                latestPlanningError = new Error(previousAttempt.error || "Agent 规划失败");
+                continue;
+            }
+            const attemptNumber = plannerAttempts.filter((attempt) => attempt.planningCycle === planningCycle).length + 1;
             const usageContext = systemAiTextUsageContext({ candidate, userId: run.userId, logicalModelId: model, businessRequestId, requestFingerprint, attemptNumber });
+            const auditAttemptNo = nextPlannerAttemptNo(plannerAttempts);
+            const startedAt = Date.now();
+            plannerAttempts = [
+                ...plannerAttempts,
+                {
+                    attemptNo: auditAttemptNo,
+                    planningCycle,
+                    logicalModelId: model,
+                    channelId: candidate.channel.id,
+                    upstreamModel: candidate.upstreamModel,
+                    protocol: preferredTextPlanningProtocol(candidate),
+                    status: "running",
+                    startedAt,
+                },
+            ];
+            if (!(await updateAgentRunById(run.id, { plannerAttempts }, undefined, ["running"], executionId))) return;
+            let receivedResponse = false;
             try {
                 const planCall = await requestFunctionCall(origin, cookie, candidate, planningInput, agentPlanTool, "create_agent_plan", controller.signal, run.userId, model, false, usageContext);
+                receivedResponse = true;
                 plan = await parseAgentPlanCall(planCall, () => voidFunctionCall(planCall), undefined, {
                     allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),
                     requiredGenerationMode: claimed.generationPreferences?.mode,
                 });
-                if (plan) acceptedPlan = { userId: claimed.userId, model, channelId: candidate.channel.id, upstreamModel: candidate.upstreamModel, call: planCall };
+                if (plan) {
+                    acceptedPlan = { userId: claimed.userId, model, channelId: candidate.channel.id, upstreamModel: candidate.upstreamModel, call: planCall };
+                    plannerAttempts = finishPlannerAttempt(plannerAttempts, auditAttemptNo, {
+                        status: "succeeded",
+                        requestAcceptance: "response",
+                        protocol: planCall.protocol,
+                        elapsedMs: planCall.elapsedMs,
+                    });
+                    if (!(await updateAgentRunById(run.id, { plannerAttempts }, undefined, ["running"], executionId))) {
+                        await releaseAcceptedPlan();
+                        return;
+                    }
+                }
                 break;
             } catch (error) {
                 if (controller.signal.aborted) throw error;
-                if (error instanceof GenerationSubmissionUncertainError) throw error;
                 latestPlanningError = error;
+                const acceptance = receivedResponse ? "response" : error instanceof TextPlanningRequestError ? error.requestAcceptance : "unknown";
                 const resolution = await resolveSystemAiTextFailure({
                     userId: run.userId,
                     businessId: businessRequestId,
                     reason: error instanceof Error ? error.message : "Agent 规划请求状态未知",
                     final: false,
-                    currentAttempt: { attemptNumber, acceptance: error instanceof TextPlanningRequestError ? error.requestAcceptance : "response" },
+                    currentAttempt: { attemptNumber, acceptance },
                 });
+                plannerAttempts = finishPlannerAttempt(plannerAttempts, auditAttemptNo, {
+                    status: "failed",
+                    requestAcceptance: acceptance,
+                    error: safePlannerError(error),
+                });
+                if (!(await updateAgentRunById(run.id, { plannerAttempts }, undefined, ["running"], executionId))) return;
                 if (resolution.state !== "safe_to_failover") throw error;
             }
         }
@@ -190,6 +252,8 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     tasks: [],
                     reviewed: true,
                     plannerAudit,
+                    plannerAttempts,
+                    plannerFailure: undefined,
                     executionId: undefined,
                     timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now(), allResultsReadyAt: Date.now(), runCompletedAt: Date.now() },
                 },
@@ -218,7 +282,16 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply } } : { type: "run.planned", data: { reply, tasks: tasks.map(taskPlanSummary), projectHandoff } };
         const planned = await updateAgentRunById(
             run.id,
-            { tasks, foundation: plan.foundation, projectHandoff, reviewed: tasks.length ? claimed.reviewed : true, plannerAudit, timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now() } },
+            {
+                tasks,
+                foundation: plan.foundation,
+                projectHandoff,
+                reviewed: tasks.length ? claimed.reviewed : true,
+                plannerAudit,
+                plannerAttempts,
+                plannerFailure: undefined,
+                timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now() },
+            },
             event,
             ["running"],
             executionId,
@@ -238,15 +311,58 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             failure = refundError;
         }
         const latest = await getAgentRun(run.id);
-        if (latest && !["paused", "cancelled"].includes(latest.status))
+        if (latest && !["paused", "cancelled"].includes(latest.status)) {
+            const message = toSafeGenerationErrorMessage(failure, "Agent 执行失败");
+            const plannerFailure = !latest.tasks.length && !latest.plannerAudit ? { message, failedAt: Date.now() } : latest.plannerFailure;
             await updateAgentRunById(
                 run.id,
-                { status: "failed", executionId: undefined, timings: { ...(latest.timings || { requestAcceptedAt: latest.createdAt }), runCompletedAt: Date.now() } },
-                { type: "run.failed", data: { message: toSafeGenerationErrorMessage(failure, "Agent 执行失败") } },
+                { status: "failed", executionId: undefined, ...(plannerFailure ? { plannerFailure } : {}), timings: { ...(latest.timings || { requestAcceptedAt: latest.createdAt }), runCompletedAt: Date.now() } },
+                { type: "run.failed", data: { message } },
                 ["planning", "running"],
                 executionId,
             );
+        }
     } finally {
         if (controllers.get(run.id) === controller) controllers.delete(run.id);
     }
+}
+
+function normalizedPlanningCycle(value: number | undefined) {
+    return Number.isSafeInteger(value) && value! > 0 ? value! : 1;
+}
+
+function nextPlannerAttemptNo(attempts: AgentRunPlannerAttempt[]) {
+    return attempts.reduce((highest, attempt) => Math.max(highest, attempt.attemptNo), 0) + 1;
+}
+
+function planningCycleAttemptNumber(attempts: AgentRunPlannerAttempt[], attemptNo: number) {
+    const target = attempts.find((attempt) => attempt.attemptNo === attemptNo);
+    if (!target) return 1;
+    const index = attempts
+        .filter((attempt) => attempt.planningCycle === target.planningCycle)
+        .toSorted((left, right) => left.attemptNo - right.attemptNo)
+        .findIndex((attempt) => attempt.attemptNo === attemptNo);
+    return Math.max(1, index + 1);
+}
+
+function samePlannerRoute(attempt: AgentRunPlannerAttempt, candidate: { channelId: string; upstreamModel: string }) {
+    return attempt.channelId === candidate.channelId && attempt.upstreamModel.trim().toLowerCase() === candidate.upstreamModel.trim().toLowerCase();
+}
+
+function finishPlannerAttempt(attempts: AgentRunPlannerAttempt[], attemptNo: number, patch: Partial<AgentRunPlannerAttempt> & Pick<AgentRunPlannerAttempt, "status">) {
+    const completedAt = Date.now();
+    return attempts.map((attempt) =>
+        attempt.attemptNo === attemptNo
+            ? {
+                  ...attempt,
+                  ...patch,
+                  completedAt,
+                  elapsedMs: patch.elapsedMs ?? Math.max(0, completedAt - attempt.startedAt),
+              }
+            : attempt,
+    );
+}
+
+function safePlannerError(error: unknown) {
+    return toSafeGenerationErrorMessage(error, "Agent 规划失败");
 }

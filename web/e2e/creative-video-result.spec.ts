@@ -378,6 +378,28 @@ test("failed image and video generations expose only in-place retry", async ({ p
     }
 });
 
+test("planning failure retries the same run, conversation and message round", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    const fixture = await mockCreativeRound(page, { type: "image", sizes: [], failed: true, planningFailure: true });
+    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+
+    const round = page.getByTestId("creative-media-round");
+    await expect(round).toBeVisible({ timeout: 45_000 });
+    await expect(round.getByText("创作任务执行失败", { exact: true })).toBeVisible();
+    await expect(page.getByText(fixture.prompt, { exact: true })).toHaveCount(1);
+    await expect(page.getByTestId("creative-media-round")).toHaveCount(1);
+
+    const retryRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === `/api/agent/runs/${fixture.runId}/retry`);
+    await round.getByRole("button", { name: "直接重试本次创作" }).click();
+    expect(await (await retryRequest).postDataJSON()).toEqual({ conversationId: fixture.id });
+    await expect.poll(() => fixture.retryRequests().length).toBe(1);
+    expect(fixture.retryRequests()[0]).toEqual({ conversationId: fixture.id });
+    await expect(page).toHaveURL(new RegExp(`conversationId=${fixture.id}$`));
+    await expect(page.getByText(fixture.prompt, { exact: true })).toHaveCount(1);
+    await expect(page.getByTestId("creative-media-round")).toHaveCount(1);
+    await expectNoHorizontalOverflow(page);
+});
+
 test("partial image and video runs keep every successful result visible with a failed-task retry", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "部分成功结果由桌面基准项目验证");
     await preparePage(page, testInfo);
@@ -560,7 +582,7 @@ async function preparePage(page: Page, testInfo: TestInfo) {
     await installBrowserSpies(page);
 }
 
-async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: MediaSize[]; failed?: boolean; partialFailure?: boolean; omitDimensions?: boolean; reportedRatio?: string; withholdPrompts?: boolean }) {
+async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: MediaSize[]; failed?: boolean; planningFailure?: boolean; partialFailure?: boolean; omitDimensions?: boolean; reportedRatio?: string; withholdPrompts?: boolean }) {
     const id = `e2e-result-${randomUUID()}`;
     const runId = `e2e-run-${randomUUID()}`;
     const timestamp = Date.now();
@@ -610,20 +632,9 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
     };
     const conversation = { id, userId: "e2e-user", surface: "chat", source: "agent", title: prompt, status: "active", contextSummary: "", contextSummaryThroughSequence: 0, createdAt: timestamp, updatedAt: timestamp, lastMessageAt: timestamp };
     const primarySize = options.sizes[0] || (options.type === "image" ? IMAGE_SIZES[0] : VIDEO_SIZES[0]);
-    const tasks = options.failed
-        ? [
-              {
-                  id: `${options.type}-task`,
-                  title: options.type === "image" ? "图片生成" : "视频生成",
-                  type: options.type,
-                  model: `${options.type}-gen`,
-                  optimizedPrompt: optimizedPromptFor(0),
-                  count: 1,
-                  status: "failed",
-                  error: "当前模型暂不可用，请切换模型或稍后重试。",
-              },
-          ]
-        : options.partialFailure
+    const tasks = options.planningFailure
+        ? []
+        : options.failed
           ? [
                 {
                     id: `${options.type}-task`,
@@ -631,41 +642,54 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
                     type: options.type,
                     model: `${options.type}-gen`,
                     optimizedPrompt: optimizedPromptFor(0),
-                    count: options.sizes.length + 1,
+                    count: 1,
                     status: "failed",
-                    error: "部分结果生成失败",
-                    childTasks: [
-                        ...assets.map((asset, index) => ({ id: `${options.type}-child-${index + 1}`, status: "completed", attempt: 1, result: { serverUrl: asset.serverUrl } })),
-                        { id: `${options.type}-child-failed`, status: "failed", attempt: 1, error: "上游拒绝了一个结果" },
-                    ],
+                    error: "当前模型暂不可用，请切换模型或稍后重试。",
                 },
             ]
-          : options.type === "image"
+          : options.partialFailure
             ? [
                   {
-                      id: "image-task",
-                      title: "生成图片",
-                      type: "image",
-                      model: "image-gen",
+                      id: `${options.type}-task`,
+                      title: options.type === "image" ? "图片生成" : "视频生成",
+                      type: options.type,
+                      model: `${options.type}-gen`,
                       optimizedPrompt: optimizedPromptFor(0),
-                      ratio: options.reportedRatio || primarySize.label,
-                      quality: "high",
-                      count: Math.max(1, options.sizes.length),
-                      status: "completed",
+                      count: options.sizes.length + 1,
+                      status: "failed",
+                      error: "部分结果生成失败",
+                      childTasks: [
+                          ...assets.map((asset, index) => ({ id: `${options.type}-child-${index + 1}`, status: "completed", attempt: 1, result: { serverUrl: asset.serverUrl } })),
+                          { id: `${options.type}-child-failed`, status: "failed", attempt: 1, error: "上游拒绝了一个结果" },
+                      ],
                   },
               ]
-            : options.sizes.map((size, index) => ({
-                  id: `video-task-${index + 1}`,
-                  title: "生成视频",
-                  type: "video",
-                  model: "video-gen",
-                  optimizedPrompt: optimizedPromptFor(index),
-                  ratio: options.reportedRatio || size.label,
-                  quality: "high",
-                  seconds: 15,
-                  count: 1,
-                  status: "completed",
-              }));
+            : options.type === "image"
+              ? [
+                    {
+                        id: "image-task",
+                        title: "生成图片",
+                        type: "image",
+                        model: "image-gen",
+                        optimizedPrompt: optimizedPromptFor(0),
+                        ratio: options.reportedRatio || primarySize.label,
+                        quality: "high",
+                        count: Math.max(1, options.sizes.length),
+                        status: "completed",
+                    },
+                ]
+              : options.sizes.map((size, index) => ({
+                    id: `video-task-${index + 1}`,
+                    title: "生成视频",
+                    type: "video",
+                    model: "video-gen",
+                    optimizedPrompt: optimizedPromptFor(index),
+                    ratio: options.reportedRatio || size.label,
+                    quality: "high",
+                    seconds: 15,
+                    count: 1,
+                    status: "completed",
+                }));
     const run = {
         id: runId,
         conversationId: id,
@@ -692,6 +716,7 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
         tasks: [],
     };
     const repeatedRequests: Array<Record<string, unknown>> = [];
+    const retryRequests: Array<Record<string, unknown>> = [];
     let promptsVisible = !options.withholdPrompts;
     let runRequestCount = 0;
 
@@ -703,6 +728,17 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
         const responseRun = promptsVisible ? run : { ...run, tasks: run.tasks.map((task) => Object.fromEntries(Object.entries(task).filter(([key]) => key !== "optimizedPrompt"))) };
         return route.fulfill({ json: { code: 0, data: { run: responseRun }, msg: "OK" } });
     });
+    await page.route(new RegExp(`/api/agent/runs/${runId}/retry$`), async (route) => {
+        retryRequests.push((await route.request().postDataJSON()) as Record<string, unknown>);
+        return route.fulfill({ json: { code: 0, data: { run: { ...run, status: "planning", planningCycle: 2, tasks: [] } }, msg: "OK" } });
+    });
+    await page.route(new RegExp(`/api/agent/runs/${runId}/events(?:\\?.*)?$`), (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "text/event-stream",
+            body: `event: run.planning\ndata: {}\n\n`,
+        }),
+    );
     await page.route(new RegExp(`/api/agent/runs/${repeatedRun.id}/events(?:\\?.*)?$`), (route) =>
         route.fulfill({
             status: 200,
@@ -717,10 +753,12 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
     });
     return {
         id,
+        runId,
         prompt,
         assets,
         optimizedPromptFor,
         repeatedRequests: () => repeatedRequests,
+        retryRequests: () => retryRequests,
         revealPrompts: () => {
             promptsVisible = true;
         },

@@ -2,7 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreativeConversationContext } from "@/lib/creative-runtime-contract";
 import { AGENT_PLAN_SCHEMA_VERSION } from "./agent-run-audit";
 import type { AgentRun, AgentRunTask } from "./agent-run-store";
-import { canvasPlan, canvasSettings, conversationPlan, creativeImageAsset, disabledSettings, imageTask, plannerFailoverSettings, planningRun, runFixture, runWithTasks, settings } from "./agent-run-executor.test-fixtures";
+import {
+    canvasPlan,
+    canvasSettings,
+    conversationPlan,
+    creativeImageAsset,
+    disabledSettings,
+    imageTask,
+    plannerFailoverSettings,
+    plannerSameChannelModelFailoverSettings,
+    planningRun,
+    runFixture,
+    runWithTasks,
+    settings,
+} from "./agent-run-executor.test-fixtures";
+import { systemAiIdempotencyKey } from "./system-ai-billing";
 
 const mocks = vi.hoisted(() => ({
     fetchInternalApi: vi.fn(),
@@ -1000,6 +1014,167 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.events.some((event) => event.type === "run.completed")).toBe(true);
     });
 
+    it("fails over between two DFLOP models after an invalid JSON response and persists both attempts", async () => {
+        mocks.run = { ...planningRun("你在吗？"), planningCycle: 2 };
+        mocks.getAuthSettings.mockResolvedValue(plannerSameChannelModelFailoverSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (!url.includes("/api/ai/system/dflop/")) throw new Error(`unexpected request: ${url}`);
+            const model = (JSON.parse(String(init?.body)) as { model: string }).model;
+            if (model === "gpt-5.6-sol") return new Response("not-json", { status: 200, headers: { "x-vozeb-pro-points-record-id": "failed-primary" } });
+            if (model === "gpt-6-astra") return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "备用模型已接管。")) }] });
+            throw new Error(`unexpected model: ${model}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const planningCalls = mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/api/ai/system/dflop/"));
+        expect(planningCalls).toHaveLength(2);
+        expect(planningCalls.map(([, init]) => (JSON.parse(String(init?.body)) as { model: string }).model)).toEqual(["gpt-5.6-sol", "gpt-6-astra"]);
+        expect(new Headers(planningCalls[0][1]?.headers).get("x-vozeb-pro-points-idempotency-key")).toBe(systemAiIdempotencyKey("agent-plan", "user", "agent-run", "2"));
+        expect(mocks.run?.plannerAttempts).toEqual([
+            expect.objectContaining({ attemptNo: 1, planningCycle: 2, logicalModelId: "gpt-5.6-sol", channelId: "dflop", upstreamModel: "gpt-5.6-sol", protocol: "chat", status: "failed", requestAcceptance: "response", error: "文本模型返回了无效 JSON" }),
+            expect.objectContaining({ attemptNo: 2, planningCycle: 2, logicalModelId: "gpt-5.6-sol", channelId: "dflop", upstreamModel: "gpt-6-astra", protocol: "chat", status: "succeeded", requestAcceptance: "response" }),
+        ]);
+        expect(mocks.run?.plannerFailure).toBeUndefined();
+        expect(mocks.finishSystemAiTextAttempt.mock.calls.filter((call) => (call as unknown as [Headers, { status: string }])[1]?.status === "succeeded")).toHaveLength(1);
+        expect(mocks.run?.status).toBe("completed");
+    });
+
+    it("fails over after a response contains structured arguments that do not match the planner schema", async () => {
+        mocks.run = planningRun("你在吗？");
+        mocks.getAuthSettings.mockResolvedValue(plannerSameChannelModelFailoverSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockImplementation(async (_url: string, init?: RequestInit) => {
+            const model = (JSON.parse(String(init?.body)) as { model: string }).model;
+            if (model === "gpt-5.6-sol") return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify({ intent: "conversation" }) }] });
+            return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "备用模型返回了有效计划。")) }] });
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(2);
+        expect(mocks.run?.plannerAttempts).toEqual([
+            expect.objectContaining({ attemptNo: 1, upstreamModel: "gpt-5.6-sol", status: "failed", requestAcceptance: "response", error: expect.any(String) }),
+            expect.objectContaining({ attemptNo: 2, upstreamModel: "gpt-6-astra", status: "succeeded", requestAcceptance: "response" }),
+        ]);
+        expect(mocks.run?.status).toBe("completed");
+    });
+
+    it("fails the Run with a complete audit and no child task when both planner bindings reject the request", async () => {
+        mocks.run = planningRun("你在吗？");
+        mocks.getAuthSettings.mockResolvedValue(plannerSameChannelModelFailoverSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockImplementation(async () => new Response("upstream unavailable", { status: 502 }));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(2);
+        expect(mocks.run).toMatchObject({
+            status: "failed",
+            tasks: [],
+            plannerFailure: { message: "upstream unavailable", failedAt: expect.any(Number) },
+            plannerAttempts: [
+                expect.objectContaining({ attemptNo: 1, upstreamModel: "gpt-5.6-sol", status: "failed", requestAcceptance: "response", error: "upstream unavailable" }),
+                expect.objectContaining({ attemptNo: 2, upstreamModel: "gpt-6-astra", status: "failed", requestAcceptance: "response", error: "upstream unavailable" }),
+            ],
+        });
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ final: true }));
+        expect(mocks.fetchInternalApi.mock.calls.some(([url]) => /\/api\/(?:image|video|audio|text)-tasks/.test(String(url)))).toBe(false);
+    });
+
+    it("resumes the same planning cycle without repeating a response-known failed candidate", async () => {
+        mocks.run = {
+            ...planningRun("你在吗？"),
+            planningCycle: 1,
+            plannerAttempts: [
+                {
+                    attemptNo: 1,
+                    planningCycle: 1,
+                    logicalModelId: "gpt-5.6-sol",
+                    channelId: "dflop",
+                    upstreamModel: "gpt-5.6-sol",
+                    protocol: "chat",
+                    status: "failed",
+                    requestAcceptance: "response",
+                    startedAt: 100,
+                    completedAt: 200,
+                    elapsedMs: 100,
+                    error: "文本模型返回了无效 JSON",
+                },
+            ],
+        };
+        mocks.getAuthSettings.mockResolvedValue(plannerSameChannelModelFailoverSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockImplementation(async (_url: string, init?: RequestInit) => {
+            const model = (JSON.parse(String(init?.body)) as { model: string }).model;
+            if (model !== "gpt-6-astra") throw new Error(`repeated model: ${model}`);
+            return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "恢复后由备用模型接管。")) }] });
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi).toHaveBeenCalledOnce();
+        expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ attemptNo: 1, upstreamModel: "gpt-5.6-sol", status: "failed" }), expect.objectContaining({ attemptNo: 2, upstreamModel: "gpt-6-astra", status: "succeeded" })]);
+        expect(mocks.run?.status).toBe("completed");
+    });
+
+    it("continues billing attempt numbers from persisted attempts even when candidate ranking changes", async () => {
+        mocks.run = {
+            ...planningRun("你在吗？"),
+            planningCycle: 1,
+            plannerAttempts: [
+                {
+                    attemptNo: 1,
+                    planningCycle: 1,
+                    logicalModelId: "gpt-5.6-sol",
+                    channelId: "dflop",
+                    upstreamModel: "gpt-6-astra",
+                    protocol: "chat",
+                    status: "failed",
+                    requestAcceptance: "response",
+                    startedAt: 100,
+                    completedAt: 200,
+                    elapsedMs: 100,
+                    error: "模型没有返回所需的结构化结果",
+                },
+            ],
+        };
+        mocks.getAuthSettings.mockResolvedValue(plannerSameChannelModelFailoverSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockResolvedValue(Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "主模型恢复。")) }] }));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const headers = new Headers(mocks.fetchInternalApi.mock.calls[0]?.[1]?.headers);
+        expect(headers.get("x-vozeb-pro-billing-attempt-number")).toBe("2");
+        expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ attemptNo: 1, upstreamModel: "gpt-6-astra", status: "failed" }), expect.objectContaining({ attemptNo: 2, upstreamModel: "gpt-5.6-sol", status: "succeeded" })]);
+    });
+
+    it("does not repeat a successful planner candidate when recovery finds its plan was not persisted", async () => {
+        mocks.run = {
+            ...planningRun("你在吗？"),
+            planningCycle: 1,
+            plannerAttempts: [
+                {
+                    attemptNo: 1,
+                    planningCycle: 1,
+                    logicalModelId: "gpt-5.6-sol",
+                    channelId: "dflop",
+                    upstreamModel: "gpt-5.6-sol",
+                    protocol: "chat",
+                    status: "succeeded",
+                    requestAcceptance: "response",
+                    startedAt: 100,
+                    completedAt: 200,
+                    elapsedMs: 100,
+                },
+            ],
+        };
+        mocks.getAuthSettings.mockResolvedValue(plannerSameChannelModelFailoverSettings("image-default", "image-default-channel"));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ final: true, currentAttempt: { attemptNumber: 1, acceptance: "response" } }));
+        expect(mocks.run).toMatchObject({ status: "failed", plannerFailure: { message: "Agent 规划结果未完整持久化" } });
+    });
+
     it("does not switch to another planning model when a timeout leaves upstream acceptance unknown", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(plannerFailoverSettings("image-default", "image-default-channel"));
@@ -1016,6 +1191,8 @@ describe("executeAgentRun backend settings", () => {
         const backupCalls = mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/planner-backup/"));
         expect(primaryCalls).toHaveLength(1);
         expect(backupCalls).toHaveLength(0);
+        expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ attemptNo: 1, planningCycle: 1, upstreamModel: "vendor/planner-primary", protocol: "chat", status: "failed", requestAcceptance: "unknown" })]);
+        expect(mocks.run?.plannerFailure).toEqual(expect.objectContaining({ message: "文本模型规划响应超时", failedAt: expect.any(Number) }));
         expect(mocks.run?.status).toBe("failed");
         expect(mocks.events.some((event) => event.type === "run.completed")).toBe(false);
     });

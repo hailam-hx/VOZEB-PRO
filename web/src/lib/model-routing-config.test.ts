@@ -140,6 +140,63 @@ describe("model routing config", () => {
         expect(models[0].bindings).toEqual([{ ...existing[0].bindings[0], upstreamModel: "models/GPT-IMAGE-2" }, expect.objectContaining({ channelId: "two", upstreamModel: "gpt-image-2" })]);
     });
 
+    it("preserves an administrator cross-model fallback membership through catalog synchronization", () => {
+        const channels = [channel("dflop", ["gpt-5.6-sol", "gpt-6-astra"])];
+        const existing: LogicalModel[] = [
+            {
+                id: "gpt-5.6-sol",
+                name: "GPT-5.6 Sol",
+                capability: "text",
+                enabled: true,
+                saleRateCard: { version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "2" }] },
+                bindings: [
+                    { id: "primary", channelId: "dflop", upstreamModel: "gpt-5.6-sol", enabled: true, priority: 1 },
+                    {
+                        id: "backup",
+                        channelId: "dflop",
+                        upstreamModel: "gpt-6-astra",
+                        enabled: true,
+                        priority: 2,
+                        weight: 80,
+                        costRateCard: { version: 1, components: [{ id: "output", dimension: "outputTokens", unitPrice: "0.5" }] },
+                        providerCostUnit: { kind: "provider-native", provider: "dflop", unit: "token", usdConversion: { version: "dflop-v1", usdPerUnit: "0.00001" } },
+                    },
+                ],
+            },
+        ];
+
+        const models = synchronizeLogicalModelsWithChannels(existing, channels);
+
+        expect(models).toHaveLength(1);
+        expect(models[0]).toMatchObject({ id: "gpt-5.6-sol", name: "GPT-5.6 Sol", capability: "text", saleRateCard: { components: [{ unitPrice: "2" }] } });
+        expect(models[0].bindings).toEqual([
+            expect.objectContaining({ id: "primary", upstreamModel: "gpt-5.6-sol", priority: 1 }),
+            expect.objectContaining({
+                id: "backup",
+                upstreamModel: "gpt-6-astra",
+                priority: 2,
+                weight: 80,
+                costRateCard: expect.objectContaining({ components: [expect.objectContaining({ unitPrice: "0.5" })] }),
+                providerCostUnit: { kind: "provider-native", provider: "dflop", unit: "token", usdConversion: { version: "dflop-v1", usdPerUnit: "0.00001" } },
+            }),
+        ]);
+    });
+
+    it("does not merge catalog bindings with the same name but different authoritative capabilities", () => {
+        const textChannel = channel("text", ["shared-model"]);
+        textChannel.advancedConfig = { modelConfigs: { "shared-model": { capability: "text", source: "provider" } } } as never;
+        const imageChannel = channel("image", ["shared-model"]);
+        imageChannel.advancedConfig = { modelConfigs: { "shared-model": { capability: "image", source: "provider" } } } as never;
+
+        const models = synchronizeLogicalModelsWithChannels([], [textChannel, imageChannel]);
+
+        expect(models).toHaveLength(2);
+        expect(models.map((model) => ({ capability: model.capability, channelIds: model.bindings.map((binding) => binding.channelId) }))).toEqual([
+            { capability: "text", channelIds: ["text"] },
+            { capability: "image", channelIds: ["image"] },
+        ]);
+    });
+
     it("removes stale bindings and creates separate logical models for different upstream names", () => {
         const channels = [channel("one", ["writer", "writer-mini"]), channel("two", ["models/WRITER"])];
         const existing: LogicalModel[] = [
@@ -344,6 +401,34 @@ describe("model routing config", () => {
         ];
         expect(modelRoutingValidationErrors(models, channels, { textModel: "missing", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" })).toEqual(
             expect.arrayContaining(["逻辑模型 writer 存在重复绑定", "默认文本模型不可解析：missing"]),
+        );
+    });
+
+    it("reports a physical binding assigned to multiple logical models and a capability mismatch", () => {
+        const source = channel("one", ["writer", "image-model"]);
+        source.advancedConfig = { modelCapabilities: { writer: "text", "image-model": "image" } } as never;
+        const models: LogicalModel[] = [
+            {
+                id: "writer",
+                name: "Writer",
+                capability: "text",
+                enabled: true,
+                bindings: [
+                    { id: "writer", channelId: "one", upstreamModel: "writer", enabled: true, priority: 1 },
+                    { id: "wrong-capability", channelId: "one", upstreamModel: "image-model", enabled: true, priority: 2 },
+                ],
+            },
+            {
+                id: "duplicate-owner",
+                name: "Duplicate",
+                capability: "text",
+                enabled: true,
+                bindings: [{ id: "duplicate", channelId: "one", upstreamModel: "writer", enabled: true, priority: 1 }],
+            },
+        ];
+
+        expect(modelRoutingValidationErrors(models, [source], { textModel: "writer", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" })).toEqual(
+            expect.arrayContaining(["渠道 one 的上游模型 writer 只能绑定一个逻辑模型", "逻辑模型 writer 不能绑定图片模型 image-model"]),
         );
     });
 

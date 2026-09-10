@@ -51,6 +51,18 @@ describe("admin settings model routing", () => {
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.settings.update", metadata: { fields: expect.arrayContaining(["systemChannels", "logicalModels", "defaultModels"]) } }));
     });
 
+    it("rejects one physical binding assigned to more than one logical model", async () => {
+        const response = await PATCH(
+            request({
+                logicalModels: [...savedSettings.logicalModels, { ...savedSettings.logicalModels[0], id: "writer-backup", name: "Writer Backup", bindings: [{ ...savedSettings.logicalModels[0].bindings[0], id: "duplicate-binding" }] }],
+            }),
+        );
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual(expect.objectContaining({ error: expect.stringContaining("只能绑定一个逻辑模型") }));
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
     it("deletes a channel together with stale logical bindings and defaults", async () => {
         const response = await PATCH(request({ systemChannels: [], logicalModels: savedSettings.logicalModels, defaultModels: savedSettings.defaultModels }));
         expect(response.status).toBe(200);

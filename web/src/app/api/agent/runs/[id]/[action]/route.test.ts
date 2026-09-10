@@ -47,7 +47,35 @@ describe("Agent Run resume concurrency", () => {
     });
 
     it("retries a planning failure in the same run and replaces its assistant state", async () => {
-        const run = { id: "run", userId: "user", status: "failed", tasks: [], assetIds: ["old"] };
+        const plannerAttempts = [
+            {
+                attemptNo: 1,
+                planningCycle: 1,
+                logicalModelId: "gpt-5.6-sol",
+                channelId: "dflop",
+                upstreamModel: "gpt-5.6-sol",
+                protocol: "chat",
+                status: "failed",
+                requestAcceptance: "response",
+                startedAt: 100,
+                completedAt: 200,
+                elapsedMs: 100,
+                error: "文本模型返回了无效 JSON",
+            },
+        ];
+        const run = {
+            id: "run",
+            userId: "user",
+            status: "failed",
+            tasks: [],
+            assetIds: ["old"],
+            createdAt: 10,
+            timings: { requestAcceptedAt: 10, planningStartedAt: 20, runCompletedAt: 200 },
+            plannerContext: { serializedChars: 100 },
+            plannerAttempts,
+            plannerFailure: { message: "文本模型返回了无效 JSON", failedAt: 200 },
+            plannerAudit: { logicalModelId: "old" },
+        };
         mocks.getAgentRun.mockResolvedValue(run);
         mocks.countActive.mockResolvedValue(0);
         mocks.getAuthSettings.mockReset().mockResolvedValue({ generationConcurrency: { agent: 2 } });
@@ -56,7 +84,23 @@ describe("Agent Run resume concurrency", () => {
         const response = await POST(new Request("http://localhost/api/agent/runs/run/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "retry" }) });
 
         expect(response.status).toBe(200);
-        expect(mocks.updateAgentRunById).toHaveBeenCalledWith("run", expect.objectContaining({ status: "planning", tasks: [], reviewed: false, assetIds: [] }), { type: "run.retry.requested" }, ["failed"]);
+        expect(mocks.updateAgentRunById).toHaveBeenCalledWith(
+            "run",
+            expect.objectContaining({
+                status: "planning",
+                tasks: [],
+                reviewed: false,
+                assetIds: [],
+                planningCycle: 2,
+                plannerContext: undefined,
+                plannerAttempts,
+                plannerFailure: undefined,
+                plannerAudit: undefined,
+                timings: { requestAcceptedAt: 10 },
+            }),
+            { type: "run.retry.requested" },
+            ["failed"],
+        );
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "retry" }));
     });
 

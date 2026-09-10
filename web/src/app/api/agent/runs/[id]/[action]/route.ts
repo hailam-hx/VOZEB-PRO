@@ -40,7 +40,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             action === "retry"
                 ? await updateAgentRunById(
                       run.id,
-                      { status: "planning", executionId: undefined, tasks: [], foundation: undefined, projectHandoff: undefined, projectHandoffEmitted: undefined, review: undefined, reviewed: false, assetIds: [] },
+                      {
+                          status: "planning",
+                          executionId: undefined,
+                          tasks: [],
+                          foundation: undefined,
+                          projectHandoff: undefined,
+                          projectHandoffEmitted: undefined,
+                          review: undefined,
+                          reviewed: false,
+                          assetIds: [],
+                          planningCycle: Math.max(1, Math.floor(run.planningCycle || 1)) + 1,
+                          plannerContext: undefined,
+                          plannerAudit: undefined,
+                          plannerFailure: undefined,
+                          plannerAttempts: run.plannerAttempts,
+                          timings: { requestAcceptedAt: run.timings?.requestAcceptedAt || run.createdAt },
+                      },
                       { type: "run.retry.requested" },
                       ["failed"],
                   )

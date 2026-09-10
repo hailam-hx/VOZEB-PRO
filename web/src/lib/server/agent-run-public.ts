@@ -32,6 +32,7 @@ export function publicAgentRunSnapshot(run: AgentRun) {
 
 export function publicAgentRunEvent(event: CreativeRunEvent): CreativeRunEvent {
     if (event.type.startsWith("run.review.")) return { ...event, data: undefined };
+    if (event.type === "run.failed") return { ...event, data: { message: "Agent 执行失败" } };
     if (event.type === "run.cancel.pending") return { ...event, data: { pendingCount: arrayValue(recordValue(event.data).pendingTaskIds).length } };
     if (event.type === "canvas.ops") {
         const data = recordValue(event.data);

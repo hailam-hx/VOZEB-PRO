@@ -148,6 +148,60 @@ describe("admin generation controls", () => {
         });
     });
 
+    it("moves a synchronized physical model into the current logical model as a fallback binding", async () => {
+        const channels = [
+            {
+                ...textChannels[0],
+                models: ["gpt-5.6-sol", "gpt-6-astra"],
+            },
+        ];
+        const models = [
+            ...textModels(),
+            {
+                id: "gpt-6-astra",
+                name: "GPT-6 Astra",
+                capability: "text" as const,
+                enabled: true,
+                bindings: [
+                    {
+                        id: "gpt-6-astra:one",
+                        channelId: "one",
+                        upstreamModel: "gpt-6-astra",
+                        enabled: true,
+                        priority: 1,
+                        costRateCard: { version: 1 as const, components: [{ id: "output", dimension: "outputTokens" as const, unitPrice: "0.5" }] },
+                        providerCostUnit: { kind: "provider-native" as const, provider: "dflop", unit: "token", usdConversion: { version: "dflop-v1", usdPerUnit: "0.00001" } },
+                    },
+                ],
+            },
+        ];
+        const applied = vi.fn();
+        const host = await render(<LogicalModelHarness channels={channels} logicalModels={models} defaultModels={textDefaults} onApplied={applied} />);
+        const user = userEvent.setup();
+
+        await openVideoEditor(host);
+        await user.click(document.querySelector('[aria-label="选择备用绑定"]') as HTMLElement);
+        await user.click(Array.from(document.querySelectorAll(".ant-select-item-option-content")).find((option) => option.textContent?.includes("GPT-6 Astra")) as HTMLElement);
+        await user.click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "添加备用绑定") as HTMLButtonElement);
+        await user.click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "确认移动") as HTMLButtonElement);
+        await user.click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "应用修改") as HTMLButtonElement);
+
+        expect(applied.mock.lastCall?.[0].logicalModels).toHaveLength(1);
+        expect(applied.mock.lastCall?.[0].logicalModels[0]).toMatchObject({
+            id: "gpt-5.6-sol",
+            bindings: [
+                { channelId: "one", upstreamModel: "gpt-5.6-sol", priority: 1 },
+                {
+                    channelId: "one",
+                    upstreamModel: "gpt-6-astra",
+                    priority: 2,
+                    costRateCard: { components: [{ unitPrice: "0.5" }] },
+                    providerCostUnit: { kind: "provider-native", provider: "dflop", unit: "token", usdConversion: { version: "dflop-v1", usdPerUnit: "0.00001" } },
+                },
+            ],
+        });
+    });
+
     it("configures upstream idempotency while preserving the operational profile", async () => {
         const applied = vi.fn();
         const host = await render(

@@ -46,6 +46,21 @@ export type AdminGenerationTask = {
         pointsCost?: number;
         skills: Array<{ id: string; name: string; sourceVersion?: string; sourceCommit?: string; sourceContentHash?: string }>;
     };
+    plannerAttempts?: Array<{
+        attemptNo: number;
+        planningCycle: number;
+        logicalModelId: string;
+        channelId: string;
+        upstreamModel: string;
+        protocol?: "responses" | "chat" | "gemini" | "custom";
+        status: "running" | "succeeded" | "failed";
+        requestAcceptance?: "response" | "unknown";
+        startedAt: number;
+        completedAt?: number;
+        elapsedMs?: number;
+        error?: string;
+    }>;
+    plannerFailure?: { message: string; failedAt: number };
     createdAt: number;
     updatedAt: number;
     canCancel: boolean;

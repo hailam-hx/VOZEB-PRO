@@ -9,6 +9,7 @@ import { cancelledRunCanvasOps, taskCanvasEventOps } from "./agent-run-canvas-op
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 import { agentTaskCompletionMessage } from "./agent-run-messages";
 import type { AgentRunPlannerAudit } from "./agent-run-audit";
+import type { TextPlanningProtocol } from "./text-planning-runtime";
 import { normalizeAgentRunCanvasSnapshot, selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 import type { VoiceSelection } from "@/lib/voice-selection";
 
@@ -99,12 +100,33 @@ export type AgentRun = {
     reviewed: boolean;
     reviewStatus?: AgentRunReviewStatus;
     reviewAttempts?: number;
+    planningCycle?: number;
     plannerContext?: AgentRunPlannerContextSummary;
     plannerAudit?: AgentRunPlannerAudit;
+    plannerAttempts?: AgentRunPlannerAttempt[];
+    plannerFailure?: AgentRunPlannerFailure;
     cancellation?: AgentRunCancellation;
     timings?: AgentRunTimings;
     createdAt: number;
     updatedAt: number;
+};
+export type AgentRunPlannerAttempt = {
+    attemptNo: number;
+    planningCycle: number;
+    logicalModelId: string;
+    channelId: string;
+    upstreamModel: string;
+    protocol?: TextPlanningProtocol;
+    status: "running" | "succeeded" | "failed";
+    requestAcceptance?: "response" | "unknown";
+    startedAt: number;
+    completedAt?: number;
+    elapsedMs?: number;
+    error?: string;
+};
+export type AgentRunPlannerFailure = {
+    message: string;
+    failedAt: number;
 };
 export type AgentRunCancellation = {
     requestedAt: number;
@@ -154,6 +176,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         status: "planning",
         tasks: [],
         reviewed: false,
+        planningCycle: 1,
         timings: { requestAcceptedAt: now },
         createdAt: now,
         updatedAt: now,
@@ -224,7 +247,24 @@ export async function updateAgentRunById(
     patch: Partial<
         Pick<
             AgentRun,
-            "status" | "executionId" | "tasks" | "foundation" | "projectHandoff" | "projectHandoffEmitted" | "review" | "reviewed" | "reviewStatus" | "reviewAttempts" | "plannerContext" | "plannerAudit" | "cancellation" | "assetIds" | "timings"
+            | "status"
+            | "executionId"
+            | "tasks"
+            | "foundation"
+            | "projectHandoff"
+            | "projectHandoffEmitted"
+            | "review"
+            | "reviewed"
+            | "reviewStatus"
+            | "reviewAttempts"
+            | "planningCycle"
+            | "plannerContext"
+            | "plannerAudit"
+            | "plannerAttempts"
+            | "plannerFailure"
+            | "cancellation"
+            | "assetIds"
+            | "timings"
         >
     >,
     event?: { type: string; data?: unknown },

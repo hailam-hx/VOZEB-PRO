@@ -43,9 +43,24 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
     const config = object(payload.config);
     const upstream = object(payload.upstream);
     const plannerAudit = agentPlannerAudit(payload.plannerAudit);
+    const plannerAttempts = agentPlannerAttempts(payload.plannerAttempts);
+    const latestPlannerAttempt = plannerAttempts?.at(-1);
+    const plannerFailure = agentPlannerFailure(payload.plannerFailure);
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(object) : [];
     const failedTask = tasks.find((task) => task.status === "failed" && text(task.id));
-    const model = firstText(plannerAudit?.logicalModelId, payload.logicalModelId, payload.model, config.logicalModel, config.model, config.imageModel, config.videoModel, config.audioModel, upstream.model, tasks.find((task) => text(task.model))?.model);
+    const model = firstText(
+        plannerAudit?.logicalModelId,
+        latestPlannerAttempt?.logicalModelId,
+        payload.logicalModelId,
+        payload.model,
+        config.logicalModel,
+        config.model,
+        config.imageModel,
+        config.videoModel,
+        config.audioModel,
+        upstream.model,
+        tasks.find((task) => text(task.model))?.model,
+    );
     const ownPointsCost = generationTaskPointsCost(payload);
     const childPointsCost = childRecords.reduce((total, child) => total + generationTaskPointsCost(child.payload), 0);
     const pointsBreakdown =
@@ -72,7 +87,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         parentTaskId: record.parentTaskId,
         attemptNo: record.attemptNo,
         model,
-        channelId: firstText(plannerAudit?.channelId, payload.channelId, config.channelId, upstream.channelId),
+        channelId: firstText(plannerAudit?.channelId, latestPlannerAttempt?.channelId, payload.channelId, config.channelId, upstream.channelId),
         provider: record.provider,
         queryPath: record.queryPath,
         executionPhase: record.executionPhase,
@@ -86,11 +101,13 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         lastUpstreamStatus: record.lastUpstreamStatus,
         attempts: generationAttempts(payload.attempts),
         prompt: firstText(payload.prompt, config.prompt, tasks.find((task) => text(task.prompt))?.prompt).slice(0, 500),
-        error: firstText(payload.error, tasks.find((task) => text(task.error))?.error).slice(0, 1000) || undefined,
+        error: firstText(plannerFailure?.message, payload.error, tasks.find((task) => text(task.error))?.error).slice(0, 1000) || undefined,
         durationMs: Math.max(0, record.updatedAt - record.createdAt),
         pointsCost,
         pointsBreakdown,
         plannerAudit,
+        plannerAttempts,
+        plannerFailure,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         canCancel: record.type !== "voice-clone" && (record.status === "pending" || record.status === "running" || record.status === "paused"),
@@ -200,6 +217,49 @@ function agentPlannerAudit(value: unknown): AdminGenerationTask["plannerAudit"] 
         ...(Number.isFinite(Number(source.pointsCost)) && Number(source.pointsCost) >= 0 ? { pointsCost: Number(source.pointsCost) } : {}),
         skills,
     };
+}
+
+function agentPlannerAttempts(value: unknown): AdminGenerationTask["plannerAttempts"] {
+    if (!Array.isArray(value)) return undefined;
+    const attempts = value.flatMap((value) => {
+        const source = object(value);
+        const attemptNo = Number(source.attemptNo);
+        const planningCycle = Number(source.planningCycle);
+        const logicalModelId = text(source.logicalModelId);
+        const channelId = text(source.channelId);
+        const upstreamModel = text(source.upstreamModel);
+        const status: "running" | "succeeded" | "failed" | undefined = source.status === "running" || source.status === "succeeded" || source.status === "failed" ? source.status : undefined;
+        if (!Number.isSafeInteger(attemptNo) || attemptNo <= 0 || !Number.isSafeInteger(planningCycle) || planningCycle <= 0 || !logicalModelId || !channelId || !upstreamModel || !status) return [];
+        const protocol: "responses" | "chat" | "gemini" | "custom" | undefined = source.protocol === "responses" || source.protocol === "chat" || source.protocol === "gemini" || source.protocol === "custom" ? source.protocol : undefined;
+        const requestAcceptance: "response" | "unknown" | undefined = source.requestAcceptance === "response" || source.requestAcceptance === "unknown" ? source.requestAcceptance : undefined;
+        const startedAt = Number(source.startedAt);
+        const completedAt = Number(source.completedAt);
+        const elapsedMs = Number(source.elapsedMs);
+        return [
+            {
+                attemptNo,
+                planningCycle,
+                logicalModelId,
+                channelId,
+                upstreamModel,
+                ...(protocol ? { protocol } : {}),
+                status,
+                ...(requestAcceptance ? { requestAcceptance } : {}),
+                startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : 0,
+                ...(Number.isFinite(completedAt) && completedAt > 0 ? { completedAt } : {}),
+                ...(Number.isFinite(elapsedMs) && elapsedMs >= 0 ? { elapsedMs } : {}),
+                ...(text(source.error) ? { error: text(source.error).slice(0, 1000) } : {}),
+            },
+        ];
+    });
+    return attempts.length ? attempts.toSorted((left, right) => left.attemptNo - right.attemptNo) : undefined;
+}
+
+function agentPlannerFailure(value: unknown): AdminGenerationTask["plannerFailure"] {
+    const source = object(value);
+    const message = text(source.message).slice(0, 1000);
+    const failedAt = Number(source.failedAt);
+    return message && Number.isFinite(failedAt) && failedAt > 0 ? { message, failedAt } : undefined;
 }
 
 function roundedPoints(value: number) {

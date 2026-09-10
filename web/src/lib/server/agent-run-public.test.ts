@@ -70,6 +70,24 @@ describe("publicAgentRun", () => {
                     },
                 ],
             },
+            planningCycle: 2,
+            plannerAttempts: [
+                {
+                    attemptNo: 2,
+                    planningCycle: 2,
+                    logicalModelId: "planner-attempt-secret",
+                    channelId: "channel-attempt-secret",
+                    upstreamModel: "upstream-attempt-secret",
+                    protocol: "chat",
+                    status: "failed",
+                    requestAcceptance: "response",
+                    startedAt: 1,
+                    completedAt: 2,
+                    elapsedMs: 1,
+                    error: "planner-error-secret",
+                },
+            ],
+            plannerFailure: { message: "planner-failure-secret", failedAt: 2 },
             review: { mode: "visual", status: "needs_revision", summary: "secret", issues: [], retryTaskIds: [] },
             reviewed: true,
             cancellation: { requestedAt: 1, pendingChildTaskIds: ["child-secret"], lastError: "secret" },
@@ -91,6 +109,12 @@ describe("publicAgentRun", () => {
         expect(serialized).not.toContain("request-secret");
         expect(serialized).not.toContain('"foundation"');
         expect(serialized).not.toContain("planner-secret");
+        expect(serialized).not.toContain("planner-attempt-secret");
+        expect(serialized).not.toContain("planner-error-secret");
+        expect(serialized).not.toContain("planner-failure-secret");
+        expect(serialized).not.toContain('"planningCycle"');
+        expect(serialized).not.toContain('"plannerAttempts"');
+        expect(serialized).not.toContain('"plannerFailure"');
         expect(serialized).not.toContain("commit-secret");
         expect(serialized).not.toContain("secret-skill-instructions");
         expect(serialized).not.toContain('"review"');
@@ -115,5 +139,13 @@ describe("publicAgentRun", () => {
         });
 
         expect(event.data).toEqual({ reply: "开始生成", ops: [{ type: "add_node", id: "task-run-0", nodeType: "task", metadata: { model: "image-pro" } }] });
+    });
+
+    it("replaces internal planner failures in public SSE events with a generic message", () => {
+        const event = publicAgentRunEvent({ id: "3", runId: "run", type: "run.failed", data: { message: "文本模型返回了无效 JSON", plannerFailure: "secret" }, createdAt: 1 });
+
+        expect(event.data).toEqual({ message: "Agent 执行失败" });
+        expect(JSON.stringify(event)).not.toContain("无效 JSON");
+        expect(JSON.stringify(event)).not.toContain("plannerFailure");
     });
 });

@@ -27,6 +27,7 @@ describe("createAgentRun video frames", () => {
         ]);
 
         await expect(createAgentRun("user", frameRunRequest())).resolves.toMatchObject({
+            planningCycle: 1,
             referencedAssetIds: ["first-image", "last-image"],
             generationPreferences: { video: { referenceMode: "first_last", firstFrameAssetId: "first-image", lastFrameAssetId: "last-image" } },
         });

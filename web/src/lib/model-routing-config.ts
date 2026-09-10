@@ -22,71 +22,93 @@ export function deriveLogicalModelsConfig(channels: SystemModelChannel[]): Logic
 }
 
 export function synchronizeLogicalModelsWithChannels(existingModels: LogicalModel[], channels: SystemModelChannel[]): LogicalModel[] {
-    const catalog = new Map<
-        string,
-        {
-            upstreamModel: string;
-            capability: LogicalModelCapability;
-            authoritative: boolean;
-            bindings: Array<{ channel: SystemModelChannel; channelIndex: number; upstreamModel: string }>;
-        }
-    >();
+    const catalogBindings: Array<{
+        key: string;
+        modelKey: string;
+        channel: SystemModelChannel;
+        channelIndex: number;
+        upstreamModel: string;
+        capability: LogicalModelCapability;
+        authoritative: boolean;
+    }> = [];
     channels.forEach((channel, channelIndex) => {
         channel.models.forEach((upstreamModel) => {
             const id = rawModelName(upstreamModel);
             if (!id || !isCreativeGenerationModel(id)) return;
-            const key = normalizeModelName(id);
             const detected = resolveChannelModelCapability(channel, upstreamModel);
-            const model = catalog.get(key) || { upstreamModel: id, capability: detected.capability, authoritative: detected.authoritative, bindings: [] };
-            if ((!model.authoritative && detected.authoritative) || (model.capability === "text" && detected.capability !== "text")) {
-                model.capability = detected.capability;
-                model.authoritative = detected.authoritative;
-            }
-            if (!model.bindings.some((binding) => binding.channel.id === channel.id)) model.bindings.push({ channel, channelIndex, upstreamModel });
-            catalog.set(key, model);
+            const modelKey = normalizeModelName(id);
+            catalogBindings.push({ key: bindingKey(channel.id, upstreamModel), modelKey, channel, channelIndex, upstreamModel, ...detected });
         });
     });
 
-    const usedExistingIds = new Set<string>();
+    const catalogByBinding = new Map(catalogBindings.map((binding) => [binding.key, binding]));
+    const savedOwner = new Map<string, number>();
+    existingModels.forEach((model, modelIndex) =>
+        model.bindings.forEach((binding) => {
+            const key = bindingKey(binding.channelId, binding.upstreamModel);
+            if (catalogByBinding.has(key) && !savedOwner.has(key)) savedOwner.set(key, modelIndex);
+        }),
+    );
+    const claimedBindings = new Set<string>();
     const usedModelIds = new Set<string>();
-    return Array.from(catalog.entries()).map(([modelKey, catalogModel]) => {
-        const matchingModels = existingModels.filter((model) => model.bindings?.some((binding) => normalizeModelName(binding.upstreamModel) === modelKey));
-        const existing = matchingModels.find((model) => normalizeModelName(model.id) === modelKey && !usedExistingIds.has(model.id.toLowerCase())) || matchingModels.find((model) => !usedExistingIds.has(model.id.toLowerCase()));
-        if (existing) usedExistingIds.add(existing.id.toLowerCase());
-        const id = uniqueLogicalModelId(existing?.id || catalogModel.upstreamModel, usedModelIds);
-        const bindings = catalogModel.bindings
-            .map(({ channel, channelIndex, upstreamModel }) => {
-                const stored = findStoredBinding(existingModels, channel.id, upstreamModel);
-                const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile);
-                const generationParameters = normalizeGenerationParameters(stored?.generationParameters);
-                const weight = clampWeight(stored?.weight);
-                const costRateCard = stored?.costRateCard === undefined ? undefined : validatePricingRateCard(stored.costRateCard);
-                const providerCostUnit = stored?.providerCostUnit === undefined ? undefined : validateProviderCostUnit(stored.providerCostUnit);
-                if (costRateCard && !providerCostUnit) throw new Error("供应商成本价格卡必须指定有效的供应商成本单位");
-                return {
-                    id: text(stored?.id, 120) || `${channel.id}:${rawModelName(upstreamModel)}`,
-                    channelId: channel.id,
-                    upstreamModel,
-                    enabled: stored?.enabled !== false,
-                    priority: clampPriority(stored?.priority, channelIndex + 1),
-                    ...(weight !== undefined ? { weight } : {}),
-                    ...(capabilityProfile ? { capabilityProfile } : {}),
-                    ...(generationParameters ? { generationParameters } : {}),
-                    ...(costRateCard ? { costRateCard } : {}),
-                    ...(providerCostUnit ? { providerCostUnit } : {}),
-                };
+    const preserved = existingModels.flatMap((existing, modelIndex) => {
+        const available = existing.bindings.flatMap((binding) => {
+            const catalog = catalogByBinding.get(bindingKey(binding.channelId, binding.upstreamModel));
+            return catalog && savedOwner.get(catalog.key) === modelIndex ? [{ catalog, stored: binding }] : [];
+        });
+        const anchor = available.find(({ catalog }) => catalog.modelKey === normalizeModelName(existing.id)) || available[0];
+        const capability = anchor?.catalog.authoritative ? anchor.catalog.capability : normalizeCapability(existing.capability);
+        const seenBindings = new Set<string>();
+        const bindings = available
+            .filter(({ catalog }) => {
+                if (seenBindings.has(catalog.key) || (catalog.authoritative && catalog.capability !== capability)) return false;
+                seenBindings.add(catalog.key);
+                return true;
             })
-            .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
-        const saleRateCard = existing?.saleRateCard === undefined ? undefined : validatePricingRateCard(existing.saleRateCard);
+            .map(({ catalog, stored }) => {
+                claimedBindings.add(catalog.key);
+                return normalizedCatalogBinding(catalog, stored);
+            });
+        const modelKeys = new Set(bindings.map((binding) => normalizeModelName(binding.upstreamModel)));
+        for (const catalog of catalogBindings) {
+            if (claimedBindings.has(catalog.key) || savedOwner.has(catalog.key) || !modelKeys.has(catalog.modelKey) || (catalog.authoritative && catalog.capability !== capability)) continue;
+            claimedBindings.add(catalog.key);
+            bindings.push(normalizedCatalogBinding(catalog));
+        }
+        if (!bindings.length) return [];
+        bindings.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+        const saleRateCard = existing.saleRateCard === undefined ? undefined : validatePricingRateCard(existing.saleRateCard);
+        return [
+            {
+                id: uniqueLogicalModelId(existing.id, usedModelIds),
+                name: text(existing.name, 120) || bindings[0].upstreamModel,
+                capability,
+                enabled: existing.enabled !== false,
+                ...(saleRateCard ? { saleRateCard } : {}),
+                bindings,
+            },
+        ];
+    });
+
+    const unassigned = new Map<string, typeof catalogBindings>();
+    for (const catalog of catalogBindings) {
+        if (claimedBindings.has(catalog.key)) continue;
+        const groupKey = `${catalog.modelKey}\0${catalog.capability}`;
+        unassigned.set(groupKey, [...(unassigned.get(groupKey) || []), catalog]);
+    }
+    const created = Array.from(unassigned.values()).map((catalog) => {
+        const authoritative = catalog.find((binding) => binding.authoritative);
+        const capability = authoritative?.capability || catalog[0].capability;
+        const bindings = catalog.map((binding) => normalizedCatalogBinding(binding)).sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
         return {
-            id,
-            name: text(existing?.name, 120) || catalogModel.upstreamModel,
-            capability: catalogModel.authoritative || !existing ? catalogModel.capability : normalizeCapability(existing.capability),
-            enabled: existing?.enabled !== false,
-            ...(saleRateCard ? { saleRateCard } : {}),
+            id: uniqueLogicalModelId(catalog[0].upstreamModel, usedModelIds),
+            name: rawModelName(catalog[0].upstreamModel),
+            capability,
+            enabled: true,
             bindings,
         };
     });
+    return [...preserved, ...created];
 }
 
 export function mergeChannelModelsIntoLogicalModels(logicalModels: LogicalModel[], channels: SystemModelChannel[]) {
@@ -122,7 +144,7 @@ export function resolveLogicalModelConfig(logicalModels: LogicalModel[], channel
 }
 
 export function modelRoutingValidationErrors(logicalModels: LogicalModel[], channels: SystemModelChannel[], defaults: SystemDefaultModels) {
-    const errors: string[] = [];
+    const errors = modelBindingAssignmentValidationErrors(logicalModels, channels);
     const modelIds = new Set<string>();
     for (const model of logicalModels) {
         const key = rawModelName(model.id).toLowerCase();
@@ -133,16 +155,34 @@ export function modelRoutingValidationErrors(logicalModels: LogicalModel[], chan
         const bindingKeys = new Set<string>();
         for (const binding of model.bindings) {
             const channel = channels.find((item) => item.id === binding.channelId);
-            const bindingKey = `${binding.channelId}:${normalizeModelName(binding.upstreamModel)}`;
+            const key = bindingKey(binding.channelId, binding.upstreamModel);
             if (!channel) errors.push(`逻辑模型 ${model.id} 引用了不存在的渠道`);
             else if (!channelSupportsModel(channel, binding.upstreamModel)) errors.push(`渠道 ${channel.name} 未启用上游模型 ${binding.upstreamModel}`);
-            if (bindingKeys.has(bindingKey)) errors.push(`逻辑模型 ${model.id} 存在重复绑定`);
-            bindingKeys.add(bindingKey);
+            if (bindingKeys.has(key)) errors.push(`逻辑模型 ${model.id} 存在重复绑定`);
+            bindingKeys.add(key);
         }
     }
     for (const { capability, key, audioOperation } of DEFAULT_MODEL_SPECS) {
         const modelId = defaults[key];
         if (modelId && !isLogicalModelResolvable(logicalModels, channels, capability, modelId, audioOperation)) errors.push(`默认${key === "voiceCloneModel" ? "声音克隆" : capabilityLabel(capability)}模型不可解析：${modelId}`);
+    }
+    return Array.from(new Set(errors));
+}
+
+export function modelBindingAssignmentValidationErrors(logicalModels: LogicalModel[], channels: SystemModelChannel[]) {
+    const errors: string[] = [];
+    const owners = new Map<string, string>();
+    for (const model of logicalModels) {
+        for (const binding of model.bindings || []) {
+            const channel = channels.find((item) => item.id === binding.channelId);
+            if (!channel || !channelSupportsModel(channel, binding.upstreamModel)) continue;
+            const key = bindingKey(binding.channelId, binding.upstreamModel);
+            const owner = owners.get(key);
+            if (owner && owner !== model.id) errors.push(`渠道 ${channel.name} 的上游模型 ${binding.upstreamModel} 只能绑定一个逻辑模型`);
+            else owners.set(key, model.id);
+            const detected = resolveChannelModelCapability(channel, binding.upstreamModel);
+            if (detected.authoritative && detected.capability !== model.capability) errors.push(`逻辑模型 ${model.id} 不能绑定${capabilityLabel(detected.capability)}模型 ${binding.upstreamModel}`);
+        }
     }
     return Array.from(new Set(errors));
 }
@@ -184,9 +224,29 @@ function channelSupportsModel(channel: Pick<SystemModelChannel, "models">, model
     return Boolean(target && channel.models.some((item) => normalizeModelName(item) === target));
 }
 
-function findStoredBinding(models: LogicalModel[], channelId: string, upstreamModel: string) {
-    const modelKey = normalizeModelName(upstreamModel);
-    return models.flatMap((model) => model.bindings || []).find((binding) => binding.channelId === channelId && normalizeModelName(binding.upstreamModel) === modelKey);
+function bindingKey(channelId: string, upstreamModel: string) {
+    return `${channelId}:${normalizeModelName(upstreamModel)}`;
+}
+
+function normalizedCatalogBinding(catalog: { channel: SystemModelChannel; channelIndex: number; upstreamModel: string }, stored?: LogicalModelBinding): LogicalModelBinding {
+    const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile);
+    const generationParameters = normalizeGenerationParameters(stored?.generationParameters);
+    const weight = clampWeight(stored?.weight);
+    const costRateCard = stored?.costRateCard === undefined ? undefined : validatePricingRateCard(stored.costRateCard);
+    const providerCostUnit = stored?.providerCostUnit === undefined ? undefined : validateProviderCostUnit(stored.providerCostUnit);
+    if (costRateCard && !providerCostUnit) throw new Error("供应商成本价格卡必须指定有效的供应商成本单位");
+    return {
+        id: text(stored?.id, 120) || `${catalog.channel.id}:${rawModelName(catalog.upstreamModel)}`,
+        channelId: catalog.channel.id,
+        upstreamModel: catalog.upstreamModel,
+        enabled: stored?.enabled !== false,
+        priority: clampPriority(stored?.priority, catalog.channelIndex + 1),
+        ...(weight !== undefined ? { weight } : {}),
+        ...(capabilityProfile ? { capabilityProfile } : {}),
+        ...(generationParameters ? { generationParameters } : {}),
+        ...(costRateCard ? { costRateCard } : {}),
+        ...(providerCostUnit ? { providerCostUnit } : {}),
+    };
 }
 
 function uniqueLogicalModelId(value: string, usedIds: Set<string>) {

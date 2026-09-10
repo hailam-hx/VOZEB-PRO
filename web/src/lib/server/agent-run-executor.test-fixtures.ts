@@ -119,6 +119,7 @@ export function disabledSettings(imageModel: string, channelId: string) {
 
 export function plannerFailoverSettings(imageModel: string, channelId: string) {
     const value = settings(imageModel, channelId) as unknown as {
+        defaultModels: { textModel: string };
         systemChannels: Array<{ id: string; name: string; enabled: boolean; baseUrl: string; apiKey: string; models: string[] }>;
         logicalModels: Array<{ id: string; bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number }> }>;
     };
@@ -128,6 +129,29 @@ export function plannerFailoverSettings(imageModel: string, channelId: string) {
         { id: "planner-primary-binding", channelId: "planner-primary", upstreamModel: "vendor/planner-primary", enabled: true, priority: 1 },
         { id: "planner-backup-binding", channelId: "planner-backup", upstreamModel: "vendor/planner-backup", enabled: true, priority: 2 },
     ];
+    return value as never;
+}
+
+export function plannerSameChannelModelFailoverSettings(imageModel: string, channelId: string) {
+    const value = settings(imageModel, channelId) as unknown as {
+        defaultModels: { textModel: string };
+        systemChannels: Array<{ id: string; name: string; enabled: boolean; baseUrl: string; apiKey: string; models: string[] }>;
+        logicalModels: Array<{ id: string; bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number }> }>;
+    };
+    value.systemChannels[0] = {
+        id: "dflop",
+        name: "DFLOP OpenAI",
+        enabled: true,
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "dflop-secret",
+        models: ["gpt-5.6-sol", "gpt-6-astra"],
+    };
+    value.logicalModels[0].id = "gpt-5.6-sol";
+    value.logicalModels[0].bindings = [
+        { id: "dflop-sol", channelId: "dflop", upstreamModel: "gpt-5.6-sol", enabled: true, priority: 1 },
+        { id: "dflop-astra", channelId: "dflop", upstreamModel: "gpt-6-astra", enabled: true, priority: 2 },
+    ];
+    value.defaultModels.textModel = "gpt-5.6-sol";
     return value as never;
 }
 

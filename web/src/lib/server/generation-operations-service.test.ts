@@ -156,6 +156,70 @@ describe("generation operations aggregation", () => {
         expect(result.items[0]).not.toHaveProperty("canReview");
     });
 
+    it("derives failed Agent routing from the latest planner attempt and keeps prompt and failure separate", async () => {
+        mocks.listStoredGenerationTaskRecords.mockResolvedValue({
+            items: [
+                {
+                    ...task(),
+                    payload: {
+                        prompt: "写剧本一个女跳舞",
+                        plannerAttempts: [
+                            {
+                                attemptNo: 1,
+                                planningCycle: 1,
+                                logicalModelId: "gpt-5.6-sol",
+                                channelId: "dflop",
+                                upstreamModel: "gpt-5.6-sol",
+                                protocol: "chat",
+                                status: "failed",
+                                requestAcceptance: "response",
+                                startedAt: 1000,
+                                completedAt: 1300,
+                                elapsedMs: 300,
+                                error: "文本模型返回了无效 JSON",
+                            },
+                            {
+                                attemptNo: 2,
+                                planningCycle: 1,
+                                logicalModelId: "gpt-5.6-sol",
+                                channelId: "dflop",
+                                upstreamModel: "gpt-6-astra",
+                                protocol: "chat",
+                                status: "failed",
+                                requestAcceptance: "response",
+                                startedAt: 1400,
+                                completedAt: 1800,
+                                elapsedMs: 400,
+                                error: "模型没有返回所需的结构化结果",
+                            },
+                        ],
+                        plannerFailure: { message: "模型没有返回所需的结构化结果", failedAt: 1800 },
+                    },
+                },
+            ],
+            all: [],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            summary: { total: 1, active: 0, success: 0, failed: 1, averageDurationMs: 800, totalPointsCost: 0, byType: { agent: 1 }, byStatus: { error: 1 } },
+        });
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+
+        expect(result.items[0]).toMatchObject({
+            prompt: "写剧本一个女跳舞",
+            error: "模型没有返回所需的结构化结果",
+            model: "gpt-5.6-sol",
+            channelId: "dflop",
+            plannerFailure: { message: "模型没有返回所需的结构化结果", failedAt: 1800 },
+            plannerAttempts: [
+                expect.objectContaining({ attemptNo: 1, planningCycle: 1, upstreamModel: "gpt-5.6-sol", status: "failed", requestAcceptance: "response" }),
+                expect.objectContaining({ attemptNo: 2, planningCycle: 1, upstreamModel: "gpt-6-astra", status: "failed", requestAcceptance: "response" }),
+            ],
+        });
+        expect(result.items[0].plannerAudit).toBeUndefined();
+    });
+
     it("does not expose a manual review action", async () => {
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
             items: [{ ...task(), type: "image", status: "running", executionPhase: "polling", payload: { config: { model: "image-model" } } }],
