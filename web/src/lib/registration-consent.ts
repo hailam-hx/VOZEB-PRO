@@ -18,10 +18,10 @@ export function normalizeRegistrationPolicyConsent(value: unknown): Registration
     const privacyVersion = text(consent.privacyVersion);
     const privacyUrl = text(consent.privacyUrl);
     const acceptedAt = text(consent.acceptedAt);
-    if (!termsVersion || !termsUrl || !privacyVersion || !privacyUrl || !acceptedAt || !Number.isFinite(Date.parse(acceptedAt))) return undefined;
+    if (termsVersion === undefined || termsUrl === undefined || privacyVersion === undefined || privacyUrl === undefined || !acceptedAt || !Number.isFinite(Date.parse(acceptedAt))) return undefined;
     return { termsVersion, termsUrl, privacyVersion, privacyUrl, acceptedAt: new Date(acceptedAt).toISOString() };
 }
 
 function text(value: unknown) {
-    return typeof value === "string" ? value.trim() : "";
+    return typeof value === "string" ? value.trim() : undefined;
 }

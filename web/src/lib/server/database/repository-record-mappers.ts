@@ -98,7 +98,7 @@ export function mapUser(row: Record<string, unknown>): UserRecord {
             termsUrl: row.terms_url,
             privacyVersion: row.privacy_version,
             privacyUrl: row.privacy_url,
-            acceptedAt: row.policy_accepted_at,
+            acceptedAt: optionalIso(row.policy_accepted_at),
         }),
         lastLoginAt: optionalIso(row.last_login_at),
         createdAt: isoValue(row.created_at),

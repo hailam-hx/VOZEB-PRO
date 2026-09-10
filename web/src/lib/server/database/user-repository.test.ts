@@ -1,55 +1,64 @@
 import { describe, expect, it, vi } from "vitest";
+import { insertPostgresUsers, mapPostgresUser } from "@/lib/auth/store-repository";
 
 import type { QueryExecutor } from "./postgres";
 import { EmailCodesRepository, SessionsRepository, UsersRepository } from "./user-repository";
 
 describe("UsersRepository security fields", () => {
-    it("persists and returns the accepted policy snapshot with a new account id", async () => {
+    it.each([
+        { termsVersion: "2.0", termsUrl: "/terms", privacyVersion: "3.0", privacyUrl: "/privacy" },
+        { termsVersion: "", termsUrl: "", privacyVersion: "", privacyUrl: "" },
+    ])("persists and returns the accepted policy snapshot %j with a new account id", async (policy) => {
         const acceptedAt = "2026-08-09T08:30:00.000Z";
+        const row = {
+            id: "user-one",
+            account_id: 1,
+            username: "new-user",
+            display_name: "新用户",
+            bio: "",
+            role: "user",
+            status: "active",
+            settled_balance: "0",
+            password_hash: "hash",
+            terms_version: policy.termsVersion,
+            terms_url: policy.termsUrl,
+            privacy_version: policy.privacyVersion,
+            privacy_url: policy.privacyUrl,
+            policy_accepted_at: new Date(acceptedAt),
+            created_at: acceptedAt,
+            updated_at: acceptedAt,
+        };
         const query = vi.fn(async (_statement: string, _values?: unknown[]) => ({
-            rows: [
-                {
-                    id: "user-one",
-                    account_id: 1,
-                    username: "new-user",
-                    display_name: "新用户",
-                    bio: "",
-                    role: "user",
-                    status: "active",
-                    settled_balance: "0",
-                    password_hash: "hash",
-                    terms_version: "2.0",
-                    terms_url: "/terms",
-                    privacy_version: "3.0",
-                    privacy_url: "/privacy",
-                    policy_accepted_at: acceptedAt,
-                    created_at: acceptedAt,
-                    updated_at: acceptedAt,
-                },
-            ],
+            rows: [row],
             rowCount: 1,
         }));
         const repository = new UsersRepository({ query } as unknown as QueryExecutor);
 
-        const user = await repository.createWithNextAccountId({
+        const input = {
             id: "user-one",
             username: "new-user",
             displayName: "新用户",
             bio: "",
-            role: "user",
+            role: "user" as const,
             adminPermissions: [],
-            status: "active",
+            status: "active" as const,
             settledBalance: "0",
             passwordHash: "hash",
-            registrationConsent: { termsVersion: "2.0", termsUrl: "/terms", privacyVersion: "3.0", privacyUrl: "/privacy", acceptedAt },
+            registrationConsent: { ...policy, acceptedAt },
             createdAt: acceptedAt,
             updatedAt: acceptedAt,
-        });
+        };
+        const user = await repository.createWithNextAccountId(input);
 
         const [statement, values] = query.mock.calls[0];
         expect(statement).toContain("terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at");
-        expect(values?.slice(13, 18)).toEqual(["2.0", "/terms", "3.0", "/privacy", acceptedAt]);
-        expect(user.registrationConsent).toEqual({ termsVersion: "2.0", termsUrl: "/terms", privacyVersion: "3.0", privacyUrl: "/privacy", acceptedAt });
+        expect(values?.slice(13, 18)).toEqual([policy.termsVersion, policy.termsUrl, policy.privacyVersion, policy.privacyUrl, acceptedAt]);
+        expect(user.registrationConsent).toEqual({ ...policy, acceptedAt });
+        expect((await repository.create({ ...input, accountId: "0001" })).registrationConsent).toEqual({ ...policy, acceptedAt });
+        expect(query.mock.calls[1][1]?.slice(14, 19)).toEqual([policy.termsVersion, policy.termsUrl, policy.privacyVersion, policy.privacyUrl, acceptedAt]);
+        await insertPostgresUsers({ query } as unknown as QueryExecutor, [{ ...input, accountId: "0001" }]);
+        expect(query.mock.calls[2][1]?.slice(14, 19)).toEqual([policy.termsVersion, policy.termsUrl, policy.privacyVersion, policy.privacyUrl, acceptedAt]);
+        expect(mapPostgresUser(row).registrationConsent).toEqual({ ...policy, acceptedAt });
     });
 
     it("persists MFA fields and can explicitly clear both values", async () => {

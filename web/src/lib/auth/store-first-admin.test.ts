@@ -48,7 +48,7 @@ describe("first administrator creation", () => {
         const stored = (memory.value as { users: Array<Record<string, unknown>> }).users;
         expect(stored[0]).toMatchObject({ settledBalance: "0" });
         expect(stored[1]).toMatchObject({ settledBalance: "0" });
-        expect(stored[1]).toHaveProperty("registrationConsent", undefined);
+        expect(stored[1].registrationConsent).toEqual({ termsVersion: "", termsUrl: "", privacyVersion: "", privacyUrl: "", acceptedAt: stored[1].createdAt });
         for (const record of stored) {
             expect(record).not.toHaveProperty("pointsBalance");
         }
