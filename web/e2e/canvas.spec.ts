@@ -527,7 +527,7 @@ test("canvas separates project management from the command menu and keeps assets
     const target = await createCanvasProject(request, { title: targetTitle, nodes: [], connections: [] });
     const project = await createCanvasProject(request, {
         title: `Canvas 资产侧栏 ${randomUUID().slice(0, 8)}`,
-        nodes: Array.from({ length: 5 }, (_, index) => node(`asset-${index + 1}`, "image", index * 180, 120, 160, 120, { content: "/logo.svg", naturalWidth: 160, naturalHeight: 120 })),
+        nodes: Array.from({ length: 5 }, (_, index) => node(`asset-${index + 1}`, "image", index * 180, 120, 160, 120, { content: "/hx-favicon.png", naturalWidth: 160, naturalHeight: 120 })),
         connections: [],
     });
 
@@ -744,16 +744,17 @@ test("canvas remains operable with 2000 nodes and 5000 connections", async ({ pa
 });
 
 test("canvas restores all nine node types and opens text editing on a single click", async ({ page, request }) => {
+    const { videoFixture, audioFixture } = await installCanvasMediaFixtures(page);
     const project = await createCanvasProject(request, {
         title: `Canvas 节点矩阵 ${randomUUID().slice(0, 8)}`,
         viewport: { x: 90, y: 80, k: 0.75 },
         nodes: [
-            node("matrix-image", "image", 40, 80, 240, 180, { content: "/logo.svg", naturalWidth: 240, naturalHeight: 180 }),
-            node("matrix-panorama", "panorama", 340, 80, 300, 150, { content: "/logo.svg", naturalWidth: 300, naturalHeight: 150 }),
+            node("matrix-image", "image", 40, 80, 240, 180, { content: "/hx-favicon.png", naturalWidth: 240, naturalHeight: 180 }),
+            node("matrix-panorama", "panorama", 340, 80, 300, 150, { content: "/hx-favicon.png", naturalWidth: 300, naturalHeight: 150 }),
             node("matrix-text", "text", 700, 80, 260, 180, { content: "单击编辑文本" }),
             node("matrix-config", "config", 1020, 80, 300, 180, { generationMode: "image", model: "" }),
-            node("matrix-video", "video", 40, 360, 260, 170, { content: "/logo.svg", mimeType: "video/mp4" }),
-            node("matrix-audio", "audio", 340, 360, 260, 150, { content: "/logo.svg", mimeType: "audio/mpeg" }),
+            node("matrix-video", "video", 40, 360, 260, 170, videoFixture),
+            node("matrix-audio", "audio", 340, 360, 260, 150, audioFixture),
             node("matrix-brief", "brief", 700, 340, 320, 210, { agentBrief: { objective: "节点矩阵目标", deliverables: [{ type: "image", title: "主视觉", count: 1 }] } }),
             node("matrix-task", "task", 40, 640, 300, 180, { prompt: "任务恢复内容", agentTaskStatus: "completed", agentTaskAttempts: 1 }),
             node("matrix-brand", "brand-kit", 420, 620, 320, 200, { brandKit: { summary: "品牌方向恢复", keywords: ["电影感"] } }),
@@ -901,6 +902,58 @@ test("canvas Agent attachment remove badge stays compact and theme readable", as
         await deleteCanvasProject(request, project.id);
     }
 });
+
+async function installCanvasMediaFixtures(page: Page) {
+    const [video, audio] = await Promise.all([createCanvasMediaFixture(page, "video"), createCanvasMediaFixture(page, "audio")]);
+    await Promise.all([
+        page.route("**/api/reference-assets/e2e-canvas-video.webm", (route) => route.fulfill({ contentType: video.mimeType, body: Buffer.from(video.base64, "base64") })),
+        page.route("**/api/reference-assets/e2e-canvas-audio.webm", (route) => route.fulfill({ contentType: audio.mimeType, body: Buffer.from(audio.base64, "base64") })),
+    ]);
+    return {
+        videoFixture: { content: "/api/reference-assets/e2e-canvas-video.webm", mimeType: video.mimeType },
+        audioFixture: { content: "/api/reference-assets/e2e-canvas-audio.webm", mimeType: audio.mimeType },
+    };
+}
+
+async function createCanvasMediaFixture(page: Page, type: "video" | "audio") {
+    return page.evaluate(async (mediaType) => {
+        const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+        const stream =
+            mediaType === "video"
+                ? (() => {
+                      const canvas = document.createElement("canvas");
+                      canvas.width = 64;
+                      canvas.height = 48;
+                      const context = canvas.getContext("2d")!;
+                      context.fillStyle = "#2563eb";
+                      context.fillRect(0, 0, canvas.width, canvas.height);
+                      return canvas.captureStream(12);
+                  })()
+                : (() => {
+                      const context = new AudioContext();
+                      const destination = context.createMediaStreamDestination();
+                      const oscillator = context.createOscillator();
+                      oscillator.connect(destination);
+                      oscillator.start();
+                      oscillator.stop(context.currentTime + 0.12);
+                      return destination.stream;
+                  })();
+        const mimeType = mediaType === "video" ? "video/webm;codecs=vp8" : "audio/webm;codecs=opus";
+        const recorder = new MediaRecorder(stream, { mimeType });
+        const chunks: Blob[] = [];
+        recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
+        const stopped = new Promise<void>((resolve) => (recorder.onstop = () => resolve()));
+        recorder.start();
+        await wait(180);
+        recorder.stop();
+        await stopped;
+        stream.getTracks().forEach((track) => track.stop());
+        const bytes = new Uint8Array(await new Blob(chunks, { type: recorder.mimeType }).arrayBuffer());
+        let binary = "";
+        bytes.forEach((byte) => (binary += String.fromCharCode(byte)));
+        return { base64: btoa(binary), mimeType: recorder.mimeType };
+    }, type);
+}
 
 function node(id: string, type: string, x: number, y: number, width: number, height: number, metadata: Record<string, unknown>) {
     return { id, type, title: id, position: { x, y }, width, height, metadata };

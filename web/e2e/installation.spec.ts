@@ -12,9 +12,10 @@ test("fresh deployments enter the installation flow", async ({ page }) => {
 
     await expect(page).toHaveURL(/\/install(?:\?|$)/);
     await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
-    await expect(page.getByRole("link", { name: /安装向导/ })).toBeVisible();
+    const installationBrand = page.getByRole("link", { name: /安装向导/ });
+    await expect(installationBrand).toBeVisible();
     await expect(page.getByText("三步完成服务器初始化", { exact: true })).toBeVisible();
-    await expect(page.locator('[style*="/logo.svg"]').first()).toBeVisible();
+    await expect(installationBrand.locator('img[src="/hx-favicon.png"]')).toBeVisible();
 });
 
 test("public session omits internal configuration fields", async ({ request }) => {
