@@ -46,7 +46,7 @@ describe("site settings", () => {
                 "zh-CN": { title: "独立 SEO 标题", description: "独立描述", keywords: "自定义,关键词" },
             },
             footerCopyright: "© 独立运营主体",
-            friendLinks: [{ id: "vozeb-pro-home", label: "官方网站", url: "https://www.vozeb.com/", enabled: true }],
+            friendLinks: [{ id: "example-home", label: "官方网站", url: "https://example.com/", enabled: true }],
         });
 
         expect(settings).toMatchObject({ seo: { "zh-CN": { title: "独立 SEO 标题", keywords: "自定义,关键词" } }, footerCopyright: "© 独立运营主体" });
@@ -83,21 +83,25 @@ describe("site settings", () => {
         });
     });
 
+    it("preserves administrator footer text without legacy brand repairs", () => {
+        expect(normalizeSiteSettings({ footerCopyright: "2026 VOZEB PRO Studio" }).footerCopyright).toBe("2026 VOZEB PRO Studio");
+    });
+
     it("normalizes common social handles and addresses without dropping them", () => {
         const settings = normalizeSiteSettings({
             socials: {
                 email: { enabled: true, label: "邮箱", url: "owner@example.com" },
-                telegram: { enabled: true, label: "Telegram", url: "t.me/vozeb_group" },
-                x: { enabled: true, label: "X", url: "@vozeb_pro" },
-                instagram: { enabled: true, label: "Instagram", url: "instagram.com/vozeb.pro" },
+                telegram: { enabled: true, label: "Telegram", url: "t.me/example_group" },
+                x: { enabled: true, label: "X", url: "@example_ai" },
+                instagram: { enabled: true, label: "Instagram", url: "instagram.com/example.ai" },
             },
         });
 
         expect(settings.socials).toEqual({
             email: { enabled: true, label: "邮箱", url: "mailto:owner@example.com" },
-            telegram: { enabled: true, label: "Telegram", url: "https://t.me/vozeb_group" },
-            x: { enabled: true, label: "X", url: "https://x.com/vozeb_pro" },
-            instagram: { enabled: true, label: "Instagram", url: "https://instagram.com/vozeb.pro" },
+            telegram: { enabled: true, label: "Telegram", url: "https://t.me/example_group" },
+            x: { enabled: true, label: "X", url: "https://x.com/example_ai" },
+            instagram: { enabled: true, label: "Instagram", url: "https://instagram.com/example.ai" },
         });
         expect(normalizeSiteSettings(settings).socials).toEqual(settings.socials);
     });

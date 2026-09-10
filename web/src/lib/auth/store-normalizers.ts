@@ -462,8 +462,6 @@ export function normalizeText(value: unknown, fallback: string, maxLength: numbe
 }
 
 export function repairKnownMojibakeText(value: string) {
-    if (value.includes("2026 VOZEB PRO") && !value.startsWith("©")) return "© 2026 VOZEB PRO. All rights reserved.";
-    if (value.startsWith("QQ ") && !value.includes("邮箱")) return "QQ 邮箱";
     return repairUtf8MojibakeText(value);
 }
 

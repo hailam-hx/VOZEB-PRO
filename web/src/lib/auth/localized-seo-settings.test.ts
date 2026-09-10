@@ -46,7 +46,7 @@ describe("localized SEO settings", () => {
         });
         const long = { title: "t".repeat(73), description: "d".repeat(181), keywords: "k".repeat(241) };
         expect(normalizeSiteSettings({ seo: { ...seo, en: long } }).seo?.en).toEqual({ title: "t".repeat(72), description: "d".repeat(180), keywords: "k".repeat(240) });
-        const english = { title: "VOZEB PRO AI creation", description: "VOZEB PRO AI studio", keywords: "VOZEB PRO,AI image" };
+        const english = { title: "Example AI creation", description: "Example AI studio", keywords: "Example AI,AI image" };
         expect(normalizeSiteSettings({ seo: { ...seo, en: english } }).seo?.en).toEqual(english);
     });
 
