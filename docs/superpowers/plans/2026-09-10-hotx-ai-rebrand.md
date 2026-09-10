@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace every user-visible VOZEB PRO/VOZEB brand reference with HOTX AI, use `hx-favicon.png` as the built-in logo everywhere, and remove the three bundled friend links without changing compatibility-sensitive technical namespaces.
+**Goal:** Replace every user-visible VOZEB PRO/VOZEB brand reference with HOTX AI, use `hx-favicon.png` as the built-in logo everywhere, remove the three bundled friend links, and leave all admin-editable content unpopulated in code defaults.
 
-**Architecture:** Establish one code-owned brand contract in `web/src/lib/site-brand.ts`, route every web fallback through it, and keep the existing admin overrides intact. Update content-producing runtime code, multilingual SEO, docs and operational output at their sources; remove obsolete VOZEB community defaults/assets; then update the currently running settings through the existing admin persistence path rather than adding migration code.
+**Architecture:** Establish only a minimal code-owned identity fallback in `web/src/lib/site-brand.ts`, route every web logo/title fallback through it, and keep the existing admin overrides intact. Represent admin-editable SEO/footer/policy/social/mail-sender fields as empty values until persisted, update content-producing runtime code and docs at their sources, remove obsolete VOZEB community defaults/assets, then configure the currently running site through the existing admin persistence path rather than adding migration code.
 
 **Tech Stack:** Next.js 16 App Router, React, TypeScript, next-intl, Ant Design, Vitest, Playwright, Fumadocs, Node.js scripts, PostgreSQL/file settings providers.
 
@@ -14,6 +14,8 @@
 
 - The product display name is exactly `HOTX AI`.
 - The built-in logo and browser icon are exactly `/hx-favicon.png`.
+- Code defaults may contain only the HOTX AI title/logo/icon identity fallback; localized SEO, copyright, Terms/Privacy setting values, friend links, social content and mail sender name must default to empty/disabled.
+- Admin form placeholders may explain what to enter but must not supply, preview or persist marketing copy as a fallback.
 - Preserve environment variables with `VOZEB_PRO_*`, database/storage/cookie namespaces with `vozeb_pro` or `VOZEB_PRO`, Docker/package/repository slugs, and real repository URLs containing `csyqlz/VOZEB-PRO`.
 - Preserve the protocol ID `vozeb-recommended` and generation constant identifiers such as `VOZEB_IMAGE_ASPECT_RATIOS`; only their user-visible labels become HOTX AI.
 - Keep admin customization for title, logo, icon and friend links; remove only the three bundled/current friend-link records.
@@ -23,23 +25,26 @@
 
 ---
 
-### Task 1: Define the HOTX AI brand contract and empty friend-link defaults
+### Task 1: Define the minimal HOTX AI identity and empty admin-content defaults
 
 **Files:**
 - Modify: `web/src/lib/site-brand.ts`
 - Modify: `web/src/lib/auth/store-foundation.ts`
 - Modify: `web/src/lib/auth/store-types.ts`
 - Modify: `web/src/lib/auth/store-normalizers.ts`
+- Modify: `web/src/i18n/site-copy.ts`
+- Modify: `web/src/i18n/site-copy.test.ts`
 - Modify: `web/src/lib/auth/site-settings.test.ts`
+- Modify: `web/src/lib/auth/localized-seo-settings.test.ts`
 
 **Interfaces:**
 - Produces: `DEFAULT_SITE_TITLE: "HOTX AI"`, `DEFAULT_SITE_LOGO_URL: "/hx-favicon.png"`, and `DEFAULT_SITE_ICON_URL: "/hx-favicon.png"` from `@/lib/site-brand`.
-- Produces: `DEFAULT_SITE_SETTINGS.friendLinks` as `[]` while retaining `SiteFriendLink[]` and `normalizeSiteFriendLinks()` for future admin entries.
+- Produces: `EMPTY_LOCALIZED_SEO` plus empty footer/policy/friend/social/mail-sender defaults while retaining all settings types and persistence APIs.
 - Consumes: existing `SiteSettings`, `LocalizedSeoSettings`, `normalizeSiteSettings()` and settings persistence contracts unchanged.
 
-- [ ] **Step 1: Write failing default-brand tests**
+- [ ] **Step 1: Write failing identity and empty-content tests**
 
-Add assertions that express the new contract and remove assertions that require the old VOZEB links:
+Add assertions that express the new contract:
 
 ```ts
 import { DEFAULT_SITE_ICON_URL, DEFAULT_SITE_LOGO_URL, DEFAULT_SITE_TITLE } from "@/lib/site-brand";
@@ -51,30 +56,39 @@ expect(DEFAULT_SITE_SETTINGS).toMatchObject({
     title: "HOTX AI",
     logoUrl: "/hx-favicon.png",
     iconUrl: "/hx-favicon.png",
-    footerCopyright: "© 2026 HOTX AI. All rights reserved.",
+    seo: {
+        vi: { title: "", description: "", keywords: "" },
+        en: { title: "", description: "", keywords: "" },
+        "zh-CN": { title: "", description: "", keywords: "" },
+    },
+    footerCopyright: "",
+    termsUrl: "",
+    termsVersion: "",
+    privacyUrl: "",
+    privacyVersion: "",
+    friendLinks: [],
 });
-expect(normalizeSiteSettings({}).friendLinks).toEqual([]);
+expect(Object.values(DEFAULT_SITE_SETTINGS.socials)).toEqual([
+    { enabled: false, label: "", url: "" },
+    { enabled: false, label: "", url: "" },
+    { enabled: false, label: "", url: "" },
+    { enabled: false, label: "", url: "" },
+]);
+expect(DEFAULT_MAIL_SETTINGS.fromName).toBe("");
 ```
 
-Keep the customized friend-link round-trip coverage by using a neutral record:
+Keep customized friend-link and localized SEO round-trip coverage with explicit neutral fixtures; do not derive those fixtures from defaults.
 
-```ts
-const customLink = { id: "partner", label: "合作伙伴", url: "https://example.com/", enabled: true };
-expect(normalizeSiteSettings({ friendLinks: [customLink] }).friendLinks).toEqual([customLink]);
-```
-
-- [ ] **Step 2: Run the tests to verify the old defaults fail**
-
-Run:
+- [ ] **Step 2: Run the tests to verify populated defaults fail**
 
 ```bash
 cd web
-pnpm exec vitest run src/lib/auth/site-settings.test.ts
+pnpm exec vitest run src/lib/auth/site-settings.test.ts src/lib/auth/localized-seo-settings.test.ts src/i18n/site-copy.test.ts
 ```
 
-Expected: FAIL because the current title is `VOZEB PRO`, the logo/icon use SVG files, and three default friend links are still installed.
+Expected: FAIL because the current title/logo/icon, localized SEO, copyright, policy values, email social, mail sender and three friend links are populated.
 
-- [ ] **Step 3: Implement the shared constants and new defaults**
+- [ ] **Step 3: Implement identity constants and empty content values**
 
 Change `site-brand.ts` to:
 
@@ -88,13 +102,30 @@ export function resolveSiteTitle(value: unknown) {
 }
 ```
 
-Use these constants in `DEFAULT_SITE_SETTINGS`, set `DEFAULT_MAIL_SETTINGS.fromName` to `HOTX AI`, and set the footer copyright to `© 2026 HOTX AI. All rights reserved.`. Define:
+Rename `DEFAULT_LOCALIZED_SEO` to `EMPTY_LOCALIZED_SEO`:
+
+```ts
+export const EMPTY_LOCALIZED_SEO: LocalizedSeoSettings = {
+    vi: { title: "", description: "", keywords: "" },
+    en: { title: "", description: "", keywords: "" },
+    "zh-CN": { title: "", description: "", keywords: "" },
+};
+```
+
+Use HOTX AI constants only for `DEFAULT_SITE_SETTINGS.title`, `logoUrl` and `iconUrl`. Set footer copyright, Terms/Privacy URLs and versions, and `DEFAULT_MAIL_SETTINGS.fromName` to empty strings. Keep SMTP provider/host/port defaults because they are transport configuration, not content. Define:
 
 ```ts
 export const DEFAULT_SITE_FRIEND_LINKS: SiteFriendLink[] = [];
+
+export const DEFAULT_SITE_SOCIALS: SiteSocialSettings = {
+    email: { enabled: false, label: "", url: "" },
+    telegram: { enabled: false, label: "", url: "" },
+    x: { enabled: false, label: "", url: "" },
+    instagram: { enabled: false, label: "", url: "" },
+};
 ```
 
-Remove the QQ constant import and delete the VOZEB-home special case from `normalizeSiteFriendLinks()` so it remains a generic normalizer:
+Remove the QQ constant import and delete the VOZEB-home special case from `normalizeSiteFriendLinks()` so it remains generic:
 
 ```ts
 export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
@@ -114,7 +145,7 @@ export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
 }
 ```
 
-Change the footer repair literal to HOTX AI; do not retain a VOZEB compatibility branch.
+Normalize missing SEO/footer/policy/social fields to empty values. Remove `normalizeBrandDefault()` and the VOZEB copyright repair branch instead of replacing either with a HOTX AI content fallback. Keep the localized `/terms` and `/privacy` navigation fallback in `auth-form.tsx`; it must not be persisted into settings.
 
 - [ ] **Step 4: Run the focused settings tests**
 
@@ -123,8 +154,8 @@ Run the command from Step 2. Expected: PASS.
 - [ ] **Step 5: Commit the contract**
 
 ```bash
-git add web/src/lib/site-brand.ts web/src/lib/auth/store-foundation.ts web/src/lib/auth/store-types.ts web/src/lib/auth/store-normalizers.ts web/src/lib/auth/site-settings.test.ts
-git commit -m "feat(brand): define HOTX AI defaults"
+git add web/src/lib/site-brand.ts web/src/lib/auth/store-foundation.ts web/src/lib/auth/store-types.ts web/src/lib/auth/store-normalizers.ts web/src/i18n/site-copy.ts web/src/i18n/site-copy.test.ts web/src/lib/auth/site-settings.test.ts web/src/lib/auth/localized-seo-settings.test.ts
+git commit -m "feat(brand): keep admin content defaults empty"
 ```
 
 ---
@@ -266,13 +297,17 @@ git commit -m "feat(brand): adopt HOTX AI logo assets"
 
 ---
 
-### Task 3: Rebrand multilingual SEO, authentication and public copy
+### Task 3: Require explicit admin SEO content and rebrand public fixtures
 
 **Files:**
-- Modify: `web/src/i18n/site-copy.ts`
+- Modify: `web/src/components/admin/admin-configuration-sections.tsx`
+- Modify: `web/src/components/admin/admin-site-seo.dom.test.tsx`
 - Modify: `web/src/i18n/messages/vi.json`
 - Modify: `web/src/i18n/messages/en.json`
 - Modify: `web/src/i18n/messages/zh-CN.json`
+- Modify: `web/src/app/layout.tsx`
+- Modify: `web/src/app/[locale]/page.tsx`
+- Modify: `web/src/app/manifest.ts`
 - Modify: `web/src/app/home-metadata.test.ts`
 - Modify: `web/src/app/api/auth/session/route.test.ts`
 - Modify: `web/src/app/install-routing.test.tsx`
@@ -285,69 +320,96 @@ git commit -m "feat(brand): adopt HOTX AI logo assets"
 - Modify: `web/e2e/core.spec.ts`
 
 **Interfaces:**
-- Consumes: existing `DEFAULT_LOCALIZED_SEO`, message catalog keys, localized route metadata and `DEFAULT_SITE_TITLE`.
-- Produces: locale-native HOTX AI title, description and keywords for `vi`, `en` and `zh-CN`, without cross-locale fallback.
+- Consumes: empty settings values from Task 1, localized route metadata, and the HOTX AI identity fallback.
+- Produces: an admin form that never previews built-in marketing copy and metadata tests that always supply explicit locale-native settings fixtures.
 
-- [ ] **Step 1: Add failing localized-copy assertions**
+- [ ] **Step 1: Add failing admin-empty-state and configured-metadata tests**
 
-Extend the existing localized SEO test with:
+Extend `admin-site-seo.dom.test.tsx` before filling fields:
 
 ```ts
-expect(DEFAULT_LOCALIZED_SEO.vi.title).toContain("HOTX AI");
-expect(DEFAULT_LOCALIZED_SEO.en.description).toContain("HOTX AI");
-expect(DEFAULT_LOCALIZED_SEO["zh-CN"].keywords).toContain("HOTX AI");
-expect(JSON.stringify(DEFAULT_LOCALIZED_SEO)).not.toContain("VOZEB");
+expect(screen.queryByText("留空后使用该语言的内置默认值。")).toBeNull();
+expect((screen.getByLabelText("SEO 标题") as HTMLInputElement).value).toBe("");
+expect((screen.getByLabelText("SEO 标题") as HTMLInputElement).placeholder).toBe("请输入当前语言的 SEO 标题");
+expect(screen.getByText("尚未配置 SEO 标题")).toBeTruthy();
+expect(screen.getByText("尚未配置 SEO 描述")).toBeTruthy();
 ```
 
-Update the existing home metadata and auth/install fixtures to expect `HOTX AI` headings and titles. Replace social-normalization fixtures such as `vozeb_group`, `@vozeb_pro` and `vozeb.pro` with neutral `hotx_ai`, `@hotx_ai` and `hotx.ai` test values while preserving the same normalization assertions.
+In home metadata tests, provide this explicit fixture instead of relying on `DEFAULT_SITE_SETTINGS.seo`:
 
-- [ ] **Step 2: Run the public-copy tests to confirm failure**
+```ts
+const configuredSeo = {
+    vi: {
+        title: "HOTX AI - Nền tảng tạo ảnh, video và giọng nói bằng AI",
+        description: "HOTX AI là nền tảng sáng tạo AI giúp bạn tạo ảnh, video và giọng nói trong một quy trình thống nhất.",
+        keywords: "HOTX AI,AI Agent,hình ảnh AI,video AI",
+    },
+    en: {
+        title: "HOTX AI - AI image, video and voice creation",
+        description: "HOTX AI is a unified AI creation platform for images, video and voice.",
+        keywords: "HOTX AI,AI Agent,AI image,AI video",
+    },
+    "zh-CN": {
+        title: "HOTX AI - AI 图片、视频与语音创作",
+        description: "HOTX AI 是统一的 AI 图片、视频与语音创作平台。",
+        keywords: "HOTX AI,AI Agent,AI 绘图,AI 视频",
+    },
+};
+```
+
+Add an empty-SEO case that preserves only the identity fallback:
+
+```ts
+mocks.getPublicSiteSettings.mockResolvedValue({ ...DEFAULT_SITE_SETTINGS, title: "HOTX AI" });
+const metadata = await generateMetadata({ params: Promise.resolve({ locale: "vi" }) });
+expect(metadata.title).toBe("HOTX AI");
+expect(metadata.description).toBeUndefined();
+expect(metadata.keywords).toEqual([]);
+expect(metadata.openGraph).toMatchObject({ title: "HOTX AI" });
+```
+
+Update auth/install fixtures to expect HOTX AI headings. Replace social-normalization fixture handles `vozeb_group`, `@vozeb_pro` and `vozeb.pro` with `hotx_ai`, `@hotx_ai` and `hotx.ai` while preserving the same normalization coverage.
+
+- [ ] **Step 2: Run tests to verify the old fallback UI and fixtures fail**
 
 ```bash
 cd web
-pnpm exec vitest run src/lib/auth/localized-seo-settings.test.ts src/app/home-metadata.test.ts src/app/api/auth/session/route.test.ts src/app/install-routing.test.tsx src/lib/auth/session.test.ts src/lib/auth/consume-email-code.test.ts src/lib/auth/postgres-auth-settings-service.test.ts src/app/api/admin/settings/route.test.ts
+pnpm exec vitest run src/components/admin/admin-site-seo.dom.test.tsx src/app/home-metadata.test.ts src/app/api/auth/session/route.test.ts src/app/install-routing.test.tsx src/lib/auth/session.test.ts src/lib/auth/consume-email-code.test.ts src/lib/auth/postgres-auth-settings-service.test.ts src/app/api/admin/settings/route.test.ts
 ```
 
-Expected: FAIL on the old product name.
+Expected: FAIL because the admin still advertises/uses built-in locale SEO and fixtures still contain the old brand.
 
-- [ ] **Step 3: Replace the locale-native brand copy**
+- [ ] **Step 3: Remove admin marketing fallbacks and update explicit fixtures**
 
-Use these exact defaults:
+Remove the SEO-default import and `seoDefaults` from `admin-configuration-sections.tsx`. Replace the explanatory line with `请为每种语言单独填写 SEO 信息；未填写的字段不会自动补充。`. Use neutral placeholders `请输入当前语言的 SEO 标题`, `请输入当前语言的 SEO 描述`, and `请输入当前语言的 SEO 关键词`.
 
-```ts
-vi: {
-    title: "HOTX AI - Nền tảng tạo ảnh, video và giọng nói bằng AI",
-    description: "HOTX AI là nền tảng sáng tạo AI giúp bạn tạo ảnh, video, giọng nói, nhân bản giọng nói và sử dụng AI Agent trong một quy trình thống nhất.",
-    keywords: "HOTX AI,AI Agent,hình ảnh AI,video AI,Canvas,phim ngắn,thư viện prompt,quản lý tài nguyên",
-},
-en: {
-    title: "HOTX AI - AI image, video and voice creation",
-    description: "HOTX AI is a unified AI creation platform for images, video, voice, voice cloning, and AI Agent workflows.",
-    keywords: "HOTX AI,AI Agent,AI image,AI video,Canvas,short drama,prompt library,asset management",
-},
-"zh-CN": {
-    title: "HOTX AI - AI 图片、视频与语音创作",
-    description: "HOTX AI 是统一的 AI 创作平台，支持图片、视频、语音、声音克隆与 AI Agent 工作流。",
-    keywords: "HOTX AI,AI Agent,AI 绘图,AI 视频,画布,短剧,提示词库,素材管理",
-},
+Render these neutral empty-state messages in the preview:
+
+```tsx
+<div className="text-base font-semibold">{seo.title.trim() || "尚未配置 SEO 标题"}</div>
+<p className="mt-2 line-clamp-3 text-sm leading-6 text-stone-500 dark:text-stone-400">
+    {seo.description.trim() || "尚未配置 SEO 描述"}
+</p>
 ```
 
-Update `footerDefaultKeywords` in all three catalogs. Task 5 owns removal of the obsolete QQ localization key and special footer branch. Update exact default-name fixtures and Playwright headings to HOTX AI; leave tests intentionally exercising arbitrary custom brands unchanged.
+Remove the unused `footerDefaultKeywords` keys from all three catalogs. Task 5 removes the remaining built-in footer label localization. Update tests and E2E headings to HOTX AI, but keep arbitrary custom-brand fixtures where they exercise customization behavior.
 
-- [ ] **Step 4: Run localized and metadata tests**
+In root/home metadata, compute `title` as `seo.title.trim() || site.title`; emit `undefined` for a blank description and an empty keywords array for blank keywords. Apply the same empty description handling to the manifest. This is a title identity fallback only and must not write any value back to settings.
+
+- [ ] **Step 4: Run admin, localized and metadata tests**
 
 ```bash
 cd web
-pnpm exec vitest run src/lib/auth/localized-seo-settings.test.ts src/app/home-metadata.test.ts src/app/api/auth/session/route.test.ts src/app/install-routing.test.tsx src/lib/auth/session.test.ts src/lib/auth/consume-email-code.test.ts src/lib/auth/postgres-auth-settings-service.test.ts src/app/api/admin/settings/route.test.ts src/app/seo-landings/seo-landing-metadata.test.ts
+pnpm exec vitest run src/components/admin/admin-site-seo.dom.test.tsx src/lib/auth/localized-seo-settings.test.ts src/app/home-metadata.test.ts src/app/api/auth/session/route.test.ts src/app/install-routing.test.tsx src/lib/auth/session.test.ts src/lib/auth/consume-email-code.test.ts src/lib/auth/postgres-auth-settings-service.test.ts src/app/api/admin/settings/route.test.ts src/app/seo-landings/seo-landing-metadata.test.ts
 ```
 
-Expected: PASS, including catalog completeness and localized metadata assertions.
+Expected: PASS; empty defaults remain empty and explicitly configured locale values round-trip without cross-locale fallback.
 
-- [ ] **Step 5: Commit public copy**
+- [ ] **Step 5: Commit admin and public fixture changes**
 
 ```bash
-git add web/src/i18n web/src/app web/src/lib/auth web/src/lib/server/zalopay-payment-provider.test.ts web/e2e/all-pages.spec.ts web/e2e/core.spec.ts
-git commit -m "feat(brand): publish HOTX AI localized copy"
+git add web/src/components/admin/admin-configuration-sections.tsx web/src/components/admin/admin-site-seo.dom.test.tsx web/src/i18n/messages web/src/app/layout.tsx 'web/src/app/[locale]/page.tsx' web/src/app/manifest.ts web/src/app/home-metadata.test.ts web/src/app/api/auth/session/route.test.ts web/src/app/install-routing.test.tsx web/src/lib/auth/session.test.ts web/src/lib/auth/consume-email-code.test.ts web/src/lib/auth/postgres-auth-settings-service.test.ts web/src/app/api/admin/settings/route.test.ts web/src/lib/server/zalopay-payment-provider.test.ts web/e2e/all-pages.spec.ts web/e2e/core.spec.ts
+git commit -m "feat(admin): require explicit localized SEO content"
 ```
 
 ---
@@ -478,7 +540,7 @@ Keep the existing E2E save/delete/refresh scenario, but initialize it from `frie
 
 Delete the QQ import, `UsersRound` icon and “加入 QQ 群” action from `admin-update-center.tsx`. Delete `community.ts` after this leaves no imports.
 
-Delete the `qq-vozeb-open-source` conditional from `home-footer.tsx`, remove `builtInSiteCopy.qqGroupLabel`, and remove `footerQqGroupLabel` from all three message catalogs. Keep generic friend-link labels unchanged.
+Delete all `builtInSiteCopy`/`localizeBuiltInSiteCopy` branches from `home-footer.tsx`; configured social and friend-link labels render exactly as saved by the administrator. Remove the helper exports from `site-copy.ts` and remove `footerEmailLabel` plus `footerQqGroupLabel` from all three message catalogs. Keep generic friend-link behavior unchanged.
 
 Remove the `www.vozeb.com` demo link and QQ group table/copy from README, and remove the QQ invitation paragraph from CONTRIBUTING. Remove `qqGroupUrl` and its menu link from `docs/src/lib/layout.shared.tsx`.
 
@@ -685,11 +747,15 @@ Set these values:
   "logoUrl": "/hx-favicon.png",
   "iconUrl": "/hx-favicon.png",
   "footerCopyright": "© 2026 HOTX AI. All rights reserved.",
+  "termsUrl": "/terms",
+  "termsVersion": "1.0",
+  "privacyUrl": "/privacy",
+  "privacyVersion": "1.0",
   "friendLinks": []
 }
 ```
 
-Set the three SEO tabs to the exact locale-native defaults from Task 3. Preserve unrelated terms/privacy URLs, versions and social settings. If mail sender name is exposed by the same settings form and still equals the old built-in product value, set it to `HOTX AI`; do not alter mail credentials.
+Set the three SEO tabs to the explicit locale-native values shown in Task 3's `configuredSeo` fixture; these are persisted admin data, not code defaults. Preserve unrelated social settings only when they do not contain VOZEB branding; clear/disable legacy VOZEB handles. Set mail sender name to `HOTX AI` through the existing form while preserving provider, host, account and secret fields.
 
 - [ ] **Step 3: Verify immediate and durable persistence**
 

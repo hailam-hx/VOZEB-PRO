@@ -7,6 +7,8 @@ Trạng thái: Đã được người dùng xác nhận
 
 Đổi toàn bộ thương hiệu sản phẩm hiển thị từ VOZEB PRO hoặc VOZEB sang HOTX AI trên ứng dụng web, trang SEO đa ngôn ngữ, tài liệu, email và nội dung hệ thống. Logo mới dùng tài nguyên do người dùng cung cấp tại `web/public/hx-favicon.png`.
 
+Mã nguồn chỉ giữ tên HOTX AI và logo này làm nhận diện dự phòng an toàn. Nội dung có thể cấu hình trong 后台 không được điền sẵn bằng nội dung mặc định; giá trị thực tế phải đến từ `app_settings.site` hoặc file provider sau khi quản trị viên lưu.
+
 Việc đổi thương hiệu không làm thay đổi các định danh kỹ thuật đang được dùng làm contract lưu trữ, cấu hình hoặc triển khai.
 
 ## Phạm vi thương hiệu hiển thị
@@ -24,7 +26,7 @@ Việc đổi thương hiệu không làm thay đổi các định danh kỹ thu
 
 `web/public/hx-favicon.png` là nguồn logo tích hợp mặc định duy nhất. Tệp có kích thước 1254 × 1254, định dạng PNG RGBA và có nền trong suốt.
 
-- `DEFAULT_SITE_SETTINGS.logoUrl` và `iconUrl` cùng trỏ tới `/hx-favicon.png`.
+- `DEFAULT_SITE_SETTINGS.title`, `logoUrl` và `iconUrl` lần lượt dùng `HOTX AI`, `/hx-favicon.png` và `/hx-favicon.png` làm nhận diện dự phòng tối thiểu.
 - Component `SiteLogo` hiển thị logo raster bằng ảnh `object-contain`, không dùng SVG mask hoặc tô màu logo theo theme.
 - Favicon động, Apple icon, web manifest, ảnh metadata, header/footer, đăng nhập, quản trị và avatar trợ lý đều dùng cùng nguồn mặc định.
 - Website tài liệu dùng bản sao cùng nội dung trong thư mục public của docs vì hai ứng dụng được build và deploy độc lập.
@@ -57,10 +59,15 @@ Các định danh này không được dùng làm tên sản phẩm hiển thị
 ## Dữ liệu và cấu hình quản trị
 
 - Schema `SiteSettings` và cơ chế quản trị logo/title/SEO không thay đổi.
-- Default title, localized SEO defaults, footer copyright, mail sender và logo/icon được đổi sang HOTX AI.
+- Chỉ title, logo và icon có giá trị nhận diện dự phòng HOTX AI. Các trường SEO của cả ba locale, footer copyright, Terms/Privacy URL và version,友情链接, social label/URL, trạng thái social và mail sender name đều mặc định rỗng hoặc tắt.
+- Các SMTP provider/host/port kỹ thuật hiện có không thuộc nội dung thương hiệu và có thể giữ nguyên để form mail hoạt động; `fromName` không được điền sẵn.
+- Form 后台 dùng placeholder hướng dẫn trung tính, không hiển thị hoặc tự lưu nội dung marketing mặc định. Dòng “留空后使用该语言的内置默认值” phải được bỏ; trạng thái trống được hiển thị là chưa cấu hình.
+- Khi SEO title trống, metadata chỉ dùng `site.title` làm nhận diện tối thiểu; description và keywords vẫn trống/không phát sinh. Fallback này không được ghi ngược vào settings.
+- Khi URL Terms/Privacy trong settings trống, route công khai `/terms` và `/privacy` vẫn tồn tại và auth UI có thể điều hướng tới route locale tương ứng; các URL này không được ghi ngược thành giá trị cấu hình mặc định.
 - Cấu hình được lưu qua `app_settings.site` JSONB hoặc file provider hiện có.
 - Không thêm bảng, cột, migration hay logic tương thích với giá trị thương hiệu cũ.
 - Trang quản trị vẫn cho phép thay tên, logo, icon, SEO và友情链接 trong tương lai.
+- Môi trường hiện tại được lưu rõ HOTX AI title/logo/icon, SEO ba locale, footer copyright, Terms/Privacy URL/version và danh sách友情链接 rỗng qua API quản trị hiện có. Đây là dữ liệu quản trị, không phải default trong code.
 
 ## Quy tắc thay thế
 
@@ -74,10 +81,10 @@ Không dùng thay thế chuỗi mù trên toàn repository. Mỗi occurrence đ�
 
 ## Kiểm thử và nghiệm thu
 
-- Unit test xác nhận default title là `HOTX AI`, logo và icon mặc định là `/hx-favicon.png`, danh sách友情链接 mặc định rỗng.
+- Unit test xác nhận default title là `HOTX AI`, logo và icon mặc định là `/hx-favicon.png`; SEO, copyright, policy settings, social settings, mail sender và友情链接 mặc định rỗng/tắt.
 - Test `SiteLogo`, favicon route, manifest và metadata xác nhận không còn phụ thuộc `/logo.svg` hoặc `/icon.svg` mặc định.
-- Test SEO ba locale xác nhận title, description, Open Graph, Twitter và structured data sử dụng HOTX AI.
-- Test settings round-trip xác nhận logo/title mới và danh sách友情链接 rỗng được persist, đọc lại ngay và không xuất hiện lại sau refresh.
+- Test SEO ba locale dùng cấu hình fixture đã lưu, xác nhận title, description, Open Graph, Twitter và structured data sử dụng HOTX AI; test không dựa vào nội dung SEO hard-code.
+- Test settings round-trip xác nhận logo/title/SEO/footer/policy đã cấu hình và danh sách友情链接 rỗng được persist, đọc lại ngay và không xuất hiện lại sau refresh.
 - Playwright kiểm tra các vị trí nhận diện chính ở desktop, 390px và 430px; logo không méo, không bị mask sai và không gây tràn ngang.
 - Quét UTF-8 và quét repository xác nhận không còn `VOZEB PRO`/`VOZEB` trong nội dung hiển thị, ngoại trừ whitelist định danh kỹ thuật và URL repository đã duyệt.
 - Chạy test liên quan trong quá trình phát triển, sau đó chạy `pnpm run check:release` và toàn bộ `pnpm run e2e` theo `AGENTS.md` trước khi báo hoàn tất.
