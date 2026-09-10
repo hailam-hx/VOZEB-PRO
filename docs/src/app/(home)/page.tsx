@@ -16,14 +16,6 @@ const previewImages = [
     src: "/screenshots/pages/02-create.webp",
     title: "Agent 工作台",
   },
-  {
-    src: "/screenshots/pages/03a-canvas-editor.webp",
-    title: "画布编排",
-  },
-  {
-    src: "/screenshots/pages/04a-drama-editor.webp",
-    title: "短剧生产",
-  },
 ];
 
 export default function HomePage() {

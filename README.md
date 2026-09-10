@@ -505,19 +505,11 @@ pnpm run dev
 <table>
   <tr>
     <td width="50%"><img src="docs/public/screenshots/pages/02-create.webp" alt="统一创作 Agent"></td>
-    <td width="50%"><img src="docs/public/screenshots/pages/03a-canvas-editor.webp" alt="Canvas 编辑器"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/public/screenshots/pages/04a-drama-editor.webp" alt="短剧生产编辑器"></td>
-    <td width="50%"><img src="docs/public/screenshots/pages/20-admin-overview.webp" alt="经营看板"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/public/screenshots/pages/34-admin-channels.webp" alt="模型渠道"></td>
-    <td width="50%"><img src="docs/public/screenshots/pages/07-prompts.webp" alt="提示词库"></td>
+    <td width="50%"><img src="docs/public/screenshots/pages/30-admin-site.webp" alt="管理后台站点资料"></td>
   </tr>
 </table>
 
-用户端、公开页和管理后台共 40 张功能截图见[页面功能图册](docs/content/docs/overview/page-gallery.mdx)。
+用户端、公开页和管理后台的当前界面截图见[页面功能图册](docs/content/docs/overview/page-gallery.mdx)。
 
 ## 数据与安全
 
