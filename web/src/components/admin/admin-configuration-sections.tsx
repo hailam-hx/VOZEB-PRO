@@ -162,8 +162,8 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                                 </div>
                                             </div>
                                             <div className="grid gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
-                                                <Input value={link.label} maxLength={32} placeholder="Linux.do" onChange={(event) => updateFriendLink(link.id, { label: event.target.value })} />
-                                                <Input value={link.url} maxLength={2000} placeholder="https://linux.do/" onChange={(event) => updateFriendLink(link.id, { url: event.target.value })} />
+                                                <Input value={link.label} maxLength={32} placeholder="示例网站" onChange={(event) => updateFriendLink(link.id, { label: event.target.value })} />
+                                                <Input value={link.url} maxLength={2000} placeholder="https://example.com/" onChange={(event) => updateFriendLink(link.id, { url: event.target.value })} />
                                             </div>
                                         </div>
                                     ))}

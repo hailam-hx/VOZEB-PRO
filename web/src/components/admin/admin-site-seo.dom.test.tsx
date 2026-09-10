@@ -66,3 +66,19 @@ it("edits and previews the selected locale without replacing other drafts and sa
         },
     });
 });
+
+it("uses neutral examples when an administrator adds a friend link", () => {
+    function Harness() {
+        const [settings, setSettings] = useState(() => structuredClone(DEFAULT_SETTINGS));
+        const saveSettings = () => {};
+        const actions = useAdminDashboardSettingsActions({ state: { settings, setSettings } as AdminDashboardState, data: { saveSettings } as unknown as AdminDashboardDataActions });
+        const ref = useRef<HTMLInputElement>(null);
+        return <AdminSiteSection controller={{ ...actions, settings, activeSection: "site", saveSettings, logoInputRef: ref, iconInputRef: ref } as unknown as AdminDashboardController} />;
+    }
+
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "添加链接" }));
+
+    expect(screen.getByPlaceholderText("示例网站")).toBeTruthy();
+    expect(screen.getByPlaceholderText("https://example.com/")).toBeTruthy();
+});
