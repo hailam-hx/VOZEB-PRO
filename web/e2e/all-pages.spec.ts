@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { expect, test, type APIRequestContext, type Page, type Response } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 import { ADMIN_SECTION_KEYS } from "../src/components/admin/admin-sections";
 import { expectNoHorizontalOverflow, expectVisibleControlsWithinViewport } from "./responsive-helpers";
 import { E2E_ADMIN } from "./support";
+import { observeRouteApi, type ApiFailure } from "./route-api-observer";
 
 const PROFILE_SECTIONS = ["overview", "profile", "billing", "orders", "points", "consume", "referrals", "security"] as const;
 const BASE_URL = `http://127.0.0.1:${Number(process.env.VOZEB_PRO_E2E_PORT || 3100)}`;
@@ -19,8 +20,7 @@ const FILE_PROVIDER_LIMITATIONS = new Map([
 ]);
 const BRAND_ROUTES = ["/", "/en", "/zh-cn", "/login", "/register", "/create", "/admin?section=site"] as const;
 
-type RouteCase = { path: string; expectedPath?: RegExp; expectedStatus?: number; readyHeading?: string; readyText?: string | RegExp };
-type ApiFailure = { path: string; status: number; body: string };
+type RouteCase = { path: string; expectedPath?: RegExp; expectedStatus?: number; readyHeading?: string; readyText?: string | RegExp; ready?: (page: Page) => Promise<void> };
 
 test("all authenticated pages reach their real routes and stay usable", async ({ page, request }, testInfo) => {
     test.setTimeout(360_000);
@@ -68,10 +68,18 @@ test("every administrator section renders its server-backed surface", async ({ p
     const theme = testInfo.project.name === "mobile-430" ? "dark" : "light";
     await setTheme(page, theme);
     for (const section of ADMIN_SECTION_KEYS) {
-        await verifyRoute(page, { path: section === "overview" ? "/admin" : `/admin?section=${section}` }, `${testInfo.project.name} admin ${section}`);
-        await expect(page.locator("[data-hydrated='true']")).toBeVisible();
-        await expect(page.locator("h1").first()).toBeVisible();
-        await expect(page.getByText("正在加载分区...", { exact: true })).toHaveCount(0);
+        await verifyRoute(
+            page,
+            {
+                path: section === "overview" ? "/admin" : `/admin?section=${section}`,
+                ready: async () => {
+                    await expect(page.locator("[data-hydrated='true']")).toBeVisible();
+                    await expect(page.locator("h1").first()).toBeVisible();
+                    await expect(page.getByText("正在加载分区...", { exact: true })).toHaveCount(0);
+                },
+            },
+            `${testInfo.project.name} admin ${section}`,
+        );
     }
 });
 
@@ -228,25 +236,14 @@ async function setTheme(page: Page, theme: "light" | "dark") {
 async function verifyRoute(page: Page, route: RouteCase, label: string) {
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];
-    const apiFailures: ApiFailure[] = [];
-    const apiFailureReads: Promise<void>[] = [];
+    const api = observeRouteApi(page, BASE_URL);
+    const apiFailures = api.failures;
     const onPageError = (error: Error) => pageErrors.push(error.message);
     const onConsole = (message: { type(): string; text(): string }) => {
         if (message.type() === "error") consoleErrors.push(message.text());
     };
-    const onResponse = (response: Response) => {
-        const url = new URL(response.url());
-        if (url.origin !== BASE_URL || !url.pathname.startsWith("/api/") || response.status() < 400) return;
-        apiFailureReads.push(
-            response
-                .text()
-                .then((body) => apiFailures.push({ status: response.status(), path: url.pathname, body }))
-                .catch(() => apiFailures.push({ status: response.status(), path: url.pathname, body: "<unreadable>" })),
-        );
-    };
     page.on("pageerror", onPageError);
     page.on("console", onConsole);
-    page.on("response", onResponse);
     try {
         const response = await page.goto(route.path, { waitUntil: "domcontentloaded" });
         if (route.expectedStatus !== undefined) expect(response?.status()).toBe(route.expectedStatus);
@@ -259,11 +256,12 @@ async function verifyRoute(page: Page, route: RouteCase, label: string) {
         if (route.expectedPath) await expect(page).toHaveURL(route.expectedPath);
         if (route.readyHeading) await expect(page.getByRole("heading", { name: route.readyHeading, exact: true })).toBeVisible();
         if (route.readyText) await expect(page.getByText(route.readyText, typeof route.readyText === "string" ? { exact: true } : undefined).first()).toBeVisible();
+        await route.ready?.(page);
         await expect(page.locator("body")).not.toContainText("Application error");
         await expect(page.locator("body")).not.toContainText("Internal Server Error");
         await expectNoHorizontalOverflow(page, `${label} ${route.path}`);
         await expectVisibleControlsWithinViewport(page, `${label} ${route.path}`);
-        await Promise.all(apiFailureReads);
+        await api.settle();
         const expectedLimitations = apiFailures.filter((failure) => isExpectedFileProviderLimitation(failure) || isExpectedRouteApiFailure(failure, route));
         const unexpectedApiFailures = apiFailures.filter((failure) => !isExpectedFileProviderLimitation(failure) && !isExpectedRouteApiFailure(failure, route));
         expect(pageErrors, `${label} ${route.path} page errors`).toEqual([]);
@@ -272,7 +270,7 @@ async function verifyRoute(page: Page, route: RouteCase, label: string) {
     } finally {
         page.off("pageerror", onPageError);
         page.off("console", onConsole);
-        page.off("response", onResponse);
+        api.dispose();
     }
 }
 
