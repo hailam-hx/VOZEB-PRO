@@ -7,6 +7,8 @@ description: HOTX AI 当前版本需要人工或真实环境确认的事项
 
 - 2026-09-10 HOTX AI 品牌发布复核已完成：桌面、390px、430px 的 Playwright 顺序运行共 197 项通过、25 项项目/环境跳过、0 项失败，覆盖 `/`、`/en`、`/zh-cn`、登录/注册、`/create`、后台站点设置、文档首页和 27 个公开 SEO URL。每处品牌 Logo 均验证精确 `HOTX AI` 文本、`/hx-favicon.png` 可见、非零正方形固有/布局尺寸、`object-contain` 和无横向溢出；后台保存后的首个 SSR 请求立即读取三语 SEO。空 EN SEO 字段保持为空；只有渲染首页标题回退到 HOTX AI 站点身份，description/keywords 不输出。
 
+- 2026-09-10 发布复核第 2 轮：由于 Playwright 固定启动 docs server，`.github/workflows/quality.yml` 的 `web` job 与 `.github/workflows/docker-image.yml` 的 `quality` job 现在都以 `web/pnpm-lock.yaml` 和 `docs/pnpm-lock.yaml` 共同作为 pnpm cache key，并在 `web` 工作目录中于 E2E 前显式执行 `pnpm --dir ../docs install --frozen-lockfile`。静态工作流契约 RED 为两处缺少 docs lockfile（exit 1），GREEN 为 9 项通过；同一 frozen docs install 本地 exit 0，随后文档品牌 Chromium/390px/430px E2E 共 6 项通过。
+
 - 本轮已完成的可复现命令和结果如下（每条均使用 `PATH=/opt/homebrew/bin:$PATH`）：
   - `cd web && pnpm exec vitest run src/lib/auth/site-settings.test.ts src/lib/auth/localized-seo-settings.test.ts src/components/layout/site-logo.test.tsx src/app/site-brand-assets.test.ts src/app/site-metadata-routes.test.ts src/app/home-metadata.test.ts src/lib/server/site-metadata.test.ts src/lib/channel-protocol-registry.test.ts src/lib/server/agent-run-executor.test.ts scripts/disaster-recovery-core.test.mjs scripts/release-check.test.mjs`：exit 0，11 个文件、114 项通过、1 项跳过。
   - `cd web && pnpm exec vitest run src/lib/auth/localized-seo-settings.test.ts`：缓存失效 RED 为 exit 1（`"max"` 与 `{ expire: 0 }` 参数不符，1 项失败、3 项通过、1 项跳过）；GREEN 为 exit 0（4 项通过、1 项跳过）。另以独立三语 baseline→configured SSR 浏览器夹具将生产实现临时变异为 `"max"`，exit 1 且首个 baseline 读取到旧 `HOTX AI` 标题；恢复 `{ expire: 0 }` 后通过。

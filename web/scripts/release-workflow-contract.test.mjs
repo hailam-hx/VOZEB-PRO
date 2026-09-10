@@ -50,6 +50,24 @@ describe("release workflow contract", () => {
         expect(step?.run).toContain("pnpm exec vitest run --no-file-parallelism");
     });
 
+    it.each([
+        ["quality.yml", "web"],
+        ["docker-image.yml", "quality"],
+    ])("installs docs dependencies before E2E in %s", (file, job) => {
+        const document = parseDocument(workflow(file));
+        expect(document.errors).toEqual([]);
+
+        const steps = document.toJS().jobs[job].steps;
+        const setupNode = steps.find((step) => String(step.uses || "").startsWith("actions/setup-node@"));
+        expect(setupNode?.with?.["cache-dependency-path"].split(/\r?\n/).filter(Boolean)).toEqual(["web/pnpm-lock.yaml", "docs/pnpm-lock.yaml"]);
+
+        const docsInstall = steps.findIndex((step) => step.name === "Install docs dependencies");
+        const e2e = steps.findIndex((step) => step.name === "Browser E2E" || step.run === "pnpm run e2e");
+        expect(steps[docsInstall]?.run).toBe("pnpm --dir ../docs install --frozen-lockfile");
+        expect(docsInstall).toBeGreaterThan(-1);
+        expect(docsInstall).toBeLessThan(e2e);
+    });
+
     it("declares one pnpm version for the repository and both Docker builds", () => {
         const rootPackage = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
         const appDockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");

@@ -41,8 +41,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Install docs dependencies
+        run: pnpm --dir ../docs install --frozen-lockfile
       - run: pnpm audit --audit-level moderate
       - run: pnpm run lint
       - run: pnpm run typecheck
