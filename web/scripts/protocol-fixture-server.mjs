@@ -167,7 +167,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
                 .toLowerCase()
                 .includes("application/json")
         )
-            return sendJson(response, 415, { code: "invalid_content_type", message: "VOZEB recommended video requests must use application/json", data: null });
+            return sendJson(response, 415, { code: "invalid_content_type", message: "HOTX AI recommended video requests must use application/json", data: null });
         const payload = jsonBody(body);
         if (payload.model === "Seedance 2.0-fast-720p" && payload.generate_audio !== false) return sendJson(response, 400, { code: "invalid_request", message: "generate_audio must be false", data: null });
         const id = nextTaskId("vozeb-video");

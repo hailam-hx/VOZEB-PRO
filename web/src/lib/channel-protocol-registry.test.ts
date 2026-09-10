@@ -79,6 +79,7 @@ describe("channel protocol registry", () => {
             resultField: "metadata.url",
             statusField: "status",
         });
+        expect(channelProtocolDefinition("vozeb-recommended")).toMatchObject({ id: "vozeb-recommended", label: "HOTX AI 推荐" });
         expect(channelProtocolDefinition("gemini").operations.video).toMatchObject({
             createPath: "/models/:model:predictLongRunning",
             imageToVideoPath: "/models/:model:predictLongRunning",
@@ -102,7 +103,7 @@ describe("channel protocol registry", () => {
         }
     });
 
-    it("applies the VOZEB recommended preset to frontend channel drafts", () => {
+    it("applies the HOTX AI recommended preset to frontend channel drafts", () => {
         const configured = applyChannelProtocol({ ...channel, baseUrl: "", models: ["Seedance 2.0-fast-720p"] }, "vozeb-recommended");
 
         expect(configured).toMatchObject({ baseUrl: "https://new.aiym.ink/v1", apiFormat: "openai" });

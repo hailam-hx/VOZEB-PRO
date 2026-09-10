@@ -322,7 +322,7 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                                 <>
                                     <Popconfirm
                                         title="覆盖当前能力配置？"
-                                        description="将使用 VOZEB 全部当前选项替换这个 binding 的能力草稿。"
+                                        description="将使用 HOTX AI 全部当前选项替换这个 binding 的能力草稿。"
                                         okText="覆盖"
                                         cancelText="取消"
                                         onConfirm={() => onChange({ generationParameters: fullGenerationParametersPreset(capability) })}
@@ -346,7 +346,7 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                         </div>
                     </div>
                     <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
-                        快速模板只覆盖 VOZEB 当前选项，不代表上游已确认支持；保存前请删除不支持的参数。
+                        快速模板只覆盖 HOTX AI 当前选项，不代表上游已确认支持；保存前请删除不支持的参数。
                     </div>
                     {binding.generationParameters ? (
                         <GenerationCapabilityEditor capability={capability} parameters={binding.generationParameters} onUpdate={updateGenerationParameters} onApplyList={applyList} onApplyDurationList={applyDurationList} />

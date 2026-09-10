@@ -50,9 +50,18 @@ vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
 
 import { executeAgentRun } from "./agent-run-executor";
 import { processAgentRunReview, taskResultOps } from "./agent-run-execution";
+import { agentPlannerSystemPrompt } from "./agent-run-surface-policy";
 import { resetTextPlanningRuntime } from "./text-planning-runtime";
 
 describe("executeAgentRun backend settings", () => {
+    it("identifies every planner surface as HOTX AI without exposing the legacy product name", () => {
+        for (const surface of ["canvas", "drama", "chat"] as const) {
+            const systemPrompt = agentPlannerSystemPrompt(surface, "{}");
+            expect(systemPrompt).toContain("HOTX AI");
+            expect(systemPrompt).not.toContain("VOZEB PRO");
+        }
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
         resetTextPlanningRuntime();

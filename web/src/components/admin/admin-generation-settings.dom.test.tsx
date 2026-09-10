@@ -172,7 +172,7 @@ describe("admin generation controls", () => {
         });
     });
 
-    it("enables every VOZEB option for only the selected binding", async () => {
+    it("enables every HOTX AI option for only the selected binding", async () => {
         const channels = [...videoChannels, { ...videoChannels[0], id: "two", name: "备用渠道" }];
         const models = [
             {
@@ -191,7 +191,7 @@ describe("admin generation controls", () => {
         expect(document.body.textContent).not.toContain("支持水印");
         const quickButtons = Array.from(document.querySelectorAll("button")).filter((button) => button.textContent?.includes("启用全部选项"));
         expect(quickButtons).toHaveLength(2);
-        expect(document.body.textContent).toContain("快速模板只覆盖 VOZEB 当前选项，不代表上游已确认支持");
+        expect(document.body.textContent).toContain("快速模板只覆盖 HOTX AI 当前选项，不代表上游已确认支持");
         await userEvent.setup().click(quickButtons[0]);
         expect(document.body.textContent).not.toContain("支持生成音频");
         expect(document.body.textContent).not.toContain("支持水印");

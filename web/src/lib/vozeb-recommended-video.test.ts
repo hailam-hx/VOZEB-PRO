@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "./vozeb-recommended-video";
 
-describe("VOZEB recommended video protocol", () => {
+describe("HOTX AI recommended video protocol", () => {
     it("rejects unsupported resolution and generated audio instead of silently rewriting them", () => {
         const request = {
             model: "Seedance 2.0-fast-720p",
