@@ -69,7 +69,7 @@ async function serveGenerationAsset(request: Request, context: RouteContext) {
             permit.release();
             return NextResponse.json({ error: "资源不存在" }, { status: 404 });
         }
-        return withMediaConcurrency(response, permit);
+        return withMediaConcurrency(response, permit, request.signal);
     } catch (error) {
         permit.release();
         throw error;

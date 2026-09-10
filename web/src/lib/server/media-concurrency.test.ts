@@ -3,6 +3,44 @@ import { describe, expect, it, vi } from "vitest";
 import { acquireMediaConcurrency, withMediaConcurrency } from "./media-concurrency";
 
 describe("media concurrency", () => {
+    it.each([false, true])("releases an unread response when its request aborts (already aborted: %s)", async (alreadyAborted) => {
+        const identity = crypto.randomUUID();
+        const abort = new AbortController();
+        const cancel = vi.fn();
+        const source = new ReadableStream<Uint8Array>({ cancel });
+        const permit = acquireMediaConcurrency("local", identity, { perIdentity: 1 });
+        if (alreadyAborted) abort.abort("client disconnected");
+        const response = withMediaConcurrency(new Response(source), permit!, abort.signal);
+        if (!alreadyAborted) abort.abort("client disconnected");
+
+        const next = acquireMediaConcurrency("local", identity, { perIdentity: 1 });
+        try {
+            expect(next).not.toBeNull();
+            expect(cancel).toHaveBeenCalledExactlyOnceWith("client disconnected");
+        } finally {
+            next?.release();
+            await response.body?.cancel();
+        }
+    });
+
+    it.each(["finish", "cancel", "error"])("removes the request abort listener after %s", async (outcome) => {
+        const abort = new AbortController();
+        const add = vi.spyOn(abort.signal, "addEventListener");
+        const remove = vi.spyOn(abort.signal, "removeEventListener");
+        const permit = acquireMediaConcurrency("local", crypto.randomUUID());
+        const release = vi.spyOn(permit!, "release");
+        const source = outcome === "error" ? new ReadableStream<Uint8Array>({ pull: () => Promise.reject(new Error("stream failed")) }) : new Response("media").body!;
+        const response = withMediaConcurrency(new Response(source), permit!, abort.signal);
+        if (outcome === "cancel") await response.body?.cancel();
+        else if (outcome === "error") await expect(response.text()).rejects.toThrow("stream failed");
+        else expect(await response.text()).toBe("media");
+
+        expect(add).toHaveBeenCalledWith("abort", expect.any(Function), { once: true });
+        expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0][1]);
+        abort.abort();
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
     it("bounds one identity and releases the permit idempotently", () => {
         const identity = crypto.randomUUID();
         const first = acquireMediaConcurrency("local", identity, { total: 2, perIdentity: 1 });

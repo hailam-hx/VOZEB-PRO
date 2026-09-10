@@ -88,7 +88,7 @@ async function serveReferenceAsset(request: Request, context: RouteContext) {
             permit.release();
             return NextResponse.json({ error: "媒体文件不存在或已过期" }, { status: 404 });
         }
-        return withMediaConcurrency(response, permit);
+        return withMediaConcurrency(response, permit, request.signal);
     } catch (error) {
         permit.release();
         throw error;

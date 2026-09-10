@@ -90,11 +90,13 @@ describe("generation log asset access", () => {
     });
 
     it("checks ownership and streams an allowed asset", async () => {
-        const response = await GET(new Request("http://localhost/api/generation-log-assets/permanent/2026/07/20/images/file.png"), context);
+        const request = new Request("http://localhost/api/generation-log-assets/permanent/2026/07/20/images/file.png");
+        const response = await GET(request, context);
         expect(response.status).toBe(200);
         expect(mocks.canAccess).toHaveBeenCalledWith("owner", "user", "/api/generation-log-assets/permanent/2026/07/20/images/file.png");
         expect(mocks.disposition).toHaveBeenCalledWith("inline", "uploaded-file.png", "image/png", "");
         expect(mocks.stream).toHaveBeenCalled();
+        expect(mocks.wrap).toHaveBeenCalledWith(response, mocks.acquire.mock.results[0].value, request.signal);
     });
 
     it("marks object-backed original HEAD downloads as attachments", async () => {

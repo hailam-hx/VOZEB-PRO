@@ -60,32 +60,51 @@ export function acquireMediaConcurrency(scope: MediaConcurrencyScope, identity: 
     };
 }
 
-export function withMediaConcurrency(response: Response, permit: MediaConcurrencyPermit) {
+export function withMediaConcurrency(response: Response, permit: MediaConcurrencyPermit, signal?: AbortSignal) {
     if (!response.body) {
         permit.release();
         return response;
     }
 
     const reader = response.body.getReader();
-    permit.setExpiryHandler(() => reader.cancel("Media concurrency lease expired"));
+    let released = false;
+    let cancelled = false;
+    let cancellation: Promise<void> | undefined;
+    const release = () => {
+        if (released) return;
+        released = true;
+        signal?.removeEventListener("abort", onAbort);
+        permit.release();
+    };
+    const cancelSource = (reason: unknown) => {
+        release();
+        return (cancellation ??= reader.cancel(reason));
+    };
+    // The client can disconnect before Next starts piping this response body.
+    const onAbort = () => void cancelSource(signal?.reason).catch(() => {});
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    permit.setExpiryHandler(() => cancelSource("Media concurrency lease expired"));
     const body = new ReadableStream<Uint8Array>({
         async pull(controller) {
             try {
                 const { done, value } = await reader.read();
+                if (cancelled) return;
                 if (done) {
-                    permit.release();
+                    release();
                     controller.close();
                     return;
                 }
                 controller.enqueue(value);
             } catch (error) {
-                permit.release();
+                release();
+                if (cancelled) return;
                 controller.error(error);
             }
         },
         async cancel(reason) {
-            permit.release();
-            await reader.cancel(reason);
+            cancelled = true;
+            await cancelSource(reason);
         },
     });
     return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
