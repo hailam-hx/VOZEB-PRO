@@ -82,8 +82,8 @@ test("signed-out, legal, installation and invalid public detail routes fail safe
         await page.addInitScript((nextTheme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: nextTheme }, version: 0 })), theme);
         const routes: RouteCase[] = [
             { path: "/", readyHeading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" },
-            { path: "/login", readyHeading: "Đăng nhập VOZEB PRO" },
-            { path: "/register", readyHeading: "Đăng ký VOZEB PRO" },
+            { path: "/login", readyHeading: "Đăng nhập HOTX AI" },
+            { path: "/register", readyHeading: "Đăng ký HOTX AI" },
             { path: "/forgot-password", readyHeading: "Đặt lại mật khẩu" },
             { path: "/privacy", readyHeading: "Chính sách quyền riêng tư" },
             { path: "/terms", readyHeading: "Điều khoản dịch vụ" },

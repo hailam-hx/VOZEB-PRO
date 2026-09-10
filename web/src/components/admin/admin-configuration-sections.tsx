@@ -9,7 +9,6 @@ import { SiteLogoPreview, SiteSettingStatus, siteSocialItems } from "@/component
 import { Button, Input, InputNumber, Switch, Tabs, Tag } from "antd";
 import { useState } from "react";
 import type { AppLocale } from "@/i18n/config";
-import { EMPTY_LOCALIZED_SEO } from "@/i18n/site-copy";
 import { Database, Globe2, Image as ImageIcon, Mail, Plus, Save, Search, Send, SlidersHorizontal, Sparkles, Trash2, Upload, UserCog } from "lucide-react";
 
 import { SettingsAnchorItem, SettingsStatusTile } from "./admin-dashboard-elements";
@@ -19,7 +18,6 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
     const [seoLocale, setSeoLocale] = useState<AppLocale>("vi");
     const { logoInputRef, iconInputRef, settings, settingsLoading, activeSection, saveSettings, updateSiteSetting, getLatestSiteSettings, updateSiteSocialSetting, addFriendLink, updateFriendLink, deleteFriendLink } = controller;
     const seo = settings.site.seo[seoLocale];
-    const seoDefaults = EMPTY_LOCALIZED_SEO[seoLocale];
     const updateSeo = (key: keyof typeof seo, value: string) => {
         const current = getLatestSiteSettings().seo;
         updateSiteSetting("seo", { ...current, [seoLocale]: { ...current[seoLocale], [key]: value } });
@@ -76,16 +74,16 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                     { key: "zh-CN", label: "简体中文" },
                                 ]}
                             />
-                            <p className="text-xs text-stone-500 dark:text-stone-400">仅用于对应语言首页；留空后使用该语言的内置默认值。</p>
+                            <p className="text-xs text-stone-500 dark:text-stone-400">请为每种语言单独填写 SEO 信息；未填写的字段不会自动补充。</p>
                             <div className="mt-4 space-y-4">
                                 <LabeledControl label="SEO 标题">
-                                    <Input value={seo.title} maxLength={72} placeholder={seoDefaults.title} onChange={(event) => updateSeo("title", event.target.value)} />
+                                    <Input value={seo.title} maxLength={72} placeholder="请输入当前语言的 SEO 标题" onChange={(event) => updateSeo("title", event.target.value)} />
                                 </LabeledControl>
                                 <LabeledControl label="SEO 描述">
-                                    <Input.TextArea value={seo.description} maxLength={180} rows={4} placeholder={seoDefaults.description} onChange={(event) => updateSeo("description", event.target.value)} />
+                                    <Input.TextArea value={seo.description} maxLength={180} rows={4} placeholder="请输入当前语言的 SEO 描述" onChange={(event) => updateSeo("description", event.target.value)} />
                                 </LabeledControl>
                                 <LabeledControl label="SEO 关键词">
-                                    <Input value={seo.keywords} maxLength={240} placeholder={seoDefaults.keywords} onChange={(event) => updateSeo("keywords", event.target.value)} />
+                                    <Input value={seo.keywords} maxLength={240} placeholder="请输入当前语言的 SEO 关键词" onChange={(event) => updateSeo("keywords", event.target.value)} />
                                 </LabeledControl>
                             </div>
                         </div>
@@ -188,8 +186,8 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                 </div>
                             </div>
                             <div className="mt-6 border-t border-stone-200 pt-4 dark:border-white/10">
-                                <div className="text-base font-semibold">{seo.title.trim() || seoDefaults.title}</div>
-                                <p className="mt-2 line-clamp-3 text-sm leading-6 text-stone-500 dark:text-stone-400">{seo.description.trim() || seoDefaults.description}</p>
+                                <div className="text-base font-semibold">{seo.title.trim() || "尚未配置 SEO 标题"}</div>
+                                <p className="mt-2 line-clamp-3 text-sm leading-6 text-stone-500 dark:text-stone-400">{seo.description.trim() || "尚未配置 SEO 描述"}</p>
                             </div>
                         </div>
                     </div>

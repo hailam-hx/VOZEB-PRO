@@ -3,10 +3,22 @@ import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store-foundation";
 
-const seo = {
-    vi: { title: "Tiêu đề tùy chỉnh", description: "Mô tả tùy chỉnh", keywords: "ảnh,video" },
-    en: { title: "Custom English title", description: "Custom English description", keywords: "image,video" },
-    "zh-CN": { title: "自定义中文标题", description: "自定义中文描述", keywords: "图片,视频" },
+const configuredSeo = {
+    vi: {
+        title: "HOTX AI - Nền tảng tạo ảnh, video và giọng nói bằng AI",
+        description: "HOTX AI là nền tảng sáng tạo AI giúp bạn tạo ảnh, video và giọng nói trong một quy trình thống nhất.",
+        keywords: "HOTX AI,AI Agent,hình ảnh AI,video AI",
+    },
+    en: {
+        title: "HOTX AI - AI image, video and voice creation",
+        description: "HOTX AI is a unified AI creation platform for images, video and voice.",
+        keywords: "HOTX AI,AI Agent,AI image,AI video",
+    },
+    "zh-CN": {
+        title: "HOTX AI - AI 图片、视频与语音创作",
+        description: "HOTX AI 是统一的 AI 图片、视频与语音创作平台。",
+        keywords: "HOTX AI,AI Agent,AI 绘图,AI 视频",
+    },
 };
 const mocks = vi.hoisted(() => ({ getPublicSiteSettings: vi.fn(), getLocale: vi.fn(async () => "vi"), headers: vi.fn(async () => new Headers({ "x-vozeb-pathname": "/" })) }));
 vi.mock("next/headers", () => ({ headers: mocks.headers }));
@@ -25,7 +37,7 @@ import HomePage, { generateMetadata } from "./[locale]/page";
 describe("homepage metadata", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getPublicSiteSettings.mockResolvedValue({ ...DEFAULT_SITE_SETTINGS, title: "HOTX AI", seo });
+        mocks.getPublicSiteSettings.mockResolvedValue({ ...DEFAULT_SITE_SETTINGS, title: "HOTX AI", seo: configuredSeo });
     });
     for (const [locale, path, ogLocale] of [
         ["vi", "/", "vi_VN"],
@@ -36,27 +48,35 @@ describe("homepage metadata", () => {
             const params = Promise.resolve({ locale });
             const metadata = await generateMetadata({ params });
             expect(metadata).toMatchObject({
-                title: seo[locale].title,
-                description: seo[locale].description,
-                keywords: seo[locale].keywords.split(","),
+                title: configuredSeo[locale].title,
+                description: configuredSeo[locale].description,
+                keywords: configuredSeo[locale].keywords.split(","),
                 alternates: { canonical: `https://hotx-ai.com${path}` },
-                openGraph: { title: seo[locale].title, description: seo[locale].description, locale: ogLocale, images: [{ url: "https://hotx-ai.com/seo/hotx-ai-og.webp", width: 1200, height: 630 }] },
-                twitter: { card: "summary_large_image", title: seo[locale].title, description: seo[locale].description },
+                openGraph: { title: configuredSeo[locale].title, description: configuredSeo[locale].description, locale: ogLocale, images: [{ url: "https://hotx-ai.com/seo/hotx-ai-og.webp", width: 1200, height: 630 }] },
+                twitter: { card: "summary_large_image", title: configuredSeo[locale].title, description: configuredSeo[locale].description },
             });
             expect(metadata.alternates?.languages).toEqual({ vi: "https://hotx-ai.com/", en: "https://hotx-ai.com/en", "zh-Hans": "https://hotx-ai.com/zh-cn", "x-default": "https://hotx-ai.com/" });
             const homepage = await HomePage({ params });
-            expect(homepage.props.initialSite.seo[locale]).toEqual(seo[locale]);
+            expect(homepage.props.initialSite.seo[locale]).toEqual(configuredSeo[locale]);
             const layout = await LocalizedLayout({ children: null, params });
             const data = JSON.parse(layout.props.children[0].props.dangerouslySetInnerHTML.__html);
-            expect(data).toMatchObject({ url: `https://hotx-ai.com${path}`, "@id": `https://hotx-ai.com${path}#website`, inLanguage: locale, description: seo[locale].description });
+            expect(data).toMatchObject({ url: `https://hotx-ai.com${path}`, "@id": `https://hotx-ai.com${path}#website`, inLanguage: locale, description: configuredSeo[locale].description });
         });
     }
     it("keeps homepage social metadata out of the root layout", async () => {
         const metadata = await generateRootMetadata();
-        expect(metadata).toMatchObject({ title: seo.vi.title, description: seo.vi.description });
+        expect(metadata).toMatchObject({ title: configuredSeo.vi.title, description: configuredSeo.vi.description });
         expect(metadata.alternates).toBeUndefined();
         expect(metadata.openGraph).toBeUndefined();
         expect(metadata.twitter).toBeUndefined();
+    });
+    it("uses the title identity without synthesizing blank SEO metadata", async () => {
+        mocks.getPublicSiteSettings.mockResolvedValue({ ...DEFAULT_SITE_SETTINGS, title: "HOTX AI" });
+        const metadata = await generateMetadata({ params: Promise.resolve({ locale: "vi" }) });
+        expect(metadata.title).toBe("HOTX AI");
+        expect(metadata.description).toBeUndefined();
+        expect(metadata.keywords).toEqual([]);
+        expect(metadata.openGraph).toMatchObject({ title: "HOTX AI" });
     });
     it("ships a 1200 by 630 WebP social image", async () => {
         expect(await sharp(fileURLToPath(new URL("../../public/seo/hotx-ai-og.webp", import.meta.url))).metadata()).toMatchObject({ width: 1200, height: 630, format: "webp" });

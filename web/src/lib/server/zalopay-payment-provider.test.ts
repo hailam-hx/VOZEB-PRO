@@ -17,7 +17,7 @@ const order: TopUpOrder = {
     creditGrantState: "pending",
     providerRefundState: "none",
     creditRecoveryState: "none",
-    subject: "Nạp điểm VOZEB PRO",
+    subject: "Nạp điểm HOTX AI",
     currency: "VND",
     currencyExponent: 0,
     nominalNativeAmount: "250000",

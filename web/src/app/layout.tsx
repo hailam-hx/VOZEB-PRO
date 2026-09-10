@@ -31,12 +31,14 @@ export async function generateMetadata(): Promise<Metadata> {
     const [site, requestedLocale, requestHeaders] = await Promise.all([getPublicSiteSettings(), getLocale(), headers()]);
     const locale = effectiveLocale(isAppLocale(requestedLocale) ? requestedLocale : defaultLocale, requestHeaders.get("x-vozeb-pathname") || "/");
     const base = siteMetadataBase();
-    const { title, description, keywords } = site.seo[locale];
+    const seo = site.seo[locale];
+    const title = seo.title.trim() || site.title;
+    const description = seo.description.trim() || undefined;
     return {
         metadataBase: base,
         title,
         description,
-        keywords: keywords
+        keywords: seo.keywords
             .split(/[,，]/)
             .map((keyword) => keyword.trim())
             .filter(Boolean),

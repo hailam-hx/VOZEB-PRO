@@ -30,6 +30,11 @@ it("edits and previews the selected locale without replacing other drafts and sa
     }
     render(<Harness />);
     expect(screen.queryByRole("tab", { name: "VI" })).not.toBeNull();
+    expect(screen.queryByText("留空后使用该语言的内置默认值。")).toBeNull();
+    expect((screen.getByLabelText("SEO 标题") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("SEO 标题") as HTMLInputElement).placeholder).toBe("请输入当前语言的 SEO 标题");
+    expect(screen.getByText("尚未配置 SEO 标题")).toBeTruthy();
+    expect(screen.getByText("尚未配置 SEO 描述")).toBeTruthy();
     for (const [tab, title, description, keywords] of [
         ["VI", "Tiêu đề mới", "Mô tả mới", "ảnh,video"],
         ["EN", "English title", "English description", "image,video"],

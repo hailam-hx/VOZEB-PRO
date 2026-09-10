@@ -20,7 +20,7 @@ describe("installation page routing", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getPublicSiteSettings.mockResolvedValue({
-            title: "VOZEB PRO",
+            title: "HOTX AI",
             logoUrl: "/hx-favicon.png",
             seo: {},
             footerCopyright: "",

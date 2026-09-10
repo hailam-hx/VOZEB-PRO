@@ -21,7 +21,9 @@ export async function generateMetadata({ params }: LocalizedPageProps): Promise<
     const locale = requireSeoPageLocale("home", (await params).locale);
     const site = await getPublicSiteSettings();
     const homeT = await getTranslations({ locale, namespace: "home" });
-    const { title, description, keywords } = site.seo[locale];
+    const seo = site.seo[locale];
+    const title = seo.title.trim() || site.title;
+    const description = seo.description.trim() || undefined;
     const base = siteMetadataBase();
     const canonical = absoluteSiteUrl(getSeoPagePath("home", locale)!, base);
     const socialImage = { url: absoluteSiteUrl("/seo/hotx-ai-og.webp", base), width: 1200, height: 630, alt: homeT("socialImageAlt") };
@@ -31,7 +33,7 @@ export async function generateMetadata({ params }: LocalizedPageProps): Promise<
         title,
         description,
         alternates: { canonical, languages: getPublishedSeoAlternates("home", base) },
-        keywords: keywords
+        keywords: seo.keywords
             .split(/[,，]/)
             .map((keyword) => keyword.trim())
             .filter(Boolean),

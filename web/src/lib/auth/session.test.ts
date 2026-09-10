@@ -97,9 +97,9 @@ describe("serializePublicSettings", () => {
         ];
         settings.site.socials = {
             email: { enabled: true, label: "邮箱", url: "mailto:owner@example.com" },
-            telegram: { enabled: true, label: "Telegram", url: "https://t.me/vozeb_group" },
-            x: { enabled: true, label: "X", url: "https://x.com/vozeb_pro" },
-            instagram: { enabled: true, label: "Instagram", url: "https://instagram.com/vozeb.pro" },
+            telegram: { enabled: true, label: "Telegram", url: "https://t.me/hotx_ai" },
+            x: { enabled: true, label: "X", url: "https://x.com/hotx_ai" },
+            instagram: { enabled: true, label: "Instagram", url: "https://instagram.com/hotx.ai" },
         };
         (settings.generationDefaults as typeof settings.generationDefaults & { createPromptMaxLength: number }).createPromptMaxLength = 9876;
 
