@@ -3,7 +3,6 @@ import { appName, gitConfig } from "./shared";
 import { ArrowUpRight } from "lucide-react";
 
 const githubUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
-const qqGroupUrl = "https://qm.qq.com/q/9MVLTxuRd6";
 
 export function baseOptions(): BaseLayoutProps {
   return {
@@ -40,15 +39,6 @@ export function baseOptions(): BaseLayoutProps {
         external: true,
         on: "menu",
         icon: <img src="/github.svg" alt="" className="size-4" />,
-      },
-      {
-        type: "icon",
-        text: "VOZEB 开源交流 QQ 群",
-        label: "VOZEB 开源交流 QQ 群（1049777515）",
-        url: qqGroupUrl,
-        external: true,
-        on: "menu",
-        icon: <img src="/qq.svg" alt="" className="size-4" />,
       },
     ],
   };

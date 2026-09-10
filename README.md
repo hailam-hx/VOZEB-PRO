@@ -15,12 +15,10 @@
 </p>
 
 <p align="center">
-  <a href="https://www.vozeb.com">演示站</a> ·
   <a href="docs/index.md">文档索引</a> ·
   <a href="docs/content/docs/overview/configuration.mdx">0.0.6 发布说明</a> ·
   <a href="#目录与文件用途">目录与文件用途</a> ·
   <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
-  <a href="https://linux.do">LINUX DO</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a> ·
   <a href="CHANGELOG.md">更新记录</a>
 </p>
@@ -555,19 +553,6 @@ pnpm run build
 - [AGPL-3.0](LICENSE)
 - [贡献者协议](CLA.md)
 
-## 社区交流
-
-<table>
-  <tr>
-    <td width="260"><a href="https://qm.qq.com/q/9MVLTxuRd6"><img src="docs/public/community/qq-vozeb-group-1049777515.webp" width="240" alt="VOZEB 开源交流 QQ 群二维码"></a></td>
-    <td>
-      <strong>VOZEB 开源交流</strong><br>
-      QQ 群：<code>1049777515</code> · <a href="https://qm.qq.com/q/9MVLTxuRd6">点击加入群聊</a><br><br>
-      欢迎交流部署、模型渠道适配、创作功能使用、Bug 复现和代码贡献。请勿在群内发送 API Key、数据库密码、支付密钥、服务器私钥或未经脱敏的生产日志。
-    </td>
-  </tr>
-</table>
-
 ## 致谢
 
-- 感谢 [LINUX DO](https://linux.do) 社区、相关提示词开源仓库、Codex / Claude Code 生态，以及项目使用的所有开源工具与基础设施。
+- 感谢相关提示词开源仓库、Codex / Claude Code 生态，以及项目使用的所有开源工具与基础设施。

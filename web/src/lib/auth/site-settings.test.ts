@@ -18,6 +18,7 @@ describe("site settings", () => {
     it("defaults public contacts to empty administrator content", () => {
         const settings = normalizeSiteSettings({});
 
+        expect(DEFAULT_SITE_SETTINGS.friendLinks).toEqual([]);
         expect(settings.socials).toEqual({
             email: { enabled: false, label: "", url: "" },
             telegram: { enabled: false, label: "", url: "" },
@@ -25,6 +26,7 @@ describe("site settings", () => {
             instagram: { enabled: false, label: "", url: "" },
         });
         expect(settings.friendLinks).toEqual([]);
+        expect(normalizeSiteSettings({}).friendLinks).toEqual([]);
     });
 
     it("preserves an explicitly configured friend link when the title changes", () => {

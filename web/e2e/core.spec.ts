@@ -84,6 +84,7 @@ test("admin site form persists social addresses, publishes them to the home foot
         await expect(instagramInput).toHaveValue("https://instagram.com/hotx.ai");
 
         await page.goto("/", { waitUntil: "domcontentloaded" });
+        await expect(page.locator('footer a[aria-label="邮箱联系"]')).toHaveAttribute("href", "mailto:owner@example.com");
         await expect(page.locator('footer a[aria-label="Telegram"]')).toHaveAttribute("href", "https://t.me/hotx_ai");
         await expect(page.locator('footer a[aria-label="X"]')).toHaveAttribute("href", "https://x.com/hotx_ai");
         await expect(page.locator('footer a[aria-label="Instagram"]')).toHaveAttribute("href", "https://instagram.com/hotx.ai");

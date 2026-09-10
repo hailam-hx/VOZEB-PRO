@@ -63,7 +63,3 @@ pnpm run build
 - 说明改动原因、主要文件、验证结果、兼容边界和仍需人工确认的事项。
 - 新增或修改功能时同步更新 `docs/content/docs/progress/pending-test.mdx`、TODO 和必要的正式文档。
 - 提交贡献即表示同意 [CLA.md](CLA.md)。维护者可能要求在 PR 中回复：`I have read and agree to CLA.md.`
-
-## 社区
-
-QQ 开源交流群：`1049777515`，[点击加入群聊](https://qm.qq.com/q/9MVLTxuRd6)。群内可以交流部署、模型渠道适配、Bug 复现和贡献方向，但请先删除所有凭据、个人信息和生产数据。

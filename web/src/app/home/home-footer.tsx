@@ -8,7 +8,6 @@ import { getLocalizedSeoHref } from "@/i18n/routing";
 import { useLocale, useTranslations } from "next-intl";
 
 import { SiteLogo } from "@/components/layout/site-logo";
-import { builtInSiteCopy, localizeBuiltInSiteCopy } from "@/i18n/site-copy";
 import { HOME_NAVIGATION, HOME_PRODUCT_NAVIGATION, type HomeNavigationItem } from "./home-data";
 import { useHomeActions } from "./home-actions";
 import styles from "./home.module.css";
@@ -70,9 +69,8 @@ export function HomeFooter() {
                     {socials.length ? (
                         <div className={styles.footerSocials}>
                             {socials.map(([key, item]) => {
-                                const label = key === "email" ? localizeBuiltInSiteCopy(item.label, builtInSiteCopy.emailLabel, t("footerEmailLabel")) : item.label;
                                 return (
-                                    <a key={key} href={item.url} target={externalTarget(item.url)} rel={externalTarget(item.url) ? "noreferrer" : undefined} aria-label={label} title={label}>
+                                    <a key={key} href={item.url} target={externalTarget(item.url)} rel={externalTarget(item.url) ? "noreferrer" : undefined} aria-label={item.label} title={item.label}>
                                         {socialIcon(key)}
                                     </a>
                                 );
@@ -107,7 +105,7 @@ export function HomeFooter() {
                         <FooterColumn title={t("friendLinks")}>
                             {friendLinks.map((item) => (
                                 <a key={item.id} href={item.url} target={externalTarget(item.url)} rel={externalTarget(item.url) ? "noreferrer" : undefined}>
-                                    {item.id === "qq-vozeb-open-source" ? localizeBuiltInSiteCopy(item.label, builtInSiteCopy.qqGroupLabel, t("footerQqGroupLabel")) : item.label}
+                                    {item.label}
                                 </a>
                             ))}
                         </FooterColumn>
