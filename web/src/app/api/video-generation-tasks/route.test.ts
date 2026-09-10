@@ -767,7 +767,7 @@ describe("video generation candidate failover", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
-    it("rejects a VOZEB provider resolution narrower than the binding before creating an attempt", async () => {
+    it("rejects a HOTX AI provider resolution narrower than the binding before creating an attempt", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             ...settings,
             systemChannels: [{ ...channels[0], models: ["Seedance 2.0-fast-720p"], advancedConfig: { protocol: "vozeb-recommended", createPath: "/v1/videos/generations" } }],

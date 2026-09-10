@@ -86,7 +86,7 @@ describe("site settings", () => {
     });
 
     it("preserves administrator footer text without legacy brand repairs", () => {
-        expect(normalizeSiteSettings({ footerCopyright: "2026 VOZEB PRO Studio" }).footerCopyright).toBe("2026 VOZEB PRO Studio");
+        expect(normalizeSiteSettings({ footerCopyright: "2026 Example AI Studio" }).footerCopyright).toBe("2026 Example AI Studio");
     });
 
     it("normalizes common social handles and addresses without dropping them", () => {

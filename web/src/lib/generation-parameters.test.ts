@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { fullGenerationParametersPreset, generationParametersCompatible, intersectGenerationParameters, normalizeGenerationParameters, unionAvailableGenerationParameters, unionGenerationParameters } from "./generation-parameters";
 
 describe("generation parameters", () => {
-    it("builds complete editable presets from every option exposed by VOZEB", () => {
+    it("builds complete editable presets from every option exposed by HOTX AI", () => {
         expect(fullGenerationParametersPreset("image")).toEqual({
             referenceInputs: ["image"],
             maxReferenceImages: 14,

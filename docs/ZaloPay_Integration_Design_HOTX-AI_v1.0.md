@@ -1,15 +1,15 @@
-# Thiết kế phương án tích hợp cổng thanh toán ZaloPay vào VOZEB-PRO
+# Thiết kế phương án tích hợp cổng thanh toán ZaloPay vào HOTX AI
 
 **Phiên bản:** 1.0  
 **Ngày:** 2026-09-03  
-**Dự án:** VOZEB-PRO custom  
+**Dự án:** HOTX AI custom
 **Phạm vi tài liệu:** Thiết kế kiến trúc và contract tích hợp ZaloPay. Tài liệu này **không phải implementation plan** và không quy định thứ tự thực hiện công việc.
 
 ---
 
 ## 1. Mục tiêu
 
-Tích hợp ZaloPay vào hệ thống nạp tiền hiện có của VOZEB-PRO theo mô hình payment provider chính thức, ngang hàng với các provider đang có như Stripe, Alipay, WeChat và PayPly.
+Tích hợp ZaloPay vào hệ thống nạp tiền hiện có của HOTX AI theo mô hình payment provider chính thức, ngang hàng với các provider đang có như Stripe, Alipay, WeChat và PayPly.
 
 Mục tiêu chính:
 
@@ -190,7 +190,7 @@ Sau khi xác minh, dữ liệu vẫn phải đi qua settlement hiện tại.
 
 ```text
 ┌────────────────────────────────────────────────────┐
-│                    VOZEB-PRO                       │
+│                    HOTX AI                         │
 │                                                    │
 │  Top-up Order                                      │
 │       │                                            │
@@ -214,7 +214,7 @@ Sau khi xác minh, dữ liệu vẫn phải đi qua settlement hiện tại.
  Redirect          Callback
         │           │
         ▼           ▼
- Browser       VOZEB webhook
+ Browser       HOTX AI webhook
                     │
                     │ Verify Key2
                     ▼
@@ -271,7 +271,7 @@ Vì vậy ZaloPay phù hợp trực tiếp với VND integer amount.
 Mapping:
 
 ```text
-VOZEB-PRO payableNativeAmount
+HOTX AI payableNativeAmount
              │
              ▼
        ZaloPay amount
@@ -292,9 +292,9 @@ Provider phải dùng đúng amount đã được quote/order snapshot xác nh�
 
 ---
 
-## 7. Mapping dữ liệu VOZEB-PRO ↔ ZaloPay
+## 7. Mapping dữ liệu HOTX AI ↔ ZaloPay
 
-| VOZEB-PRO | ZaloPay | Ghi chú |
+| HOTX AI | ZaloPay | Ghi chú |
 |---|---|---|
 | `provider` | `zalopay` | Provider ID nội bộ |
 | `order.id` | `embed_data.vozebProOrderId` | Liên kết callback/query với local order |
@@ -1553,7 +1553,7 @@ Operational dashboard metrics
 
 Phương án được chọn:
 
-> **Tích hợp ZaloPay Payment Gateway vào payment provider abstraction hiện có của VOZEB-PRO, sử dụng Create Order + server callback + Query Order fallback. Mọi thanh toán thành công phải được normalize thành `TopUpPaymentEvent` và đi qua settlement hiện tại trước khi cộng积分. Redirect chỉ phục vụ UX và tuyệt đối không phải nguồn xác nhận thanh toán.**
+> **Tích hợp ZaloPay Payment Gateway vào payment provider abstraction hiện có của HOTX AI, sử dụng Create Order + server callback + Query Order fallback. Mọi thanh toán thành công phải được normalize thành `TopUpPaymentEvent` và đi qua settlement hiện tại trước khi cộng积分. Redirect chỉ phục vụ UX và tuyệt đối không phải nguồn xác nhận thanh toán.**
 
 Các quyết định quan trọng:
 

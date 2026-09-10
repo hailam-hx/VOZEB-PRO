@@ -1,6 +1,6 @@
-# VOZEB-PRO — 声音克隆 (Voice Cloning) Integration Design v2.0
+# HOTX AI — 声音克隆 (Voice Cloning) Integration Design v2.0
 
-**Project:** VOZEB-PRO-custom  
+**Project:** HOTX AI custom
 **Feature:** 声音克隆 / Voice Cloning  
 **Primary provider:** Dflop (`model.dflop.top` / `api.dflop.top`)  
 **Design version:** 2.0  
@@ -11,9 +11,9 @@
 
 ## 1. Mục tiêu tài liệu
 
-Tài liệu này viết lại phương án tích hợp **声音克隆 (Voice Cloning)** cho VOZEB-PRO dựa trên:
+Tài liệu này viết lại phương án tích hợp **声音克隆 (Voice Cloning)** cho HOTX AI dựa trên:
 
-1. source code hiện tại của `VOZEB-PRO-custom`;
+1. source code hiện tại của HOTX AI;
 2. tài liệu API chính thức của nhà cung cấp Dflop;
 3. kiến trúc Logical Model / Channel Routing / PAYG / Generation Task hiện có của dự án.
 
@@ -31,23 +31,23 @@ Thiết kế này **không gọi MiniMax trực tiếp**. Dflop được xem là
 
 Phương án được chọn:
 
-> **Voice Profile là tài nguyên của VOZEB-PRO; Dflop Voice ID chỉ là binding upstream.**  
+> **Voice Profile là tài nguyên của HOTX AI; Dflop Voice ID chỉ là binding upstream.**
 > Clone sử dụng Dflop `/v1/audio/voices`; TTS sử dụng Dflop `/v1/audio/speech` với model `voice-tts-pro` và truyền cloned voice ID vào trường `voice`.
 
 Các quyết định chính:
 
 1. Thêm domain **Voice Profile / 我的声音** thuộc user.
-2. User upload audio vào storage hiện có của VOZEB-PRO.
+2. User upload audio vào storage hiện có của HOTX AI.
 3. Backend chuyển asset thành một URL Dflop có thể truy cập rồi gọi clone.
 4. Clone luôn dùng **async mode**.
-5. VOZEB-PRO lưu Dflop voice ID nội bộ; frontend chỉ dùng `voiceProfileId`.
+5. HOTX AI lưu Dflop voice ID nội bộ; frontend chỉ dùng `voiceProfileId`.
 6. TTS cloned voice vẫn đi qua `/api/audio-tasks`, không tạo một TTS pipeline thứ hai.
 7. Khi dùng cloned voice, routing phải **pin vào channel/provider account đã tạo voice đó**; không được fallback sang channel không có voice.
 8. Dflop preset voices được lấy từ `GET /v1/audio/voices`; không nên hard-code danh sách OpenAI `alloy`, `nova` cho model `voice-tts-pro`.
 9. Clone dùng pricing engine hiện tại với `capability=audio` + `request=1`.
 10. TTS dùng pricing engine hiện tại với `capability=audio` + `characters`.
 11. Tất cả request có tính phí phải có `Idempotency-Key` ổn định.
-12. Không hard-code giá Dflop vào business logic; giá phải quản lý qua model pricing/rate card của VOZEB-PRO.
+12. Không hard-code giá Dflop vào business logic; giá phải quản lý qua model pricing/rate card của HOTX AI.
 
 ---
 
@@ -96,7 +96,7 @@ Quy tắc quan trọng:
 - lỗi async được Dflop hoàn tiền upstream;
 - Dflop ghi `audio_url` là public URL lâu dài/permanent trên object storage của họ.
 
-VOZEB-PRO vẫn nên tải audio kết quả về storage của mình để đảm bảo ownership, media lifecycle, audit và không phụ thuộc URL upstream.
+HOTX AI vẫn nên tải audio kết quả về storage của mình để đảm bảo ownership, media lifecycle, audit và không phụ thuộc URL upstream.
 
 ---
 
@@ -127,7 +127,7 @@ Yêu cầu sample được Dflop mô tả:
 - thời lượng: **5 giây – 3 phút**;
 - nên là **giọng người rõ ràng**.
 
-Dflop không yêu cầu client upload file bytes trực tiếp vào endpoint clone; VOZEB-PRO phải cung cấp `audio_url`.
+Dflop không yêu cầu client upload file bytes trực tiếp vào endpoint clone; HOTX AI phải cung cấp `audio_url`.
 
 Async clone:
 
@@ -208,7 +208,7 @@ cho các POST có tính phí, bao gồm voice clone và TTS.
 - retention hiện tại: **7 ngày**;
 - scope là **Dflop account**, không phải riêng API key.
 
-VOZEB-PRO phải tận dụng cơ chế này, không chỉ dựa vào idempotency nội bộ.
+HOTX AI phải tận dụng cơ chế này, không chỉ dựa vào idempotency nội bộ.
 
 ---
 
@@ -230,7 +230,7 @@ voice-tts-pro   : 0.1254 / character
 
 Trong media API, TTS cũng được mô tả tương đương khoảng `125.36 / 1000 characters`.
 
-Vì provider nói model/price có thể thay đổi và có public catalog realtime, **không được hard-code các con số trên vào source code VOZEB-PRO**.
+Vì provider nói model/price có thể thay đổi và có public catalog realtime, **không được hard-code các con số trên vào source code HOTX AI**.
 
 Các con số chỉ dùng làm thông tin tham khảo khi cấu hình giá ban đầu.
 
@@ -264,7 +264,7 @@ Tuy nhiên đường dẫn phải đặt trong channel/model `advancedConfig.cre
 
 ---
 
-# 4. Đánh giá source VOZEB-PRO hiện tại
+# 4. Đánh giá source HOTX AI hiện tại
 
 ## 4.1 Thành phần có thể tái sử dụng
 
@@ -300,7 +300,7 @@ web/src/lib/server/audio-task-runtime.ts
 - candidate fallback;
 - billing/refund;
 - fetch audio result;
-- persist result vào VOZEB storage;
+- persist result vào HOTX AI storage;
 - generation attempt logging.
 
 Runtime hiện đã có default create path:
@@ -405,7 +405,7 @@ Hiện tại dự án chưa có:
                │ voiceProfileId
                ▼
 ┌───────────────────────────────┐
-│        VOZEB-PRO API          │
+│        HOTX AI API             │
 │                               │
 │ /api/voice-profiles           │
 │ /api/voice-profiles/:id       │
@@ -554,7 +554,7 @@ nhưng không nên tăng độ phức tạp ngay từ MVP.
 
 Dflop mô tả voice list theo **account**. Các API key thuộc cùng account chia sẻ wallet; cloned voice cũng được truy vấn qua account voice library.
 
-VOZEB-PRO không có metadata đáng tin cậy để chứng minh hai channel API key thuộc cùng một Dflop account.
+HOTX AI không có metadata đáng tin cậy để chứng minh hai channel API key thuộc cùng một Dflop account.
 
 Vì vậy MVP áp dụng quy tắc an toàn:
 
@@ -600,7 +600,7 @@ Nếu channel clone bị disabled:
   ↓
 校验
   ↓
-保存到 VOZEB persistent storage
+保存到 HOTX AI persistent storage
   ↓
 确认声音授权
   ↓
@@ -631,7 +631,7 @@ và phải là audio hợp lệ.
 
 Dflop chỉ công bố yêu cầu URL + thời lượng + clear human voice; tài liệu hiện tại không nêu một danh sách MIME/file format cụ thể cho clone endpoint.
 
-VOZEB-PRO không nên tự tuyên bố rằng Dflop chỉ hỗ trợ WAV/MP3 nếu provider chưa ghi vậy.
+HOTX AI không nên tự tuyên bố rằng Dflop chỉ hỗ trợ WAV/MP3 nếu provider chưa ghi vậy.
 
 ### Khuyến nghị chuẩn hóa nội bộ
 
@@ -700,7 +700,7 @@ URL chỉ cần tồn tại đủ lâu để upstream tải sample, không cần
 
 ---
 
-# 12. API nội bộ VOZEB-PRO
+# 12. API nội bộ HOTX AI
 
 ## 12.1 Create voice profile
 
@@ -791,7 +791,7 @@ PATCH /api/voice-profiles/{id}
 }
 ```
 
-MVP rename chỉ đổi tên local VOZEB-PRO; không cần rename provider object nếu Dflop không có endpoint rename riêng.
+MVP rename chỉ đổi tên local HOTX AI; không cần rename provider object nếu Dflop không có endpoint rename riêng.
 
 ---
 
@@ -815,7 +815,7 @@ mark deleted
 
 Dflop mô tả DELETE là xóa local voice record phía provider.
 
-Không hard-delete DB ngay; nên giữ tombstone/audit tối thiểu theo retention policy của VOZEB-PRO.
+Không hard-delete DB ngay; nên giữ tombstone/audit tối thiểu theo retention policy của HOTX AI.
 
 ---
 
@@ -903,7 +903,7 @@ Task vẫn phải dùng các nền tảng có sẵn:
 
 # 14. Dflop clone request mapping
 
-Canonical VOZEB config:
+Canonical HOTX AI config:
 
 ```ts
 {
@@ -918,7 +918,7 @@ Provider request:
 ```json
 {
   "name": "女主角 01",
-  "audio_url": "https://vozeb.../provider-read...",
+  "audio_url": "https://your-domain.example/provider-read...",
   "async": true
 }
 ```
@@ -953,7 +953,7 @@ Submit success:
 }
 ```
 
-VOZEB lưu ngay:
+HOTX AI lưu ngay:
 
 ```text
 voice_profiles.provider_voice_id
@@ -968,7 +968,7 @@ GET /audio/voices/{id}
 
 Mapping:
 
-| Dflop | VOZEB task | Voice Profile |
+| Dflop | HOTX AI task | Voice Profile |
 |---|---|---|
 | `pending` | `running` | `pending` |
 | `ready` | `success` | `ready` |
@@ -995,7 +995,7 @@ Tiếp tục dùng:
 POST /api/audio-tasks
 ```
 
-Canonical request phía VOZEB nên đổi từ `voice` string thuần sang union rõ ràng.
+Canonical request phía HOTX AI nên đổi từ `voice` string thuần sang union rõ ràng.
 
 ### Preset
 
@@ -1492,7 +1492,7 @@ POST system proxy /audio/voices
 
 ## 27.1 Clone
 
-VOZEB key:
+HOTX AI key:
 
 ```text
 voice-clone:<voiceProfileId>:attempt:<n>
@@ -1551,7 +1551,7 @@ Mark safe failure, release reserve.
 
 ### Dflop 402
 
-Provider balance insufficient. VOZEB không được chuyển lỗi này thành lỗi “user points insufficient” nếu ví VOZEB của user vẫn đủ.
+Provider balance insufficient. HOTX AI không được chuyển lỗi này thành lỗi “user points insufficient” nếu ví HOTX AI của user vẫn đủ.
 
 Admin-facing error:
 
@@ -1575,7 +1575,7 @@ Không tạo key mới. Retry cùng key sau backoff.
 
 ### `failed`
 
-VoiceProfile -> `failed`; provider upstream refund; VOZEB release/refund user hold.
+VoiceProfile -> `failed`; provider upstream refund; HOTX AI release/refund user hold.
 
 ---
 
@@ -1808,7 +1808,7 @@ Không gộp clone + preview thành một charge nếu pricing business không q
 
 Dflop nhấn mạnh cần có authorization của chủ giọng nói trước khi clone real voice.
 
-VOZEB-PRO phải có checkbox bắt buộc.
+HOTX AI phải có checkbox bắt buộc.
 
 Lưu:
 
@@ -2113,7 +2113,7 @@ stateDiagram-v2
 ```text
 Create local VoiceProfile
    ↓
-Reserve VOZEB points
+Reserve HOTX AI points
    ↓
 Submit Dflop
    ↓
@@ -2231,7 +2231,7 @@ Không tự đổi sang preset voice.
 | TTS-207 | no matching channel | explicit unavailable error |
 | TTS-208 | input 5001 chars | local reject |
 | TTS-209 | request uses raw providerVoiceId | internal only |
-| TTS-210 | async Dflop success | audio saved to VOZEB storage |
+| TTS-210 | async Dflop success | audio saved to HOTX AI storage |
 | TTS-211 | Dflop failed | points refunded |
 | TTS-212 | cloned speed | sent |
 | TTS-213 | Dflop preset speed | hidden/not sent by UI policy |
@@ -2248,7 +2248,7 @@ Không tự đổi sang preset voice.
 | BILL-303 | clone failed | 0 final charge/refund |
 | BILL-304 | TTS 100 chars | characters rate card |
 | BILL-305 | long TTS reserve | based on request characters |
-| BILL-306 | upstream provider cost absent | VOZEB sale pricing still deterministic |
+| BILL-306 | upstream provider cost absent | HOTX AI sale pricing still deterministic |
 
 ---
 
@@ -2350,7 +2350,7 @@ Bản v1 giả định MiniMax là provider clone trực tiếp. Sau khi đối 
 
 # 48. Quyết định cuối cùng
 
-Đối với VOZEB-PRO hiện tại, cách tích hợp phù hợp nhất là:
+Đối với HOTX AI hiện tại, cách tích hợp phù hợp nhất là:
 
 ```text
 Voice Profile
@@ -2379,7 +2379,7 @@ và:
 
 > **Cloned voice phải pin vào Dflop channel/account đã tạo nó, không được silent fallback.**
 
-Hai nguyên tắc này giúp chức năng clone tích hợp đúng với kiến trúc VOZEB-PRO hiện tại, tránh lỗi multi-channel và vẫn mở đường cho multi-provider về sau.
+Hai nguyên tắc này giúp chức năng clone tích hợp đúng với kiến trúc HOTX AI hiện tại, tránh lỗi multi-channel và vẫn mở đường cho multi-provider về sau.
 
 ---
 

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="web/public/logo.svg?v=0.0.6" width="108" alt="VOZEB PRO logo">
+  <img src="web/public/hx-favicon.png" width="108" alt="HOTX AI logo">
 </p>
 
-<h1 align="center">VOZEB PRO</h1>
+<h1 align="center">HOTX AI</h1>
 
 <p align="center">面向统一创作 Agent、Canvas 与短剧生产的开源 AI 创作平台</p>
 
@@ -23,9 +23,9 @@
   <a href="CHANGELOG.md">更新记录</a>
 </p>
 
-![VOZEB PRO 首页](docs/public/screenshots/pages/01-home.webp)
+![HOTX AI 首页](docs/public/screenshots/pages/01-home.webp)
 
-VOZEB PRO 把统一创作 Agent、画布、短剧生产、素材库和商业运营后台放在同一套 Next.js 全栈应用中。PostgreSQL 保存账号与业务数据；媒体可写入服务器本地目录或 S3 兼容对象存储；模型、支付和存储密钥只在服务端使用。
+HOTX AI 把统一创作 Agent、画布、短剧生产、素材库和商业运营后台放在同一套 Next.js 全栈应用中。PostgreSQL 保存账号与业务数据；媒体可写入服务器本地目录或 S3 兼容对象存储；模型、支付和存储密钥只在服务端使用。
 
 ## 核心功能
 
@@ -371,7 +371,7 @@ flowchart LR
 
 ## 最低服务器配置
 
-VOZEB PRO 调用外部 AI 模型，不要求 GPU。服务器主要承担 Web、PostgreSQL、媒体下载/存储和可选 FFmpeg 转码。
+HOTX AI 调用外部 AI 模型，不要求 GPU。服务器主要承担 Web、PostgreSQL、媒体下载/存储和可选 FFmpeg 转码。
 
 | 使用方式                   | CPU      | 内存           | 磁盘      | 说明                                                                |
 | -------------------------- | -------- | -------------- | --------- | ------------------------------------------------------------------- |
@@ -399,7 +399,7 @@ cp .env.example .env
 至少修改：
 
 ```dotenv
-NEXT_PUBLIC_SITE_URL=https://vozeb-pro.example.com
+NEXT_PUBLIC_SITE_URL=https://your-domain.example
 POSTGRES_PASSWORD=replace-with-a-strong-password
 VOZEB_PRO_ENCRYPTION_KEY=replace-with-openssl-rand-hex-32
 VOZEB_PRO_INSTALL_TOKEN=replace-with-one-time-openssl-rand-hex-32
@@ -465,7 +465,7 @@ pnpm install --frozen-lockfile
 pnpm run dev
 ```
 
-`http://localhost:3000` 必须显示 VOZEB PRO 主应用；如果看到“VOZEB PRO 文档中心”，说明启动的是 `docs/` 子项目或旧版文档脚本，请停止该进程并从 `web/` 启动主应用。独立文档站只使用 `http://localhost:3001`。
+`http://localhost:3000` 必须显示 HOTX AI 主应用；如果看到“HOTX AI 文档中心”，说明启动的是 `docs/` 子项目或旧版文档脚本，请停止该进程并从 `web/` 启动主应用。独立文档站只使用 `http://localhost:3001`。
 
 ## 首次配置顺序
 

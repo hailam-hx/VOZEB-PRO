@@ -917,7 +917,7 @@ describe("Stable Diffusion proxy", () => {
     });
 });
 
-describe("VOZEB recommended video proxy", () => {
+describe("HOTX AI recommended video proxy", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
