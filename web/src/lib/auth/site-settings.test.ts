@@ -15,34 +15,36 @@ describe("site settings", () => {
         expect(settings.iconUrl).toBe("https://cdn.example.com/favicon.ico");
     });
 
-    it("defaults public contacts to the VOZEB email and QQ group", () => {
+    it("defaults public contacts to empty administrator content", () => {
         const settings = normalizeSiteSettings({});
 
-        expect(settings.socials.email).toMatchObject({ enabled: true, url: "mailto:csyqlz@gmail.com" });
-        expect(settings.socials.telegram).toMatchObject({ enabled: false, url: "" });
-        expect(settings.socials.x).toMatchObject({ enabled: false, url: "" });
-        expect(settings.socials.instagram).toMatchObject({ enabled: false, url: "" });
-        expect(settings.friendLinks).toContainEqual(expect.objectContaining({ id: "qq-vozeb-open-source", url: "https://qm.qq.com/q/9MVLTxuRd6", enabled: true }));
+        expect(settings.socials).toEqual({
+            email: { enabled: false, label: "", url: "" },
+            telegram: { enabled: false, label: "", url: "" },
+            x: { enabled: false, label: "", url: "" },
+            instagram: { enabled: false, label: "", url: "" },
+        });
+        expect(settings.friendLinks).toEqual([]);
     });
 
-    it("updates only bundled brand defaults when the site title changes", () => {
+    it("preserves an explicitly configured friend link when the title changes", () => {
         const settings = normalizeSiteSettings({
-            ...DEFAULT_SITE_SETTINGS,
             title: "无限创作",
+            friendLinks: [{ id: "official-home", label: "官方网站", url: "https://example.com/", enabled: true }],
         });
 
-        expect(settings).toMatchObject({
-            title: "无限创作",
-            footerCopyright: expect.stringContaining("无限创作"),
-        });
-        expect(settings.friendLinks).toContainEqual(expect.objectContaining({ id: "vozeb-pro-home", label: "VOZEB" }));
+        expect(settings).toMatchObject({ title: "无限创作", footerCopyright: "" });
+        expect(settings.friendLinks).toEqual([{ id: "official-home", label: "官方网站", url: "https://example.com/", enabled: true }]);
     });
 
     it("preserves explicitly customized brand copy when the title changes", () => {
         const settings = normalizeSiteSettings({
-            ...DEFAULT_SITE_SETTINGS,
             title: "无限创作",
-            seo: { ...DEFAULT_SITE_SETTINGS.seo, "zh-CN": { title: "独立 SEO 标题", description: "独立描述", keywords: "自定义,关键词" } },
+            seo: {
+                vi: { title: "Tiêu đề", description: "Mô tả", keywords: "ảnh,video" },
+                en: { title: "English title", description: "English description", keywords: "image,video" },
+                "zh-CN": { title: "独立 SEO 标题", description: "独立描述", keywords: "自定义,关键词" },
+            },
             footerCopyright: "© 独立运营主体",
             friendLinks: [{ id: "vozeb-pro-home", label: "官方网站", url: "https://www.vozeb.com/", enabled: true }],
         });

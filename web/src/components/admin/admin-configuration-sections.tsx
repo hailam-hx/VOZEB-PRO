@@ -9,7 +9,7 @@ import { SiteLogoPreview, SiteSettingStatus, siteSocialItems } from "@/component
 import { Button, Input, InputNumber, Switch, Tabs, Tag } from "antd";
 import { useState } from "react";
 import type { AppLocale } from "@/i18n/config";
-import { DEFAULT_LOCALIZED_SEO } from "@/i18n/site-copy";
+import { EMPTY_LOCALIZED_SEO } from "@/i18n/site-copy";
 import { Database, Globe2, Image as ImageIcon, Mail, Plus, Save, Search, Send, SlidersHorizontal, Sparkles, Trash2, Upload, UserCog } from "lucide-react";
 
 import { SettingsAnchorItem, SettingsStatusTile } from "./admin-dashboard-elements";
@@ -19,7 +19,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
     const [seoLocale, setSeoLocale] = useState<AppLocale>("vi");
     const { logoInputRef, iconInputRef, settings, settingsLoading, activeSection, saveSettings, updateSiteSetting, getLatestSiteSettings, updateSiteSocialSetting, addFriendLink, updateFriendLink, deleteFriendLink } = controller;
     const seo = settings.site.seo[seoLocale];
-    const seoDefaults = DEFAULT_LOCALIZED_SEO[seoLocale];
+    const seoDefaults = EMPTY_LOCALIZED_SEO[seoLocale];
     const updateSeo = (key: keyof typeof seo, value: string) => {
         const current = getLatestSiteSettings().seo;
         updateSiteSetting("seo", { ...current, [seoLocale]: { ...current[seoLocale], [key]: value } });

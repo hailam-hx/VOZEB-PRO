@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
+import { DEFAULT_SITE_ICON_URL } from "@/lib/site-brand";
 import { browserIconHref, resolveSiteMetadataBase } from "./site-metadata";
 
 describe("site metadata", () => {
@@ -9,11 +10,11 @@ describe("site metadata", () => {
     });
 
     it("keeps the bundled browser icon on the same origin", () => {
-        expect(browserIconHref(DEFAULT_SITE_SETTINGS)).toBe("/icon.svg");
+        expect(browserIconHref(DEFAULT_SITE_SETTINGS)).toBe(DEFAULT_SITE_ICON_URL);
     });
 
     it("uses a custom logo when the browser icon is still the bundled default", () => {
-        expect(browserIconHref({ iconUrl: "/icon.svg", logoUrl: "/custom-logo.svg" })).toBe("/custom-logo.svg");
+        expect(browserIconHref({ iconUrl: DEFAULT_SITE_ICON_URL, logoUrl: "/custom-logo.svg" })).toBe("/custom-logo.svg");
     });
 
     it("keeps an independently configured browser icon", () => {

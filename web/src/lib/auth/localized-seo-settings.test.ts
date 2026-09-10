@@ -27,42 +27,35 @@ afterEach(async () => {
 });
 
 describe("localized SEO settings", () => {
-    it("normalizes each locale independently and keeps administrator text", () => {
+    it("normalizes each locale independently and clears blank administrator content", () => {
         expect(normalizeSiteSettings({ seo }).seo).toEqual(seo);
         const input = structuredClone(seo);
         input.en = { title: " ", description: "", keywords: " " };
         const normalized = normalizeSiteSettings({ seo: input }).seo;
         expect(normalized?.vi).toEqual(seo.vi);
         expect(normalized?.["zh-CN"]).toEqual(seo["zh-CN"]);
-        expect(normalized?.en.title).toContain("AI image, video and voice creation");
-        expect(normalized?.en.description).toContain("AI creation platform");
-        expect(normalized?.en.keywords).toContain("AI image");
+        expect(normalized?.en).toEqual({ title: "", description: "", keywords: "" });
     });
 
-    it("supplies complete same-language defaults and applies 72/180/240 limits", () => {
+    it("supplies empty defaults and applies 72/180/240 limits", () => {
         const defaults = normalizeSiteSettings({}).seo;
-        expect(defaults?.vi.title).toContain("Nền tảng");
-        expect(defaults?.vi.description).toContain("nền tảng sáng tạo AI");
-        expect(defaults?.["zh-CN"].title).toContain("AI 图片");
-        expect(defaults?.["zh-CN"].description).toContain("创作平台");
+        expect(defaults).toEqual({
+            vi: { title: "", description: "", keywords: "" },
+            en: { title: "", description: "", keywords: "" },
+            "zh-CN": { title: "", description: "", keywords: "" },
+        });
         const long = { title: "t".repeat(73), description: "d".repeat(181), keywords: "k".repeat(241) };
         expect(normalizeSiteSettings({ seo: { ...seo, en: long } }).seo?.en).toEqual({ title: "t".repeat(72), description: "d".repeat(180), keywords: "k".repeat(240) });
         const english = { title: "VOZEB PRO AI creation", description: "VOZEB PRO AI studio", keywords: "VOZEB PRO,AI image" };
         expect(normalizeSiteSettings({ seo: { ...seo, en: english } }).seo?.en).toEqual(english);
     });
 
-    it("uses a missing or blank locale's own defaults without copying configured neighbours", () => {
-        for (const [locale, titlePart, descriptionPart, keywordPart] of [
-            ["vi", "Nền tảng", "nền tảng sáng tạo AI", "hình ảnh AI"],
-            ["en", "AI image, video and voice", "AI creation platform", "AI image"],
-            ["zh-CN", "AI 图片", "创作平台", "AI 绘图"],
-        ] as const) {
+    it("uses empty values for missing or blank locales without copying configured neighbours", () => {
+        for (const locale of ["vi", "en", "zh-CN"] as const) {
             const input = structuredClone(seo);
             input[locale] = { title: "  ", description: "", keywords: " " };
             const result = normalizeSiteSettings({ seo: input }).seo;
-            expect(result[locale].title).toContain(titlePart);
-            expect(result[locale].description).toContain(descriptionPart);
-            expect(result[locale].keywords).toContain(keywordPart);
+            expect(result[locale]).toEqual({ title: "", description: "", keywords: "" });
             for (const other of ["vi", "en", "zh-CN"] as const) if (other !== locale) expect(result[other]).toEqual(seo[other]);
         }
     });
@@ -87,7 +80,7 @@ describe("localized SEO settings", () => {
                 const cleared = { ...seo, en: { title: "", description: " ", keywords: "" } };
                 await PATCH(new Request("http://localhost/api/admin/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ site: { ...original, seo: cleared } }) }));
                 const reread = (await (await GET()).json()).settings.site.seo;
-                expect(reread.en.description).toContain("AI creation platform");
+                expect(reread.en).toEqual({ title: "", description: "", keywords: "" });
                 expect(reread.vi).toEqual(seo.vi);
                 expect(reread["zh-CN"]).toEqual(seo["zh-CN"]);
                 expect((await getFreshAuthSettings()).site.seo).toEqual(reread);

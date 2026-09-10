@@ -4,11 +4,12 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
+import { DEFAULT_SITE_ICON_URL, DEFAULT_SITE_LOGO_URL } from "@/lib/site-brand";
 
 describe("default infinite-evolution brand assets", () => {
-    it("uses the built-in infinite-evolution logo for every default brand entry", () => {
-        expect(DEFAULT_SITE_SETTINGS.logoUrl).toBe("/logo.svg");
-        expect(DEFAULT_SITE_SETTINGS.iconUrl).toBe("/icon.svg");
+    it("uses the HOTX AI favicon for every default brand entry", () => {
+        expect(DEFAULT_SITE_SETTINGS.logoUrl).toBe(DEFAULT_SITE_LOGO_URL);
+        expect(DEFAULT_SITE_SETTINGS.iconUrl).toBe(DEFAULT_SITE_ICON_URL);
     });
 
     it("keeps web logo, browser icon and docs logo identical without triangle primitives", async () => {

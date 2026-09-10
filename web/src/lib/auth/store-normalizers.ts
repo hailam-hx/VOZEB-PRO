@@ -183,7 +183,7 @@ export function normalizeSettings(settings: AuthSettings): AuthSettings {
         site,
         registrationEnabled: Boolean(settings.registrationEnabled),
         emailRegistrationEnabled: Boolean(settings.emailRegistrationEnabled),
-        mail: normalizeMailSettings(settings.mail, site.title),
+        mail: normalizeMailSettings(settings.mail),
         allowUserApiConfig: false,
         modelPointCosts: normalizeModelPointCosts(settings.modelPointCosts),
         generationPointMultipliers: normalizeGenerationPointMultipliers(settings.generationPointMultipliers),
@@ -373,31 +373,24 @@ export function normalizeSiteSettings(settings: Partial<SiteSettings> | undefine
                 ];
             }),
         ) as SiteSettings["seo"],
-        footerCopyright: normalizeBrandDefault(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, title, DEFAULT_SITE_SETTINGS.footerCopyright.replace(DEFAULT_SITE_SETTINGS.title, title), 120),
+        footerCopyright: normalizeText(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, 120),
         termsUrl: normalizeLinkUrl(settings?.termsUrl, DEFAULT_SITE_SETTINGS.termsUrl),
         termsVersion: normalizeText(settings?.termsVersion, DEFAULT_SITE_SETTINGS.termsVersion, 80),
         privacyUrl: normalizeLinkUrl(settings?.privacyUrl, DEFAULT_SITE_SETTINGS.privacyUrl),
         privacyVersion: normalizeText(settings?.privacyVersion, DEFAULT_SITE_SETTINGS.privacyVersion, 80),
-        friendLinks: normalizeSiteFriendLinks(settings?.friendLinks, title),
+        friendLinks: normalizeSiteFriendLinks(settings?.friendLinks),
         socials: normalizeSiteSocials(settings?.socials),
     };
 }
 
-function normalizeBrandDefault(value: unknown, defaultValue: string, siteTitle: string, fallback: string, maxLength: number) {
-    const text = typeof value === "string" ? value.trim() : "";
-    if (!text || (siteTitle !== DEFAULT_SITE_SETTINGS.title && text === defaultValue)) return fallback.slice(0, maxLength);
-    return normalizeText(text, fallback, maxLength);
-}
-
-export function normalizeSiteFriendLinks(settings: unknown, siteTitle = DEFAULT_SITE_SETTINGS.title): SiteFriendLink[] {
+export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
     const links = Array.isArray(settings) ? settings : DEFAULT_SITE_FRIEND_LINKS;
     return links
         .map((link, index) => {
             const value = link as Partial<SiteFriendLink>;
-            const defaultHomeLink = value.id === "vozeb-pro-home" && value.url?.replace(/\/$/, "") === "https://www.vozeb.com";
             return {
                 id: normalizeText(value.id, `friend-${index + 1}`, 80),
-                label: normalizeText(defaultHomeLink && (!value.label || value.label === DEFAULT_SITE_SETTINGS.title || value.label === siteTitle) ? "VOZEB" : value.label, "友情链接", 32),
+                label: normalizeText(value.label, "友情链接", 32),
                 url: normalizeLinkUrl(value.url, ""),
                 enabled: value.enabled !== false,
             };
@@ -443,7 +436,7 @@ function normalizeSiteSocialUrl(key: SiteSocialKey, value: unknown) {
     return normalizeLinkUrl(url, "");
 }
 
-export function normalizeMailSettings(settings: Partial<MailSettings> | undefined, siteTitle = DEFAULT_SITE_SETTINGS.title): MailSettings {
+export function normalizeMailSettings(settings: Partial<MailSettings> | undefined): MailSettings {
     const port = Math.max(1, Math.min(65535, Math.floor(Number(settings?.port) || DEFAULT_MAIL_SETTINGS.port)));
     return {
         provider: normalizeText(settings?.provider, DEFAULT_MAIL_SETTINGS.provider, 40),
@@ -453,7 +446,7 @@ export function normalizeMailSettings(settings: Partial<MailSettings> | undefine
         username: normalizeText(settings?.username, DEFAULT_MAIL_SETTINGS.username, 160),
         password: normalizeSecretText(settings?.password, DEFAULT_MAIL_SETTINGS.password, 512),
         fromEmail: normalizeText(settings?.fromEmail, DEFAULT_MAIL_SETTINGS.fromEmail, 160),
-        fromName: normalizeText(!settings?.fromName || settings.fromName === DEFAULT_MAIL_SETTINGS.fromName ? siteTitle : settings.fromName, siteTitle, 60),
+        fromName: normalizeText(settings?.fromName, DEFAULT_MAIL_SETTINGS.fromName, 60),
     };
 }
 

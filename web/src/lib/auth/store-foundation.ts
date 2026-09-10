@@ -1,4 +1,5 @@
-import { DEFAULT_LOCALIZED_SEO } from "@/i18n/site-copy";
+import { EMPTY_LOCALIZED_SEO } from "@/i18n/site-copy";
+import { DEFAULT_SITE_ICON_URL, DEFAULT_SITE_LOGO_URL, DEFAULT_SITE_TITLE } from "@/lib/site-brand";
 import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image";
 import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
@@ -80,15 +81,15 @@ export const EMAIL_CODE_RESEND_COOLDOWN_MS = 1000 * 60;
 export const DEFAULT_USER_POINTS = 0;
 export const DEFAULT_MODEL_POINT_COST_KEY = "__default__";
 export const DEFAULT_SITE_SETTINGS: SiteSettings = {
-    title: "VOZEB PRO",
-    logoUrl: "/logo.svg",
-    iconUrl: "/icon.svg",
-    seo: DEFAULT_LOCALIZED_SEO,
-    footerCopyright: "© 2026 VOZEB PRO. All rights reserved.",
-    termsUrl: "/terms",
-    termsVersion: "1.0",
-    privacyUrl: "/privacy",
-    privacyVersion: "1.0",
+    title: DEFAULT_SITE_TITLE,
+    logoUrl: DEFAULT_SITE_LOGO_URL,
+    iconUrl: DEFAULT_SITE_ICON_URL,
+    seo: EMPTY_LOCALIZED_SEO,
+    footerCopyright: "",
+    termsUrl: "",
+    termsVersion: "",
+    privacyUrl: "",
+    privacyVersion: "",
     friendLinks: DEFAULT_SITE_FRIEND_LINKS,
     socials: DEFAULT_SITE_SOCIALS,
 };
@@ -100,7 +101,7 @@ export const DEFAULT_MAIL_SETTINGS: MailSettings = {
     username: "",
     password: "",
     fromEmail: "",
-    fromName: "VOZEB PRO",
+    fromName: "",
 };
 export const DEFAULT_GENERATION_POINT_MULTIPLIERS: GenerationPointMultipliers = {
     imageQuality: { auto: 1, low: 1, medium: 1, high: 1 },

@@ -8,7 +8,6 @@ import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
 import type { PricingRateCardV1 } from "@/lib/billing/pricing";
 import type { ProviderCostUnit } from "@/lib/billing/money";
-import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type SystemChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
@@ -324,17 +323,13 @@ export type SiteSocialSettings = Record<
 >;
 
 export const DEFAULT_SITE_SOCIALS: SiteSocialSettings = {
-    email: { enabled: true, label: "邮箱联系", url: "mailto:csyqlz@gmail.com" },
-    telegram: { enabled: false, label: "Telegram", url: "" },
-    x: { enabled: false, label: "X", url: "" },
-    instagram: { enabled: false, label: "Instagram", url: "" },
+    email: { enabled: false, label: "", url: "" },
+    telegram: { enabled: false, label: "", url: "" },
+    x: { enabled: false, label: "", url: "" },
+    instagram: { enabled: false, label: "", url: "" },
 };
 
-export const DEFAULT_SITE_FRIEND_LINKS: SiteFriendLink[] = [
-    { id: "vozeb-pro-home", label: "VOZEB", url: "https://www.vozeb.com/", enabled: true },
-    { id: "qq-vozeb-open-source", label: "VOZEB 开源交流 QQ 群", url: VOZEB_QQ_GROUP_URL, enabled: true },
-    { id: "linux-do", label: "Linux.do", url: "https://linux.do/", enabled: true },
-];
+export const DEFAULT_SITE_FRIEND_LINKS: SiteFriendLink[] = [];
 
 export type MailSettings = {
     provider: string;
