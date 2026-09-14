@@ -5,6 +5,7 @@ import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy"
 import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
 import { resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
+import { normalizeTextStream } from "@/lib/server/text-stream-protocol";
 
 export type TextPlanningProtocol = "responses" | "chat" | "gemini" | "custom";
 export type TextPlanningCandidate = {
@@ -231,7 +232,7 @@ async function readRoutedResponse(input: RoutedTextRequest, request: ProtocolReq
         const raw = await response.text();
         throw new TextPlanningRequestError(safeUpstreamError(raw, response.status), response.status, retryableStatus(response.status));
     }
-    if (request.protocol === "custom" || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+    if (request.protocol === "custom" || request.supportsStreaming === false) {
         const firstByteMs = Date.now() - startedAt;
         await input.onFirstByte?.(firstByteMs);
         const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
@@ -242,40 +243,23 @@ async function readRoutedResponse(input: RoutedTextRequest, request: ProtocolReq
         const output = readProtocolArguments(payload, input.tool.name, request, true);
         return finishRoutedOutput(input, request, response.headers, output, startedAt, firstByteMs);
     }
-    if (!response.body) throw new TextPlanningRequestError("文本模型没有返回有效流");
-    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buffer = "";
     let output = "";
     let visible = "";
     let firstByteMs: number | undefined;
     let firstContentMs: number | undefined;
-    for (;;) {
-        const next = await reader.read();
-        if (next.done) break;
+    for await (const event of normalizeTextStream(response, request.protocol)) {
+        if (event.type === "error") throw new TextPlanningRequestError(event.message, event.status || 502, !event.contract && retryableStatus(event.status || 502));
+        if (event.type === "completed" || event.type === "usage") continue;
         if (firstByteMs === undefined) {
             firstByteMs = Date.now() - startedAt;
             await input.onFirstByte?.(firstByteMs);
         }
-        buffer += next.value;
-        const frames = takeSseFrames(buffer);
-        buffer = frames.rest;
-        for (const frame of frames.values) {
-            if (frame === "[DONE]") continue;
-            const payload = parseRecord(frame);
-            if (!payload) continue;
-            output += streamedText(payload, request.protocol);
-            const routed = routeOutput(output);
-            if (routed.kind !== "conversation" || routed.content === visible) continue;
-            visible = routed.content;
-            firstContentMs ??= Date.now() - startedAt;
-            await input.onConversationContent?.(visible, firstContentMs);
-        }
-    }
-    if (buffer.trim()) {
-        for (const frame of takeSseFrames(`${buffer}\n\n`).values) {
-            const payload = parseRecord(frame);
-            if (payload) output += streamedText(payload, request.protocol);
-        }
+        output += event.text;
+        const routed = routeOutput(output);
+        if (routed.kind !== "conversation" || routed.content === visible) continue;
+        visible = routed.content;
+        firstContentMs ??= Date.now() - startedAt;
+        await input.onConversationContent?.(visible, firstContentMs);
     }
     const result = finishRoutedOutput(input, request, response.headers, output, startedAt, firstByteMs, firstContentMs);
     if (result.kind === "conversation" && result.content !== visible) await input.onConversationContent?.(result.content, result.firstContentMs);
@@ -346,44 +330,6 @@ function geminiSsePath(path: string) {
     target.pathname = target.pathname.replace(/:generateContent$/i, ":streamGenerateContent");
     target.searchParams.set("alt", "sse");
     return `${target.pathname}${target.search}`;
-}
-
-function takeSseFrames(value: string) {
-    const normalized = value.replace(/\r\n/g, "\n");
-    const blocks = normalized.split("\n\n");
-    const rest = blocks.pop() || "";
-    const values = blocks
-        .map((block) =>
-            block
-                .split("\n")
-                .filter((line) => line.startsWith("data:"))
-                .map((line) => line.slice(5).trimStart())
-                .join("\n"),
-        )
-        .filter(Boolean);
-    return { values, rest };
-}
-
-function streamedText(payload: Record<string, unknown>, protocol: TextPlanningProtocol) {
-    if (protocol === "responses") return payload.type === "response.output_text.delta" && typeof payload.delta === "string" ? payload.delta : "";
-    if (protocol === "gemini")
-        return records(record(firstRecord(payload.candidates)?.content)?.parts)
-            .map((part) => (typeof part.text === "string" ? part.text : ""))
-            .join("");
-    const delta = record(firstRecord(payload.choices)?.delta);
-    if (typeof delta?.content === "string") return delta.content;
-    return records(delta?.content)
-        .map((item) => (typeof item.text === "string" ? item.text : ""))
-        .join("");
-}
-
-function parseRecord(value: string) {
-    try {
-        const parsed = JSON.parse(value) as unknown;
-        return record(parsed);
-    } catch {
-        return undefined;
-    }
 }
 
 function readProtocolArguments(payload: Record<string, unknown>, toolName: string, request: ProtocolRequest, allowNaturalLanguage = false) {

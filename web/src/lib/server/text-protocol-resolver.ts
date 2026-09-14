@@ -9,6 +9,7 @@ export type ResolvedTextProtocol = {
     path: string;
     providerKind: ResolvedTextProtocolKind;
     providerPath: string;
+    supportsStreaming: boolean;
     requestTemplate?: string;
     resultField?: string;
 };
@@ -18,6 +19,7 @@ type TextProtocolInput = {
     apiFormat: ApiCallFormat;
     advancedConfig?: SystemChannelAdvancedConfig;
     throughSystemProxy?: boolean;
+    preserveNativeProtocol?: boolean;
 };
 
 export function resolveTextProtocol(input: TextProtocolInput): ResolvedTextProtocol {
@@ -63,7 +65,7 @@ export function resolveTextProtocol(input: TextProtocolInput): ResolvedTextProto
 }
 
 function proxyAdapted(input: TextProtocolInput, providerKind: "gemini" | "claude", providerPath: string): ResolvedTextProtocol {
-    if (!input.throughSystemProxy) return resolved(providerKind, providerPath);
+    if (!input.throughSystemProxy || input.preserveNativeProtocol) return resolved(providerKind, providerPath);
     return { ...resolved("chat", "/chat/completions"), providerKind, providerPath };
 }
 
@@ -75,7 +77,7 @@ function customProtocol(advanced: SystemChannelAdvancedConfig | undefined, model
 }
 
 function resolved(kind: ResolvedTextProtocolKind, path: string): ResolvedTextProtocol {
-    return { kind, path, providerKind: kind, providerPath: path };
+    return { kind, path, providerKind: kind, providerPath: path, supportsStreaming: kind !== "custom" };
 }
 
 function isChatPreset(protocol: SystemChannelProtocol | undefined) {

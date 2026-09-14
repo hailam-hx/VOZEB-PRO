@@ -84,7 +84,7 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
             lastUpstreamStatus: "submitting",
         });
         try {
-            const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/") });
+            const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/"), preserveNativeProtocol: true });
             const result = await runResolvedTextTask(candidateTask, origin, cookie, protocol);
             if ("state" in result) {
                 const billing = hasSystemAiCharge(result) ? { pointsCost: result.pointsCost, pointsRecordId: result.pointsRecordId, refunded: false } : undefined;
