@@ -141,3 +141,32 @@ TDD evidence:
 - `npm run typecheck`: **passed**. ESLint of the two changed TypeScript files: **0 errors, 1 unchanged unused-variable warning**. Prettier and `git diff --check`: **passed**.
 
 All verification used Node 22 and local fixtures. No real credentials, upstream providers, browser-session dependency or new polling/retry behavior was introduced. The previously documented four executor baseline failures and root-owned browser/live-database validation gap are unchanged.
+
+## Final browser-gate investigation — stale standalone build
+
+Root reported nine browser failures: the same three responsive cases across desktop Chromium, 390px and 430px. Systematic debugging and review verification found that this run exercised stale generated output, not the current source. No production or fixture changes were needed.
+
+- `pree2e` runs `scripts/prepare-e2e.mjs`, which only removes test data/reports/artifacts. It does not build the app. Playwright starts `pnpm run start`; `start-standalone.mjs` serves the existing `.next/standalone` unless `NEXT_DIST_DIR` selects another build.
+- The default `.next/BUILD_ID` timestamp was **2026-09-10 22:58:16 +0700**, before the committed composer scroll correction `8e1ef87` (**2026-09-14 12:08:35 +0700**). Its actual `/create` chunk `064wb0nr0y9hd.js` still sets the preview's `style.transform` to `translate3d(...)`, matching the failed trace. Copying static assets into standalone on startup does not rebuild that source chunk.
+- Current `/create` and Canvas source already synchronize preview `scrollTop`/`scrollLeft` on scroll, blur, value and layout changes, without translating the overlay viewport. Existing component regressions explicitly assert scroll values and an empty transform.
+- Neither `run.conversation.updated` nor `task.text.updated` was present in the stale build's static chunks. Current `services/api/creative.ts` explicitly handles both. Existing conversation regressions emit `Xin` followed by `Xin chào` and assert snapshot replacement, so the legacy conversation fixture remains valid and should not be changed to disguise stale output. Native TextTask events continue to use attempt/revision filtering.
+
+Fresh current-source verification, using Node 22 from `web`:
+
+```sh
+pnpm exec vitest run \
+  'src/app/(user)/canvas/components/canvas-agent-chat-ui.test.tsx' \
+  'src/app/(user)/create/components/creative-composer-popover.test.ts' \
+  'src/app/(user)/create/components/creative-composer-video-mode.test.ts' \
+  'src/app/(user)/create/components/creative-composer-styles.test.ts' \
+  'src/app/(user)/create/use-create-agent.test.ts' \
+  src/lib/agent-text-stream.test.ts \
+  src/services/api/creative.test.ts \
+  'src/app/(user)/canvas/components/canvas-agent-run-client.test.ts' \
+  src/lib/server/agent-run-text-stream.test.ts \
+  src/lib/server/agent-run-store.test.ts
+pnpm exec vitest run 'src/app/(user)/create/components/creative-reference-capability.test.tsx'
+pnpm run typecheck
+```
+
+Results: **10 files / 84 tests passed**, plus **1 file / 11 tests passed**; **typecheck passed**. No new RED/GREEN production-edit cycle was performed because the reported failing browser artifact already predates the existing fix. Root owns the fresh production rebuild and subsequent browser matrix. This investigation does not claim a fresh browser pass; it leaves working source and tests unchanged.
