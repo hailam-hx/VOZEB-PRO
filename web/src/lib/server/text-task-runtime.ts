@@ -21,6 +21,7 @@ import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, ge
 import { resolveTextProtocol, type ResolvedTextProtocol } from "@/lib/server/text-protocol-resolver";
 import { refundTextTask, textTaskRefundIdempotencyKey } from "@/lib/server/text-task-refund";
 import { normalizeTextStream } from "@/lib/server/text-stream-protocol";
+import { structuredRootError, textStreamDiagnosticsEnabled } from "@/lib/server/text-stream-diagnostics";
 import { createTextSnapshotWriter, registerTextTaskAttempt, type TextTaskSnapshotHook, type TextTaskTimeoutPolicy } from "@/lib/server/text-task-stream-control";
 
 configureServerProxyDispatcher();
@@ -118,6 +119,25 @@ async function executeTextTaskStep(task: TextTask, origin: string, cookie: strin
             if (runtime.response) await finishSystemAiTextAttempt(runtime.response.headers, { status: "failed", reason: message, payload: runtime.usagePayload, normalizedUsage: runtime.usageAccumulator?.finish() });
             const closed = await closeTextTaskAttempt(task.id, candidateTask.activeAttemptId!, "failed", { error: message }, activeRevision(latest));
             if (!closed) return { state: "failed", error: "文本任务状态已变化" };
+            if (textStreamDiagnosticsEnabled()) {
+                const closedAttempt = closed.attempts?.find((attempt) => attempt.id === candidateTask.activeAttemptId);
+                console.warn("Text task failure diagnostic", {
+                    event: "attempt_failed",
+                    ...candidateTask.executionContext,
+                    taskId: task.id,
+                    attemptId: candidateTask.activeAttemptId,
+                    attemptNo: candidateTask.attemptNo,
+                    protocol: protocol.kind,
+                    provider: config.advancedConfig?.protocol || config.apiFormat,
+                    channelId: config.channelId,
+                    model: config.model,
+                    revision: closedAttempt?.revision,
+                    hadPublicText: Boolean(runtime.snapshot.content),
+                    signalAborted: runtime.control.signal.aborted,
+                    failure: structuredRootError(error),
+                    ...(runtime.control.signal.aborted ? { abortReason: structuredRootError(reason) } : {}),
+                });
+            }
             await options.onAttemptState?.(closed);
             ownedTask = closed;
             if (config.channelId) recordChannelRuntimeFailure(config.channelId, "text", message);
@@ -147,7 +167,7 @@ function createAttemptRuntime(task: TextTask, streaming: boolean, options: TextT
         idleTimeoutMs: stageTimeout(timeouts?.idleMs),
         overallTimeoutMs,
     };
-    const control = registerTextTaskAttempt(task.id, task.activeAttemptId!, policy, streaming, options.signal);
+    const control = registerTextTaskAttempt(task.id, task.activeAttemptId!, policy, streaming, options.signal, task.executionContext);
     const attempt = task.attempts?.find((item) => item.id === task.activeAttemptId);
     return {
         control,
@@ -184,7 +204,19 @@ async function runNativeTextTask(task: TextTask, origin: string, cookie: string,
         url.searchParams.set("alt", "sse");
     }
     const response = await fetchTextAttempt(config, url.href, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" }, runtime);
-    for await (const event of normalizeTextStream(response, protocol.kind)) {
+    for await (const event of normalizeTextStream(response, protocol.kind, {
+        signal: runtime.control.signal,
+        diagnosticContext: {
+            source: "text_task_adapter",
+            ...task.executionContext,
+            taskId: task.id,
+            attemptId: task.activeAttemptId,
+            attemptNo: task.attemptNo,
+            channelId: config.channelId,
+            provider: config.advancedConfig?.protocol || config.apiFormat,
+            model: config.model,
+        },
+    })) {
         runtime.control.signal.throwIfAborted();
         if (event.type === "error") throw new GenerationSubmissionSafeFailure(event.message, event.status);
         if (event.type === "usage") {

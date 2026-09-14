@@ -1,10 +1,16 @@
 import { createStreamingUsageAccumulator } from "@/lib/server/usage-billing-adapter";
 import { attachUsageProviderEvidence, finishUsageProviderAttempt, settleCancelledUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
-import { TEXT_STREAM_COMPLETED, TEXT_STREAM_FAILED } from "./text-sse-decoder";
+import { createTextSseDecoder, TEXT_STREAM_COMPLETED, TEXT_STREAM_FAILED } from "./text-sse-decoder";
+import { classifyTextStreamTermination, createTextStreamDiagnostics, type TextStreamDiagnosticContext } from "./text-stream-diagnostics";
+import type { TextStreamProtocol } from "./text-stream-protocol";
 
-export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billing: UsageBilling, attemptNumber: number) {
+type MeteredTextStreamOptions = { protocol?: TextStreamProtocol; signal?: AbortSignal; diagnosticContext?: TextStreamDiagnosticContext };
+
+export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billing: UsageBilling, attemptNumber: number, options: MeteredTextStreamOptions = {}) {
     const reader = body.getReader();
     const accumulator = createStreamingUsageAccumulator("text", billing.snapshot.requestUsage);
+    const diagnostics = options.protocol ? createTextStreamDiagnostics(options.protocol, options.diagnosticContext) : undefined;
+    const diagnosticDecoder = diagnostics ? createTextSseDecoder((frame) => diagnostics.frame(frame)) : undefined;
     let finalized = false;
     let cancelled = false;
     const finalize = async (status: "succeeded" | "failed" | "canceled") => {
@@ -28,20 +34,26 @@ export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billin
                 const next = await reader.read();
                 if (cancelled) return;
                 if (next.done) {
+                    diagnosticDecoder?.finish();
+                    diagnostics?.finish("normal_eof", undefined, options.signal);
                     await finalize("succeeded");
                     controller.close();
                     return;
                 }
                 accumulator.push(next.value);
+                diagnostics?.byte(next.value);
+                diagnosticDecoder?.push(next.value);
                 controller.enqueue(next.value);
             } catch (error) {
                 if (cancelled) return;
+                diagnostics?.finish(classifyTextStreamTermination(error, options.signal), error, options.signal);
                 await finalize("failed");
                 controller.error(error);
             }
         },
         async cancel(reason) {
             cancelled = true;
+            diagnostics?.finish(reason === TEXT_STREAM_COMPLETED ? "protocol_terminal" : reason === TEXT_STREAM_FAILED ? "provider_error" : "application_abort", reason, options.signal);
             try {
                 await reader.cancel(reason);
             } finally {

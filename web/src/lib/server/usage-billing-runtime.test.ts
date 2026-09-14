@@ -74,6 +74,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -108,6 +109,50 @@ describe("usage billing runtime", () => {
         expect(db.walletHolds[0].status).toBe("active");
         expect(db.providerUsageAttempts[0]).toMatchObject({ status: "pending", observedUsage: { inputTokens: "5", outputTokens: "2" } });
         expect(db.usageCharges).toEqual([]);
+    });
+
+    it("records the raw proxy stream body-timeout root cause without logging text content", async () => {
+        vi.stubEnv("VOZEB_PRO_TEXT_STREAM_DIAGNOSTICS_TEST", "1");
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "text-task:proxy-diagnostic",
+            requestFingerprint: "f".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "fixture",
+        });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const rootError = Object.assign(new TypeError("terminated"), {
+            cause: Object.assign(new Error("body timed out"), { name: "BodyTimeoutError", code: "UND_ERR_BODY_TIMEOUT" }),
+        });
+        let sent = false;
+        const source = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                if (!sent) {
+                    sent = true;
+                    controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"private streamed text"}}]}\n\n'));
+                    return;
+                }
+                controller.error(rootError);
+            },
+        });
+        const reader = meteredTextResponseBody(source, billing, 1, {
+            protocol: "chat",
+            diagnosticContext: { source: "system_proxy_upstream", taskId: "proxy-diagnostic", attemptNo: 1, channelId: "channel", model: "model" },
+        }).getReader();
+
+        await reader.read();
+        await expect(reader.read()).rejects.toThrow("terminated");
+
+        expect(warn).toHaveBeenCalledWith(
+            "Text stream transport diagnostic",
+            expect.objectContaining({ source: "system_proxy_upstream", taskId: "proxy-diagnostic", connectionTermination: "body_timeout", framesReceived: 1, bytesReceived: expect.any(Number) }),
+        );
+        expect(info).toHaveBeenCalledWith("Text stream frame diagnostic", expect.objectContaining({ source: "system_proxy_upstream", sequence: 1, textDelta: true }));
+        expect(JSON.stringify([...info.mock.calls, ...warn.mock.calls])).not.toContain("private streamed text");
     });
     it("resubmits Custom async retry without polling its previous upstream task or restoring its scheduler result", async () => {
         const config = {

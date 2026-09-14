@@ -5,6 +5,8 @@ description: HOTX AI 当前版本需要人工或真实环境确认的事项
 
 # 待测试
 
+- 文本流读取失败现会在系统渠道代理原始上游层与 Text Task adapter 层分别输出脱敏结构化诊断，关联 task/attempt/channel/model，记录每帧顺序与字节数、最后上游帧/文本时间、`finishReason`、terminal/usage/`[DONE]`、连接结束类型，以及 `reader.read()` 根错误和 cause 的 name/message/code/errno/syscall；Text Task 同时记录实际注册的总超时/阶段超时、父 Signal、Abort 来源和 Attempt 转为失败的落点。专项自动化覆盖 normal EOF（含有 `finish_reason` 但缺 `[DONE]`）、application abort、socket reset、Undici body timeout、generic read error、敏感正文/凭据不入日志，以及 partial text 后仍沿用原失败语义且不切换渠道。历史失败 Attempt 无法由新增日志反向还原，仍需部署后在同一正式拓扑捕获下一次自然失败，并与 Dflop/反向代理同时间窗日志按 task/attempt 对齐后，才能决定是否调整 timeout、retry 或 parser。
+
 - 2026-09-10 HOTX AI 品牌发布复核已完成：桌面、390px、430px 的 Playwright 顺序运行共 197 项通过、25 项项目/环境跳过、0 项失败，覆盖 `/`、`/en`、`/zh-cn`、登录/注册、`/create`、后台站点设置、文档首页和 27 个公开 SEO URL。每处品牌 Logo 均验证精确 `HOTX AI` 文本、`/hx-favicon.png` 可见、非零正方形固有/布局尺寸、`object-contain` 和无横向溢出；后台保存后的首个 SSR 请求立即读取三语 SEO。空 EN SEO 字段保持为空；只有渲染首页标题回退到 HOTX AI 站点身份，description/keywords 不输出。
 
 - 2026-09-10 发布复核第 2 轮：由于 Playwright 固定启动 docs server，`.github/workflows/quality.yml` 的 `web` job 与 `.github/workflows/docker-image.yml` 的 `quality` job 现在都以 `web/pnpm-lock.yaml` 和 `docs/pnpm-lock.yaml` 共同作为 pnpm cache key，并在 `web` 工作目录中于 E2E 前显式执行 `pnpm --dir ../docs install --frozen-lockfile`。静态工作流契约 RED 为两处缺少 docs lockfile（exit 1），GREEN 为 9 项通过；同一 frozen docs install 本地 exit 0，随后文档品牌 Chromium/390px/430px E2E 共 6 项通过。

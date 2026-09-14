@@ -225,6 +225,45 @@ describe("text task runtime recovery", () => {
         expect(state.error).not.toContain("private detail");
     });
 
+    it("keeps read-error failure semantics and logs the adapter-to-attempt failed transition", async () => {
+        vi.stubEnv("VOZEB_PRO_TEXT_STREAM_DIAGNOSTICS_TEST", "1");
+        const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        state = { ...textTask(openAiConfig("one", "https://one.example"), [openAiConfig("two", "https://two.example")]), executionContext: { runId: "run", parentTaskId: "parent" } };
+        const bytes = new TextEncoder().encode(chatFrame("保留部分"));
+        let sent = false;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                new Response(
+                    new ReadableStream<Uint8Array>({
+                        pull(controller) {
+                            if (!sent) {
+                                sent = true;
+                                controller.enqueue(bytes);
+                                return;
+                            }
+                            controller.error(Object.assign(new TypeError("terminated"), { cause: { name: "SocketError", code: "UND_ERR_SOCKET", message: "other side closed" } }));
+                        },
+                    }),
+                    { headers: { "content-type": "text/event-stream" } },
+                ),
+            ),
+        );
+
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "failed", error: "读取文本流失败" });
+
+        expect(state.status).toBe("error");
+        expect(state.visibleTextSnapshot?.content).toBe("保留部分");
+        expect(state.attempts?.map((attempt) => attempt.status)).toEqual(["failed"]);
+        expect(warn).toHaveBeenCalledWith(
+            "Text task failure diagnostic",
+            expect.objectContaining({ event: "attempt_failed", runId: "run", taskId: state.id, parentTaskId: "parent", attemptId: state.activeAttemptId, protocol: "chat", hadPublicText: true, signalAborted: false }),
+        );
+        info.mockRestore();
+        warn.mockRestore();
+    });
+
     it("cancels the upstream body, flushes partial text, and settles cancellation once", async () => {
         state = textTask(openAiConfig("one", "https://one.example"), [openAiConfig("two", "https://two.example")]);
         let cancelled = false;

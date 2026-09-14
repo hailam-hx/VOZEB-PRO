@@ -70,7 +70,11 @@ describe("text snapshot writer", () => {
 });
 
 describe("attempt scoped cancellation and configured timeouts", () => {
-    afterEach(() => vi.useRealTimers());
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        vi.unstubAllEnvs();
+    });
 
     it("shares the attempt registry across separately loaded route modules", async () => {
         const attempt = control.registerTextTaskAttempt("cross-route-task", "attempt", {}, true);
@@ -102,6 +106,38 @@ describe("attempt scoped cancellation and configured timeouts", () => {
         await vi.advanceTimersByTimeAsync(80);
         expect(attempt.signal.aborted).toBe(true);
         expect(attempt.signal.reason).toMatchObject({ name: "TimeoutError", stage });
+        attempt.dispose();
+    });
+
+    it("logs the configured timeout source and stage without changing the abort reason", async () => {
+        vi.useFakeTimers();
+        vi.stubEnv("VOZEB_PRO_TEXT_STREAM_DIAGNOSTICS_TEST", "1");
+        const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const attempt = control.registerTextTaskAttempt("task", "attempt", { overallTimeoutMs: 150_000 }, true, undefined, { runId: "run", parentTaskId: "parent" });
+
+        await vi.advanceTimersByTimeAsync(150_000);
+
+        expect(info).toHaveBeenCalledWith(
+            "Text task timeout diagnostic",
+            expect.objectContaining({ runId: "run", taskId: "task", parentTaskId: "parent", attemptId: "attempt", event: "registered", policy: { overallTimeoutMs: 150_000 }, streaming: true, parentSignalAttached: false }),
+        );
+        expect(attempt.signal.reason).toMatchObject({ name: "TimeoutError", stage: "overall" });
+        expect(warn).toHaveBeenCalledWith("Text task abort diagnostic", expect.objectContaining({ runId: "run", taskId: "task", parentTaskId: "parent", attemptId: "attempt", source: "timeout", stage: "overall", timeoutMs: 150_000 }));
+        attempt.dispose();
+    });
+
+    it("records an already-aborted parent signal as the abort source", () => {
+        vi.stubEnv("VOZEB_PRO_TEXT_STREAM_DIAGNOSTICS_TEST", "1");
+        vi.spyOn(console, "info").mockImplementation(() => undefined);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const parent = new AbortController();
+        parent.abort(new DOMException("parent stopped", "AbortError"));
+
+        const attempt = control.registerTextTaskAttempt("task", "attempt", {}, true, parent.signal, { runId: "run", parentTaskId: "parent" });
+
+        expect(attempt.signal.aborted).toBe(true);
+        expect(warn).toHaveBeenCalledWith("Text task abort diagnostic", expect.objectContaining({ taskId: "task", attemptId: "attempt", source: "parent" }));
         attempt.dispose();
     });
 

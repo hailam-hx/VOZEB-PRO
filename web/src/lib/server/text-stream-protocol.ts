@@ -1,16 +1,18 @@
 import { createTextSseDecoder, TEXT_STREAM_COMPLETED, TEXT_STREAM_FAILED } from "./text-sse-decoder";
+import { classifyTextStreamTermination, createTextStreamDiagnostics, type TextStreamDiagnosticContext } from "./text-stream-diagnostics";
 
 export type TextStreamProtocol = "chat" | "responses" | "gemini" | "claude";
 
 export type NormalizedTextStreamEvent =
     { type: "text_delta"; text: string } | { type: "usage"; inputTokens?: number; outputTokens?: number; totalTokens?: number } | { type: "completed" } | { type: "error"; message: string; status?: number; contract?: true };
 
-type TextStreamOptions = { onFirstByte?: () => void | Promise<void> };
+type TextStreamOptions = { onFirstByte?: () => void | Promise<void>; signal?: AbortSignal; diagnosticContext?: TextStreamDiagnosticContext };
 type UsageState = { inputTokens?: number; outputTokens?: number };
 
 export async function* normalizeTextStream(response: Response, protocol: TextStreamProtocol, options: TextStreamOptions = {}): AsyncGenerator<NormalizedTextStreamEvent> {
     if (!response.ok) {
-        reportDiagnostic(protocol, "http_error", await response.text(), response.status);
+        await response.text();
+        reportDiagnostic(protocol, "http_error", response.status);
         yield { type: "error", message: `文本流请求失败（HTTP ${response.status}）`, status: response.status };
         return;
     }
@@ -32,6 +34,7 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
     let firstByte = false;
     const usageState: UsageState = {};
     const consume = (frame: string) => streamEvents(frame, protocol, usageState);
+    const diagnostics = createTextStreamDiagnostics(protocol, options.diagnosticContext);
     try {
         reading: for (;;) {
             const next = await reader.read();
@@ -40,8 +43,12 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
                 await options.onFirstByte?.();
             }
             if (next.done) decoder.finish();
-            else decoder.push(next.value);
+            else {
+                diagnostics?.byte(next.value);
+                decoder.push(next.value);
+            }
             for (const frame of frames.splice(0)) {
+                diagnostics?.frame(frame);
                 const parsed = consume(frame);
                 completed ||= parsed.completed;
                 for (const event of parsed.events) {
@@ -53,17 +60,25 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
             if (next.done) break;
         }
     } catch (error) {
+        diagnostics?.finish(classifyTextStreamTermination(error, options.signal), error, options.signal);
         if (error instanceof Error && error.name === "AbortError") throw error;
-        reportDiagnostic(protocol, "read_error", error instanceof Error ? error.message : String(error));
         yield { type: "error", message: "读取文本流失败" };
         return;
     } finally {
         await reader.cancel(completed ? TEXT_STREAM_COMPLETED : failed ? TEXT_STREAM_FAILED : undefined).catch(() => undefined);
         reader.releaseLock();
     }
-    if (failed) return;
-    if (completed) yield { type: "completed" };
-    else yield { type: "error", message: "文本流在完成前意外结束", contract: true };
+    if (failed) {
+        diagnostics?.finish("provider_error", undefined, options.signal);
+        return;
+    }
+    if (completed) {
+        diagnostics?.finish("protocol_terminal", undefined, options.signal);
+        yield { type: "completed" };
+    } else {
+        diagnostics?.finish("normal_eof", undefined, options.signal);
+        yield { type: "error", message: "文本流在完成前意外结束", contract: true };
+    }
 }
 
 function streamEvents(frame: string, protocol: TextStreamProtocol, usageState: UsageState): { events: NormalizedTextStreamEvent[]; completed: boolean } {
@@ -73,7 +88,7 @@ function streamEvents(frame: string, protocol: TextStreamProtocol, usageState: U
     const events: NormalizedTextStreamEvent[] = [];
     const usage = normalizedUsage(payload, usageState);
     if (hasStreamError(payload)) {
-        reportDiagnostic(protocol, "stream_error", JSON.stringify(payload));
+        reportDiagnostic(protocol, "stream_error");
         if (usage) events.push({ type: "usage", ...usage });
         events.push({ type: "error", message: "文本流上游返回错误" });
         return { events, completed: false };
@@ -136,8 +151,8 @@ function nativeCompleted(payload: Record<string, unknown>, protocol?: TextStream
     return false;
 }
 
-function reportDiagnostic(protocol: TextStreamProtocol, kind: string, diagnostic: string, status?: number) {
-    console.warn("Text stream protocol diagnostic", { protocol, kind, status, diagnostic });
+function reportDiagnostic(protocol: TextStreamProtocol, kind: string, status?: number) {
+    console.warn("Text stream protocol diagnostic", { protocol, kind, status });
 }
 
 function parseRecord(value: string) {

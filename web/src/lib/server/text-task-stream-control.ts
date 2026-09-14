@@ -1,4 +1,5 @@
 import type { TextTask, TextTaskSnapshotUpdate } from "./text-task-store";
+import { structuredRootError, textStreamDiagnosticsEnabled } from "./text-stream-diagnostics";
 
 export type TextTaskTimeoutPolicy = Partial<Record<`${"connect" | "firstByte" | "firstText" | "idle" | "overall"}TimeoutMs`, number>>;
 export type TextTaskSnapshotHook = (task: TextTask) => void | Promise<void>;
@@ -51,12 +52,37 @@ type Stage = "connect" | "firstByte" | "firstText" | "idle" | "overall";
 const registry = globalThis as typeof globalThis & { __vozebProTextTaskControllers?: Map<string, AbortController> };
 const controllers = (registry.__vozebProTextTaskControllers ??= new Map<string, AbortController>());
 
-export function registerTextTaskAttempt(taskId: string, attemptId: string, policy: TextTaskTimeoutPolicy, streaming: boolean, parentSignal?: AbortSignal) {
+export function registerTextTaskAttempt(taskId: string, attemptId: string, policy: TextTaskTimeoutPolicy, streaming: boolean, parentSignal?: AbortSignal, context?: { runId?: string; parentTaskId?: string }) {
     const key = `${taskId}\0${attemptId}`;
     const controller = new AbortController();
+    const startedAt = Date.now();
     controllers.set(key, controller);
     const signal = parentSignal ? AbortSignal.any([controller.signal, parentSignal]) : controller.signal;
     const timers = new Map<Stage, ReturnType<typeof setTimeout>>();
+    if (context && textStreamDiagnosticsEnabled()) console.info("Text task timeout diagnostic", { ...context, taskId, attemptId, event: "registered", policy, streaming, parentSignalAttached: Boolean(parentSignal), registeredAt: startedAt });
+    const reportAbort = (source: "timeout" | "cancellation" | "application" | "parent", reason: unknown) => {
+        if (!context || !textStreamDiagnosticsEnabled()) return;
+        const details = reason && typeof reason === "object" && !Array.isArray(reason) ? (reason as Record<string, unknown>) : undefined;
+        console.warn("Text task abort diagnostic", {
+            ...context,
+            taskId,
+            attemptId,
+            source,
+            ...(typeof details?.stage === "string" ? { stage: details.stage } : {}),
+            ...(typeof details?.timeoutMs === "number" ? { timeoutMs: details.timeoutMs } : {}),
+            elapsedMs: Date.now() - startedAt,
+            reason: structuredRootError(reason),
+        });
+    };
+    const onControllerAbort = () => {
+        const reason = controller.signal.reason;
+        const details = reason && typeof reason === "object" && !Array.isArray(reason) ? (reason as Record<string, unknown>) : undefined;
+        reportAbort(typeof details?.stage === "string" ? "timeout" : reason instanceof Error && reason.name === "AbortError" ? "cancellation" : "application", reason);
+    };
+    const onParentAbort = () => reportAbort("parent", parentSignal?.reason);
+    controller.signal.addEventListener("abort", onControllerAbort, { once: true });
+    parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+    if (parentSignal?.aborted) onParentAbort();
     const clear = (stage: Stage) => {
         clearTimeout(timers.get(stage));
         timers.delete(stage);
@@ -65,7 +91,7 @@ export function registerTextTaskAttempt(taskId: string, attemptId: string, polic
         clear(stage);
         const ms = policy[`${stage}TimeoutMs`];
         if (!Number.isFinite(ms) || Number(ms) <= 0) return;
-        const timer = setTimeout(() => controller.abort(Object.assign(new Error("文本模型响应超时"), { name: "TimeoutError", stage })), ms);
+        const timer = setTimeout(() => controller.abort(Object.assign(new Error("文本模型响应超时"), { name: "TimeoutError", stage, timeoutMs: ms })), ms);
         timer.unref?.();
         timers.set(stage, timer);
     };
@@ -90,6 +116,8 @@ export function registerTextTaskAttempt(taskId: string, attemptId: string, polic
         },
         dispose() {
             for (const stage of timers.keys()) clear(stage);
+            controller.signal.removeEventListener("abort", onControllerAbort);
+            parentSignal?.removeEventListener("abort", onParentAbort);
             if (controllers.get(key) === controller) controllers.delete(key);
         },
     };

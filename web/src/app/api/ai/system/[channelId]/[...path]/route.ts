@@ -30,6 +30,7 @@ import { attachUsageProviderEvidence, finishUsageProviderAttempt, recordUsagePro
 import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
 import { usageRecoveryIdentity } from "@/lib/server/generation-usage-context";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
+import { resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
 import { getVoiceProfileSourceDurationForBilling, userOwnsVoiceProfileProviderVoice } from "@/lib/server/voice-profile-store";
 
 export const runtime = "nodejs";
@@ -313,7 +314,31 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         });
     }
 
-    const responseBody = upstream.ok && usageBilling && usageContext && access.capability === "text" && upstream.body ? meteredTextResponseBody(upstream.body, usageBilling, usageContext.attemptNumber) : upstream.body;
+    const nativeTextProtocol =
+        upstream.ok && usageBilling && usageContext && access.capability === "text" && upstream.body && upstream.headers.get("content-type")?.toLowerCase().includes("text/event-stream") && upstreamModel
+            ? resolveTextProtocol({
+                  model: upstreamModel,
+                  apiFormat: globalPreset?.apiFormat || apiFormat,
+                  advancedConfig: channel.advancedConfig && modelConfig?.protocol ? { ...channel.advancedConfig, protocol: modelConfig.protocol } : channel.advancedConfig,
+                  preserveNativeProtocol: true,
+              }).kind
+            : undefined;
+    const recoveryIdentity = usageContext ? usageRecoveryIdentity(usageContext.businessRequestId) : undefined;
+    const responseBody =
+        upstream.ok && usageBilling && usageContext && access.capability === "text" && upstream.body
+            ? meteredTextResponseBody(upstream.body, usageBilling, usageContext.attemptNumber, {
+                  ...(nativeTextProtocol && nativeTextProtocol !== "custom" ? { protocol: nativeTextProtocol } : {}),
+                  signal: request.signal,
+                  diagnosticContext: {
+                      source: "system_proxy_upstream",
+                      taskId: recoveryIdentity?.taskId,
+                      attemptNo: usageContext.attemptNumber,
+                      channelId: channel.id,
+                      provider: modelConfig?.protocol || channel.advancedConfig?.protocol || apiFormat,
+                      model: upstreamModel,
+                  },
+              })
+            : upstream.body;
     return new Response(responseBody, {
         status: upstream.status,
         statusText: upstream.statusText,
