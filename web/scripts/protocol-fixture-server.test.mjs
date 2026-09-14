@@ -37,6 +37,19 @@ describe("protocol fixture server", () => {
         expect(JSON.parse(response.output[0].arguments)).toMatchObject({ intent: "generation", deliverables: [{ type: "image", model: "mock-image", ratio: "16:9" }] });
     });
 
+    it("serves native Chat SSE when a text request asks to stream", async () => {
+        const response = await fetch(`${origin}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ model: "mock-text", stream: true, messages: [{ role: "user", content: "fixture" }] }),
+        });
+
+        expect(response.headers.get("content-type")).toContain("text/event-stream");
+        const stream = await response.text();
+        expect(stream).toContain('data: {"choices":[{"delta":{"content":"协议测试文本返回成功"}}]}');
+        expect(stream).toContain("data: [DONE]");
+    });
+
     it("serves OpenAI and Stable Diffusion image results", async () => {
         const openAi = await fetch(`${origin}/v1/images/generations`, { method: "POST" }).then((response) => response.json());
         const stableDiffusion = await fetch(`${origin}/sdapi/v1/txt2img`, { method: "POST" }).then((response) => response.json());

@@ -91,6 +91,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         if (shouldFailRequest(request, model)) return sendJson(response, model.includes("-fail") ? 400 : 503, { error: { message: "fixture text failure" } });
         const toolName = selectedToolName(payload);
         const argumentsText = toolName ? JSON.stringify(toolArguments(toolName, payload)) : "协议测试文本返回成功";
+        if (payload.stream === true) return sendTextStream(response, path, argumentsText);
         if (path === "/responses") {
             return sendJson(response, 200, toolName ? { output: [{ type: "function_call", name: toolName, arguments: argumentsText }] } : { output_text: argumentsText });
         }
@@ -107,13 +108,14 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         });
     }
 
-    if (request.method === "POST" && /\/models\/[^/]+:generateContent$/.test(path)) {
+    if (request.method === "POST" && /\/models\/[^/]+:(?:generateContent|streamGenerateContent)$/.test(path)) {
         const payload = jsonBody(body);
         if (payload.generationConfig?.responseModalities?.includes("IMAGE")) {
             return sendJson(response, 200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: (await fixtureImage(options)).toString("base64") } }] } }] });
         }
         const toolName = selectedToolName(payload);
         const text = toolName ? JSON.stringify(toolArguments(toolName, payload)) : "协议测试文本返回成功";
+        if (path.endsWith(":streamGenerateContent")) return sendSse(response, [{ candidates: [{ content: { parts: [{ text }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 8, totalTokenCount: 16 } }]);
         return sendJson(response, 200, { candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 8, totalTokenCount: 16 } });
     }
     if (request.method === "POST" && path === "/planner/run") return sendJson(response, 200, { data: { plan: JSON.stringify({}) } });
@@ -446,6 +448,31 @@ function shouldFailRequest(request, model) {
 
 function sendJson(response, status, value, headers) {
     sendBytes(response, status, "application/json; charset=utf-8", Buffer.from(JSON.stringify(value)), headers);
+}
+
+function sendTextStream(response, path, text) {
+    if (path === "/responses")
+        return sendSse(response, [
+            { type: "response.output_text.delta", delta: text },
+            { type: "response.completed", response: { usage: { input_tokens: 8, output_tokens: 8, total_tokens: 16 } } },
+        ]);
+    if (path === "/messages")
+        return sendSse(response, [
+            { type: "message_start", message: { usage: { input_tokens: 8, output_tokens: 0 } } },
+            { type: "content_block_delta", delta: { type: "text_delta", text } },
+            { type: "message_delta", usage: { output_tokens: 8 } },
+            { type: "message_stop" },
+        ]);
+    return sendSse(response, [{ choices: [{ delta: { content: text } }] }, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 8, completion_tokens: 8, total_tokens: 16 } }, "[DONE]"]);
+}
+
+function sendSse(response, events) {
+    sendBytes(
+        response,
+        200,
+        "text/event-stream; charset=utf-8",
+        Buffer.from(events.map((event) => `data: ${typeof event === "string" ? event : JSON.stringify(event)}\n\n`).join("")),
+    );
 }
 
 function sendBytes(response, status, contentType, bytes, headers = {}) {
