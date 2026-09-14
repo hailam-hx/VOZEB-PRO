@@ -12,6 +12,7 @@ import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { createTextTask, type TextTask, type TextTaskConfig } from "@/lib/server/text-task-store";
 import type { AiTextMessage } from "@/types/ai";
+import { resolveAgentTextTaskContext } from "@/lib/server/agent-run-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ export const maxDuration = 2400;
 type CreateTextTaskBody = {
     config?: TextTaskConfig;
     messages?: AiTextMessage[];
+    context?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -40,7 +42,9 @@ export async function POST(request: Request) {
         const messages = sanitizeMessages(body.messages);
         if (!configs.length || !messages.length) return NextResponse.json({ error: "任务参数不完整" }, { status: 400 });
 
-        const task = await createTextTask({ userId: currentUser.id, config: configs[0], candidateConfigs: configs.slice(1), messages });
+        const executionContext = body.context ? await resolveAgentTextTaskContext(currentUser.id, body.context) : undefined;
+        if (body.context && !executionContext) return NextResponse.json({ error: "Agent 执行上下文已失效" }, { status: 409 });
+        const task = await createTextTask({ userId: currentUser.id, config: configs[0], candidateConfigs: configs.slice(1), messages, ...(executionContext ? { executionContext } : {}) });
         const cookie = request.headers.get("cookie") || "";
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         await scheduleGenerationTask("text", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });

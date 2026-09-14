@@ -82,7 +82,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 async function cancelAgentRun(request: Request, run: AgentRun) {
     const origin = resolveInternalOrigin(new URL(request.url).origin);
     const cookie = request.headers.get("cookie") || "";
-    const children = run.tasks.filter((task) => task.status === "running" && ["text", "image", "video", "audio"].includes(task.type)).flatMap((task) => cancellableChildTaskIds(task).map((taskId) => ({ type: task.type, taskId })));
+    const children = run.tasks
+        .filter((task) => task.status === "running" && ["text", "image", "video", "audio"].includes(task.type))
+        .flatMap((task) => cancellableChildTaskIds(task).map((taskId) => ({ type: task.type, taskId, ...(task.type === "text" && task.activeAttemptId ? { attemptId: task.activeAttemptId } : {}) })));
     const requestedAt = run.cancellation?.requestedAt || Date.now();
     const stopping = await updateAgentRunById(
         run.id,
@@ -114,13 +116,13 @@ async function cancelAgentRun(request: Request, run: AgentRun) {
     return NextResponse.json({ code: 0, data: { run: publicAgentRun(cancelled) }, msg: "OK" });
 }
 
-async function cancelChildTask(child: { type: AgentRun["tasks"][number]["type"]; taskId: string }, origin: string, cookie: string) {
+async function cancelChildTask(child: { type: AgentRun["tasks"][number]["type"]; taskId: string; attemptId?: string }, origin: string, cookie: string) {
     const url = `${origin}/api/${child.type}-tasks/${encodeURIComponent(child.taskId)}`;
     try {
         const response = await fetchInternalApi(url, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", cookie },
-            body: JSON.stringify({ status: "cancelled" }),
+            body: JSON.stringify({ status: "cancelled", ...(child.attemptId ? { attemptId: child.attemptId } : {}) }),
         });
         const result = await readChildTaskResponse(response);
         if ((response.ok && childTaskTerminal(result.status)) || response.status === 404) return { taskId: child.taskId, confirmed: true as const };

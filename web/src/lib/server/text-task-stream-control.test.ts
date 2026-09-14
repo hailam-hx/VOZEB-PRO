@@ -72,6 +72,18 @@ describe("text snapshot writer", () => {
 describe("attempt scoped cancellation and configured timeouts", () => {
     afterEach(() => vi.useRealTimers());
 
+    it("shares the attempt registry across separately loaded route modules", async () => {
+        const attempt = control.registerTextTaskAttempt("cross-route-task", "attempt", {}, true);
+        try {
+            vi.resetModules();
+            const routeControl = await import("./text-task-stream-control");
+            expect(routeControl.cancelTextTaskAttempt("cross-route-task", "attempt")).toBe(true);
+            expect(attempt.signal.aborted).toBe(true);
+        } finally {
+            attempt.dispose();
+        }
+    });
+
     it("cancels only the identified attempt and unregisters it on dispose", () => {
         const one = control.registerTextTaskAttempt("task", "one", {}, true);
         const two = control.registerTextTaskAttempt("task", "two", {}, true);

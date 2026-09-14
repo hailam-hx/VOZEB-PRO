@@ -332,6 +332,14 @@ export function useCreateAgent() {
             streamRef.current = watchCreativeAgentRun(
                 run.id,
                 {
+                    onTextTask: (parentTaskId, state) => {
+                        if (!isCurrentConversation(run.conversationId, generation)) return;
+                        setRunDetails((current) => {
+                            const currentRun = current[run.id] || run;
+                            const tasks = currentRun.tasks.some((task) => task.id === parentTaskId) ? currentRun.tasks : [...currentRun.tasks, { id: parentTaskId, title: "", type: "text" as const, status: "running" as const }];
+                            return { ...current, [run.id]: { ...currentRun, tasks: tasks.map((task) => (task.id === parentTaskId ? { ...task, ...state } : task)) } };
+                        });
+                    },
                     onConversation: (content) => {
                         if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
                         setRunDetails((current) => ({

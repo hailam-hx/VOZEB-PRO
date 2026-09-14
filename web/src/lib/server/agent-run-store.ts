@@ -14,6 +14,8 @@ import type { AgentRunPlannerAudit } from "./agent-run-audit";
 import type { TextPlanningProtocol } from "./text-planning-runtime";
 import { normalizeAgentRunCanvasSnapshot, selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 import type { VoiceSelection } from "@/lib/voice-selection";
+import { applyAgentTextEvent, type AgentTextState, type AgentTextEvent } from "@/lib/agent-text-stream";
+import { getTextTask, type TextTask } from "./text-task-store";
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentRunReviewStatus = "review_pending" | "reviewing" | "review_completed" | "review_unavailable";
@@ -51,29 +53,31 @@ export type AgentRunChildSlot = AgentRunGenerationSelection & {
     status: "resolved" | "failed";
     error?: string;
 };
-export type AgentRunTask = AgentRunGenerationSelection & {
-    id: string;
-    targetNodeId?: string;
-    referenceAssetId?: string;
-    referenceUrl?: string;
-    referenceType?: "image" | "video" | "audio";
-    references?: AgentRunReference[];
-    title: string;
-    type: "text" | "image" | "video" | "audio";
-    optimizedPrompt?: string;
-    prompt: string;
-    count: number;
-    dependencies: string[];
-    status: "ready" | "running" | "completed" | "failed" | "cancelled";
-    attempts: number;
-    taskId?: string;
-    taskIds?: string[];
-    childTasks?: AgentRunChildTask[];
-    childSlots?: AgentRunChildSlot[];
-    assetIds?: string[];
-    result?: unknown;
-    error?: string;
-};
+export type AgentRunTask = AgentRunGenerationSelection &
+    AgentTextState & {
+        textAttemptNo?: number;
+        id: string;
+        targetNodeId?: string;
+        referenceAssetId?: string;
+        referenceUrl?: string;
+        referenceType?: "image" | "video" | "audio";
+        references?: AgentRunReference[];
+        title: string;
+        type: "text" | "image" | "video" | "audio";
+        optimizedPrompt?: string;
+        prompt: string;
+        count: number;
+        dependencies: string[];
+        status: "ready" | "running" | "completed" | "failed" | "cancelled";
+        attempts: number;
+        taskId?: string;
+        taskIds?: string[];
+        childTasks?: AgentRunChildTask[];
+        childSlots?: AgentRunChildSlot[];
+        assetIds?: string[];
+        result?: unknown;
+        error?: string;
+    };
 export type AgentRun = {
     id: string;
     userId: string;
@@ -219,6 +223,42 @@ async function assertVideoFrameAssets(userId: string, input: CreativeRunRequest)
 }
 
 export const getAgentRun = (id: string) => getStoredGenerationTask<AgentRun>("agent", id);
+export async function resolveAgentTextTaskContext(userId: string, value: unknown): Promise<TextTask["executionContext"] | null> {
+    if (!value || typeof value !== "object") return null;
+    const { runId, parentTaskId, executionId } = value as Record<string, unknown>;
+    if (typeof runId !== "string" || typeof parentTaskId !== "string" || typeof executionId !== "string" || !executionId) return null;
+    const run = await getAgentRun(runId);
+    if (!run || run.userId !== userId || run.status !== "running" || run.executionId !== executionId || !run.tasks.some((task) => task.id === parentTaskId && task.type === "text" && task.status === "running")) return null;
+    return { runId: run.id, parentTaskId };
+}
+export async function mirrorAgentTextTaskSnapshot(task: TextTask): Promise<AgentRun | null> {
+    const { runId, parentTaskId } = task.executionContext || {};
+    const attempt = task.attempts?.find((item) => item.id === task.activeAttemptId);
+    if (!runId || !parentTaskId || !attempt) return null;
+    const latest = await getTextTask(task.id);
+    if (latest?.activeAttemptId !== attempt.id) return null;
+    const data: AgentTextEvent = {
+        runId,
+        taskId: task.id,
+        parentTaskId,
+        attemptId: attempt.id,
+        revision: attempt.revision,
+        content: attempt.content,
+        status: attempt.status === "running" ? "streaming" : attempt.status === "succeeded" ? "completed" : attempt.status === "cancelled" ? "cancelled" : "failed",
+    };
+    return mutateCreativeRun<AgentRun>(runId, TTL, (current) => {
+        const parent = current.tasks.find((item) => item.id === parentTaskId && item.type === "text");
+        if (!parent || current.userId !== task.userId || (parent.taskId && parent.taskId !== task.id) || (parent.textAttemptNo || 0) > attempt.attemptNo) return null;
+        const started = parent.activeAttemptId !== attempt.id;
+        const base = started ? { ...parent, activeAttemptId: attempt.id, textRevision: -1, textAttemptNo: attempt.attemptNo } : parent;
+        const next = applyAgentTextEvent(base, data);
+        if (next === base) return null;
+        return {
+            run: { ...current, tasks: current.tasks.map((item) => (item.id === parentTaskId ? { ...next, taskId: task.id } : item)) },
+            event: { type: started && !data.content && data.status === "streaming" ? "task.attempt.started" : "task.text.updated", data },
+        };
+    });
+}
 export const listAgentRuns = (options: { userId: string; conversationId?: string; projectId?: string; surface?: CreativeSurface; statuses?: AgentRunStatus[]; limit?: number }) => queryStoredGenerationTasks<AgentRun>("agent", options);
 export async function getAgentRunByClientRequestId(userId: string, clientRequestId: string) {
     return getCreativeRunByClientRequestId<AgentRun>(userId, clientRequestId);
@@ -240,9 +280,7 @@ export async function setAgentRunStatus(run: AgentRun, status: AgentRunStatus) {
                     tasks,
                     executionId: undefined,
                     ...(status === "cancelled" ? { cancellation: undefined } : {}),
-                    ...(["completed", "failed", "cancelled"].includes(status)
-                        ? { timings: { ...(current.timings || { requestAcceptedAt: current.createdAt }), runCompletedAt: current.timings?.runCompletedAt || now } }
-                        : {}),
+                    ...(["completed", "failed", "cancelled"].includes(status) ? { timings: { ...(current.timings || { requestAcceptedAt: current.createdAt }), runCompletedAt: current.timings?.runCompletedAt || now } } : {}),
                 },
                 event: { type: `run.${status}`, ...(ops.length ? { data: { ops } } : {}) },
                 assistant: terminalAssistant(current, status),

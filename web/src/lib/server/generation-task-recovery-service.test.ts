@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
     getTextTask: vi.fn(),
     updateTextTask: vi.fn(),
     runTextTaskStep: vi.fn(),
+    mirrorText: vi.fn(),
     requestCancellation: vi.fn(),
     refundImageTask: vi.fn(),
     refundVideoTask: vi.fn(),
@@ -49,7 +50,7 @@ vi.mock("@/lib/server/generation-task-scheduler", () => ({
 }));
 vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.executeAgentRun }));
 vi.mock("@/lib/server/agent-run-execution", () => ({ processAgentRunReview: mocks.processAgentRunReview }));
-vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun }));
+vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, mirrorAgentTextTaskSnapshot: mocks.mirrorText }));
 vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn((userId: string) => `worker-context:${userId}`) }));
 vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: mocks.failVideoTask, persistVideoTaskResult: vi.fn(), queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
 vi.mock("@/lib/server/video-task-store", () => ({ getVideoTask: mocks.getVideoTask }));
@@ -92,6 +93,22 @@ vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings, get
 import { runGenerationTaskRecoveryBatch } from "./generation-task-recovery-service";
 
 describe("generation task recovery service", () => {
+    it("forwards accepted text while the recovery execution is still running", async () => {
+        const task = { id: "text-live", userId: "user", status: "pending", config: { model: "text", apiFormat: "openai" } };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, type: "text", status: "pending", executionPhase: "created" }]);
+        mocks.getTextTask.mockResolvedValue(task);
+        const observed: string[] = [];
+        mocks.mirrorText.mockImplementation(async (snapshot) => {
+            observed.push(snapshot.visibleTextSnapshot.content);
+        });
+        mocks.runTextTaskStep.mockImplementationOnce(async (_task, _origin, _cookie, options) => {
+            await options?.onSnapshot?.({ ...task, visibleTextSnapshot: { content: "尚未结束的正文" } });
+            return { state: "completed" };
+        });
+        await runGenerationTaskRecoveryBatch({ origin: "http://localhost", workerId: "worker" });
+        expect(observed).toEqual(["尚未结束的正文"]);
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.release.mockResolvedValue({});

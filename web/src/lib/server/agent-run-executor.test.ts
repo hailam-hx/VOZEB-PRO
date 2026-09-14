@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
     updateAgentRunConversationContent: vi.fn(),
     updateAgentRunTaskById: vi.fn(),
     scheduleGenerationTask: vi.fn(async () => undefined),
+    getTextTask: vi.fn(),
+    retryTextTask: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({
@@ -51,6 +53,7 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
 }));
 vi.mock("@/lib/server/generation-task-store", () => ({ linkStoredGenerationTask: mocks.linkStoredGenerationTask }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
+vi.mock("@/lib/server/text-task-store", () => ({ getTextTask: mocks.getTextTask, retryTextTask: mocks.retryTextTask }));
 vi.mock("@/lib/server/creative-review-service", () => ({ reviewCreativeOutputs: mocks.reviewCreativeOutputs }));
 vi.mock("@/lib/server/usage-billing-runtime", () => ({ finishSystemAiTextAttempt: mocks.finishSystemAiTextAttempt, resolveSystemAiTextFailure: mocks.resolveSystemAiTextFailure }));
 vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
@@ -404,6 +407,29 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(0);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).endsWith("/api/image-tasks/child-existing"))).toBe(true);
         expect(mocks.run?.status).toBe("completed");
+    });
+
+    it("restarts a failed text child before polling without allocating another task id", async () => {
+        mocks.run = {
+            ...runWithTasks([
+                { id: "article", title: "文章", type: "text", model: "planner", prompt: "扩写文章", count: 1, dependencies: [], status: "ready", attempts: 1, taskId: "text-existing", childTasks: [{ id: "text-existing", status: "failed", attempt: 1 }] },
+            ]),
+            surface: "chat",
+        };
+        mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
+        let childStatus = "error";
+        mocks.getTextTask.mockImplementation(async () => ({ id: "text-existing", userId: "user", status: childStatus }));
+        mocks.retryTextTask.mockImplementation(async () => {
+            childStatus = "pending";
+            return { id: "text-existing", status: "pending" };
+        });
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST") throw new Error("must reuse text child");
+            if (url.endsWith("/api/text-tasks/text-existing")) return Response.json({ task: { status: childStatus === "pending" ? "success" : "error", result: { content: "重试后完成的文章" } } });
+            throw new Error(`unexpected ${url}`);
+        });
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+        expect(mocks.run?.tasks[0]).toMatchObject({ status: "completed", taskId: "text-existing", result: { content: "重试后完成的文章" } });
     });
 
     it("keeps polling an existing manual child after the selected model is disabled", async () => {
@@ -1048,10 +1074,7 @@ describe("executeAgentRun backend settings", () => {
 
         expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ final: false, currentAttempt: { attemptNumber: 1, acceptance: "response" } }));
         expect(mocks.run).toMatchObject({ status: "completed", conversationReply: "Hello from backup" });
-        expect(mocks.run?.plannerAttempts).toEqual([
-            expect.objectContaining({ status: "failed", requestAcceptance: "response", firstByteMs: expect.any(Number) }),
-            expect.objectContaining({ status: "succeeded", resultKind: "conversation" }),
-        ]);
+        expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ status: "failed", requestAcceptance: "response", firstByteMs: expect.any(Number) }), expect.objectContaining({ status: "succeeded", resultKind: "conversation" })]);
     });
 
     it("fails over before the first public conversation frame", async () => {

@@ -37,6 +37,29 @@ describe("Canvas Agent 事件流", () => {
     });
     afterEach(() => vi.unstubAllGlobals());
 
+    it("replaces running text and restores failed partial text on reconnect", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const content: string[] = [];
+        const promise = watchCanvasAgentRun("run", {
+            onPlan: () => undefined,
+            onAssistant: () => undefined,
+            onStage: () => undefined,
+            onPaused: () => undefined,
+            onOps: () => undefined,
+            onTextTask: (_id, state) => {
+                if (state.visibleTextSnapshot) content.push(state.visibleTextSnapshot.content);
+            },
+        });
+        FakeEventSource.instance.emit("task.attempt.started", { data: { runId: "run", parentTaskId: "parent", taskId: "child", attemptId: "a", revision: 0, content: "", status: "streaming" } });
+        FakeEventSource.instance.emit("task.text.updated", { data: { runId: "run", parentTaskId: "parent", taskId: "child", attemptId: "a", revision: 1, content: "正文", status: "streaming" } });
+        FakeEventSource.instance.emit("run.snapshot", {
+            status: "failed",
+            tasks: [{ id: "parent", type: "text", status: "failed", activeAttemptId: "a", textRevision: 2, visibleTextSnapshot: { attemptId: "a", revision: 2, content: "正文部分", status: "failed" } }],
+        });
+        await promise;
+        expect(content).toEqual(["正文", "正文部分"]);
+    });
+
     it("reports thinking stages and the final returned message", async () => {
         vi.stubGlobal("EventSource", FakeEventSource);
         const stages: CanvasAgentRunStage[] = [];

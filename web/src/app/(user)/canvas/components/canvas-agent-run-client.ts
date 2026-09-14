@@ -2,6 +2,7 @@ import type { CanvasAgentOp } from "../utils/canvas-agent-ops";
 import type { CanvasAgentRunStage, CanvasAgentStableStageKey } from "./canvas-agent-progress";
 import { getCreativeAgentRun } from "@/services/api/creative";
 import { ClientSessionExpiredError, stopIfClientSessionExpired } from "@/services/api/session-expiration";
+import { createAgentTextTracker, type AgentTextState } from "@/lib/agent-text-stream";
 
 type RunHandlers = {
     onPlan: (ops: CanvasAgentOp[], reply: string) => void;
@@ -9,6 +10,7 @@ type RunHandlers = {
     onStage: (stage: CanvasAgentRunStage) => void;
     onPaused: (paused: boolean) => void;
     onOps: (ops: CanvasAgentOp[]) => void;
+    onTextTask?: (parentTaskId: string, state: AgentTextState) => void;
 };
 
 export type CanvasAgentRunTranslate = (key: string, values?: Record<string, string | number>) => string;
@@ -27,6 +29,7 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, option
         let latestOutput: { nodeIds?: string[]; taskType?: "text" | "image" | "video" | "audio" } | undefined;
         const completedOutputNodeIds = new Set<string>();
         let latestFailedTask: { taskId: string; title?: string } | undefined;
+        const textTasks = createAgentTextTracker(runId, handlers.onTextTask);
         const finish = (error?: Error) => {
             if (settled) return;
             settled = true;
@@ -60,6 +63,7 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, option
             try {
                 const run = await getCreativeAgentRun(runId);
                 if (settled) return;
+                textTasks.restore(run.tasks);
                 if (run.status === "completed") {
                     handlers.onAssistant(t("runCompleted"), latestOutput);
                     finish();
@@ -91,6 +95,8 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, option
         };
 
         listen("run.planning", () => reportStage({ key: "planning", text: t("planning") }));
+        listen("task.attempt.started", (event) => textTasks.event(read<{ data?: unknown }>(event).data, true));
+        listen("task.text.updated", (event) => textTasks.event(read<{ data?: unknown }>(event).data));
         listen("skills.selected", () => reportStage({ key: "skills", text: t("skills") }));
         listen("canvas.ops", (event) => {
             const payload = read<{ data?: { ops?: CanvasAgentOp[]; reply?: string } }>(event);
@@ -169,7 +175,8 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, option
             reportStage({ key: "executing", text: t("resumed") });
         });
         listen("run.snapshot", (event) => {
-            const payload = read<{ status?: string; tasks?: Array<{ id?: string; title?: string; status?: string; error?: string }> }>(event);
+            const payload = read<{ status?: string; tasks?: Array<AgentTextState & { id: string; type?: string; title?: string; status?: string; error?: string }> }>(event);
+            textTasks.restore(payload.tasks);
             if (payload.status === "cancelled") {
                 handlers.onAssistant(t("runCancelled"));
                 finish();

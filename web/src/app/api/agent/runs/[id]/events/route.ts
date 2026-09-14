@@ -63,6 +63,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
                         cursor = event.id;
                     }
                     if (events.length === CREATIVE_RUN_EVENT_BATCH_SIZE) continue;
+                    if (events.length) current = (await getAgentRun(run.id)) || current;
                     const snapshotVersion = `${current.status}:${current.updatedAt}`;
                     if (snapshotVersion !== lastSnapshotVersion) {
                         controller.enqueue(encoder.encode(`event: run.snapshot\ndata: ${JSON.stringify(publicAgentRunSnapshot(current))}\n\n`));

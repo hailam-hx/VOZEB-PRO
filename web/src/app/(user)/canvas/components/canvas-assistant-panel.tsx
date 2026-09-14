@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowRight, Bot, Files, History, ImagePlus, Layers3, LayoutPanelTop, PanelRightClose, Pause, PenLine, Play, Plus, Sparkles, Square, WandSparkles } from "lucide-react";
 import { App, Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import type { AppLocale } from "@/i18n/config";
+import { agentTextStatusText } from "@/lib/agent-text-stream";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { nanoid } from "nanoid";
@@ -59,6 +61,7 @@ import { AssistantHistory, AssistantReferenceChip, assistantMessageToChatMessage
 export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, sessions, activeSessionId, onSelectNodeIds, onSessionsChange, onApplyOps, onLocateNode, onPasteImage, closing, onCollapse }: CanvasAssistantPanelProps) {
     const { message } = App.useApp();
     const t = useTranslations("canvas");
+    const locale = useLocale() as AppLocale;
     const agentMessageFormatter = useAgentMessageFormatter();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const user = useUserStore((state) => state.user);
@@ -316,6 +319,10 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
                 await watchCanvasAgentRun(
                     runId,
                     {
+                        onTextTask: (parentTaskId, state) => {
+                            if (!state.visibleTextSnapshot?.content) return;
+                            upsertMessage(sessionId, { id: `text-${runId}-${parentTaskId}`, runId, role: "assistant", text: state.visibleTextSnapshot.content, meta: agentTextStatusText(state, "running", locale) });
+                        },
                         onPlan: (ops, reply) => {
                             onApplyOps(ops);
                             upsertMessage(sessionId, { id: assistantId, role: "assistant", text: reply });

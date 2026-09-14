@@ -42,6 +42,50 @@ describe("creative result references", () => {
 });
 
 describe("CreativeMessages", () => {
+    it.each(["running", "failed", "cancelled"] as const)("shows durable partial text while the text task is %s", (status) => {
+        const message: CreativeMessage = { id: "assistant", conversationId: "conversation", runId: "run", sequence: 2, role: "assistant", status, content: "内部进度摘要", metadata: {}, createdAt: 1, updatedAt: 1 };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[message]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        run: {
+                            id: "run",
+                            conversationId: "conversation",
+                            inputMessageId: "input",
+                            assistantMessageId: "assistant",
+                            status,
+                            assetIds: [],
+                            tasks: [
+                                {
+                                    id: "parent",
+                                    title: "文章",
+                                    type: "text",
+                                    status,
+                                    activeAttemptId: status === "running" ? "retry" : "first",
+                                    textRevision: 0,
+                                    visibleTextSnapshot: { attemptId: "first", revision: 2, content: "第一段公开文章\n第二段仍然保留", status: "failed" },
+                                },
+                            ],
+                        },
+                    }}
+                    onMaterializeProject={vi.fn()}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+        expect(markup).toContain("第一段公开文章");
+        expect(markup).toContain("第二段仍然保留");
+        expect(markup).not.toContain("内部进度摘要");
+        expect(markup).toContain(status === "running" ? "正在重新生成失败任务" : status === "failed" ? "Agent 执行失败" : "Agent 任务已取消");
+    });
+
     it("renders completed assistant markdown instead of showing syntax markers", () => {
         const message: CreativeMessage = {
             id: "assistant-markdown",

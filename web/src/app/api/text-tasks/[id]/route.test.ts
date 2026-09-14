@@ -26,6 +26,7 @@ import { after } from "next/server";
 import { GET, PATCH } from "./route";
 import { createTextTask, openTextTaskAttempt, closeTextTaskAttempt } from "@/lib/server/text-task-store";
 import { getStoredGenerationTask } from "@/lib/server/generation-task-store";
+import { registerTextTaskAttempt } from "@/lib/server/text-task-stream-control";
 
 describe("GET /api/text-tasks/[id]", () => {
     beforeEach(() => {
@@ -53,6 +54,42 @@ describe("GET /api/text-tasks/[id]", () => {
         expect(after).not.toHaveBeenCalled();
         expect(mocks.records).toEqual(before);
         expect((await getStoredGenerationTask<typeof task>("text", task.id))?.activeAttemptId).toBe(next?.activeAttemptId);
+    });
+
+    it("aborts the current in-process attempt when cancellation is accepted", async () => {
+        const task = await createTextTask({ userId: "user", messages: [], config: { baseUrl: "https://fixture.example", apiKey: "fixture", apiFormat: "openai", model: "text-model" } });
+        const opened = (await openTextTaskAttempt(task, task.config, "chat", []))!;
+        const active = registerTextTaskAttempt(task.id, opened.activeAttemptId!, {}, true);
+        const stale = registerTextTaskAttempt(task.id, "previous", {}, true);
+        mocks.getTextTask.mockResolvedValue(opened);
+        try {
+            const response = await PATCH(new Request(`http://localhost/api/text-tasks/${task.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }), {
+                params: Promise.resolve({ id: task.id }),
+            });
+            expect(response.status).toBe(200);
+            expect(active.signal.aborted).toBe(true);
+            expect(stale.signal.aborted).toBe(false);
+        } finally {
+            active.dispose();
+            stale.dispose();
+        }
+    });
+
+    it("rejects a cancellation explicitly addressed to a previous attempt", async () => {
+        const task = await createTextTask({ userId: "user", messages: [], config: { baseUrl: "https://fixture.example", apiKey: "fixture", apiFormat: "openai", model: "text-model" } });
+        const opened = (await openTextTaskAttempt(task, task.config, "chat", []))!;
+        const active = registerTextTaskAttempt(task.id, opened.activeAttemptId!, {}, true);
+        mocks.getTextTask.mockResolvedValue(opened);
+        try {
+            const response = await PATCH(new Request(`http://localhost/api/text-tasks/${task.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: "cancelled", attemptId: "previous" }) }), {
+                params: Promise.resolve({ id: task.id }),
+            });
+            expect(response.status).toBe(409);
+            expect(active.signal.aborted).toBe(false);
+            expect((await getStoredGenerationTask<typeof task>("text", task.id))?.status).toBe("pending");
+        } finally {
+            active.dispose();
+        }
     });
 
     it("schedules a low-cost recovery wakeup for a running task", async () => {

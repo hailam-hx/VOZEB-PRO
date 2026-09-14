@@ -13,6 +13,7 @@ import { ClientSessionExpiredError, stopIfClientSessionExpired, throwIfClientSes
 import type { VoiceSelection } from "@/lib/voice-selection";
 import type { AppLocale } from "@/i18n/config";
 import { agentRunCopy } from "@/lib/agent-run-copy";
+import { createAgentTextTracker, type AgentTextState } from "@/lib/agent-text-stream";
 
 export type CreativeAgentRun = {
     id: string;
@@ -32,26 +33,28 @@ export type CreativeAgentRun = {
     createdAt?: number;
     updatedAt?: number;
     assetIds: string[];
-    tasks: Array<{
-        id: string;
-        title: string;
-        type?: "text" | "image" | "video" | "audio";
-        model?: string;
-        optimizedPrompt?: string;
-        ratio?: string;
-        quality?: string;
-        seconds?: number;
-        voice?: string;
-        voiceSelection?: VoiceSelection;
-        voiceName?: string;
-        format?: string;
-        generateAudio?: boolean;
-        watermark?: boolean;
-        speed?: number;
-        count?: number;
-        status: "ready" | "running" | "completed" | "failed" | "cancelled";
-        error?: string;
-    }>;
+    tasks: Array<
+        AgentTextState & {
+            id: string;
+            title: string;
+            type?: "text" | "image" | "video" | "audio";
+            model?: string;
+            optimizedPrompt?: string;
+            ratio?: string;
+            quality?: string;
+            seconds?: number;
+            voice?: string;
+            voiceSelection?: VoiceSelection;
+            voiceName?: string;
+            format?: string;
+            generateAudio?: boolean;
+            watermark?: boolean;
+            speed?: number;
+            count?: number;
+            status: "ready" | "running" | "completed" | "failed" | "cancelled";
+            error?: string;
+        }
+    >;
     cancellation?: { pendingCount: number };
 };
 
@@ -158,6 +161,7 @@ type CreativeRunHandlers = {
     onProjectHandoff?: (handoff: CreativeProjectHandoff) => void;
     onStatus?: (status: CreativeAgentRun["status"]) => void;
     onTaskCompleted?: (progress?: CreativeTaskProgress) => void;
+    onTextTask?: (parentTaskId: string, state: AgentTextState) => void;
 };
 
 export type CreativeTaskProgress = {
@@ -175,8 +179,9 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
     let connectionInterrupted = false;
     let reconciliation: Promise<void> | null = null;
     let conversationContent = "";
+    const textTasks = createAgentTextTracker(runId, handlers.onTextTask);
     const read = (event: Event) => {
-        let parsed: { data?: Record<string, unknown>; status?: string; responseKind?: string; conversationReply?: string };
+        let parsed: { data?: Record<string, unknown>; status?: string; responseKind?: string; conversationReply?: string; tasks?: CreativeAgentRun["tasks"] };
         try {
             parsed = JSON.parse((event as MessageEvent<string>).data) as { data?: Record<string, unknown>; status?: string; responseKind?: string; conversationReply?: string };
         } catch {
@@ -216,6 +221,7 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
             const run = await getCreativeAgentRun(runId);
             if (settled) return;
             handlers.onStatus?.(run.status);
+            textTasks.restore(run.tasks);
             publishConversation(run.conversationReply);
             if (run.status === "completed") return finish("completed", run.conversationReply);
             if (run.status === "failed") return finish("failed", run.conversationReply || run.tasks.find((task) => task.status === "failed")?.error || copy.failed);
@@ -230,13 +236,16 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
             publishStatus(copy.unknownBackground);
         }
     };
-    const listen = (type: string, callback: (payload: { data?: Record<string, unknown>; status?: string; responseKind?: string; conversationReply?: string }) => void) =>
+    const listen = (type: string, callback: (payload: { data?: Record<string, unknown>; status?: string; responseKind?: string; conversationReply?: string; tasks?: CreativeAgentRun["tasks"] }) => void) =>
         source.addEventListener(type, (event) => {
+            if (settled) return;
             const payload = read(event);
             if (payload) callback(payload);
         });
 
     listen("run.planning", () => publishStatus(copy.planning));
+    listen("task.attempt.started", ({ data }) => textTasks.event(data, true));
+    listen("task.text.updated", ({ data }) => textTasks.event(data));
     listen("skills.selected", () => publishStatus(copy.matching));
     listen("run.conversation.updated", ({ data }) => publishConversation(text(data?.content)));
     listen("run.planned", ({ data }) => {
@@ -275,6 +284,7 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
     listen("run.failed", ({ data }) => finish("failed", text(data?.message) || copy.failed));
     listen("run.cancelled", () => finish("cancelled", copy.cancelled));
     listen("run.snapshot", (payload) => {
+        textTasks.restore(payload.tasks);
         if (payload.status && ["planning", "running", "paused", "completed", "failed", "cancelled"].includes(payload.status)) handlers.onStatus?.(payload.status as CreativeAgentRun["status"]);
         publishConversation(payload.conversationReply);
         if (payload.status === "completed") finish("completed", payload.conversationReply);

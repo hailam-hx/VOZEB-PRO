@@ -41,7 +41,7 @@ type GeminiPart = {
     fileData?: { mimeType?: string; fileUri?: string };
 };
 
-type TextTaskRuntimeOptions = { onSnapshot?: TextTaskSnapshotHook; signal?: AbortSignal };
+type TextTaskRuntimeOptions = { onSnapshot?: TextTaskSnapshotHook; onAttemptState?: TextTaskSnapshotHook; signal?: AbortSignal };
 type AttemptRuntime = {
     control: ReturnType<typeof registerTextTaskAttempt>;
     writer: ReturnType<typeof createTextSnapshotWriter>;
@@ -52,6 +52,17 @@ type AttemptRuntime = {
 };
 
 export async function runTextTaskStep(task: TextTask, origin: string, cookie: string, options: TextTaskRuntimeOptions = {}): Promise<TextTaskStep> {
+    try {
+        return await executeTextTaskStep(task, origin, cookie, options);
+    } finally {
+        if (options.onAttemptState) {
+            const latest = await getTextTask(task.id);
+            if (latest) await options.onAttemptState(latest);
+        }
+    }
+}
+
+async function executeTextTaskStep(task: TextTask, origin: string, cookie: string, options: TextTaskRuntimeOptions): Promise<TextTaskStep> {
     const current = await getTextTask(task.id);
     if (!current || current.status === "success") return { state: "completed" };
     if (current.status === "error" || current.status === "cancelled") return { state: "failed", error: current.error || "文本任务已结束" };
@@ -66,6 +77,7 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
         const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/"), preserveNativeProtocol: true });
         const candidateTask = await openTextTaskAttempt(ownedTask, config, protocol.kind, candidates.slice(index + 1));
         if (!candidateTask) return { state: "failed", error: "文本任务状态已变化" };
+        await options.onAttemptState?.(candidateTask);
         await scheduleGenerationTask("text", task.id, {
             executionPhase: "submitting",
             channelId: config.channelId,
@@ -106,6 +118,7 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
             if (runtime.response) await finishSystemAiTextAttempt(runtime.response.headers, { status: "failed", reason: message, payload: runtime.usagePayload, normalizedUsage: runtime.usageAccumulator?.finish() });
             const closed = await closeTextTaskAttempt(task.id, candidateTask.activeAttemptId!, "failed", { error: message }, activeRevision(latest));
             if (!closed) return { state: "failed", error: "文本任务状态已变化" };
+            await options.onAttemptState?.(closed);
             ownedTask = closed;
             if (config.channelId) recordChannelRuntimeFailure(config.channelId, "text", message);
             // Once public text exists, a provider change would overwrite an answer the user has seen.

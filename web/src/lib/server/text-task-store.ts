@@ -126,6 +126,7 @@ export function closeTextTaskAttempt(id: string, attemptId: string, status: Excl
         const next = {
             ...attempt,
             ...patch,
+            revision: attempt.revision + 1,
             status,
             completedAt: now,
             milestones,
@@ -138,12 +139,32 @@ export function closeTextTaskAttempt(id: string, attemptId: string, status: Excl
                 totalMs: now - task.createdAt,
             },
         };
-        return { ...task, attempts: task.attempts!.map((item) => (item.id === attemptId ? next : item)) };
+        return {
+            ...task,
+            attempts: task.attempts!.map((item) => (item.id === attemptId ? next : item)),
+            ...(attempt.content ? { visibleTextSnapshot: { attemptId, revision: next.revision, content: attempt.content, updatedAt: now } } : {}),
+        };
     });
 }
 
 export async function getTextTask(id: string) {
     return getStoredGenerationTask<TextTask>("text", id);
+}
+
+export async function retryTextTask(task: TextTask, input: Pick<TextTask, "config" | "candidateConfigs" | "messages">): Promise<TextTask | null> {
+    return transitionTextTask(
+        task,
+        ["error"],
+        { ...input, status: "pending", result: undefined, error: undefined, upstream: undefined, billing: undefined },
+        {
+            executionPhase: "created",
+            nextPollAt: Date.now(),
+            submittedAt: undefined,
+            upstreamTaskId: undefined,
+            resultPayload: undefined,
+            lastUpstreamStatus: "retry_requested",
+        },
+    );
 }
 
 export function transitionTextTask(

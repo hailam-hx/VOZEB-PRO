@@ -27,6 +27,36 @@ afterEach(() => {
 });
 
 describe("useCreateAgent submission retry", () => {
+    it("updates the current Run with live task text without creating visible internal messages", async () => {
+        class Source extends EventTarget {
+            static current: Source;
+            constructor() {
+                super();
+                Source.current = this;
+            }
+            close() {}
+        }
+        vi.stubGlobal("EventSource", Source);
+        const run = { id: "run", conversationId: "conversation", inputMessageId: "input", assistantMessageId: "assistant", status: "running", assetIds: [], tasks: [{ id: "parent", type: "text", title: "文章", status: "running" }] };
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ code: 0, data: { run, created: true } })));
+        const { result, unmount } = renderHook(() => useCreateAgent());
+        try {
+            await act(async () => {
+                await result.current.submit("写一篇文章");
+            });
+            act(() => {
+                Source.current.dispatchEvent(
+                    new MessageEvent("task.text.updated", { data: JSON.stringify({ data: { runId: "run", parentTaskId: "parent", taskId: "child", attemptId: "attempt", revision: 1, content: "公开文章的第一段", status: "streaming" } }) }),
+                );
+            });
+            expect(result.current.runDetails.run.tasks[0]).toMatchObject({ activeAttemptId: "attempt", visibleTextSnapshot: { content: "公开文章的第一段" } });
+            expect(result.current.messages.filter((message) => message.role === "user").map((message) => message.content)).toEqual(["写一篇文章"]);
+        } finally {
+            unmount();
+            vi.unstubAllGlobals();
+        }
+    });
+
     it("keeps draft and saved asset selections in the order the user chose them", async () => {
         const { result, unmount } = renderHook(() => useCreateAgent());
         let draftId = "";

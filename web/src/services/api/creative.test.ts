@@ -41,6 +41,23 @@ describe("统一创作 Agent 事件流", () => {
     });
     afterEach(() => vi.unstubAllGlobals());
 
+    it("restores text snapshots and rejects duplicate, stale and prior-attempt replay", () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const states: Array<{ visibleTextSnapshot?: { content: string }; activeAttemptId?: string }> = [];
+        watchCreativeAgentRun("run", { onProgress: () => undefined, onTerminal: () => undefined, onConnectionError: () => undefined, onTextTask: (_id, state) => states.push(state) });
+        const source = FakeEventSource.instance;
+        source.emit("run.snapshot", { status: "running", tasks: [{ id: "parent", type: "text", activeAttemptId: "a", textRevision: 2, visibleTextSnapshot: { attemptId: "a", revision: 2, content: "已保存部分", status: "failed" } }] });
+        const frame = (attemptId: string, revision: number, content: string, status = "streaming") => ({ data: { runId: "run", taskId: "child", parentTaskId: "parent", attemptId, revision, content, status } });
+        source.emit("task.text.updated", frame("a", 1, "倒序"));
+        source.emit("task.attempt.started", frame("b", 0, ""));
+        source.emit("task.text.updated", frame("a", 50, "过期"));
+        expect(states.at(-1)).toMatchObject({ activeAttemptId: "b", visibleTextSnapshot: { content: "已保存部分" } });
+        source.emit("task.text.updated", frame("b", 1, "新的正文"));
+        source.emit("task.text.updated", frame("b", 1, "重复"));
+        source.emit("task.attempt.started", frame("a", 0, ""));
+        expect(states.map((state) => state.visibleTextSnapshot?.content)).toEqual(["已保存部分", "已保存部分", "新的正文"]);
+    });
+
     it("returns planning, task and final replies to one conversation", () => {
         vi.stubGlobal("EventSource", FakeEventSource);
         const progress: string[] = [];

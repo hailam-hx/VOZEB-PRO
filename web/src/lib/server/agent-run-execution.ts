@@ -26,6 +26,8 @@ import { agentSurfaceImageSize, canvasReferenceContext, canvasReferenceSupportsT
 import { readSystemAiBilling, systemAiBillingHeaders, type SystemAiUsageContextDraft } from "./system-ai-billing";
 import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "./usage-billing-runtime";
 import { acceptsMediaReference, mergeTaskReferences, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
+import { getTextTask, retryTextTask } from "./text-task-store";
+import { toSystemGenerationChannel } from "./generation-channel";
 
 export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
 export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
@@ -897,7 +899,16 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
     const directTextContent = run.surface === "canvas" ? directCanvasTextContent(task) : null;
     if (directTextContent) return { result: { content: directTextContent }, sourceTaskIds: [`direct-${run.id}-${task.id}`] };
     const path = task.type === "image" ? "/api/image-tasks" : task.type === "video" ? "/api/video-generation-tasks" : task.type === "audio" ? "/api/audio-tasks" : "/api/text-tasks";
-    const context = { conversationId: run.conversationId, runId: run.id, surface: run.surface, projectId: run.projectId, parentTaskId: task.id, attemptNo: attempt, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}` };
+    const context = {
+        conversationId: run.conversationId,
+        runId: run.id,
+        surface: run.surface,
+        projectId: run.projectId,
+        parentTaskId: task.id,
+        ...(task.type === "text" ? { executionId } : {}),
+        attemptNo: attempt,
+        clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}`,
+    };
     const copies = agentTaskCopies(task.type, task.count);
     const initialChildren = normalizeChildTasks(task);
     const childSlots = new Map((task.childSlots || []).map((slot) => [slot.index, slot]));
@@ -907,6 +918,19 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
         let child = agentChildAtSlot(initialChildren, slot, index);
         let taskId = child?.id;
         let childTask = slot?.status === "resolved" ? agentTaskWithChildSlot(task, slot) : task;
+        if (task.type === "text" && taskId && child?.status === "failed") {
+            const previous = await getTextTask(taskId);
+            if (!previous || previous.userId !== run.userId) throw new AgentChildTaskTerminalError("文本任务不存在");
+            const configs = resolveLogicalModelCandidates(settings, "text", task.model || settings.defaultModels.textModel).map(toSystemGenerationChannel);
+            if (!configs.length) throw new AgentChildTaskTerminalError("已保存的文本模型当前不可用");
+            if (previous.status === "error") {
+                const retried = await retryTextTask(previous, { config: configs[0], candidateConfigs: configs.slice(1), messages: [{ role: "user", content: task.prompt }] });
+                if (!retried) throw new AgentChildTaskDeferredError("文本任务状态已变化");
+            }
+            child = { ...child, status: "pending", attempt, error: undefined };
+            await linkAgentChildTask(run, task, taskId, attempt);
+            if (!(await patchTask(run.id, task.id, { childTasks: [child] }, "task.created", executionId))) throw new Error("Agent Run 已由新执行器接管");
+        }
         if (!taskId) {
             if (slot?.status === "failed") throw new AgentChildTaskTerminalError(slot.error || "生成任务缺少可提交的模型配置");
             if (!slot && !resolvedForSubmission) {
@@ -1013,7 +1037,7 @@ function agentTaskSubmissionBody(task: AgentRunTask, settings: Awaited<ReturnTyp
           ? { config, prompt: task.prompt, references: references.map((item) => ({ type: item.type, url: item.url, ...(item.role ? { role: item.role } : {}) })), source, context }
           : task.type === "audio"
             ? { config, prompt: task.prompt, source, context }
-            : { config, messages: [{ role: "user", content: task.prompt }] };
+            : { config, messages: [{ role: "user", content: task.prompt }], context };
 }
 
 async function mapWithConcurrency<R>(count: number, concurrency: number, worker: (index: number) => Promise<R>): Promise<Array<PromiseSettledResult<R> & { index: number }>> {

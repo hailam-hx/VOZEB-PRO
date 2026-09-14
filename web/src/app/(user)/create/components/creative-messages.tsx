@@ -23,6 +23,7 @@ import type { AppLocale } from "@/i18n/config";
 import type { MaterializedCreativeProject } from "@/services/creative-project-handoff";
 import { getCreativeAgentRun, type CreativeAgentRun } from "@/services/api/creative";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
+import { agentTextStatusText } from "@/lib/agent-text-stream";
 
 import { creativeAssetLayout } from "./creative-asset-layout";
 import { creativeConversationEntries, isMediaCreativeRound, type CreativeConversationEntry } from "./creative-conversation-rounds";
@@ -152,7 +153,15 @@ export function CreativeMessages({
                 const handoff = isCreativeProjectHandoff(item.metadata.projectHandoff) ? item.metadata.projectHandoff : null;
                 const run = item.runId ? runDetails[item.runId] : undefined;
                 const hasConversationReply = run?.responseKind === "conversation" && Boolean(item.content.trim());
-                const displayContent = item.status === "failed" && !hasConversationReply ? t("creationTaskFailed") : formatMessage(item.content);
+                const streamedText =
+                    item.role === "assistant"
+                        ? run?.tasks
+                              .filter((task) => task.type === "text")
+                              .map((task) => task.visibleTextSnapshot?.content || "")
+                              .filter(Boolean)
+                              .join("\n\n")
+                        : "";
+                const displayContent = streamedText || (item.status === "failed" && !hasConversationReply ? t("creationTaskFailed") : formatMessage(item.content));
                 const textAssetContent = itemAssets
                     .filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim())
                     .map((asset) => formatAgentArtifactText(asset.textContent!))
@@ -165,7 +174,9 @@ export function CreativeMessages({
                         {item.role === "assistant" ? <CreativeAssistantAvatar className="mt-0" logoUrl={site.logoUrl} /> : null}
                         <div className={cn("min-w-0", item.role === "user" ? "max-w-[520px] text-right" : "min-w-0 flex-1")}>
                             {item.role === "user" && itemAssets.length ? <CreativeRoundReferenceStrip assets={itemAssets} /> : null}
-                            {item.role === "assistant" && item.status === "running" && !hasConversationReply ? (
+                            {streamedText && !(textAssetContent && item.status === "completed") ? (
+                                <CreativeTextTaskResults run={run!} />
+                            ) : item.role === "assistant" && item.status === "running" && !hasConversationReply ? (
                                 <CreativeGenerationWaiting run={run} message={item} />
                             ) : textAssetContent && item.role === "assistant" && item.status === "completed" ? null : (
                                 <div
@@ -244,7 +255,8 @@ function CreativeMediaRound({
     const videoOutputs = mediaOutputs.filter((asset) => asset.type === "video");
     const otherMediaOutputs = mediaOutputs.filter((asset) => asset.type !== "video");
     const textOutputs = outputAssets.filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim());
-    const isFailedMediaRound = assistantMessage.status === "failed" && run?.status === "failed" && !mediaOutputs.length && !textOutputs.length;
+    const hasTextSnapshots = run?.tasks.some((task) => task.type === "text" && task.visibleTextSnapshot?.content);
+    const isFailedMediaRound = assistantMessage.status === "failed" && run?.status === "failed" && !mediaOutputs.length && !textOutputs.length && !hasTextSnapshots;
     const showAssistantText = Boolean(displayContent.trim()) && !(assistantMessage.status === "completed" && (mediaOutputs.length || textOutputs.length));
     const mode = creativeRunMode(run);
     const resultTitle = t(mode === "video" ? "generatedVideoForYou" : mode === "audio" ? "generatedAudioForYou" : "generatedImageForYou");
@@ -280,6 +292,7 @@ function CreativeMediaRound({
                             </>
                         ) : null}
                         <div data-testid="creative-result-group" className="mt-3 flex w-fit max-w-full flex-col items-start">
+                            {hasTextSnapshots && !textOutputs.length ? <CreativeTextTaskResults run={run!} /> : null}
                             {isFailedMediaRound ? (
                                 <CreativeGenerationFailure message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent} onRetry={() => onRetryMessage(assistantMessage, run)} />
                             ) : assistantMessage.status === "running" ? (
@@ -332,6 +345,25 @@ function CreativeMediaRound({
             </div>
         </section>
     );
+}
+
+function CreativeTextTaskResults({ run }: { run: CreativeAgentRun }) {
+    const locale = useLocale() as AppLocale;
+    return run.tasks
+        .filter((task) => task.type === "text" && task.visibleTextSnapshot?.content)
+        .map((task) => {
+            const status = agentTextStatusText(task, run.status, locale);
+            return (
+                <div key={task.id} data-testid="creative-task-text" className="mb-3 min-w-0 max-w-full break-words text-[15px] leading-7 text-stone-800 dark:text-stone-100">
+                    <AgentMarkdown>{task.visibleTextSnapshot!.content}</AgentMarkdown>
+                    {status ? (
+                        <p role="status" className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+                            {status}
+                        </p>
+                    ) : null}
+                </div>
+            );
+        });
 }
 
 function CreativeRoundReferenceStrip({ assets }: { assets: CreativeAsset[] }) {

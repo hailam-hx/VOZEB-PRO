@@ -10,6 +10,7 @@ import { generationModelId } from "@/lib/server/generation-channel";
 import { cancellationExecutionPatch, type GenerationCancellationTarget } from "@/lib/server/generation-task-cancellation-service";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import { cancelTextTaskAttempt } from "@/lib/server/text-task-stream-control";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,9 +58,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: user ? 404 : 401 });
     const schedule = await getStoredGenerationTaskRecord("text", task.id);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
-    const parsed = await readJsonBodyResult<{ status?: string }>(request);
+    const parsed = await readJsonBodyResult<{ status?: string; attemptId?: string }>(request);
     if (!parsed.ok) return NextResponse.json({ error: parsed.message }, { status: parsed.status });
     const body = parsed.data;
+    if (body.attemptId !== undefined && body.attemptId !== task.activeAttemptId) return NextResponse.json({ error: "文本任务尝试已变化" }, { status: 409 });
     if (body.status !== "cancelled" || !["pending", "running"].includes(task.status)) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
     const target: GenerationCancellationTarget = {
         type: "text",
@@ -72,6 +74,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     };
     const cancelled = await transitionTextTask(task, ["pending", "running"], { status: "cancelled", error: "任务已取消", messages: [] }, cancellationExecutionPatch(target));
     if (!cancelled) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
+    if (cancelled.activeAttemptId) cancelTextTaskAttempt(cancelled.id, cancelled.activeAttemptId);
     const origin = resolveInternalOrigin(new URL(request.url).origin);
     after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id] }));
     const refreshedUser = await getCurrentUser(request);

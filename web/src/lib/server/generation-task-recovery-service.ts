@@ -11,6 +11,7 @@ import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResul
 import { getImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
 import { getTextTask, updateTextTask } from "@/lib/server/text-task-store";
 import { markTextTaskFailed, queryCancelledTextTaskUpstreamStep, runTextTaskStep } from "@/lib/server/text-task-runtime";
+import { mirrorAgentTextTaskSnapshot } from "@/lib/server/agent-run-store";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import { executeAgentRun } from "@/lib/server/agent-run-executor";
 import { processAgentRunReview } from "@/lib/server/agent-run-execution";
@@ -351,7 +352,10 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
             lastUpstreamStatus: "submitting",
         });
     try {
-        const step = await runTextTaskStep(task, origin, cookie || maintenanceWorkerContext(task.userId));
+        const mirror = async (snapshot: import("./text-task-store").TextTask) => {
+            await mirrorAgentTextTaskSnapshot(snapshot);
+        };
+        const step = await runTextTaskStep(task, origin, cookie || maintenanceWorkerContext(task.userId), { onSnapshot: mirror, onAttemptState: mirror });
         if (step.state === "completed") {
             await releaseGenerationTaskLease("text", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "completed" });
             return "completed";

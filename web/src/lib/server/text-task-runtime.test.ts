@@ -118,6 +118,20 @@ describe("text task runtime recovery", () => {
         vi.useRealTimers();
     });
 
+    it("publishes persisted attempt start and terminal revisions independently of text snapshots", async () => {
+        state = textTask(openAiConfig("one", "https://one.example"));
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(chatFrame("正文") + "data: [DONE]\n\n")));
+        const lifecycle: TextTask[] = [];
+        await runTextTaskStep(state, "http://internal", "", {
+            onAttemptState: (task: TextTask) => {
+                lifecycle.push(structuredClone(task));
+            },
+        });
+        expect(lifecycle.map((task) => task.attempts!.at(-1)!.status)).toEqual(["running", "succeeded"]);
+        expect(lifecycle[0].attempts![0]).toMatchObject({ revision: 0, content: "" });
+        expect(lifecycle[1].attempts![0].revision).toBe(state.visibleTextSnapshot!.revision);
+    });
+
     it("publishes incremental snapshots before EOF with stable execution identity", async () => {
         state = { ...textTask(openAiConfig("channel-one", "https://one.example")), executionContext: { runId: "run", parentTaskId: "parent" } };
         let output!: ReadableStreamDefaultController<Uint8Array>;
@@ -205,7 +219,7 @@ describe("text task runtime recovery", () => {
             }),
         ).resolves.toEqual({ state: "completed" });
         expect(snapshots).toEqual(["自定义结果"]);
-        expect(state.attempts?.[0]).toMatchObject({ transport: "buffered", protocol: "custom", revision: 1, milestones: { first_text: expect.any(Number) }, latency: { generationMs: expect.any(Number), finalizationMs: expect.any(Number) } });
+        expect(state.attempts?.[0]).toMatchObject({ transport: "buffered", protocol: "custom", revision: 2, milestones: { first_text: expect.any(Number) }, latency: { generationMs: expect.any(Number), finalizationMs: expect.any(Number) } });
     });
 
     it("keeps trailing usage and first-byte evidence on failure", async () => {

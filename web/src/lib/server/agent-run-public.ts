@@ -42,6 +42,10 @@ export function publicAgentRunSnapshot(run: AgentRun) {
 }
 
 export function publicAgentRunEvent(event: CreativeRunEvent): CreativeRunEvent {
+    if (event.type === "task.text.updated" || event.type === "task.attempt.started") {
+        const { runId, taskId, parentTaskId, attemptId, revision, content, status } = recordValue(event.data);
+        return { ...event, data: { runId, taskId, parentTaskId, attemptId, revision, content, status } };
+    }
     if (event.type.startsWith("run.review.")) return { ...event, data: undefined };
     if (event.type === "run.failed") {
         const data = recordValue(event.data);
@@ -73,6 +77,7 @@ function publicAgentRunTask(task: AgentRunTask) {
         speed: task.speed,
         count: task.count,
         status: task.status,
+        ...(task.type === "text" ? { activeAttemptId: task.activeAttemptId, textRevision: task.textRevision, textStatus: task.textStatus, visibleTextSnapshot: task.visibleTextSnapshot } : {}),
         error: task.error ? toSafeGenerationErrorMessage(task.error, "生成任务失败") : undefined,
     };
 }

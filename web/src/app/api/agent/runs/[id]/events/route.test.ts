@@ -33,8 +33,24 @@ describe("Agent Run SSE", () => {
         expect(body).toContain("id: 2");
         expect(body).toContain("event: run.snapshot");
         expect(body).toContain('"status":"completed"');
-        expect(mocks.getAgentRun).toHaveBeenCalledTimes(1);
+        expect(mocks.getAgentRun).toHaveBeenCalledTimes(2);
         expect(mocks.listCreativeRunEvents).toHaveBeenCalledWith("run", "1");
+    });
+
+    it("does not emit an older attempt snapshot after newer durable text events", async () => {
+        const run = { id: "run", userId: "user", status: "completed", updatedAt: 1, tasks: [{ id: "parent", type: "text", status: "completed", activeAttemptId: "old", textRevision: 1 }] };
+        mocks.getAgentRun
+            .mockResolvedValueOnce(run)
+            .mockResolvedValue({ ...run, updatedAt: 3, tasks: [{ ...run.tasks[0], activeAttemptId: "new", textRevision: 2, visibleTextSnapshot: { attemptId: "new", revision: 2, content: "最新正文", status: "completed" } }] });
+        mocks.listCreativeRunEvents.mockResolvedValue([
+            { id: "3", runId: "run", type: "task.text.updated", createdAt: 3, data: { runId: "run", parentTaskId: "parent", taskId: "child", attemptId: "new", revision: 2, content: "最新正文", status: "completed", prompt: "private" } },
+        ]);
+        const response = await GET(new Request("http://localhost/api/agent/runs/run/events", { headers: { "last-event-id": "2" } }), { params: Promise.resolve({ id: "run" }) });
+        const body = await response.text();
+        expect(body).toContain("id: 3");
+        expect(body).toContain('"activeAttemptId":"new"');
+        expect(body).not.toContain('"activeAttemptId":"old"');
+        expect(body).not.toContain("private");
     });
 
     it("drains every persisted event batch before closing a terminal run", async () => {
@@ -49,7 +65,7 @@ describe("Agent Run SSE", () => {
         expect(body.indexOf("id: 502")).toBeLessThan(body.indexOf("event: run.snapshot"));
         expect(mocks.listCreativeRunEvents).toHaveBeenNthCalledWith(1, "run", "1");
         expect(mocks.listCreativeRunEvents).toHaveBeenNthCalledWith(2, "run", "501");
-        expect(mocks.getAgentRun).toHaveBeenCalledTimes(1);
+        expect(mocks.getAgentRun).toHaveBeenCalledTimes(2);
     });
 
     it("starts after the latest manual retry instead of replaying an older failure", async () => {

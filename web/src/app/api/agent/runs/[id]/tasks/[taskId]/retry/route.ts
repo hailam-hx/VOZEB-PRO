@@ -33,6 +33,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const limit = settings.generationConcurrency.agent;
     const tasks = run.tasks.map((item) => {
         if (!requestedTaskIdSet.has(item.id)) return item;
+        if (item.type === "text") return { ...item, status: "ready" as const, attempts: Math.max(1, item.attempts || 0), error: undefined, result: undefined };
         const completedChildren = item.childTasks?.filter((child) => child.status === "completed") || [];
         const completedChildIds = new Set(completedChildren.map((child) => child.id));
         const completedSlots = item.childSlots?.filter((slot) => slot.taskId && completedChildIds.has(slot.taskId)) || [];

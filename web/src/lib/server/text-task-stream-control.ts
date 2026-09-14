@@ -48,7 +48,8 @@ export function createTextSnapshotWriter(write: (revision: number, update: TextT
 }
 
 type Stage = "connect" | "firstByte" | "firstText" | "idle" | "overall";
-const controllers = new Map<string, AbortController>();
+const registry = globalThis as typeof globalThis & { __vozebProTextTaskControllers?: Map<string, AbortController> };
+const controllers = (registry.__vozebProTextTaskControllers ??= new Map<string, AbortController>());
 
 export function registerTextTaskAttempt(taskId: string, attemptId: string, policy: TextTaskTimeoutPolicy, streaming: boolean, parentSignal?: AbortSignal) {
     const key = `${taskId}\0${attemptId}`;

@@ -103,6 +103,36 @@ describe("Agent child task retry concurrency", () => {
         expect(mocks.runGenerationTaskRecoveryBatch).toHaveBeenCalledTimes(1);
     });
 
+    it("retains text child identity and visible partial for an explicit retry", async () => {
+        const run = {
+            id: "run",
+            userId: "user",
+            status: "failed",
+            tasks: [
+                {
+                    id: "task",
+                    type: "text",
+                    title: "文案",
+                    status: "failed",
+                    attempts: 1,
+                    taskId: "child",
+                    taskIds: ["child"],
+                    childTasks: [{ id: "child", status: "failed", attempt: 1 }],
+                    childSlots: [{ index: 0, status: "resolved", taskId: "child" }],
+                    activeAttemptId: "attempt",
+                    textRevision: 2,
+                    visibleTextSnapshot: { attemptId: "attempt", revision: 2, content: "部分正文", status: "failed" },
+                },
+            ],
+        };
+        mocks.countActive.mockResolvedValue(0);
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...run, ...patch }));
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/tasks/task/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", taskId: "task" }) });
+        expect(response.status).toBe(200);
+        expect(mocks.updateAgentRunById.mock.calls[0][1].tasks[0]).toMatchObject({ status: "ready", taskId: "child", taskIds: ["child"], childTasks: [{ id: "child", status: "failed" }], visibleTextSnapshot: { content: "部分正文", status: "failed" } });
+    });
+
     it("discards failed child task IDs before starting a new retry", async () => {
         const run = {
             id: "run",
