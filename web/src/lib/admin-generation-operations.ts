@@ -13,7 +13,7 @@ export type AdminGenerationAttempt = {
     pointsRecordId?: string;
     error?: string;
     providerTrace?: string;
-    protocol?: "responses" | "chat" | "gemini" | "custom";
+    protocol?: "responses" | "chat" | "gemini" | "claude" | "custom";
     transport?: "stream" | "buffered";
     usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
     milestones?: Partial<Record<"task_created" | "upstream_started" | "first_byte" | "first_text" | "stream_completed" | "task_completed", number>>;

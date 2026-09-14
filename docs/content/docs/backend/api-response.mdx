@@ -209,6 +209,8 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 
 对文本任务，生成运维详情还会投影已持久化的候选尝试、协议与传输方式、阶段耗时、Token 用量、里程碑和错误，便于定位流式链路。该投影仅存在于管理员生成运维接口和界面；`/api/text-tasks/*` 的用户响应及 Agent SSE 继续使用公开字段白名单，不能返回这些内部诊断。
 
+文本任务显式重试保留原任务 ID 和全部已关闭尝试，原子清除上一轮结果、错误、上游 ID 与调度状态，并建立新的内部计费周期；仅该周期内的自动故障切换共享预留。协议终态触发流读取收尾，Chat 的 `finish_reason` 不代替 `[DONE]`；多行 SSE usage 与失败终态中的 usage 均按完整事件归一，计费证据不进入公开事件。
+
 ## 生成任务恢复、Worker 与回调
 
 文本、图片、视频和音频任务详情接口，以及 Agent Run SSE，只会唤醒当前用户正在读取的同一持久任务。业务状态与执行阶段分离：`pending/running` 任务可处于 `created/submitting/submitted/polling/result_ready/persisting`；普通 Agent 生成完成后可进入 `review_pending/reviewing/review_unavailable/completed`，持久 Worker 执行一次复盘，调用失败即记录为不可用，不会使用未配置的固定次数重复计费，也不改变用户已经收到的生成结果。已经保存上游任务 ID 后，恢复路径只能查询原任务；`result_ready` 只重试结果保存，不能再次创建上游任务。若提交结果不确定或查询契约缺失，任务直接结束失败、释放积分暂存且不产生消费记录。

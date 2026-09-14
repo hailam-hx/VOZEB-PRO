@@ -85,6 +85,9 @@ importers:
       entities:
         specifier: 8.0.0
         version: 8.0.0
+      eventsource-parser:
+        specifier: 3.1.1
+        version: 3.1.1
       fflate:
         specifier: ^0.8.3
         version: 0.8.3

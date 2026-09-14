@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { normalizeTextStream } from "./text-stream-protocol";
 
@@ -6,10 +6,67 @@ const encoder = new TextEncoder();
 
 describe("normalized text stream protocol", () => {
     it.each([
+        ["chat", 'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: {"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\ndata: [DONE]\n\n'],
+        ["responses", 'data: {"type":"response.output_text.delta","delta":"done"}\n\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2}}}\n\n'],
+        ["claude", 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}\n\ndata: {"type":"message_delta","usage":{"input_tokens":5,"output_tokens":2}}\n\ndata: {"type":"message_stop"}\n\n'],
+        ["gemini", 'data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2}}\n\n'],
+    ] as const)("completes and cancels the reader at the %s terminal marker without waiting for EOF", async (protocol, frames) => {
+        let controller!: ReadableStreamDefaultController<Uint8Array>;
+        const cancel = vi.fn();
+        const body = new ReadableStream<Uint8Array>({
+            start(value) {
+                controller = value;
+            },
+            cancel,
+        });
+        controller.enqueue(encoder.encode(frames));
+        let settled = false;
+        const result = read(normalizeTextStream(new Response(body, { headers: { "content-type": "text/event-stream" } }), protocol)).then((events) => {
+            settled = true;
+            return events;
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const endedAtMarker = settled;
+        if (!settled) controller.close();
+        expect(await result).toEqual([{ type: "text_delta", text: "done" }, { type: "usage", inputTokens: 5, outputTokens: 2, totalTokens: 7 }, { type: "completed" }]);
+        expect(endedAtMarker).toBe(true);
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(body.locked).toBe(false);
+    });
+
+    it("emits response.failed usage before the safe error", async () => {
+        const frames = ['data: {"type":"response.failed","response":{"id":"resp_fixture","status":"failed","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7},"error":{"code":"server_error","message":"private"}}}'];
+        expect(await read(normalizeTextStream(sseResponse(frames, [3]), "responses"))).toEqual([
+            { type: "usage", inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+            { type: "error", message: "文本流上游返回错误" },
+        ]);
+    });
+    it.each([
         ["chat", ['data: {"choices":[{"delta":{"content":"你","reasoning_content":"hidden","tool_calls":[{}]}}]}', 'data: {"choices":[{"delta":{"content":"好"}}]}', 'data: {"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}']] as const,
-        ["responses", ['event: response.output_text.delta\ndata: {"type":"response.output_text.delta",\ndata: "delta":"你"}', 'data: {"type":"response.output_text.delta","delta":"好"}', 'data: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}']] as const,
-        ["gemini", ['data: {"candidates":[{"content":{"parts":[{"text":"你"},{"functionCall":{"name":"hidden"}}]}}]}', 'data: {"candidates":[{"content":{"parts":[{"text":"好"}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}']] as const,
-        ["claude", ['event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":2}}}', 'event: content_block_delta\ndata: {"type":"content_block_delta",\ndata: "delta":{"type":"text_delta","text":"你"}}', 'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"好"}}', 'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":3}}']] as const,
+        [
+            "responses",
+            [
+                'event: response.output_text.delta\ndata: {"type":"response.output_text.delta",\ndata: "delta":"你"}',
+                'data: {"type":"response.output_text.delta","delta":"好"}',
+                'data: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}',
+            ],
+        ] as const,
+        [
+            "gemini",
+            [
+                'data: {"candidates":[{"content":{"parts":[{"text":"你"},{"functionCall":{"name":"hidden"}}]}}]}',
+                'data: {"candidates":[{"content":{"parts":[{"text":"好"}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}',
+            ],
+        ] as const,
+        [
+            "claude",
+            [
+                'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":2}}}',
+                'event: content_block_delta\ndata: {"type":"content_block_delta",\ndata: "delta":{"type":"text_delta","text":"你"}}',
+                'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"好"}}',
+                'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":3}}',
+            ],
+        ] as const,
     ])("emits text and usage from fragmented multiline %s SSE without internal payloads", async (protocol, frames) => {
         const response = sseResponse([...frames, "data: [DONE]"], [1, 2, 4, 3, 5]);
 
@@ -23,9 +80,7 @@ describe("normalized text stream protocol", () => {
     });
 
     it("turns a successful JSON response from a streaming protocol into a contract error", async () => {
-        await expect(read(normalizeTextStream(Response.json({ output_text: "buffered" }), "responses"))).resolves.toEqual([
-            { type: "error", message: "文本流协议预期 SSE 响应，但上游返回了 application/json", contract: true },
-        ]);
+        await expect(read(normalizeTextStream(Response.json({ output_text: "buffered" }), "responses"))).resolves.toEqual([{ type: "error", message: "文本流协议预期 SSE 响应，但上游返回了 application/json", contract: true }]);
     });
 
     it("normalizes provider HTTP error JSON", async () => {
@@ -37,9 +92,7 @@ describe("normalized text stream protocol", () => {
     });
 
     it("does not expose a raw provider SSE error", async () => {
-        await expect(read(normalizeTextStream(sseResponse(['event: error\ndata: {"type":"error","error":{"message":"internal upstream details"}}'], [1024]), "claude"))).resolves.toEqual([
-            { type: "error", message: "文本流上游返回错误" },
-        ]);
+        await expect(read(normalizeTextStream(sseResponse(['event: error\ndata: {"type":"error","error":{"message":"internal upstream details"}}'], [1024]), "claude"))).resolves.toEqual([{ type: "error", message: "文本流上游返回错误" }]);
     });
 
     it("reports EOF before a native terminal event as a contract error", async () => {
@@ -64,11 +117,7 @@ describe("normalized text stream protocol", () => {
                     "claude",
                 ),
             ),
-        ).resolves.toEqual([
-            { type: "usage", inputTokens: 11 },
-            { type: "usage", inputTokens: 11, outputTokens: 7, totalTokens: 18 },
-            { type: "completed" },
-        ]);
+        ).resolves.toEqual([{ type: "usage", inputTokens: 11 }, { type: "usage", inputTokens: 11, outputTokens: 7, totalTokens: 18 }, { type: "completed" }]);
     });
 });
 

@@ -10,10 +10,17 @@ import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { emptyDb } from "@/lib/auth/store-normalizers";
 import { readAuthDb, writeAuthDb } from "@/lib/auth/store-repository";
 import { meteredTextResponseBody } from "./system-ai-metered-text-stream";
-import { createTextTask } from "./text-task-store";
+import { createTextTask, getTextTask, retryTextTask } from "./text-task-store";
 import { runTextTaskStep } from "./text-task-runtime";
-import { systemAiUsageResponseHeaders } from "./system-ai-billing";
+import { systemAiUsageResponseHeaders, finalizeSystemAiUsageRequestHeaders } from "./system-ai-billing";
 import * as outbound from "./safe-outbound-fetch";
+import * as internal from "./internal-origin";
+import * as authStore from "@/lib/auth/store";
+import * as session from "@/lib/auth/session";
+import * as security from "./security";
+import { POST as systemProxyPost } from "@/app/api/ai/system/[channelId]/[...path]/route";
+import { scheduleGenerationTask } from "./generation-task-scheduler";
+import { getStoredGenerationTaskRecord } from "./generation-task-store";
 
 import {
     attachUsageProviderUpstreamTaskId,
@@ -76,6 +83,194 @@ afterAll(() => {
 });
 
 describe("usage billing runtime", () => {
+    it("preserves protocol completion billing when HTTP transport cancellation loses the local cleanup reason", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "text-task:http-terminal",
+            requestFingerprint: "a".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "fixture",
+        });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode('data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2}}}\n\n'));
+            },
+        });
+        const reader = meteredTextResponseBody(body, billing, 1).getReader();
+        await reader.read();
+        await reader.cancel();
+        const db = await readAuthDb();
+        expect(db.walletHolds[0].status).toBe("active");
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "pending", observedUsage: { inputTokens: "5", outputTokens: "2" } });
+        expect(db.usageCharges).toEqual([]);
+    });
+    it("resubmits Custom async retry without polling its previous upstream task or restoring its scheduler result", async () => {
+        const config = {
+            baseUrl: "https://fixture.example",
+            apiFormat: "openai" as const,
+            apiKey: "fixture",
+            model: "custom-model",
+            advancedConfig: { ...emptyAdvancedConfig(), protocol: "custom" as const, createPath: "/jobs", queryPath: "/jobs/:task_id", requestTemplate: '{"prompt":"{{prompt}}"}', resultField: "text" },
+        };
+        const task = await createTextTask({ userId: "user-one", config, messages: [{ role: "user", content: "fixture" }] });
+        const upstream = vi
+            .spyOn(outbound, "fetchSafeOutbound")
+            .mockResolvedValueOnce(Response.json({ task_id: "old-upstream" }))
+            .mockResolvedValueOnce(Response.json({ status: "failed" }))
+            .mockResolvedValueOnce(Response.json({ task_id: "new-upstream" }));
+        expect(await runTextTaskStep(task, "http://internal", "")).toMatchObject({ state: "pending", upstreamTaskId: "old-upstream" });
+        await scheduleGenerationTask("text", task.id, { executionPhase: "submitted", upstreamTaskId: "old-upstream", submittedAt: Date.now(), resultPayload: { text: "stale" } });
+        expect(await runTextTaskStep((await getTextTask(task.id))!, "http://internal", "")).toMatchObject({ state: "failed" });
+        await retryTextTask((await getTextTask(task.id))!, { config, messages: [{ role: "user", content: "fixture" }], candidateConfigs: [] });
+        expect(await getStoredGenerationTaskRecord("text", task.id)).toMatchObject({ executionPhase: "created" });
+        expect((await getStoredGenerationTaskRecord("text", task.id))?.upstreamTaskId).toBeUndefined();
+        expect((await getStoredGenerationTaskRecord("text", task.id))?.resultPayload).toBeUndefined();
+        expect(await runTextTaskStep((await getTextTask(task.id))!, "http://internal", "")).toMatchObject({ state: "pending", upstreamTaskId: "new-upstream" });
+        expect(upstream.mock.calls.map(([url, init]) => [String(url), init?.method || "GET"])).toEqual([
+            ["https://fixture.example/v1/jobs", "POST"],
+            ["https://fixture.example/v1/jobs/old-upstream", "GET"],
+            ["https://fixture.example/v1/jobs", "POST"],
+        ]);
+    });
+    it("creates a fresh persisted billing cycle for explicit retry and shares it only across that cycle's failovers", async () => {
+        const rate = { version: 1 as const, components: [{ id: "request", dimension: "request" as const, unitPrice: "1" }] };
+        const config = {
+            apiSource: "system" as const,
+            baseUrl: "/api/ai/system/fixture-channel",
+            apiFormat: "openai" as const,
+            apiKey: "system",
+            model: "fixture-model",
+            logicalModel: "writer",
+            channelId: "fixture-channel",
+            capabilityProfile: { maxOutputTokens: 128 },
+            usagePricing: { logicalModelId: "writer", bindingId: "fixture-binding", saleRateCard: rate, costRateCard: rate, providerCostUnit: { kind: "fiat" as const, currency: "USD" as const } },
+        };
+        const db = await readAuthDb();
+        vi.spyOn(session, "getCurrentUser").mockResolvedValue({ ...db.users[0], heldBalance: "0", availableBalance: "10", mfaEnabled: false });
+        vi.spyOn(authStore, "getAuthSettings").mockResolvedValue({
+            ...db.settings,
+            logicalModels: [
+                {
+                    id: "writer",
+                    name: "测试写作",
+                    capability: "text",
+                    enabled: true,
+                    saleRateCard: rate,
+                    bindings: [
+                        {
+                            id: "fixture-binding",
+                            channelId: "fixture-channel",
+                            upstreamModel: "fixture-model",
+                            enabled: true,
+                            priority: 1,
+                            weight: 1,
+                            costRateCard: rate,
+                            providerCostUnit: { kind: "fiat", currency: "USD" },
+                            capabilityProfile: { maxOutputTokens: 128 },
+                        },
+                    ],
+                },
+            ],
+            systemChannels: [{ id: "fixture-channel", name: "fixture", enabled: true, baseUrl: "https://fixture.example/v1", apiKey: "fixture-key", apiFormat: "openai", models: ["fixture-model"] }],
+        });
+        vi.spyOn(security, "isSafeOutboundUrl").mockResolvedValue(true);
+        vi.spyOn(internal, "fetchInternalApi").mockImplementation(async (url, init) => {
+            const target = new URL(url);
+            const headers = new Headers(init?.headers);
+            finalizeSystemAiUsageRequestHeaders(headers, { method: "POST", canonicalPath: target.pathname, canonicalQuery: target.searchParams.toString(), bodyDigest: createHash("sha256").update(String(init?.body)).digest("hex") });
+            return systemProxyPost(new Request(url, { ...init, headers }), { params: Promise.resolve({ channelId: "fixture-channel", path: ["chat", "completions"] }) });
+        });
+        const responses = [
+            'data: {"error":{"message":"fixture failure"}}\n\n',
+            'data: {"error":{"message":"retry failover"}}\n\n',
+            'data: {"choices":[{"delta":{"content":"完成"}}]}\n\ndata: {"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\ndata: [DONE]\n\n',
+        ];
+        const upstream = vi.spyOn(outbound, "fetchSafeOutbound").mockImplementation(async () => new Response(responses.shift(), { headers: { "content-type": "text/event-stream" } }));
+        const task = await createTextTask({ userId: "user-one", config, messages: [{ role: "user", content: "fixture" }] });
+        expect(await runTextTaskStep(task, "http://internal", "")).toMatchObject({ state: "failed" });
+        const failed = (await getTextTask(task.id))!;
+        const firstAudit = structuredClone(failed.attempts);
+        const firstBilling = await readAuthDb();
+        expect(firstBilling.walletHolds[0].status).toBe("released");
+
+        await retryTextTask(failed, { config, candidateConfigs: [config], messages: [{ role: "user", content: "fixture" }] });
+        const retried = (await getTextTask(task.id))!;
+        expect(await runTextTaskStep(retried, "http://internal", "")).toEqual({ state: "completed" });
+        expect(upstream).toHaveBeenCalledTimes(3);
+        const completed = (await getTextTask(task.id))!;
+        expect(completed.id).toBe(task.id);
+        expect(completed.attempts?.slice(0, 1)).toEqual(firstAudit);
+        expect(completed.attempts?.map((attempt) => attempt.status)).toEqual(["failed", "failed", "succeeded"]);
+        const settled = await readAuthDb();
+        expect(settled.walletHolds).toHaveLength(2);
+        expect(settled.walletHolds.find((hold) => hold.id === firstBilling.walletHolds[0].id)).toEqual(firstBilling.walletHolds[0]);
+        const retryHold = settled.walletHolds.find((hold) => hold.id !== firstBilling.walletHolds[0].id)!;
+        expect(retryHold).toMatchObject({ status: "settled", runtimeSnapshot: { recovery: { taskType: "text", taskId: task.id } } });
+        expect(
+            settled.providerUsageAttempts
+                .filter((attempt) => attempt.holdId === retryHold.id)
+                .map((attempt) => attempt.status)
+                .sort(),
+        ).toEqual(["failed", "succeeded"]);
+        expect(settled.usageCharges).toHaveLength(1);
+    });
+    it("settles multiline terminal usage on an open Responses stream exactly once", async () => {
+        const task = await createTextTask({
+            userId: "user-one",
+            messages: [{ role: "user", content: "fixture" }],
+            config: { baseUrl: "https://fixture.example", apiFormat: "openai", apiKey: "fixture", model: "text-model", advancedConfig: { ...emptyAdvancedConfig(), createPath: "/responses" } },
+        });
+        const rate = {
+            version: 1 as const,
+            components: [
+                { id: "input", dimension: "inputTokens" as const, unitPrice: "0.1" },
+                { id: "cached", dimension: "cachedInputTokens" as const, unitPrice: "0.01" },
+                { id: "output", dimension: "outputTokens" as const, unitPrice: "0.2" },
+            ],
+        };
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: `text-task:${task.id}`,
+            requestFingerprint: createHash("sha256").update(task.id).digest("hex"),
+            logicalModelId: "text-model",
+            saleRateSnapshot: rate,
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", cachedInputTokens: "0", maxOutputTokens: "10" }),
+            description: "文本预留",
+        });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" }, costRateSnapshot: rate });
+        let sourceController!: ReadableStreamDefaultController<Uint8Array>;
+        const source = new ReadableStream<Uint8Array>({
+            start(controller) {
+                sourceController = controller;
+                controller.enqueue(
+                    new TextEncoder().encode(
+                        'data: {"type":"response.output_text.delta","delta":"完成"}\n\nevent: response.completed\ndata: {"type":"response.completed",\ndata: "response":{"usage":{"input_tokens":5,"output_tokens":2,\ndata: "input_tokens_details":{"cached_tokens":1}}}}\n\n',
+                    ),
+                );
+            },
+        });
+        vi.spyOn(outbound, "fetchSafeOutbound").mockResolvedValue(
+            new Response(meteredTextResponseBody(source, billing, 1), { headers: { "content-type": "text/event-stream", ...systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }) } }),
+        );
+        let settled = false;
+        const execution = runTextTaskStep(task, "http://internal", "").then((result) => {
+            settled = true;
+            return result;
+        });
+        // The persisted public snapshot proves the runtime consumed this stream before checking completion.
+        await vi.waitFor(async () => expect((await getTextTask(task.id))?.visibleTextSnapshot?.content).toBe("完成"));
+        await vi.waitFor(() => expect(settled).toBe(true)).catch(() => sourceController.close());
+        await execution;
+        const db = await readAuthDb();
+        expect(db.walletHolds[0].status).toBe("settled");
+        expect(db.usageCharges).toHaveLength(1);
+        expect(db.usageCharges[0]).toMatchObject({ settledCredits: "0.81", estimated: false });
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "succeeded", normalizedUsage: { inputTokens: "4", cachedInputTokens: "1", outputTokens: "2" } });
+        expect(db.pointRecords.filter((record) => record.type === "consume")).toHaveLength(1);
+    });
     it.each([
         {
             protocol: "chat",
@@ -140,6 +335,7 @@ describe("usage billing runtime", () => {
         expect(db.walletHolds[0].status).toBe("released");
         expect(db.providerUsageAttempts[0]).toMatchObject({ status: "failed", nativeCostAmount: "0.81", costUsd: "0.81", normalizedUsage: { inputTokens: "4", cachedInputTokens: "1", outputTokens: "2" } });
         expect(db.usageCharges).toEqual([]);
+        if (path === "/responses") expect((await getTextTask(task.id))?.attempts?.[0]).toMatchObject({ usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 } });
     });
 
     it("keeps a failed text attempt hold active when its stream is closed before failover", async () => {

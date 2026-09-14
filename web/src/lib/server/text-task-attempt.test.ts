@@ -12,6 +12,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
 
 import * as store from "./text-task-store";
 import { getStoredGenerationTaskRecord } from "./generation-task-store";
+import { scheduleGenerationTask } from "./generation-task-scheduler";
 
 describe("text attempt persistence", () => {
     beforeEach(() => {
@@ -24,6 +25,45 @@ describe("text attempt persistence", () => {
         const task = await create();
         expect(task.executionContext).toEqual({ runId: "run", parentTaskId: "parent", taskId: task.id });
         expect(task.milestones).toEqual({ task_created: task.createdAt });
+    });
+
+    it("clears failed payload and scheduler state atomically on explicit retry while retaining the attempt audit", async () => {
+        const task = await create();
+        const opened = (await store.openTextTaskAttempt(task, task.config, "custom", []))!;
+        const closed = (await store.closeTextTaskAttempt(task.id, opened.activeAttemptId!, "failed", { error: "old error", pointsCost: 1, pointsRecordId: "old charge" }))!;
+        const failed = (await store.transitionTextTask(closed, ["pending"], {
+            status: "error",
+            result: { content: "old result" },
+            error: "old error",
+            upstream: { id: "old upstream", createPath: "/jobs" },
+            billing: { pointsCost: 1, pointsRecordId: "old charge", refunded: true },
+        }))!;
+        await scheduleGenerationTask("text", task.id, {
+            executionPhase: "completed",
+            upstreamTaskId: "old upstream",
+            submittedAt: 100,
+            lastPollAt: 200,
+            resultPayload: { text: "old result" },
+            queryPath: "/jobs/old",
+            channelId: "old channel",
+            provider: "old provider",
+        });
+
+        await store.retryTextTask(failed, { config: task.config, messages: [], candidateConfigs: [] });
+        const retried = (await store.getTextTask(task.id))!;
+        expect(retried).toMatchObject({ id: task.id, status: "pending", attempts: closed.attempts });
+        for (const key of ["result", "error", "upstream", "billing"]) expect(retried).not.toHaveProperty(key);
+        const record = (await getStoredGenerationTaskRecord("text", task.id))!;
+        expect(record.executionPhase).toBe("created");
+        for (const key of ["upstreamTaskId", "submittedAt", "lastPollAt", "resultPayload", "queryPath", "channelId", "provider"]) expect(record[key as keyof typeof record]).toBeUndefined();
+        expect(await store.transitionTextTask(failed, ["pending"], { status: "error", error: "late previous cycle" })).toBeNull();
+    });
+
+    it("rejects an attempt opened from an earlier explicit retry cycle", async () => {
+        const task = await create();
+        const failed = (await store.transitionTextTask(task, ["pending"], { status: "error" }))!;
+        await store.retryTextTask(failed, { config: task.config, messages: [] });
+        expect(await store.openTextTaskAttempt(failed, task.config, "custom", [])).toBeNull();
     });
 
     it("rejects stale revisions and closed attempts without replacing a prior visible partial on retry", async () => {

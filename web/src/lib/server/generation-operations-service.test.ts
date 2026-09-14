@@ -265,7 +265,7 @@ describe("generation operations aggregation", () => {
         expect(result.items[0].attempts?.[0]?.providerTrace).toBe("trace-123 [redacted-url]");
     });
 
-    it("projects persisted text attempt timing and usage only into the admin operation payload", async () => {
+    it.each(["chat", "claude"])("projects persisted %s text attempt timing and usage only into the admin operation payload", async (protocol) => {
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
             items: [
                 {
@@ -282,7 +282,7 @@ describe("generation operations aggregation", () => {
                                 status: "failed",
                                 startedAt: 1000,
                                 completedAt: 5000,
-                                protocol: "chat",
+                                protocol,
                                 transport: "stream",
                                 error: "上游流中断",
                                 usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
@@ -305,7 +305,7 @@ describe("generation operations aggregation", () => {
         expect(result.items[0]?.attempts).toEqual([
             expect.objectContaining({
                 upstreamModel: "writer-v2",
-                protocol: "chat",
+                protocol,
                 transport: "stream",
                 usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
                 milestones: { upstream_started: 1000, first_byte: 1120, first_text: 1240, stream_completed: 4600 },

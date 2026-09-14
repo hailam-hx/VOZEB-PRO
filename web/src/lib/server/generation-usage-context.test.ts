@@ -24,6 +24,7 @@ describe("generation usage context", () => {
 
     it("derives only known stable task identities for recovery", () => {
         expect(usageRecoveryIdentity("video-task:video-one")).toEqual({ taskType: "video", taskId: "video-one" });
+        expect(usageRecoveryIdentity("text-task:text-one:cycle:retry-cycle")).toEqual({ taskType: "text", taskId: "text-one" });
         expect(usageRecoveryIdentity("unknown:one")).toBeUndefined();
     });
 

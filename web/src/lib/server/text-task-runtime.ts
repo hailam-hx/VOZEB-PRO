@@ -10,7 +10,7 @@ import { acceptTextTaskSnapshot, closeTextTaskAttempt, openTextTaskAttempt, getT
 import { updateTextTask } from "@/lib/server/text-task-store";
 import type { AiTextMessage } from "@/types/ai";
 import { hasSystemAiCharge, readSystemAiBilling, readSystemAiUsageBilling, systemAiBillingHeaders, type SystemAiUsageContextDraft } from "@/lib/server/system-ai-billing";
-import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
+import { generationSystemAiUsageContext, textTaskBillingBusinessId } from "@/lib/server/generation-usage-context";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { buildProviderRequest, isProviderBusinessError, providerQueryPaths, readProviderString } from "@/lib/server/provider-task-config";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
@@ -135,12 +135,17 @@ async function executeTextTaskStep(task: TextTask, origin: string, cookie: strin
 function createAttemptRuntime(task: TextTask, streaming: boolean, options: TextTaskRuntimeOptions): AttemptRuntime {
     const profile = task.config.capabilityProfile as { timeoutMs?: number; streamingTimeouts?: { connectMs?: number; firstByteMs?: number; firstTextMs?: number; idleMs?: number } } | undefined;
     const timeouts = profile?.streamingTimeouts;
+    const overallTimeoutMs = resolveModelRequestTimeoutMs(task.config, "text");
+    const stageTimeout = (value: number | undefined) => {
+        const ms = Math.floor(Number(value));
+        return Number.isFinite(ms) && ms > 0 ? Math.min(ms, overallTimeoutMs) : undefined;
+    };
     const policy: TextTaskTimeoutPolicy = {
-        connectTimeoutMs: timeouts?.connectMs,
-        firstByteTimeoutMs: timeouts?.firstByteMs,
-        firstTextTimeoutMs: timeouts?.firstTextMs,
-        idleTimeoutMs: timeouts?.idleMs,
-        overallTimeoutMs: profile?.timeoutMs || resolveModelRequestTimeoutMs(task.config, "text"),
+        connectTimeoutMs: stageTimeout(timeouts?.connectMs),
+        firstByteTimeoutMs: stageTimeout(timeouts?.firstByteMs),
+        firstTextTimeoutMs: stageTimeout(timeouts?.firstTextMs),
+        idleTimeoutMs: stageTimeout(timeouts?.idleMs),
+        overallTimeoutMs,
     };
     const control = registerTextTaskAttempt(task.id, task.activeAttemptId!, policy, streaming, options.signal);
     const attempt = task.attempts?.find((item) => item.id === task.activeAttemptId);
@@ -380,7 +385,7 @@ async function failTextTask(task: TextTask, error: string): Promise<TextTaskStep
         await refundUserPoints(failed.userId, generationModelId(failed.config), failed.billing.pointsCost, "text", 1, undefined, failed.billing.pointsRecordId);
         await transitionTextTask(failed, ["error"], { status: "error", billing: { ...failed.billing, refunded: true } });
     }
-    await releaseUsageBillingForBusiness(failed.userId, `text-task:${failed.id}`, message);
+    await releaseUsageBillingForBusiness(failed.userId, textTaskBillingBusinessId(failed), message);
     return { state: "failed", error: message };
 }
 
@@ -394,7 +399,7 @@ async function cancelRunningTextTask(task: TextTask, headers?: Headers, normaliz
     const closed = await closeTextTaskAttempt(task.id, task.activeAttemptId!, "cancelled", { error: "任务已取消" }, activeRevision(task));
     if (closed) {
         if (headers) await finishSystemAiTextAttempt(headers, { status: "canceled", reason: "任务已取消", normalizedUsage });
-        else await releaseUsageBillingForBusiness(task.userId, `text-task:${task.id}`, "任务已取消");
+        else await releaseUsageBillingForBusiness(task.userId, textTaskBillingBusinessId(task), "任务已取消");
         await updateTextTask(task.id, { config: clearSecret(task.config), candidateConfigs: [] });
     }
     return { state: "failed", error: "任务已取消" };
@@ -539,7 +544,7 @@ async function persistTextResponseBilling(task: TextTask, headers: Headers) {
 }
 
 function pointsIdempotencyKey(task: TextTask, protocol: ResolvedTextProtocol) {
-    const providerKey = `text-task:${task.id}:attempt:${task.attemptNo || 1}:${protocol.kind}`;
+    const providerKey = `${textTaskBillingBusinessId(task)}:attempt:${task.attemptNo || 1}:${protocol.kind}`;
     return generationSystemAiUsageContext(task.config, "text", providerKey, task.userId) || providerKey;
 }
 

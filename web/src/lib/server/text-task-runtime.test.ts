@@ -335,6 +335,75 @@ describe("text task runtime recovery", () => {
         vi.useRealTimers();
     });
 
+    it.each([
+        { configured: 1, effective: 5_000 },
+        { configured: 60 * 60_000, effective: 30 * 60_000 },
+        { configured: 12_345, effective: 12_345 },
+    ])("enforces the effective overall timeout for $configured ms", async ({ configured, effective }) => {
+        vi.useFakeTimers();
+        state = textTask({ ...openAiConfig("one", "https://one.example"), capabilityProfile: { timeoutMs: configured } });
+        let signal!: AbortSignal;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockImplementation(
+                (_url: string, init: RequestInit) =>
+                    new Promise((_resolve, reject) => {
+                        signal = init.signal!;
+                        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                    }),
+            ),
+        );
+        const execution = runTextTaskStep(state, "http://internal", "");
+        await vi.advanceTimersByTimeAsync(effective - 1);
+        const wasPremature = signal.aborted;
+        await vi.advanceTimersByTimeAsync(1);
+        const atDeadline = signal.aborted;
+        if (!signal.aborted) cancelTextTaskAttempt(state.id, state.activeAttemptId!);
+        await execution;
+        expect(wasPremature).toBe(false);
+        expect(atDeadline).toBe(true);
+        expect(state.status).toBe("error");
+    });
+
+    it("disables a fractional stage timeout that normalizes below one millisecond", async () => {
+        vi.useFakeTimers();
+        state = textTask({ ...openAiConfig("one", "https://one.example"), capabilityProfile: { timeoutMs: 5_000, streamingTimeouts: { connectMs: 0.9, firstByteMs: 6_000 } } });
+        let signal!: AbortSignal;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockImplementation(
+                (_url: string, init: RequestInit) =>
+                    new Promise((_resolve, reject) => {
+                        signal = init.signal!;
+                        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                    }),
+            ),
+        );
+        const execution = runTextTaskStep(state, "http://internal", "");
+        await vi.advanceTimersByTimeAsync(4_999);
+        const premature = signal.aborted;
+        await vi.advanceTimersByTimeAsync(1);
+        await execution;
+        expect(premature).toBe(false);
+        expect(signal.reason).toMatchObject({ stage: "overall" });
+    });
+
+    it("persists failed Responses usage in the immutable attempt audit", async () => {
+        state = textTask({ ...openAiConfig("one", "https://one.example"), advancedConfig: { ...emptyAdvancedConfig(), createPath: "/responses" } });
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValue(
+                    sse(
+                        'data: {"type":"response.output_text.delta","delta":"partial"}\n\ndata: {"type":"response.failed","response":{"id":"resp_fixture","status":"failed","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7},"error":{"code":"server_error","message":"private"}}}\n\n',
+                    ),
+                ),
+        );
+        await runTextTaskStep(state, "http://internal", "");
+        expect(state.attempts?.[0]).toMatchObject({ status: "failed", content: "partial", usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 }, milestones: { task_completed: expect.any(Number) } });
+    });
+
     it("stops upstream timers at EOF while a final snapshot is still flushing", async () => {
         vi.useFakeTimers();
         state = textTask({ ...openAiConfig("one", "https://one.example"), capabilityProfile: { streamingTimeouts: { idleMs: 50 } } as TextTaskConfig["capabilityProfile"] });

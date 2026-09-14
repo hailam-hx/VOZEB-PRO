@@ -6,6 +6,7 @@ import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenera
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 import type { ResolvedTextProtocolKind } from "@/lib/server/text-protocol-resolver";
+import { textTaskBillingBusinessId } from "./generation-usage-context";
 
 type TextTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
 
@@ -21,6 +22,7 @@ export type TextTaskAttempt = Omit<GenerationAttempt, "status"> & {
     transport: "stream" | "buffered";
     revision: number;
     content: string;
+    billingBusinessId?: string;
     usage?: TextTaskUsage;
     milestones: TextTaskMilestones;
     latency?: { firstByteMs?: number; firstTextMs?: number; streamMs?: number; generationMs?: number; finalizationMs?: number; totalMs?: number };
@@ -52,6 +54,7 @@ export type TextTask = {
     result?: { content: string };
     upstream?: { id: string; createPath: string };
     billing?: { pointsCost: number; pointsRecordId?: string; refunded: boolean };
+    billingCycleId?: string;
     error?: string;
     pointsRemaining?: number;
     candidateConfigs?: TextTaskConfig[];
@@ -79,7 +82,7 @@ export async function createTextTask(input: Omit<TextTask, "id" | "status" | "cr
 
 export function openTextTaskAttempt(task: TextTask, config: TextTaskConfig, protocol: ResolvedTextProtocolKind, candidateConfigs: TextTaskConfig[]) {
     return mutateStoredGenerationTask<TextTask>("text", task.id, GENERATION_TASK_RETENTION_MS, (current) => {
-        if (!["pending", "running"].includes(current.status) || current.activeAttemptId !== task.activeAttemptId || current.attempts?.some((attempt) => attempt.status === "running")) return null;
+        if (!["pending", "running"].includes(current.status) || current.billingCycleId !== task.billingCycleId || current.activeAttemptId !== task.activeAttemptId || current.attempts?.some((attempt) => attempt.status === "running")) return null;
         const id = randomUUID();
         const attemptNo = (current.attempts?.length || 0) + 1;
         const attempt: TextTaskAttempt = {
@@ -95,6 +98,7 @@ export function openTextTaskAttempt(task: TextTask, config: TextTaskConfig, prot
             transport: protocol === "custom" ? "buffered" : "stream",
             revision: 0,
             content: "",
+            billingBusinessId: textTaskBillingBusinessId(current),
             milestones: { task_created: current.createdAt },
         };
         return { ...current, config, candidateConfigs, attemptNo, activeAttemptId: id, executionContext: { ...current.executionContext, taskId: current.id, attemptId: id }, attempts: [...(current.attempts || []), attempt] };
@@ -155,12 +159,16 @@ export async function retryTextTask(task: TextTask, input: Pick<TextTask, "confi
     return transitionTextTask(
         task,
         ["error"],
-        { ...input, status: "pending", result: undefined, error: undefined, upstream: undefined, billing: undefined },
+        { ...input, status: "pending", result: undefined, error: undefined, upstream: undefined, billing: undefined, pointsRemaining: undefined, billingCycleId: randomUUID(), milestones: { task_created: task.createdAt } },
         {
             executionPhase: "created",
             nextPollAt: Date.now(),
             submittedAt: undefined,
+            lastPollAt: undefined,
             upstreamTaskId: undefined,
+            channelId: undefined,
+            provider: undefined,
+            queryPath: undefined,
             resultPayload: undefined,
             lastUpstreamStatus: "retry_requested",
         },
@@ -170,12 +178,22 @@ export async function retryTextTask(task: TextTask, input: Pick<TextTask, "confi
 export function transitionTextTask(
     task: TextTask,
     allowedStatuses: TextTaskStatus[],
-    patch: Partial<Pick<TextTask, "config" | "candidateConfigs" | "messages" | "result" | "error" | "pointsRemaining" | "upstream" | "billing">> & { status: TextTaskStatus },
+    patch: Partial<Pick<TextTask, "config" | "candidateConfigs" | "messages" | "result" | "error" | "pointsRemaining" | "upstream" | "billing" | "billingCycleId" | "milestones">> & { status: TextTaskStatus },
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
 ) {
     const next = { ...patch, ...(["success", "error", "cancelled"].includes(patch.status) ? { milestones: { ...task.milestones, task_completed: Date.now() } } : {}) };
     const revision = task.attempts?.find((attempt) => attempt.id === task.activeAttemptId)?.revision;
-    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, next, GENERATION_TASK_RETENTION_MS, executionPatch, { activeAttemptId: task.activeAttemptId, revision }, patch.status === "cancelled");
+    return transitionStoredGenerationTask<TextTask>(
+        "text",
+        task.id,
+        task.userId,
+        allowedStatuses,
+        next,
+        GENERATION_TASK_RETENTION_MS,
+        executionPatch,
+        { activeAttemptId: task.activeAttemptId, revision, billingCycleId: task.billingCycleId },
+        patch.status === "cancelled",
+    );
 }
 
 export function touchTextTask(id: string) {

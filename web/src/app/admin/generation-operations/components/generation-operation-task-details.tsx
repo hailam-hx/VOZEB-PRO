@@ -158,9 +158,10 @@ export function generationTaskPointsLabel(task: AdminGenerationTask) {
     return breakdown ? `规划 ${breakdown.planner} · 子任务 ${breakdown.childTasks} · 合计 ${breakdown.total} 积分` : `${task.pointsCost} 积分`;
 }
 
-export function planningProtocolLabel(protocol?: "responses" | "chat" | "gemini" | "custom") {
+export function planningProtocolLabel(protocol?: "responses" | "chat" | "gemini" | "claude" | "custom") {
     if (protocol === "responses") return "Responses";
     if (protocol === "gemini") return "Gemini";
+    if (protocol === "claude") return "Claude";
     if (protocol === "custom") return "自定义协议";
     if (protocol === "chat") return "Chat Completions";
     return "未记录协议";

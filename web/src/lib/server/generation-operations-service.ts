@@ -188,7 +188,7 @@ function generationAttempts(value: unknown): AdminGenerationAttempt[] | undefine
 }
 
 function attemptProtocol(value: unknown): AdminGenerationAttempt["protocol"] | undefined {
-    return value === "responses" || value === "chat" || value === "gemini" || value === "custom" ? value : undefined;
+    return value === "responses" || value === "chat" || value === "gemini" || value === "claude" || value === "custom" ? value : undefined;
 }
 
 function attemptUsage(value: unknown): AdminGenerationAttempt["usage"] | undefined {

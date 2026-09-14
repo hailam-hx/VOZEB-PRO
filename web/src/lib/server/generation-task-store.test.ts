@@ -80,8 +80,29 @@ describe("mutateStoredGenerationTask", () => {
         expect(sql).toContain("payload->>'activeAttemptId'");
         expect(sql).toContain("(attempt->>'revision')::numeric = $22::numeric");
         expect(sql).toContain("execution_phase =");
-        expect(values?.slice(-4)).toEqual([true, "attempt-one", 2, false]);
+        expect(values?.slice(19, 23)).toEqual([true, "attempt-one", 2, false]);
         expect(sql).toContain("$9::boolean AND NOT $23::boolean");
+    });
+
+    it("explicitly removes undefined retry payload keys and schedule values in the guarded PostgreSQL update", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [], command: "UPDATE", rowCount: 0, oid: 0, fields: [] });
+        await transitionStoredGenerationTask<import("./text-task-store").TextTask>(
+            "text",
+            "text-one",
+            "user",
+            ["error"],
+            { status: "pending", result: undefined, error: undefined, upstream: undefined, billing: undefined },
+            60_000,
+            { executionPhase: "created", upstreamTaskId: undefined, submittedAt: undefined, resultPayload: undefined },
+            { activeAttemptId: "attempt-one", revision: 2 },
+        );
+        const [sql, values] = vi.mocked(postgresQuery).mock.calls[0];
+        expect(values?.[23]).toEqual(["result", "error", "upstream", "billing"]);
+        expect(values?.[24]).toEqual(["upstreamTaskId", "submittedAt", "resultPayload"]);
+        expect(sql).toContain("payload - $24::text[]");
+        for (const key of ["upstreamTaskId", "submittedAt", "resultPayload"]) expect(sql).toContain(`WHEN '${key}' = ANY($25::text[]) THEN NULL`);
+        expect(values?.slice(19, 23)).toEqual([true, "attempt-one", 2, false]);
     });
 
     it("removes only one stable bounded batch of expired file tasks", async () => {

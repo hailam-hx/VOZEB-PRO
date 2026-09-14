@@ -1,10 +1,9 @@
+import { createTextSseDecoder, TEXT_STREAM_COMPLETED, TEXT_STREAM_FAILED } from "./text-sse-decoder";
+
 export type TextStreamProtocol = "chat" | "responses" | "gemini" | "claude";
 
 export type NormalizedTextStreamEvent =
-    | { type: "text_delta"; text: string }
-    | { type: "usage"; inputTokens?: number; outputTokens?: number; totalTokens?: number }
-    | { type: "completed" }
-    | { type: "error"; message: string; status?: number; contract?: true };
+    { type: "text_delta"; text: string } | { type: "usage"; inputTokens?: number; outputTokens?: number; totalTokens?: number } | { type: "completed" } | { type: "error"; message: string; status?: number; contract?: true };
 
 type TextStreamOptions = { onFirstByte?: () => void | Promise<void> };
 type UsageState = { inputTokens?: number; outputTokens?: number };
@@ -26,41 +25,32 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
     }
 
     const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const frames: string[] = [];
+    const decoder = createTextSseDecoder((data) => frames.push(data));
     let failed = false;
     let completed = false;
     let firstByte = false;
     const usageState: UsageState = {};
     const consume = (frame: string) => streamEvents(frame, protocol, usageState);
     try {
-        for (;;) {
+        reading: for (;;) {
             const next = await reader.read();
-            if (next.done) break;
-            if (!firstByte && next.value.byteLength) {
+            if (!firstByte && next.value?.byteLength) {
                 firstByte = true;
                 await options.onFirstByte?.();
             }
-            buffer += decoder.decode(next.value, { stream: true });
-            const frames = takeSseFrames(buffer);
-            buffer = frames.rest;
-            for (const frame of frames.values) {
+            if (next.done) decoder.finish();
+            else decoder.push(next.value);
+            for (const frame of frames.splice(0)) {
                 const parsed = consume(frame);
                 completed ||= parsed.completed;
                 for (const event of parsed.events) {
-                    yield event;
                     if (event.type === "error") failed = true;
+                    yield event;
                 }
+                if (completed || failed) break reading;
             }
-        }
-        buffer += decoder.decode();
-        if (buffer.trim()) {
-            const parsed = consume(buffer);
-            completed ||= parsed.completed;
-            for (const event of parsed.events) {
-                yield event;
-                if (event.type === "error") failed = true;
-            }
+            if (next.done) break;
         }
     } catch (error) {
         if (error instanceof Error && error.name === "AbortError") throw error;
@@ -68,6 +58,7 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
         yield { type: "error", message: "读取文本流失败" };
         return;
     } finally {
+        await reader.cancel(completed ? TEXT_STREAM_COMPLETED : failed ? TEXT_STREAM_FAILED : undefined).catch(() => undefined);
         reader.releaseLock();
     }
     if (failed) return;
@@ -79,34 +70,18 @@ function streamEvents(frame: string, protocol: TextStreamProtocol, usageState: U
     if (frame.trim() === "[DONE]") return { events: [], completed: true };
     const payload = parseRecord(frame);
     if (!payload) return { events: [], completed: false };
+    const events: NormalizedTextStreamEvent[] = [];
+    const usage = normalizedUsage(payload, usageState);
     if (hasStreamError(payload)) {
         reportDiagnostic(protocol, "stream_error", JSON.stringify(payload));
-        return { events: [{ type: "error", message: "文本流上游返回错误" }], completed: false };
+        if (usage) events.push({ type: "usage", ...usage });
+        events.push({ type: "error", message: "文本流上游返回错误" });
+        return { events, completed: false };
     }
-    const events: NormalizedTextStreamEvent[] = [];
     const text = streamedText(payload, protocol);
     if (text) events.push({ type: "text_delta", text });
-    const usage = normalizedUsage(payload, usageState);
     if (usage) events.push({ type: "usage", ...usage });
     return { events, completed: nativeCompleted(payload, protocol) };
-}
-
-function takeSseFrames(value: string) {
-    const values: string[] = [];
-    let rest = value;
-    for (;;) {
-        const match = /\r?\n\r?\n/u.exec(rest);
-        if (!match || match.index === undefined) break;
-        const block = rest.slice(0, match.index);
-        rest = rest.slice(match.index + match[0].length);
-        const data = block
-            .split(/\r?\n/u)
-            .filter((line) => line.startsWith("data:"))
-            .map((line) => line.slice(5).replace(/^\s/u, ""))
-            .join("\n");
-        if (data) values.push(data);
-    }
-    return { values, rest };
 }
 
 function streamedText(payload: Record<string, unknown>, protocol: TextStreamProtocol) {
@@ -142,15 +117,23 @@ function hasStreamError(payload: Record<string, unknown>) {
     return Boolean(record(payload.error) || record(record(payload.response)?.error) || payload.type === "error" || payload.type === "response.failed");
 }
 
-function nativeCompleted(payload: Record<string, unknown>, protocol: TextStreamProtocol) {
-    if (protocol === "responses") return payload.type === "response.completed";
-    if (protocol === "claude") return payload.type === "message_stop";
-    if (protocol === "gemini")
+export function textStreamTerminalStatus(payload: Record<string, unknown> | string): "succeeded" | "failed" | undefined {
+    if (payload === "[DONE]") return "succeeded";
+    if (typeof payload === "string") return undefined;
+    if (hasStreamError(payload)) return "failed";
+    return nativeCompleted(payload) ? "succeeded" : undefined;
+}
+
+function nativeCompleted(payload: Record<string, unknown>, protocol?: TextStreamProtocol) {
+    if ((!protocol || protocol === "responses") && payload.type === "response.completed") return true;
+    if ((!protocol || protocol === "claude") && payload.type === "message_stop") return true;
+    if (!protocol || protocol === "gemini")
         return records(payload.candidates).some((candidate) => {
             const finishReason = record(candidate)?.finishReason;
             return typeof finishReason === "string" && Boolean(finishReason.trim());
         });
-    return records(payload.choices).some((choice) => record(choice)?.finish_reason !== undefined && record(choice)?.finish_reason !== null);
+    // Chat can send final usage after finish_reason; only [DONE] terminates it.
+    return false;
 }
 
 function reportDiagnostic(protocol: TextStreamProtocol, kind: string, diagnostic: string, status?: number) {

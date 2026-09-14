@@ -11,6 +11,13 @@ const textRate = {
 };
 
 describe("usage billing protocol adapters", () => {
+    it("joins legal multiline SSE usage before normalizing cached input tokens", () => {
+        const requestUsage = normalizeProxyBillableRequest({ capability: "text", payload: { prompt: "fixture", max_tokens: 128 }, rateCard: textRate });
+        const accumulator = createStreamingUsageAccumulator("text", requestUsage);
+        const bytes = new TextEncoder().encode('event: response.completed\r\ndata: {"type":"response.completed",\r\ndata: "response":{"usage":{"input_tokens":5,"output_tokens":2,\r\ndata: "input_tokens_details":{"cached_tokens":1}}}}\r\n\r\n');
+        for (const byte of bytes) accumulator.push(Uint8Array.of(byte));
+        expect(accumulator.finish()).toMatchObject({ source: "actual", inputTokens: "4", cachedInputTokens: "1", outputTokens: "2" });
+    });
     it("rejects text before upstream when no request or model output maximum proves the reserve", () => {
         expect(() => normalizeProxyBillableRequest({ capability: "text", payload: { model: "writer", messages: [{ role: "user", content: "hello" }] }, rateCard: textRate })).toThrow("最大输出 token");
     });
@@ -91,7 +98,6 @@ describe("usage billing protocol adapters", () => {
         accumulator.push(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"lo"}}],"usage":{"prompt_tokens":7,"completion_tokens":3}}\n\ndata: [DONE]\n\n'));
 
         expect(accumulator.finish()).toMatchObject({ capability: "text", source: "actual", request: "1", inputTokens: "7", cachedInputTokens: "0", outputTokens: "3", characters: "5" });
-        expect(accumulator.bufferedBytes()).toBe(0);
     });
 
     it("does not turn streamed response bytes into billable output tokens", () => {
@@ -112,7 +118,6 @@ describe("usage billing protocol adapters", () => {
         expect(accumulator.finish()).toMatchObject({ source: "actual", inputTokens: "10", cachedInputTokens: "12", outputTokens: "0" });
         accumulator.push(new TextEncoder().encode('data: {"type":"message_delta","usage":{"output_tokens":2}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":4}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":4}}\n\n'));
         expect(accumulator.finish()).toMatchObject({ source: "actual", inputTokens: "10", cachedInputTokens: "12", outputTokens: "4" });
-        expect(accumulator.bufferedBytes()).toBe(0);
     });
 
     it("normalizes nested Responses usage and replaces cumulative totals across chunk boundaries", () => {
@@ -124,7 +129,6 @@ describe("usage billing protocol adapters", () => {
         accumulator.push(new TextEncoder().encode('tokens":5,"output_tokens":2,"input_tokens_details":{"cached_tokens":1}},"error":{"message":"fixture"}}}\n\n'));
         expect(accumulator.finish()).toMatchObject({ source: "actual", inputTokens: "4", cachedInputTokens: "1", outputTokens: "2" });
         expect(accumulator.finish()).toMatchObject({ inputTokens: "4", outputTokens: "2" });
-        expect(accumulator.bufferedBytes()).toBe(0);
     });
 
     it.each([{ message: { usage: { input_tokens: 4, output_tokens: 2, cache_read_input_tokens: 1 } } }, { response: { usage: { input_tokens: 5, output_tokens: 2, input_tokens_details: { cached_tokens: 1 } } } }])(

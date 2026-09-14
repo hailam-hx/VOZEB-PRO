@@ -57,7 +57,11 @@ export function systemAiTextUsageContext(input: { candidate: PricedTextCandidate
 export function usageRecoveryIdentity(businessRequestId: string) {
     const match = businessRequestId.match(/^(text|image|video|audio|voice-clone)-task:(.+)$/);
     if (!match?.[2]) return undefined;
-    return { taskType: match[1] as "text" | "image" | "video" | "audio" | "voice-clone", taskId: match[2] };
+    return { taskType: match[1] as "text" | "image" | "video" | "audio" | "voice-clone", taskId: match[1] === "text" ? match[2].replace(/:cycle:[^:]+$/, "") : match[2] };
+}
+
+export function textTaskBillingBusinessId(task: { id: string; billingCycleId?: string }) {
+    return `text-task:${task.id}${task.billingCycleId ? `:cycle:${task.billingCycleId}` : ""}`;
 }
 
 function parseAttemptKey(value: string) {

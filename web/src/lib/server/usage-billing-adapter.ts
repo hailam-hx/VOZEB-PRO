@@ -1,5 +1,7 @@
 import { calculateNormalizedUsagePrice, calculatePricingReserve, normalizeBillableUsage, validatePricingRateCard, type BillableCapability, type NormalizedUsage, type PricingRateCardV1 } from "@/lib/billing/pricing";
 import { decimal } from "@/lib/billing/decimal";
+import { createTextSseDecoder } from "./text-sse-decoder";
+import { textStreamTerminalStatus } from "./text-stream-protocol";
 
 type ProxyUsageInput = {
     capability: BillableCapability;
@@ -78,15 +80,18 @@ export function deriveProxyBillableUsage(input: { capability: BillableCapability
 }
 
 export function createStreamingUsageAccumulator(capability: BillableCapability, requestUsage: NormalizedUsage) {
-    const decoder = new TextDecoder();
-    let tail = "";
     let actual: NormalizedUsage | undefined;
+    let terminalStatus: "succeeded" | "failed" | undefined;
     let textUsage: Record<string, unknown> = {};
-    const consumeLine = (line: string) => {
-        const data = line.trim().replace(/^data:\s*/, "");
-        if (!data || data === "[DONE]") return;
+    const decoder = createTextSseDecoder((data) => {
+        if (!data) return;
+        if (data === "[DONE]") {
+            terminalStatus ??= "succeeded";
+            return;
+        }
         try {
             const payload = object(JSON.parse(data)) || {};
+            terminalStatus ??= textStreamTerminalStatus(payload);
             const usage = capability === "text" ? readTextUsage(payload) : undefined;
             // Native usage events contain cumulative counters, sometimes split across frames.
             if (usage) textUsage = { ...textUsage, ...usage };
@@ -95,23 +100,16 @@ export function createStreamingUsageAccumulator(capability: BillableCapability, 
         } catch {
             // Non-JSON stream events have no billable usage metadata.
         }
-    };
+    });
     return {
+        terminalStatus: () => terminalStatus,
         push(chunk: Uint8Array) {
-            tail += decoder.decode(chunk, { stream: true });
-            const lines = tail.split(/\r?\n/);
-            tail = lines.pop() || "";
-            lines.forEach(consumeLine);
+            decoder.push(chunk);
         },
         finish() {
-            tail += decoder.decode();
-            if (tail) consumeLine(tail);
-            tail = "";
+            decoder.finish();
             if (actual) return actual;
             return undefined;
-        },
-        bufferedBytes() {
-            return Buffer.byteLength(tail, "utf8");
         },
     };
 }

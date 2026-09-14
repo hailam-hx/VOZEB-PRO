@@ -538,31 +538,38 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
     patch: Partial<T> & { status: string },
     ttlMs: number,
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
-    attemptGuard?: { activeAttemptId?: string; revision?: number },
+    attemptGuard?: { activeAttemptId?: string; revision?: number; billingCycleId?: string },
     preserveExecutionLease = false,
 ): Promise<T | null> {
     const updatedAt = Date.now();
     const nextPatch = { ...patch, updatedAt };
     const execution = executionPatch ? normalizeExecutionPatch(executionPatch) : null;
+    const deletedKeys = Object.entries(patch)
+        .filter(([, value]) => value === undefined)
+        .map(([key]) => key);
+    const clearedExecutionKeys = Object.entries(executionPatch || {})
+        .filter(([, value]) => value === undefined)
+        .map(([key]) => key);
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery<{ payload: T }>(
             `UPDATE generation_tasks
-             SET status = $5, payload = payload || $6::jsonb, updated_at = $7, expires_at = $8,
+             SET status = $5, payload = (payload - $24::text[]) || $6::jsonb, updated_at = $7, expires_at = $8,
                  execution_phase = CASE WHEN $9::boolean THEN COALESCE($10, execution_phase) ELSE execution_phase END,
-                 upstream_task_id = CASE WHEN $9::boolean THEN COALESCE($11, upstream_task_id) ELSE upstream_task_id END,
-                 channel_id = CASE WHEN $9::boolean THEN COALESCE($12, channel_id) ELSE channel_id END,
-                 provider = CASE WHEN $9::boolean THEN COALESCE($13, provider) ELSE provider END,
-                 query_path = CASE WHEN $9::boolean THEN COALESCE($14, query_path) ELSE query_path END,
-                 submitted_at = CASE WHEN $9::boolean THEN COALESCE($15, submitted_at) ELSE submitted_at END,
+                 upstream_task_id = CASE WHEN 'upstreamTaskId' = ANY($25::text[]) THEN NULL WHEN $9::boolean THEN COALESCE($11, upstream_task_id) ELSE upstream_task_id END,
+                 channel_id = CASE WHEN 'channelId' = ANY($25::text[]) THEN NULL WHEN $9::boolean THEN COALESCE($12, channel_id) ELSE channel_id END,
+                 provider = CASE WHEN 'provider' = ANY($25::text[]) THEN NULL WHEN $9::boolean THEN COALESCE($13, provider) ELSE provider END,
+                 query_path = CASE WHEN 'queryPath' = ANY($25::text[]) THEN NULL WHEN $9::boolean THEN COALESCE($14, query_path) ELSE query_path END,
+                 submitted_at = CASE WHEN 'submittedAt' = ANY($25::text[]) THEN NULL WHEN $9::boolean THEN COALESCE($15, submitted_at) ELSE submitted_at END,
                  next_poll_at = CASE WHEN $9::boolean THEN $16 ELSE next_poll_at END,
-                 last_poll_at = CASE WHEN $9::boolean THEN COALESCE($17, last_poll_at) ELSE last_poll_at END,
-                 last_upstream_status = CASE WHEN $9::boolean THEN COALESCE($18, last_upstream_status) ELSE last_upstream_status END,
-                 result_payload = CASE WHEN $9::boolean THEN COALESCE($19::jsonb, result_payload) ELSE result_payload END,
+                 last_poll_at = CASE WHEN 'lastPollAt' = ANY($25::text[]) THEN NULL WHEN $9::boolean THEN COALESCE($17, last_poll_at) ELSE last_poll_at END,
+                 last_upstream_status = CASE WHEN 'lastUpstreamStatus' = ANY($25::text[]) THEN NULL WHEN $9::boolean THEN COALESCE($18, last_upstream_status) ELSE last_upstream_status END,
+                 result_payload = CASE WHEN 'resultPayload' = ANY($25::text[]) THEN NULL WHEN $9::boolean THEN COALESCE($19::jsonb, result_payload) ELSE result_payload END,
                  worker_id = CASE WHEN $9::boolean AND NOT $23::boolean THEN NULL ELSE worker_id END,
                  lease_until = CASE WHEN $9::boolean AND NOT $23::boolean THEN NULL ELSE lease_until END
              WHERE id = $1 AND task_type = $2 AND user_id = $3 AND status = ANY($4::text[]) AND expires_at > now()
                AND (NOT $20::boolean OR ((payload->>'activeAttemptId') IS NOT DISTINCT FROM $21::text
+                 AND (payload->>'billingCycleId') IS NOT DISTINCT FROM $26::text
                  AND ($21::text IS NULL OR EXISTS (
                    SELECT 1 FROM jsonb_array_elements(COALESCE(payload->'attempts', '[]'::jsonb)) AS attempt
                    WHERE attempt->>'id' = $21::text AND (attempt->>'revision')::numeric = $22::numeric
@@ -592,6 +599,9 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
                 attemptGuard?.activeAttemptId || null,
                 attemptGuard?.revision ?? null,
                 preserveExecutionLease,
+                deletedKeys,
+                clearedExecutionKeys,
+                attemptGuard?.billingCycleId || null,
             ],
         );
         return result.rows[0]?.payload || null;
@@ -603,9 +613,15 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
             if (record.id !== id || record.type !== type || record.userId !== userId || record.expiresAt <= updatedAt || !allowed.has(record.status)) return record;
             if (attemptGuard) {
                 const attempts = record.payload.attempts as Array<{ id: string; revision: number }> | undefined;
-                if (record.payload.activeAttemptId !== attemptGuard.activeAttemptId || (attemptGuard.activeAttemptId && attempts?.find((attempt) => attempt.id === attemptGuard.activeAttemptId)?.revision !== attemptGuard.revision)) return record;
+                if (
+                    record.payload.billingCycleId !== attemptGuard.billingCycleId ||
+                    record.payload.activeAttemptId !== attemptGuard.activeAttemptId ||
+                    (attemptGuard.activeAttemptId && attempts?.find((attempt) => attempt.id === attemptGuard.activeAttemptId)?.revision !== attemptGuard.revision)
+                )
+                    return record;
             }
             transitioned = { ...(record.payload as T), ...nextPatch };
+            for (const key of deletedKeys) delete (transitioned as Record<string, unknown>)[key];
             return {
                 ...record,
                 status: normalizeGenerationTaskStatus(patch.status),
@@ -613,6 +629,7 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
                 updatedAt,
                 expiresAt: updatedAt + ttlMs,
                 ...(execution ? applyExecutionPatch(execution) : {}),
+                ...Object.fromEntries(clearedExecutionKeys.map((key) => [key, undefined])),
                 ...(execution && !preserveExecutionLease ? { workerId: undefined, leaseUntil: undefined } : {}),
             };
         }),

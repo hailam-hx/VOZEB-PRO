@@ -668,6 +668,15 @@ describe("generation task recovery service", () => {
         expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "cancelled_upstream_succeeded" }), { cancellation: true });
         expect(result).toMatchObject({ claimed: 1, completed: 1 });
     });
+
+    it("finalizes the current text billing cycle when a retried Custom task is cancelled", async () => {
+        const task = { id: "text-cancelled", userId: "user-one", status: "cancelled", billingCycleId: "retry-cycle", upstream: { id: "upstream-text" }, config: { baseUrl: "https://provider.example", apiKey: "key", apiFormat: "openai", model: "writer" } };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "text", status: "cancelled", executionPhase: "cancel_polling", upstreamTaskId: task.upstream.id, resultPayload: { cancellationRequestedAt: Date.now() } }]);
+        mocks.getTextTask.mockResolvedValue(task);
+        mocks.queryCancelledTextTaskUpstreamStep.mockResolvedValue({ state: "terminal", status: "failed" });
+        await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+        expect(mocks.finalizeBilling).toHaveBeenCalledWith({ userId: task.userId, businessId: "text-task:text-cancelled:cycle:retry-cycle" });
+    });
 });
 
 function lease() {
