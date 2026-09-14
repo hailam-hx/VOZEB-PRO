@@ -12,7 +12,7 @@ vi.mock("./creative-runtime-store", () => ({
 }));
 vi.mock("./generation-task-store", () => ({ getStoredGenerationTask: vi.fn(), listStoredGenerationTasks: vi.fn() }));
 
-import { createAgentRun, setAgentRunStatus, updateAgentRunById, updateAgentRunTaskById } from "./agent-run-store";
+import { createAgentRun, setAgentRunStatus, updateAgentRunById, updateAgentRunConversationContent, updateAgentRunTaskById } from "./agent-run-store";
 
 describe("createAgentRun video frames", () => {
     beforeEach(() => {
@@ -31,6 +31,12 @@ describe("createAgentRun video frames", () => {
             referencedAssetIds: ["first-image", "last-image"],
             generationPreferences: { video: { referenceMode: "first_last", firstFrameAssetId: "first-image", lastFrameAssetId: "last-image" } },
         });
+    });
+
+    it("persists the server-resolved response locale without changing the public request", async () => {
+        mocks.getCreativeAssetsByIds.mockResolvedValue([]);
+
+        await expect(createAgentRun("user", { clientRequestId: "request-chat", surface: "chat", prompt: "hello", assetIds: [], skillIds: [], modelIds: [] }, "vi")).resolves.toMatchObject({ responseLocale: "vi" });
     });
 
     it.each([
@@ -136,6 +142,7 @@ describe("setAgentRunStatus", () => {
         const updated = await setAgentRunStatus(run, "cancelled");
 
         expect(updated).toMatchObject({ status: "cancelled", tasks: [{ status: "cancelled", childTasks: [{ status: "cancelled" }] }, { status: "completed" }] });
+        expect(updated?.timings?.runCompletedAt).toEqual(expect.any(Number));
         expect(mutation).toMatchObject({
             event: {
                 type: "run.cancelled",
@@ -147,6 +154,33 @@ describe("setAgentRunStatus", () => {
                 },
             },
         });
+    });
+
+    it("localizes cancellation text using the run locale", async () => {
+        const run = { ...canvasRun(), responseLocale: "vi" as const };
+        let mutation: Record<string, unknown> | null = null;
+        mocks.mutateCreativeRun.mockImplementation(async (_id, _ttl, mutate) => {
+            mutation = mutate(run);
+            return mutation && "run" in mutation ? mutation.run : null;
+        });
+
+        await setAgentRunStatus(run, "cancelled");
+
+        expect(mutation).toMatchObject({ assistant: { status: "cancelled", content: "Tác vụ Agent đã bị hủy." } });
+        expect((mutation as { run?: { tasks?: AgentRun["tasks"] } } | null)?.run?.tasks?.[0]?.error).toBe("Tác vụ Agent đã bị hủy.");
+    });
+
+    it("keeps already published conversation content in the assistant message when cancelled", async () => {
+        const run = { ...canvasRun(), surface: "chat" as const, responseLocale: "vi" as const, responseKind: "conversation" as const, conversationReply: "Nội dung đã nhận" };
+        let mutation: Record<string, unknown> | null = null;
+        mocks.mutateCreativeRun.mockImplementation(async (_id, _ttl, mutate) => {
+            mutation = mutate(run);
+            return mutation && "run" in mutation ? mutation.run : null;
+        });
+
+        await setAgentRunStatus(run, "cancelled");
+
+        expect(mutation).toMatchObject({ assistant: { status: "cancelled", content: "Nội dung đã nhận" } });
     });
 
     it("merges concurrent child task and asset updates without dropping earlier results", async () => {
@@ -261,6 +295,41 @@ describe("setAgentRunStatus", () => {
         });
         expect((mutation as { assistant?: { metadata?: Record<string, unknown> } } | null)?.assistant?.metadata).not.toHaveProperty("foundation");
         expect((mutation as { assistant?: { metadata?: Record<string, unknown> } } | null)?.assistant?.metadata).not.toHaveProperty("review");
+    });
+
+    it("persists accumulated conversation content and emits idempotent replacement events", async () => {
+        let current = { ...canvasRun(), surface: "chat" as const, conversationReply: undefined };
+        const mutations: Array<Record<string, unknown>> = [];
+        mocks.mutateCreativeRun.mockImplementation(async (_id, _ttl, mutate) => {
+            const mutation = mutate(current);
+            if (!mutation) return null;
+            mutations.push(mutation);
+            current = mutation.run;
+            return current;
+        });
+
+        await updateAgentRunConversationContent("run", "你", "execution");
+        const firstReplyAt = current.timings?.firstPublicReplyAt;
+        await updateAgentRunConversationContent("run", "你好", "execution");
+
+        expect(current).toMatchObject({ responseKind: "conversation", conversationReply: "你好", timings: { firstPublicReplyAt: firstReplyAt } });
+        expect(mutations).toEqual([
+            expect.objectContaining({ event: { type: "run.conversation.updated", data: { content: "你" } }, assistant: { status: "running", content: "你" } }),
+            expect.objectContaining({ event: { type: "run.conversation.updated", data: { content: "你好" } }, assistant: { status: "running", content: "你好" } }),
+        ]);
+    });
+
+    it("keeps streamed conversation content when the run fails after publishing it", async () => {
+        const run = { ...canvasRun(), surface: "chat" as const, responseKind: "conversation" as const, conversationReply: "Xin chào một phần" };
+        let mutation: Record<string, unknown> | null = null;
+        mocks.mutateCreativeRun.mockImplementation(async (_id, _ttl, mutate) => {
+            mutation = mutate(run);
+            return mutation && "run" in mutation ? mutation.run : null;
+        });
+
+        await updateAgentRunById("run", { status: "failed" }, { type: "run.failed", data: { message: "internal failure", partialConversation: true } }, ["running"]);
+
+        expect(mutation).toMatchObject({ assistant: { status: "failed", content: "Xin chào một phần" } });
     });
 
     it("persists background review without rewriting the completed assistant message", async () => {

@@ -15,6 +15,13 @@ describe("Agent 返回文案", () => {
         expect(agentRunCompletionReply(run)).toBe("已完成 1 个创作任务。\n\n「主图」已生成并返回画布。");
     });
 
+    it("localizes completion and failure copy from the persisted run locale", () => {
+        const image = task({ title: "Ảnh bìa", type: "image", result: { url: "https://example.com/image.png" } });
+
+        expect(agentRunCompletionReply(agentRun({ responseLocale: "vi", tasks: [image] }))).toBe("Đã hoàn tất 1 tác vụ sáng tạo.\n\n“Ảnh bìa” đã được tạo và đưa về Canvas.");
+        expect(agentRunFailureMessage([{ ...image, status: "failed", error: "upstream failed" }], "en")).toContain("Failure details");
+    });
+
     it("does not expose per-task media titles in chat completion", () => {
         const image = task({ title: "主图", type: "image", result: { url: "https://example.com/image.png" } });
         const detail = task({ id: "detail", title: "环境生活方式版", type: "image", result: { url: "https://example.com/detail.png" } });

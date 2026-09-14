@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     after: vi.fn(),
     getCurrentUser: vi.fn(),
     getAuthSettings: vi.fn(),
+    getLocale: vi.fn(),
     checkRateLimit: vi.fn(),
     countActiveStoredGenerationTasks: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: mocks.after }));
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
+vi.mock("next-intl/server", () => ({ getLocale: mocks.getLocale }));
 vi.mock("@/lib/server/security", () => ({ checkRateLimit: mocks.checkRateLimit }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
@@ -29,6 +31,7 @@ describe("POST /api/agent/runs", () => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user" });
         mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 2 }, generationDefaults: { createPromptMaxLength: 4000 } });
+        mocks.getLocale.mockResolvedValue("vi");
         mocks.checkRateLimit.mockReturnValue({ allowed: true });
         mocks.countActiveStoredGenerationTasks.mockResolvedValue(0);
         mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
@@ -77,14 +80,18 @@ describe("POST /api/agent/runs", () => {
         mocks.createAgentRun.mockResolvedValue({ run, conversation: { id: "conversation" }, created: true });
         const response = await POST(request(validInput()));
         expect(await response.json()).toMatchObject({ data: { run: { id: "new-run" }, conversation: { id: "conversation" }, created: true } });
-        expect(mocks.createAgentRun).toHaveBeenCalledWith("user", {
-            ...validInput(),
-            conversationId: undefined,
-            projectId: undefined,
-            skillIds: [],
-            modelIds: [],
-            snapshot: undefined,
-        });
+        expect(mocks.createAgentRun).toHaveBeenCalledWith(
+            "user",
+            {
+                ...validInput(),
+                conversationId: undefined,
+                projectId: undefined,
+                skillIds: [],
+                modelIds: [],
+                snapshot: undefined,
+            },
+            "vi",
+        );
         expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
     });
 });

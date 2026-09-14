@@ -106,8 +106,13 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     const apiFormat = modelConfig?.apiFormat || channel.apiFormat;
     const globalChannel = isGlobalAiOpcChannel(channel.advancedConfig);
     const globalPreset = resolveGlobalAiOpcPreset(channel.advancedConfig, upstreamModel) || resolveGlobalAiOpcPathPreset(channel.advancedConfig, path);
-    const globalAdaptation = adaptGlobalAiOpcTextRequest(channel.advancedConfig, path, requestBody.body);
+    const preferredLogicalModelId = request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER)?.trim() || "";
+    const configuredTextBinding = upstreamModel
+        ? settings.logicalModels.find((model) => model.enabled && model.id === preferredLogicalModelId)?.bindings.find((binding) => binding.enabled && binding.channelId === channel.id && sameModel(binding.upstreamModel, upstreamModel))
+        : undefined;
+    const globalAdaptation = adaptGlobalAiOpcTextRequest(channel.advancedConfig, path, requestBody.body, { maxOutputTokens: configuredTextBinding?.capabilityProfile?.maxOutputTokens });
     if (globalAdaptation === "responses-unsupported") return NextResponse.json({ error: "该 GlobalAiOpc 原生文本接口不支持 Responses，已切换 Chat 兼容回退。" }, { status: 404 });
+    if (globalAdaptation === "claude-max-output-tokens-required") return NextResponse.json({ error: "Claude 文本模型缺少后台配置的最大输出 token" }, { status: 400 });
     const pointsRequest =
         classifyPointsRequest(request.method, apiFormat, path, contentType, requestBody.pointsPayload, settings.generationPointMultipliers) ||
         classifyConfiguredPointsRequest(
@@ -128,7 +133,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         search: requestUrl.search,
         channelId: channel.id,
         upstreamModel,
-        preferredLogicalModelId: request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "",
+        preferredLogicalModelId,
         logicalModels: settings.logicalModels || [],
         apiFormat: globalPreset?.apiFormat || apiFormat,
         pointsUsageKind: pointsRequest?.usageKind,

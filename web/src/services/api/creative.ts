@@ -11,6 +11,8 @@ import {
 import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { ClientSessionExpiredError, stopIfClientSessionExpired, throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import type { VoiceSelection } from "@/lib/voice-selection";
+import type { AppLocale } from "@/i18n/config";
+import { agentRunCopy } from "@/lib/agent-run-copy";
 
 export type CreativeAgentRun = {
     id: string;
@@ -18,6 +20,8 @@ export type CreativeAgentRun = {
     inputMessageId: string;
     assistantMessageId: string;
     status: "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
+    responseKind?: "conversation" | "generation";
+    conversationReply?: string;
     surface?: CreativeRunRequest["surface"];
     projectId?: string;
     prompt?: string;
@@ -148,6 +152,7 @@ export function deleteCreativeConversations(conversationIds: string[]) {
 
 type CreativeRunHandlers = {
     onProgress: (text: string) => void;
+    onConversation?: (content: string) => void;
     onTerminal: (status: "completed" | "failed" | "cancelled", text?: string) => void;
     onConnectionError: (message: string) => void;
     onProjectHandoff?: (handoff: CreativeProjectHandoff) => void;
@@ -163,15 +168,17 @@ export type CreativeTaskProgress = {
     totalCount: number;
 };
 
-export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandlers) {
+export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandlers, locale: AppLocale = "zh-CN") {
+    const copy = agentRunCopy(locale);
     const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
     let settled = false;
     let connectionInterrupted = false;
     let reconciliation: Promise<void> | null = null;
+    let conversationContent = "";
     const read = (event: Event) => {
-        let parsed: { data?: Record<string, unknown>; status?: string };
+        let parsed: { data?: Record<string, unknown>; status?: string; responseKind?: string; conversationReply?: string };
         try {
-            parsed = JSON.parse((event as MessageEvent<string>).data) as { data?: Record<string, unknown>; status?: string };
+            parsed = JSON.parse((event as MessageEvent<string>).data) as { data?: Record<string, unknown>; status?: string; responseKind?: string; conversationReply?: string };
         } catch {
             return null;
         }
@@ -182,94 +189,107 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
         settled = true;
         source.close();
         void refreshUserPointsIfSystem("system");
-        handlers.onTerminal(status, text);
+        handlers.onTerminal(status, conversationContent || text);
+    };
+    const publishConversation = (content?: string) => {
+        const normalized = text(content);
+        if (!normalized || normalized === conversationContent) return;
+        conversationContent = normalized;
+        if (handlers.onConversation) handlers.onConversation(normalized);
+        else handlers.onProgress(normalized);
+    };
+    const publishStatus = (message: string) => {
+        if (!conversationContent) handlers.onProgress(message);
     };
     const stopObservation = (message: string) => {
         if (settled) return;
         settled = true;
         source.close();
-        handlers.onConnectionError(message);
+        handlers.onConnectionError(conversationContent ? "" : message);
     };
     const reconcileRun = async () => {
         if (await stopIfClientSessionExpired()) {
-            stopObservation("登录状态已失效，任务仍可能在后台运行；重新登录后可继续查看");
+            stopObservation(copy.loginExpired);
             return;
         }
         try {
             const run = await getCreativeAgentRun(runId);
             if (settled) return;
             handlers.onStatus?.(run.status);
-            if (run.status === "completed") return finish("completed");
-            if (run.status === "failed") return finish("failed", run.tasks.find((task) => task.status === "failed")?.error || "Agent 执行失败");
-            if (run.status === "cancelled") return finish("cancelled", "任务已取消");
-            handlers.onProgress(run.status === "paused" ? "任务仍在后台保存，当前处于暂停状态" : "任务仍在后台运行，正在恢复连接");
+            publishConversation(run.conversationReply);
+            if (run.status === "completed") return finish("completed", run.conversationReply);
+            if (run.status === "failed") return finish("failed", run.conversationReply || run.tasks.find((task) => task.status === "failed")?.error || copy.failed);
+            if (run.status === "cancelled") return finish("cancelled", copy.cancelled);
+            publishStatus(run.status === "paused" ? copy.pausedInBackground : copy.runningInBackground);
         } catch (error) {
             if (settled) return;
             if (error instanceof ClientSessionExpiredError) {
-                stopObservation("登录状态已失效，任务仍可能在后台运行；重新登录后可继续查看");
+                stopObservation(copy.loginExpired);
                 return;
             }
-            handlers.onProgress("暂时无法确认实时状态，任务仍会在后台继续运行");
+            publishStatus(copy.unknownBackground);
         }
     };
-    const listen = (type: string, callback: (payload: { data?: Record<string, unknown>; status?: string }) => void) =>
+    const listen = (type: string, callback: (payload: { data?: Record<string, unknown>; status?: string; responseKind?: string; conversationReply?: string }) => void) =>
         source.addEventListener(type, (event) => {
             const payload = read(event);
             if (payload) callback(payload);
         });
 
-    listen("run.planning", () => handlers.onProgress("正在理解需求并选择合适的创作能力"));
-    listen("skills.selected", () => handlers.onProgress("正在匹配创作技能与模型"));
+    listen("run.planning", () => publishStatus(copy.planning));
+    listen("skills.selected", () => publishStatus(copy.matching));
+    listen("run.conversation.updated", ({ data }) => publishConversation(text(data?.content)));
     listen("run.planned", ({ data }) => {
         void refreshUserPointsIfSystem("system");
-        handlers.onProgress(text(data?.reply) || "方案已确定，正在创建任务");
+        publishStatus(text(data?.reply) || copy.finishing);
     });
-    listen("task.running", ({ data }) => handlers.onProgress(`正在处理「${text(data?.title) || "创作任务"}」`));
-    listen("task.waiting", ({ data }) => handlers.onProgress(text(data?.error) || `「${text(data?.title) || "创作任务"}」仍在上游处理中，系统会继续恢复`));
+    listen("task.running", ({ data }) => publishStatus(taskRunningText(text(data?.title), locale)));
+    listen("task.waiting", ({ data }) => publishStatus(text(data?.error) || taskWaitingText(text(data?.title), locale)));
     listen("task.child.completed", ({ data }) => {
         void refreshUserPointsIfSystem("system");
-        const progress = taskProgress(data);
-        handlers.onProgress(taskProgressText(progress));
+        const progress = taskProgress(data, locale);
+        publishStatus(taskProgressText(progress, locale));
         handlers.onTaskCompleted?.(progress);
     });
-    listen("task.child.failed", ({ data }) => handlers.onProgress(taskProgressText(taskProgress(data))));
+    listen("task.child.failed", ({ data }) => publishStatus(taskProgressText(taskProgress(data, locale), locale)));
     listen("task.completed", ({ data }) => {
         void refreshUserPointsIfSystem("system");
-        handlers.onProgress(text(data?.message) || `「${text(data?.title) || "创作任务"}」已完成`);
+        publishStatus(text(data?.message) || taskCompletedText(text(data?.title), locale));
         handlers.onTaskCompleted?.();
     });
     listen("project.handoff", ({ data }) => {
         if (isCreativeProjectHandoff(data?.projectHandoff || data)) handlers.onProjectHandoff?.((data?.projectHandoff || data) as CreativeProjectHandoff);
     });
-    listen("run.review.retry", () => handlers.onProgress("正在优化生成结果"));
+    listen("run.review.retry", () => publishStatus(copy.finishing));
     listen("run.review.passed", () => {
         void refreshUserPointsIfSystem("system");
-        handlers.onProgress("检查完成，正在整理结果");
+        publishStatus(copy.finishing);
     });
     listen("run.review.unavailable", () => {
         void refreshUserPointsIfSystem("system");
-        handlers.onProgress("正在整理已完成的创作结果");
+        publishStatus(copy.finishing);
     });
-    listen("run.cancel.requested", () => handlers.onProgress("正在取消任务，等待子任务确认"));
-    listen("run.cancel.pending", () => handlers.onProgress("部分子任务取消状态尚未确认，可稍后再次取消"));
+    listen("run.cancel.requested", () => publishStatus(copy.cancelRequested));
+    listen("run.cancel.pending", () => publishStatus(copy.cancelPending));
     listen("run.completed", ({ data }) => finish("completed", text(data?.reply)));
-    listen("run.failed", ({ data }) => finish("failed", text(data?.message) || "Agent 执行失败"));
-    listen("run.cancelled", () => finish("cancelled", "任务已取消"));
+    listen("run.failed", ({ data }) => finish("failed", text(data?.message) || copy.failed));
+    listen("run.cancelled", () => finish("cancelled", copy.cancelled));
     listen("run.snapshot", (payload) => {
         if (payload.status && ["planning", "running", "paused", "completed", "failed", "cancelled"].includes(payload.status)) handlers.onStatus?.(payload.status as CreativeAgentRun["status"]);
-        if (payload.status === "completed") finish("completed");
-        if (payload.status === "failed") finish("failed", "Agent 执行失败");
-        if (payload.status === "cancelled") finish("cancelled", "任务已取消");
-        if (payload.status === "paused") handlers.onProgress("任务已暂停");
+        publishConversation(payload.conversationReply);
+        if (payload.status === "completed") finish("completed", payload.conversationReply);
+        if (payload.status === "failed") finish("failed", payload.conversationReply || copy.failed);
+        if (payload.status === "cancelled") finish("cancelled", copy.cancelled);
+        if (payload.status === "paused") publishStatus(copy.paused);
     });
     source.onopen = () => {
-        if (connectionInterrupted && !settled) handlers.onProgress("连接已恢复，任务继续运行");
+        if (connectionInterrupted && !settled) publishStatus(copy.restored);
         connectionInterrupted = false;
     };
     source.onerror = () => {
         if (settled) return;
         connectionInterrupted = true;
-        handlers.onProgress("连接暂时中断，正在确认后台任务状态");
+        publishStatus(copy.reconnecting);
         reconciliation ||= reconcileRun().finally(() => {
             reconciliation = null;
         });
@@ -292,19 +312,43 @@ function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
 }
 
-function taskProgress(data?: Record<string, unknown>): CreativeTaskProgress {
+function taskProgress(data?: Record<string, unknown>, locale: AppLocale = "zh-CN"): CreativeTaskProgress {
     return {
         taskId: text(data?.taskId) || undefined,
-        title: text(data?.title) || "创作任务",
+        title: text(data?.title) || defaultTaskTitle(locale),
         completedCount: count(data?.completedCount),
         failedCount: count(data?.failedCount),
         totalCount: Math.max(1, count(data?.totalCount)),
     };
 }
 
-function taskProgressText(progress: CreativeTaskProgress) {
-    const failed = progress.failedCount ? `，失败 ${progress.failedCount}` : "";
-    return `「${progress.title}」已完成 ${progress.completedCount}/${progress.totalCount}${failed}`;
+function taskProgressText(progress: CreativeTaskProgress, locale: AppLocale) {
+    if (locale === "vi") return `“${progress.title}” đã hoàn tất ${progress.completedCount}/${progress.totalCount}${progress.failedCount ? `, thất bại ${progress.failedCount}` : ""}`;
+    if (locale === "en") return `“${progress.title}” completed ${progress.completedCount}/${progress.totalCount}${progress.failedCount ? `, ${progress.failedCount} failed` : ""}`;
+    return `「${progress.title}」已完成 ${progress.completedCount}/${progress.totalCount}${progress.failedCount ? `，失败 ${progress.failedCount}` : ""}`;
+}
+
+function defaultTaskTitle(locale: AppLocale) {
+    return locale === "vi" ? "Tác vụ sáng tạo" : locale === "en" ? "Creative task" : "创作任务";
+}
+
+function taskRunningText(title: string, locale: AppLocale) {
+    const taskTitle = title || defaultTaskTitle(locale);
+    return locale === "vi" ? `Đang xử lý “${taskTitle}”` : locale === "en" ? `Processing “${taskTitle}”` : `正在处理「${taskTitle}」`;
+}
+
+function taskWaitingText(title: string, locale: AppLocale) {
+    const taskTitle = title || defaultTaskTitle(locale);
+    return locale === "vi"
+        ? `“${taskTitle}” vẫn đang được xử lý ở upstream; hệ thống sẽ tiếp tục khôi phục`
+        : locale === "en"
+          ? `“${taskTitle}” is still processing upstream; the system will continue recovery`
+          : `「${taskTitle}」仍在上游处理中，系统会继续恢复`;
+}
+
+function taskCompletedText(title: string, locale: AppLocale) {
+    const taskTitle = title || defaultTaskTitle(locale);
+    return locale === "vi" ? `“${taskTitle}” đã hoàn tất` : locale === "en" ? `“${taskTitle}” is complete` : `「${taskTitle}」已完成`;
 }
 
 function count(value: unknown) {

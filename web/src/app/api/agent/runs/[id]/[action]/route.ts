@@ -55,6 +55,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
                           plannerAudit: undefined,
                           plannerFailure: undefined,
                           plannerAttempts: run.plannerAttempts,
+                          responseKind: undefined,
+                          conversationReply: undefined,
                           timings: { requestAcceptedAt: run.timings?.requestAcceptedAt || run.createdAt },
                       },
                       { type: "run.retry.requested" },

@@ -1,4 +1,5 @@
 import { after, NextResponse } from "next/server";
+import { getLocale } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings } from "@/lib/auth/store";
 import { CreativeRuntimeInputError, normalizeCreativeRunRequest, normalizeCreativeSurface } from "@/lib/creative-runtime-contract";
@@ -10,6 +11,7 @@ import { CreativeStoreConflict } from "@/lib/server/creative-runtime-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { publicAgentRun } from "@/lib/server/agent-run-public";
+import { defaultLocale, isAppLocale } from "@/i18n/config";
 
 export const maxDuration = 2400;
 
@@ -44,14 +46,15 @@ export async function POST(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     try {
-        const settings = await getAuthSettings();
+        const [settings, locale] = await Promise.all([getAuthSettings(), getLocale()]);
+        const responseLocale = isAppLocale(locale) ? locale : defaultLocale;
         const input = normalizeCreativeRunRequest(await readJsonBody<unknown>(request), settings.generationDefaults.createPromptMaxLength);
         const existing = await getAgentRunByClientRequestId(user.id, input.clientRequestId);
         if (existing) return NextResponse.json({ code: 0, data: { run: publicAgentRun(existing), created: false }, msg: "Agent 任务已存在" });
         const rate = await checkRateLimit(`agent-run:${user.id}`, { maxRequests: 10, windowMs: 60 * 1000 });
         if (!rate.allowed) return NextResponse.json({ code: 429, data: null, msg: "Agent 请求过于频繁，请稍后重试" }, { status: 429 });
         const response = await withGenerationConcurrencyLimit(user.id, "agent", 10 * 60 * 1000, settings.generationConcurrency.agent, async () => {
-            const created = await createAgentRun(user.id, input);
+            const created = await createAgentRun(user.id, input, responseLocale);
             if (created.created) {
                 const origin = resolveInternalOrigin(new URL(request.url).origin);
                 after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [created.run.id] }));

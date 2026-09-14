@@ -7,7 +7,7 @@ import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveLogicalModel, resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { audioGenerationRequest, filterGenerationCandidates, imageGenerationRequest, resolveAudioGenerationCandidates, resolveImageGenerationCandidates, resolveVideoGenerationCandidates, videoGenerationRequest } from "@/lib/server/capability-constraints";
 import { reviewCreativeOutputs } from "@/lib/server/creative-review-service";
-import { requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
+import { requestRoutedText, requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
 import { registerAgentTaskAssets } from "@/lib/server/agent-run-assets";
 import { buildAgentProjectHandoff } from "@/lib/server/agent-run-project-handoff";
 import { getAgentRun, updateAgentRunById, updateAgentRunTaskById, type AgentRun, type AgentRunChildSlot, type AgentRunChildTask, type AgentRunGenerationSelection, type AgentRunReference, type AgentRunTask } from "@/lib/server/agent-run-store";
@@ -534,7 +534,7 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                     if (!emitted) return;
                     completedRun = emitted;
                 }
-                const reply = `${agentRunCompletionReply(completedRun)}${projectHandoff ? `\n\n已创建${projectHandoff.surface === "canvas" ? "画布" : "短剧"}项目「${projectHandoff.title}」，可以从当前对话直接打开。` : ""}`;
+                const reply = `${agentRunCompletionReply(completedRun)}${projectHandoff ? projectHandoffCompletion(projectHandoff.surface, projectHandoff.title, completedRun.responseLocale) : ""}`;
                 const backgroundReview = !shouldBlockOnReview(completedRun) && !completedRun.reviewed;
                 const finished = await updateAgentRunById(
                     runId,
@@ -563,18 +563,30 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                         tasks: terminalTasks,
                         timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), allResultsReadyAt: run.timings?.allResultsReadyAt || Date.now(), runCompletedAt: Date.now() },
                     },
-                    { type: "run.completed", data: { completed: terminalTasks.filter((task) => task.status === "completed").length, partial: true, assetIds: run.assetIds, reply: agentRunFailureMessage(terminalTasks) } },
+                    { type: "run.completed", data: { completed: terminalTasks.filter((task) => task.status === "completed").length, partial: true, assetIds: run.assetIds, reply: agentRunFailureMessage(terminalTasks, run.responseLocale) } },
                     ["running"],
                     executionId,
                 );
                 return;
             }
-            await updateAgentRunById(runId, { status: "failed", executionId: undefined, tasks: terminalTasks }, { type: "run.failed", data: { message: agentRunFailureMessage(terminalTasks) } }, ["running"], executionId);
+            await updateAgentRunById(
+                runId,
+                { status: "failed", executionId: undefined, tasks: terminalTasks, timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), runCompletedAt: Date.now() } },
+                { type: "run.failed", data: { message: agentRunFailureMessage(terminalTasks, run.responseLocale), responseLocale: run.responseLocale } },
+                ["running"],
+                executionId,
+            );
             return;
         }
         const results = await Promise.all(ready.map((task) => runTaskWithRetry(runId, task, origin, cookie, executionId, settings)));
         if (results.some((result) => result === "deferred")) return;
     }
+}
+
+function projectHandoffCompletion(surface: "canvas" | "drama", title: string, locale: AgentRun["responseLocale"]) {
+    if (locale === "vi") return `\n\nĐã tạo dự án ${surface === "canvas" ? "Canvas" : "phim ngắn"} “${title}”; bạn có thể mở trực tiếp từ cuộc trò chuyện này.`;
+    if (locale === "en") return `\n\nCreated the ${surface === "canvas" ? "Canvas" : "short-drama"} project “${title}”; you can open it directly from this conversation.`;
+    return `\n\n已创建${surface === "canvas" ? "画布" : "短剧"}项目「${title}」，可以从当前对话直接打开。`;
 }
 
 function shouldBlockOnReview(run: AgentRun) {
@@ -654,10 +666,50 @@ export async function requestFunctionCall(
     });
     return {
         ...readFunctionCallResult(call.arguments, call.headers, call.protocol, call.elapsedMs),
+        firstByteMs: call.firstByteMs,
         usageHeaders: call.headers,
         usageBusinessId: usageContext?.businessRequestId,
         usageAttemptNumber: usageContext?.attemptNumber,
     };
+}
+
+export async function requestRoutedFunctionCall(
+    origin: string,
+    cookie: string,
+    candidate: TextPlanningCandidate,
+    input: Array<{ role: string; content: string }>,
+    tool: typeof agentPlanTool,
+    signal: AbortSignal,
+    billingModel: string,
+    usageContext: SystemAiUsageContextDraft | undefined,
+    onConversationContent: (content: string, firstContentMs?: number) => void | Promise<void>,
+    onResponse?: (headers: Headers) => void | Promise<void>,
+    onFirstByte?: (elapsedMs: number) => void | Promise<void>,
+): Promise<(AgentFunctionCallResult & { kind: "conversation"; content: string; firstByteMs?: number; firstContentMs?: number }) | (AgentFunctionCallResult & { kind: "generation"; firstByteMs?: number })> {
+    const requestHeaders = runtimeRequestHeaders(cookie, {
+        "Content-Type": "application/json",
+        ...systemAiBillingHeaders(billingModel, usageContext, candidate.upstreamModel),
+    });
+    const result = await requestRoutedText({
+        origin,
+        cookie,
+        candidate,
+        messages: input,
+        tool: { name: tool.name, description: tool.description, parameters: tool.parameters },
+        headers: requestHeaders,
+        signal,
+        onConversationContent,
+        onResponse,
+        onFirstByte,
+    });
+    const call = {
+        ...readFunctionCallResult(result.kind === "generation" ? result.arguments : "", result.headers, result.protocol, result.elapsedMs),
+        usageHeaders: result.headers,
+        usageBusinessId: usageContext?.businessRequestId,
+        usageAttemptNumber: usageContext?.attemptNumber,
+    };
+    if (result.kind === "conversation") return { ...call, kind: "conversation", content: result.content, firstByteMs: result.firstByteMs, firstContentMs: result.firstContentMs };
+    return { ...call, kind: "generation", firstByteMs: result.firstByteMs };
 }
 
 export function responseOutputText(payload: { output_text?: string; output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }) {

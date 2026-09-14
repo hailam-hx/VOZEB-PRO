@@ -497,7 +497,7 @@ describe("system media proxy", () => {
         expect(mocks.settleCancelledUsageBilling).toHaveBeenCalledOnce();
     });
 
-    it("classifies a provider stream read failure as failed and releases the hold", async () => {
+    it("classifies a provider stream read failure as failed and leaves the hold available for downstream failover", async () => {
         const upstream = new ReadableStream<Uint8Array>({
             pull() {
                 throw new Error("read failed");
@@ -507,7 +507,7 @@ describe("system media proxy", () => {
 
         await expect(stream.getReader().read()).rejects.toThrow("read failed");
         expect(mocks.finishUsageProviderAttempt).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
-        expect(mocks.releaseUsageBilling).toHaveBeenCalledOnce();
+        expect(mocks.releaseUsageBilling).not.toHaveBeenCalled();
         expect(mocks.settleCancelledUsageBilling).not.toHaveBeenCalled();
     });
 
@@ -826,7 +826,7 @@ describe("GlobalAiOpc native text proxy", () => {
         const response = await POST(chatRequest({ model: "claude-opus-4-6", messages: [{ role: "user", content: "hello" }] }), textContext());
 
         expect(fetchMock.mock.calls[0][0]).toBe("http://apillm.globalaiopc.com/gw_llm_power/v1/messages");
-        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ model: "claude-opus-4-6", messages: [{ role: "user", content: "hello" }] });
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ model: "claude-opus-4-6", max_tokens: 128, messages: [{ role: "user", content: "hello" }] });
         expect(await response.json()).toMatchObject({ choices: [{ message: { role: "assistant", content: "OK" } }] });
 
         fetchMock.mockClear();

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SystemChannelAdvancedConfig, SystemModelChannel } from "@/lib/auth/store";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
-import { getTextPlanningRuntime, rankTextPlanningCandidates, requestStructuredText, resetTextPlanningRuntime, type TextPlanningCandidate } from "./text-planning-runtime";
+import { getTextPlanningRuntime, rankTextPlanningCandidates, requestRoutedText, requestStructuredText, resetTextPlanningRuntime, type TextPlanningCandidate } from "./text-planning-runtime";
 
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn() }));
 vi.mock("@/lib/server/channel-runtime-health", () => ({ recordChannelRuntimeFailure: vi.fn(), recordChannelRuntimeSuccess: vi.fn() }));
@@ -88,6 +88,22 @@ describe("text planning runtime protocol matrix", () => {
         expectBasicJsonMessages(requestBody());
     });
 
+    it.each(["text-gemini-native", "text-claude-native"] as const)("GlobalAiOpc %s 的路由对话明确使用 buffered Chat 适配", async (globalAiOpcPreset) => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(Response.json({ choices: [{ message: { content: "<conversation>\nHello" } }] }));
+
+        const result = await requestRoutedText({
+            ...requestInput(candidate("globalaiopc", { globalAiOpcPreset })),
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+
+        expect(result).toMatchObject({ kind: "conversation", content: "Hello", protocol: "chat" });
+        expect(requestBody()).not.toHaveProperty("stream");
+        expect(visible).toEqual([]);
+    });
+
     it("Gemini 原生预设使用 generateContent 并解析候选文本", async () => {
         mockedFetch.mockResolvedValue(Response.json({ candidates: [{ content: { parts: [{ text: "{}" }] } }] }));
 
@@ -121,6 +137,333 @@ describe("text planning runtime protocol matrix", () => {
         expect(result).toMatchObject({ protocol: "custom", arguments: "{}" });
         expect(String(mockedFetch.mock.calls[0]?.[0])).toContain("/planner/run");
         expect(requestBody()).toMatchObject({ deployment: "model-one", conversation: expect.arrayContaining([{ role: "user", content: "test" }]) });
+    });
+
+    it("在 Chat 上游结束前转发已完成判别的多语言对话内容", async () => {
+        let closeStream!: () => void;
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(chatDelta("<conver"));
+                controller.enqueue(chatDelta("sation>\n你好，xin chào"));
+                closeStream = () => {
+                    controller.enqueue("data: [DONE]\n\n");
+                    controller.close();
+                };
+            }),
+        );
+
+        let settled = false;
+        const pending = requestRoutedText({
+            ...requestInput(candidate("newapi")),
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        }).finally(() => {
+            settled = true;
+        });
+
+        await vi.waitFor(() => expect(visible).toEqual(["你好，xin chào"]));
+        expect(settled).toBe(false);
+        expect(requestBody()).toMatchObject({ model: "model-one", stream: true, stream_options: { include_usage: true } });
+
+        closeStream();
+        await expect(pending).resolves.toMatchObject({ kind: "conversation", content: "你好，xin chào", protocol: "chat" });
+    });
+
+    it("缓存流式 generation JSON 且不把判别符或计划内容发给公开回调", async () => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(chatDelta('<generation>\n{"result":'));
+                controller.enqueue(chatDelta('"ok"}'));
+                controller.enqueue("data: [DONE]\n\n");
+                controller.close();
+            }),
+        );
+
+        const result = await requestRoutedText({
+            ...requestInput(candidate("newapi")),
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+
+        expect(visible).toEqual([]);
+        expect(result).toMatchObject({ kind: "generation", arguments: '{"result":"ok"}', protocol: "chat" });
+    });
+
+    it("不会把 fenced generation JSON 当作对话内容公开", async () => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(chatDelta("```j"));
+                controller.enqueue(chatDelta('son\n{"result":"ok"}\n```'));
+                controller.close();
+            }),
+        );
+
+        const result = await requestRoutedText({
+            ...requestInput(candidate("newapi")),
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+
+        expect(visible).toEqual([]);
+        expect(result).toMatchObject({ kind: "generation", arguments: '{"result":"ok"}' });
+    });
+
+    it.each(["<Conversation>\nHello", 'Here is the plan: {"result":"ok"}'])("拒绝无效路由前缀且不公开任何内容: %s", async (output) => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(chatDelta(output));
+                controller.enqueue("data: [DONE]\n\n");
+                controller.close();
+            }),
+        );
+
+        await expect(
+            requestRoutedText({
+                ...requestInput(candidate("newapi")),
+                onConversationContent: (content) => {
+                    visible.push(content);
+                },
+            }),
+        ).rejects.toThrow("结果类型");
+
+        expect(visible).toEqual([]);
+    });
+
+    it.each([
+        ['<conversation>\n{"intent":"generation",', '"deliverables":[]}'],
+        ["<conversation>\n<gen", 'eration>\n{"result":"ok"}'],
+        ["<conversation>\n```j", 'son\n{"intent":"generation","deliverables":[]}\n```'],
+    ])("buffers and rejects a mislabeled planner payload without exposing split frames", async (first, second) => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(chatDelta(first));
+                controller.enqueue(chatDelta(second));
+                controller.close();
+            }),
+        );
+
+        await expect(
+            requestRoutedText({
+                ...requestInput(candidate("newapi")),
+                onConversationContent: (content) => {
+                    visible.push(content);
+                },
+            }),
+        ).rejects.toThrow("结果类型");
+
+        expect(visible).toEqual([]);
+    });
+
+    it("keeps already safe prose but never publishes JSON appended by a mislabeled planner", async () => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(chatDelta("<conversation>\nI can help."));
+                controller.enqueue(chatDelta('\n{"intent":"generation","deliverables":[]}'));
+                controller.close();
+            }),
+        );
+
+        await expect(
+            requestRoutedText({
+                ...requestInput(candidate("newapi")),
+                onConversationContent: (content) => {
+                    visible.push(content);
+                },
+            }),
+        ).rejects.toThrow("结果类型");
+
+        expect(visible).toEqual(["I can help."]);
+        expect(visible.join(" ")).not.toMatch(/intent|generation|deliverables|[{}]/);
+    });
+
+    it("releases a valid technical answer containing braces after proving it is not a plan", async () => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(chatDelta('<conversation>\nconst user = {"name":"A"};'));
+                controller.close();
+            }),
+        );
+
+        const result = await requestRoutedText({
+            ...requestInput(candidate("newapi")),
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+
+        expect(result).toMatchObject({ kind: "conversation", content: 'const user = {"name":"A"};' });
+        expect(visible.at(-1)).toBe('const user = {"name":"A"};');
+    });
+
+    it("forces configured Gemini query parameters to use SSE", async () => {
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "<conversation>\nHello" }] } }] })}\n\n`);
+                controller.close();
+            }),
+        );
+
+        await requestRoutedText({ ...requestInput(candidate("compatible", { apiFormat: "gemini", createPath: "/models/:model:generateContent?alt=json&key=value" })) });
+
+        const url = new URL(String(mockedFetch.mock.calls[0]?.[0]));
+        expect(url.pathname).toContain(":streamGenerateContent");
+        expect(url.searchParams.get("alt")).toBe("sse");
+        expect(url.searchParams.get("key")).toBe("value");
+    });
+
+    it("reports response headers and rejects after preserving content emitted before a stream failure", async () => {
+        const visible: string[] = [];
+        const responseHeaders: string[] = [];
+        const firstBytes: number[] = [];
+        let failStream!: () => void;
+        mockedFetch.mockResolvedValue(
+            new Response(
+                new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode(chatDelta("<conversation>\nXin chào")));
+                        failStream = () => controller.error(new Error("stream failed"));
+                    },
+                }),
+                { headers: { "content-type": "text/event-stream", "x-vozeb-pro-usage-hold-id": "hold-stream" } },
+            ),
+        );
+        const pending = requestRoutedText({
+            ...requestInput(candidate("newapi")),
+            onResponse: (headers) => {
+                responseHeaders.push(headers.get("x-vozeb-pro-usage-hold-id") || "");
+            },
+            onFirstByte: (elapsedMs) => {
+                firstBytes.push(elapsedMs);
+            },
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+        const rejected = expect(pending).rejects.toThrow("stream failed");
+
+        await vi.waitFor(() => expect(visible).toEqual(["Xin chào"]));
+        failStream();
+        await rejected;
+
+        expect(responseHeaders).toEqual(["hold-stream"]);
+        expect(firstBytes).toEqual([expect.any(Number)]);
+    });
+
+    it("aborts an active conversation stream without marking the provider unhealthy", async () => {
+        const configured = candidate("newapi");
+        const abort = new AbortController();
+        const visible: string[] = [];
+        mockedFetch.mockImplementation(async (_url, init) => {
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(chatDelta("<conversation>\nHello")));
+                    init?.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")), { once: true });
+                },
+            });
+            return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+        });
+        const pending = requestRoutedText({
+            ...requestInput(configured),
+            signal: abort.signal,
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+        const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+
+        await vi.waitFor(() => expect(visible).toEqual(["Hello"]));
+        abort.abort();
+        await rejected;
+
+        expect(getTextPlanningRuntime(configured)).toBeUndefined();
+    });
+
+    it("解析 Responses 文本事件并只公开标记后的正文", async () => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "<conversation>\nHello" })}\n\n`);
+                controller.enqueue(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: " world" })}\n\n`);
+                controller.close();
+            }),
+        );
+
+        const result = await requestRoutedText({
+            ...requestInput(candidate("compatible", { createPath: "/responses" })),
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+
+        expect(visible).toEqual(["Hello", "Hello world"]);
+        expect(result).toMatchObject({ kind: "conversation", content: "Hello world", protocol: "responses" });
+        expect(requestBody()).toMatchObject({ model: "model-one", stream: true });
+    });
+
+    it("使用 Gemini streamGenerateContent 并解析逐帧文本", async () => {
+        const visible: string[] = [];
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "<conversation>\nXin" }] } }] })}\n\n`);
+                controller.enqueue(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: " chào" }] } }] })}\n\n`);
+                controller.close();
+            }),
+        );
+
+        const result = await requestRoutedText({
+            ...requestInput(candidate("compatible", { apiFormat: "gemini", createPath: "/models/:model:generateContent" })),
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+
+        expect(String(mockedFetch.mock.calls[0]?.[0])).toContain("/models/model-one:streamGenerateContent?alt=sse");
+        expect(visible).toEqual(["Xin", "Xin chào"]);
+        expect(result).toMatchObject({ kind: "conversation", content: "Xin chào", protocol: "gemini" });
+    });
+
+    it("giữ custom protocol ở chế độ buffered và vẫn phân loại hội thoại", async () => {
+        const visible: string[] = [];
+        const configured = candidate("custom", { createPath: "/planner/run", requestTemplate: '{"prompt":"{{prompt}}"}', resultField: "data.plan" });
+        mockedFetch.mockResolvedValue(Response.json({ data: { plan: "<conversation>\nXin chào" } }));
+
+        const result = await requestRoutedText({
+            ...requestInput(configured),
+            onConversationContent: (content) => {
+                visible.push(content);
+            },
+        });
+
+        expect(result).toMatchObject({ kind: "conversation", content: "Xin chào", protocol: "custom" });
+        expect(visible).toEqual([]);
+        expect(requestBody()).not.toHaveProperty("stream");
+    });
+
+    it("records buffered response arrival before body parsing completes", async () => {
+        vi.useFakeTimers();
+        const response = Response.json({ choices: [{ message: { content: "<conversation>\nHello" } }] });
+        vi.spyOn(response, "json").mockImplementation(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            return { choices: [{ message: { content: "<conversation>\nHello" } }] };
+        });
+        mockedFetch.mockResolvedValue(response);
+
+        const pending = requestRoutedText(requestInput(candidate("globalaiopc", { globalAiOpcPreset: "text-gemini-native" })));
+        await vi.advanceTimersByTimeAsync(250);
+        const result = await pending;
+
+        expect(result.firstByteMs).toBe(0);
+        expect(result.elapsedMs).toBe(250);
     });
 
     it("成功响应包含无效 JSON 时携带真实响应头调用终止钩子", async () => {
@@ -319,4 +662,13 @@ function expectBasicJsonMessages(body: Record<string, unknown>) {
 
 function chatJsonResponse() {
     return Response.json({ choices: [{ message: { content: "{}" } }] });
+}
+
+function sseResponse(start: (controller: ReadableStreamDefaultController<string>) => void) {
+    const source = new ReadableStream<string>({ start });
+    return new Response(source.pipeThrough(new TextEncoderStream()), { headers: { "content-type": "text/event-stream" } });
+}
+
+function chatDelta(content: string) {
+    return `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
 }

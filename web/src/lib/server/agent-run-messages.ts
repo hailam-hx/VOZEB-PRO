@@ -1,27 +1,35 @@
 import type { AgentRun, AgentRunTask } from "./agent-run-store";
+import type { AppLocale } from "@/i18n/config";
 
-export function agentTaskCompletionMessage(task: AgentRunTask, surface: AgentRun["surface"] = "canvas") {
+export function agentTaskCompletionMessage(task: AgentRunTask, surface: AgentRun["surface"] = "canvas", locale: AppLocale = "zh-CN") {
     if (task.type === "text") {
         const summary = resultSummary(task.result);
+        if (locale === "vi") return summary ? `“${task.title}” đã hoàn tất:\n${sliceUnicode(summary, 1600)}` : `“${task.title}” đã hoàn tất.`;
+        if (locale === "en") return summary ? `“${task.title}” is complete:\n${sliceUnicode(summary, 1600)}` : `“${task.title}” is complete.`;
         return summary ? `「${task.title}」已完成：\n${sliceUnicode(summary, 1600)}` : `「${task.title}」已完成。`;
     }
+    if (locale === "vi") return surface === "canvas" ? `“${task.title}” đã được tạo và đưa về Canvas.` : `“${task.title}” đã được tạo.`;
+    if (locale === "en") return surface === "canvas" ? `“${task.title}” was generated and returned to the Canvas.` : `“${task.title}” was generated.`;
     return surface === "canvas" ? `「${task.title}」已生成并返回画布。` : `「${task.title}」已生成。`;
 }
 
 export function agentRunCompletionReply(run: AgentRun) {
+    const locale = run.responseLocale || "zh-CN";
     const completed = run.tasks.filter((task) => task.status === "completed");
-    if (!completed.length && run.projectHandoff) return "项目资料已整理完成。";
+    if (!completed.length && run.projectHandoff) return locale === "vi" ? "Thông tin dự án đã được chuẩn bị xong." : locale === "en" ? "The project information is ready." : "项目资料已整理完成。";
     if (wantsTextOnly(run.prompt) && completed.length === 1 && completed[0].type === "text") {
-        return enforceRequestedLength(conciseTextResult(resultSummary(completed[0].result)), run.prompt) || `「${completed[0].title}」已完成。`;
+        return enforceRequestedLength(conciseTextResult(resultSummary(completed[0].result)), run.prompt) || agentTaskCompletionMessage(completed[0], run.surface, locale);
     }
     const visibleTasks = run.surface === "chat" ? completed.filter((task) => task.type === "text") : completed;
-    const details = visibleTasks.map((task) => agentTaskCompletionMessage(task, run.surface)).join("\n\n");
+    const details = visibleTasks.map((task) => agentTaskCompletionMessage(task, run.surface, locale)).join("\n\n");
+    if (locale === "vi") return `Đã hoàn tất ${completed.length} tác vụ sáng tạo.${details ? `\n\n${details}` : ""}`;
+    if (locale === "en") return `Completed ${completed.length} creative task${completed.length === 1 ? "" : "s"}.${details ? `\n\n${details}` : ""}`;
     return `已完成 ${completed.length} 个创作任务。${details ? `\n\n${details}` : ""}`;
 }
 
-export function agentRunFailureMessage(tasks: AgentRunTask[]) {
+export function agentRunFailureMessage(tasks: AgentRunTask[], locale: AppLocale = "zh-CN") {
     const failed = tasks.filter((task) => task.status === "failed" && task.error?.trim());
-    if (!failed.length) return "创作任务执行失败";
+    if (!failed.length) return locale === "vi" ? "Tác vụ sáng tạo thất bại" : locale === "en" ? "The creative task failed" : "创作任务执行失败";
     const counts = tasks.reduce(
         (total, task) => {
             if (task.childTasks?.length) {
@@ -36,6 +44,14 @@ export function agentRunFailureMessage(tasks: AgentRunTask[]) {
         { completed: 0, failed: 0 },
     );
     if (!counts.failed) counts.failed = failed.length;
+    if (locale === "vi") {
+        const summary = counts.completed ? `Kết quả: thành công ${counts.completed}, thất bại ${counts.failed}.` : `Tạo nội dung thất bại: ${counts.failed} mục.`;
+        return `${summary}\nLý do thất bại:\n${failed.map((task) => `“${task.title}”: ${task.error!.trim()}`).join("\n")}`;
+    }
+    if (locale === "en") {
+        const summary = counts.completed ? `Results: ${counts.completed} succeeded and ${counts.failed} failed.` : `Generation failed for ${counts.failed} item${counts.failed === 1 ? "" : "s"}.`;
+        return `${summary}\nFailure details:\n${failed.map((task) => `“${task.title}”: ${task.error!.trim()}`).join("\n")}`;
+    }
     const unit = tasks.every((task) => task.type === "image") ? "张" : tasks.every((task) => task.type === "video") ? "个视频" : "项";
     const summary = counts.completed ? `生成结果：成功 ${counts.completed} ${unit}，失败 ${counts.failed} ${unit}。` : `生成失败：失败 ${counts.failed} ${unit}。`;
     const reasons = failed.map((task) => `「${task.title}」：${task.error!.trim()}`).join("\n");

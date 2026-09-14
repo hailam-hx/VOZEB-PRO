@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/lib/auth/store-foundation";
 
-import { agentPlannerInput, agentPlannerSystemPrompt, buildAgentPlannerInput, compactCanvasSnapshot, plannerAgentSkills, selectAgentSkills } from "./agent-run-surface-policy";
+import { agentPlannerInput, agentPlannerSystemPrompt, agentPlanReply, buildAgentPlannerInput, compactCanvasSnapshot, isDirectAgentIdentityQuestion, plannerAgentSkills, selectAgentSkills } from "./agent-run-surface-policy";
 import { filterAgentPlannerModels, resolveAgentPlanningProfile } from "./agent-run-planning-profile";
 
 describe("selectAgentSkills", () => {
@@ -31,11 +31,39 @@ describe("selectAgentSkills", () => {
 });
 
 describe("agentPlannerInput", () => {
+    it("localizes generation acknowledgement without introducing a product identity", () => {
+        const task = { type: "image", references: [], title: "Poster" } as never;
+
+        expect(agentPlanReply({} as never, [task], "chat", "vi")).toBe("Đã nhận yêu cầu. Tôi sẽ hoàn thành nội dung sáng tạo theo đúng yêu cầu của bạn.");
+        expect(agentPlanReply({} as never, [task], "chat", "en")).toBe("Got it. I’ll complete this creative request as requested.");
+        expect(agentPlanReply({} as never, [task], "chat", "vi")).not.toMatch(/HOTX|VOZEB/i);
+    });
+
     it("requires audio deliverables to contain only the final spoken text", () => {
         const prompt = agentPlannerSystemPrompt("chat", "{}");
 
         expect(prompt).toContain("type=audio 时，deliverable.prompt 只能填写最终需要合成并朗读的原文");
         expect(prompt).toContain("不得加入朗读、配音、音色指令、标题、引号、foundation、Skill、依赖说明或其他元数据");
+    });
+
+    it("only identifies direct assistant or platform identity questions", () => {
+        expect(isDirectAgentIdentityQuestion("Bạn là ai?")).toBe(true);
+        expect(isDirectAgentIdentityQuestion("Who are you?")).toBe(true);
+        expect(isDirectAgentIdentityQuestion("你是谁？")).toBe(true);
+        expect(isDirectAgentIdentityQuestion("xin chào")).toBe(false);
+        expect(isDirectAgentIdentityQuestion('Tạo poster có dòng chữ "Bạn là ai?"')).toBe(false);
+    });
+
+    it("does not include a site name unless the caller has verified an identity question", () => {
+        const ordinaryPrompt = agentPlannerSystemPrompt("chat", "{}", { responseLocale: "vi" });
+        const prompt = agentPlannerSystemPrompt("chat", "{}", { siteTitle: "HOTX AI", responseLocale: "vi" });
+
+        expect(ordinaryPrompt).not.toContain("HOTX AI");
+        expect(prompt).not.toContain("你是 HOTX AI");
+        expect(prompt).not.toContain("reply 用自然中文");
+        expect(prompt).toContain("用户本轮已明确询问平台或助手身份，可使用站点名称 HOTX AI");
+        expect(prompt).toContain("优先使用用户本轮消息的语言");
+        expect(prompt).toContain("越南语");
     });
 
     it("constrains drama generation to the current project snapshot", () => {
@@ -129,6 +157,30 @@ describe("agentPlannerInput", () => {
         expect(skill).not.toHaveProperty("instructions");
         expect(JSON.stringify(input).length).toBeGreaterThan(12_000);
         expect(input).not.toHaveProperty("planningBudget");
+    });
+
+    it("keeps legacy canned greetings in storage but omits them from model context", () => {
+        const legacyGreeting = "你好！我是 VOZEB PRO，可以帮你规划和生成文本、图片、视频或音频内容，也可以随时回答问题。";
+        const recentMessages = [
+            { role: "user", content: "你好", sequence: 1 },
+            { role: "assistant", content: legacyGreeting, sequence: 2 },
+            { role: "user", content: "继续", sequence: 3 },
+            { role: "assistant", content: `${legacyGreeting}\n这是需要保留的后续内容。`, sequence: 4 },
+        ];
+
+        const input = agentPlannerInput(
+            { surface: "chat", prompt: "继续", referencedAssetIds: [], selectedSkillIds: [] } as never,
+            { summary: `历史摘要：${legacyGreeting}`, summaryThroughSequence: 0, recentMessages } as never,
+            [],
+            "none",
+            [],
+            [{ id: "image", name: "图片", capability: "image" }],
+            DEFAULT_SETTINGS,
+        ) as { conversationContext: { summary: string; recentMessages: Array<{ role: string; content: string; sequence: number }> } };
+
+        expect(input.conversationContext.summary).not.toContain("VOZEB PRO");
+        expect(input.conversationContext.recentMessages).toEqual([recentMessages[0], recentMessages[2], { role: "assistant", content: "这是需要保留的后续内容。", sequence: 4 }]);
+        expect(recentMessages[1]?.content).toContain("VOZEB PRO");
     });
 
     it("keeps the complete capability-filtered model catalog without fixed truncation", () => {

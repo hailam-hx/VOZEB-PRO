@@ -28,6 +28,16 @@ describe("GlobalAiOpc native text proxy", () => {
         });
     });
 
+    it("uses the configured Claude output limit instead of inventing one", () => {
+        const config = { protocol: "globalaiopc", globalAiOpcPreset: "text-claude-native" } as never;
+        const body = JSON.stringify({ model: "claude-opus-4-6", messages: [{ role: "user", content: "hello" }] });
+
+        const adapted = adaptGlobalAiOpcTextRequest(config, ["chat", "completions"], body, { maxOutputTokens: 768 });
+
+        expect(JSON.parse((adapted as { body: string }).body)).toMatchObject({ max_tokens: 768 });
+        expect(adaptGlobalAiOpcTextRequest(config, ["chat", "completions"], body)).toBe("claude-max-output-tokens-required");
+    });
+
     it("keeps native Responses as an explicit fallback so Agent can use Chat", () => {
         expect(adaptGlobalAiOpcTextRequest({ protocol: "globalaiopc", globalAiOpcPreset: "text-claude-native" } as never, ["responses"], JSON.stringify({ model: "claude-opus-4-6" }))).toBe("responses-unsupported");
         expect(isGlobalAiOpcChannel({ protocol: "globalaiopc", globalAiOpcPreset: "text-claude-native" } as never)).toBe(true);

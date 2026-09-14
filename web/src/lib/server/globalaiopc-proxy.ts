@@ -13,7 +13,7 @@ export function isGlobalAiOpcChannel(config?: SystemChannelAdvancedConfig) {
     return Boolean(resolveGlobalAiOpcPresets(config).length);
 }
 
-export function adaptGlobalAiOpcTextRequest(config: SystemChannelAdvancedConfig | undefined, path: string[], body: BodyInit | undefined) {
+export function adaptGlobalAiOpcTextRequest(config: SystemChannelAdvancedConfig | undefined, path: string[], body: BodyInit | undefined, options: { maxOutputTokens?: number } = {}) {
     const payload = jsonObject(body);
     const preset = resolveGlobalAiOpcPreset(config, payload?.model);
     if (!preset || (preset.id !== "text-gemini-native" && preset.id !== "text-claude-native")) return null;
@@ -21,9 +21,9 @@ export function adaptGlobalAiOpcTextRequest(config: SystemChannelAdvancedConfig 
     if (cleanPath.join("/") === "responses") return "responses-unsupported" as const;
     if (cleanPath.join("/") !== "chat/completions") return null;
     if (!payload) return null;
-    return preset.id === "text-gemini-native"
-        ? { path: ["models", `${modelName(payload.model)}:generateContent`], body: JSON.stringify(toGeminiRequest(payload)), adapter: "gemini" as const }
-        : { path: ["messages"], body: JSON.stringify(toClaudeRequest(payload)), adapter: "claude" as const };
+    if (preset.id === "text-gemini-native") return { path: ["models", `${modelName(payload.model)}:generateContent`], body: JSON.stringify(toGeminiRequest(payload)), adapter: "gemini" as const };
+    const claude = toClaudeRequest(payload, options.maxOutputTokens);
+    return claude ? { path: ["messages"], body: JSON.stringify(claude), adapter: "claude" as const } : ("claude-max-output-tokens-required" as const);
 }
 
 export function adaptGlobalAiOpcTextResponse(adapter: ProxyAdapter, payload: unknown) {
@@ -63,7 +63,7 @@ function toGeminiRequest(payload: Record<string, unknown>) {
     };
 }
 
-function toClaudeRequest(payload: Record<string, unknown>) {
+function toClaudeRequest(payload: Record<string, unknown>, configuredMaxOutputTokens?: number) {
     const messages = array(payload.messages);
     const systemText = messages
         .filter((item) => object(item)?.role === "system")
@@ -77,9 +77,11 @@ function toClaudeRequest(payload: Record<string, unknown>) {
         .map((item) => ({ name: text(item.name), description: text(item.description), input_schema: item.parameters || { type: "object", properties: {} } }));
     const choice = object(payload.tool_choice);
     const functionChoice = object(choice?.function);
+    const maxOutputTokens = positiveInteger(payload.max_tokens) || positiveInteger(configuredMaxOutputTokens);
+    if (!maxOutputTokens) return null;
     return {
         model: modelName(payload.model),
-        max_tokens: number(payload.max_tokens, 4096),
+        max_tokens: maxOutputTokens,
         messages: messages.filter((item) => object(item)?.role !== "system").map((item) => ({ role: object(item)?.role === "assistant" ? "assistant" : "user", content: contentText(object(item)?.content) })),
         ...(systemText ? { system: systemText } : {}),
         ...(tools.length ? { tools } : {}),
@@ -171,6 +173,7 @@ function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
 }
 
-function number(value: unknown, fallback: number) {
-    return Number.isFinite(Number(value)) ? Number(value) : fallback;
+function positiveInteger(value: unknown) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }

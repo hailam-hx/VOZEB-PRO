@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import type { AppLocale } from "@/i18n/config";
 import type { CreativeFoundation, CreativeReview } from "@/lib/creative-agent-contract";
 import { CreativeRuntimeInputError, type CreativeGenerationPreferences, type CreativeProjectHandoffPlan, type CreativeRunRequest, type CreativeSurface } from "@/lib/creative-runtime-contract";
 import { extractImageSizeFromPrompt } from "@/lib/image-size";
@@ -7,6 +8,7 @@ import { createCreativeRunBundle, getCreativeAssetsByIds, getCreativeRunByClient
 import { getStoredGenerationTask, queryStoredGenerationTasks } from "./generation-task-store";
 import { cancelledRunCanvasOps, taskCanvasEventOps } from "./agent-run-canvas-ops";
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
+import { agentRunCopy } from "@/lib/agent-run-copy";
 import { agentTaskCompletionMessage } from "./agent-run-messages";
 import type { AgentRunPlannerAudit } from "./agent-run-audit";
 import type { TextPlanningProtocol } from "./text-planning-runtime";
@@ -89,6 +91,9 @@ export type AgentRun = {
     requestedModelIds?: string[];
     requestedImageSize?: string;
     generationPreferences?: CreativeGenerationPreferences;
+    responseLocale?: AppLocale;
+    responseKind?: "conversation" | "generation";
+    conversationReply?: string;
     assetIds: string[];
     status: AgentRunStatus;
     executionId?: string;
@@ -122,6 +127,9 @@ export type AgentRunPlannerAttempt = {
     startedAt: number;
     completedAt?: number;
     elapsedMs?: number;
+    firstByteMs?: number;
+    firstContentMs?: number;
+    resultKind?: "conversation" | "generation";
     error?: string;
 };
 export type AgentRunPlannerFailure = {
@@ -140,7 +148,11 @@ export type AgentRunPlannerContextSummary = {
 };
 export type AgentRunTimings = {
     requestAcceptedAt: number;
+    executionStartedAt?: number;
     planningStartedAt?: number;
+    upstreamRequestStartedAt?: number;
+    upstreamFirstByteAt?: number;
+    firstPublicReplyAt?: number;
     planningCompletedAt?: number;
     firstTaskSubmittedAt?: number;
     firstResultReadyAt?: number;
@@ -150,7 +162,7 @@ export type AgentRunTimings = {
 };
 const TTL = 365 * 24 * 60 * 60 * 1000;
 
-export async function createAgentRun(userId: string, input: CreativeRunRequest) {
+export async function createAgentRun(userId: string, input: CreativeRunRequest, responseLocale?: AppLocale) {
     await assertVideoFrameAssets(userId, input);
     const now = Date.now();
     const conversationId = input.conversationId || `conversation-${nanoid()}`;
@@ -172,6 +184,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         ...(input.modelIds.length ? { requestedModelIds: input.modelIds } : {}),
         requestedImageSize: extractImageSizeFromPrompt(input.prompt) || undefined,
         ...(input.preferences ? { generationPreferences: input.preferences } : {}),
+        ...(responseLocale ? { responseLocale } : {}),
         assetIds: [],
         status: "planning",
         tasks: [],
@@ -188,7 +201,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         prompt: publicPrompt,
         title: publicPrompt.slice(0, 48),
         assetIds: input.assetIds,
-        acknowledgement: agentRequirementAcknowledgement(publicPrompt, input.surface, input.assetIds.length > 0 || (input.surface === "canvas" && selectedCanvasNodeIds(snapshot).length > 0)),
+        acknowledgement: agentRequirementAcknowledgement(publicPrompt, input.surface, input.assetIds.length > 0 || (input.surface === "canvas" && selectedCanvasNodeIds(snapshot).length > 0), responseLocale),
         ttlMs: TTL,
     });
 }
@@ -217,26 +230,37 @@ export async function setAgentRunStatus(run: AgentRun, status: AgentRunStatus) {
         TTL,
         (current) => {
             if (current.userId !== run.userId || current.status !== run.status) return null;
-            const tasks = status === "cancelled" ? cancelActiveTasks(current.tasks) : current.tasks;
+            const now = Date.now();
+            const tasks = status === "cancelled" ? cancelActiveTasks(current.tasks, current.responseLocale) : current.tasks;
             const ops = status === "cancelled" && current.surface === "canvas" ? cancelledRunCanvasOps(current.id, tasks) : [];
             return {
-                run: { ...current, status, tasks, executionId: undefined, ...(status === "cancelled" ? { cancellation: undefined } : {}) },
+                run: {
+                    ...current,
+                    status,
+                    tasks,
+                    executionId: undefined,
+                    ...(status === "cancelled" ? { cancellation: undefined } : {}),
+                    ...(["completed", "failed", "cancelled"].includes(status)
+                        ? { timings: { ...(current.timings || { requestAcceptedAt: current.createdAt }), runCompletedAt: current.timings?.runCompletedAt || now } }
+                        : {}),
+                },
                 event: { type: `run.${status}`, ...(ops.length ? { data: { ops } } : {}) },
-                assistant: terminalAssistant(status),
+                assistant: terminalAssistant(current, status),
             };
         },
         [run.status],
     );
 }
 
-function cancelActiveTasks(tasks: AgentRunTask[]) {
+function cancelActiveTasks(tasks: AgentRunTask[], locale?: AppLocale) {
+    const message = agentRunCopy(locale).cancelled;
     return tasks.map((task): AgentRunTask =>
         task.status === "ready" || task.status === "running"
             ? {
                   ...task,
                   status: "cancelled",
-                  error: "任务已取消",
-                  childTasks: task.childTasks?.map((child) => (child.status === "pending" ? { ...child, status: "cancelled" as const, error: "任务已取消" } : child)),
+                  error: message,
+                  childTasks: task.childTasks?.map((child) => (child.status === "pending" ? { ...child, status: "cancelled" as const, error: message } : child)),
               }
             : task,
     );
@@ -262,6 +286,8 @@ export async function updateAgentRunById(
             | "plannerAudit"
             | "plannerAttempts"
             | "plannerFailure"
+            | "responseKind"
+            | "conversationReply"
             | "cancellation"
             | "assetIds"
             | "timings"
@@ -279,6 +305,33 @@ export async function updateAgentRunById(
             return { run: next, event, assistant: assistantUpdate(next, event) };
         },
         allowedStatuses,
+        expectedExecutionId,
+    );
+}
+
+export async function updateAgentRunConversationContent(id: string, content: string, expectedExecutionId: string) {
+    const normalized = content.trim();
+    if (!normalized) return null;
+    return mutateCreativeRun<AgentRun>(
+        id,
+        TTL,
+        (current) => {
+            const now = Date.now();
+            return {
+                run: {
+                    ...current,
+                    responseKind: "conversation",
+                    conversationReply: normalized,
+                    timings: {
+                        ...(current.timings || { requestAcceptedAt: current.createdAt }),
+                        firstPublicReplyAt: current.timings?.firstPublicReplyAt || now,
+                    },
+                },
+                event: { type: "run.conversation.updated", data: { content: normalized } },
+                assistant: { status: "running", content: normalized },
+            };
+        },
+        ["running"],
         expectedExecutionId,
     );
 }
@@ -323,7 +376,7 @@ export async function updateAgentRunTaskById(id: string, taskId: string, patch: 
                         completedCount: completedChildren,
                         failedCount: failedChildren,
                         totalCount: totalChildren,
-                        message: eventType === "task.completed" ? agentTaskCompletionMessage(task, current.surface) : undefined,
+                        message: eventType === "task.completed" ? agentTaskCompletionMessage(task, current.surface, current.responseLocale) : undefined,
                     },
                 },
             };
@@ -368,13 +421,14 @@ function mergeChildTasks(current: AgentRunChildTask[], incoming: AgentRunChildTa
 
 function assistantUpdate(run: AgentRun, event?: { type: string; data?: unknown }) {
     const data = event?.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : {};
+    const copy = agentRunCopy(run.responseLocale);
     if (event?.type.startsWith("run.review.")) return undefined;
-    if (event?.type === "run.retry.requested") return { status: "running" as const, content: "正在重新分析并执行这次请求…" };
-    if (run.status === "running" && event?.type === "task.retry.requested") return { status: "running" as const, content: "正在重新生成失败任务…" };
+    if (event?.type === "run.retry.requested") return { status: "running" as const, content: copy.retrying };
+    if (run.status === "running" && event?.type === "task.retry.requested") return { status: "running" as const, content: copy.retryingTasks };
     if (run.status === "completed") {
         return {
             status: "completed" as const,
-            content: typeof data.reply === "string" && data.reply.trim() ? data.reply.trim() : "创作任务已完成。",
+            content: typeof data.reply === "string" && data.reply.trim() ? data.reply.trim() : copy.completed,
             metadata: {
                 assetIds: run.assetIds,
                 taskIds: Array.from(new Set(run.tasks.flatMap((task) => task.taskIds || (task.taskId ? [task.taskId] : [])))),
@@ -382,12 +436,19 @@ function assistantUpdate(run: AgentRun, event?: { type: string; data?: unknown }
             },
         };
     }
-    if (run.status === "failed") return { status: "failed" as const, content: typeof data.message === "string" ? data.message : "Agent 执行失败" };
-    if (run.status === "cancelled") return { status: "cancelled" as const, content: "Agent 任务已取消。" };
+    if (run.status === "failed")
+        return {
+            status: "failed" as const,
+            content: run.responseKind === "conversation" && run.conversationReply?.trim() ? run.conversationReply.trim() : typeof data.message === "string" ? data.message : copy.failed,
+        };
+    if (run.status === "cancelled") return { status: "cancelled" as const, content: copy.cancelled };
     return undefined;
 }
 
-function terminalAssistant(status: AgentRunStatus) {
-    if (status === "cancelled") return { status: "cancelled" as const, content: "Agent 任务已取消。" };
+function terminalAssistant(run: AgentRun, status: AgentRunStatus) {
+    if (status === "cancelled") {
+        const content = run.responseKind === "conversation" && run.conversationReply?.trim() ? run.conversationReply.trim() : agentRunCopy(run.responseLocale).cancelled;
+        return { status: "cancelled" as const, content };
+    }
     return undefined;
 }

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useCreateAgent } from "./use-create-agent";
 import { useCreateDraftAttachmentsStore } from "./use-create-draft-attachments-store";
 
-vi.mock("next-intl", () => ({ useTranslations: () => (key: string) => key }));
+vi.mock("next-intl", () => ({ useLocale: () => "zh-CN", useTranslations: () => (key: string) => key }));
 vi.mock("@/services/api/creative", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/services/api/creative")>()),
     listCreativeAgentRuns: vi.fn().mockResolvedValue([]),

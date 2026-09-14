@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
     events: [] as Array<{ type: string; data?: unknown }>,
     run: null as AgentRun | null,
     updateAgentRunById: vi.fn(),
+    updateAgentRunConversationContent: vi.fn(),
     updateAgentRunTaskById: vi.fn(),
     scheduleGenerationTask: vi.fn(async () => undefined),
 }));
@@ -58,6 +59,7 @@ vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
         ...actual,
         getAgentRun: vi.fn(async () => mocks.run),
         updateAgentRunById: mocks.updateAgentRunById,
+        updateAgentRunConversationContent: mocks.updateAgentRunConversationContent,
         updateAgentRunTaskById: mocks.updateAgentRunTaskById,
     };
 });
@@ -68,10 +70,11 @@ import { agentPlannerSystemPrompt } from "./agent-run-surface-policy";
 import { resetTextPlanningRuntime } from "./text-planning-runtime";
 
 describe("executeAgentRun backend settings", () => {
-    it("identifies every planner surface as HOTX AI without exposing the legacy product name", () => {
+    it("keeps the default planner role brand-neutral", () => {
         for (const surface of ["canvas", "drama", "chat"] as const) {
             const systemPrompt = agentPlannerSystemPrompt(surface, "{}");
-            expect(systemPrompt).toContain("HOTX AI");
+            expect(systemPrompt).not.toContain("HOTX AI");
+            expect(systemPrompt).not.toContain("你是 HOTX AI");
             expect(systemPrompt).not.toContain("VOZEB PRO");
         }
     });
@@ -96,6 +99,18 @@ describe("executeAgentRun backend settings", () => {
                 ...patch,
             };
             if (event) mocks.events.push(event);
+            return mocks.run;
+        });
+        mocks.updateAgentRunConversationContent.mockImplementation(async (_id, content, expectedExecutionId) => {
+            if (!mocks.run || mocks.run.status !== "running" || mocks.run.executionId !== expectedExecutionId) return null;
+            const firstPublicReplyAt = mocks.run.timings?.firstPublicReplyAt || Date.now();
+            mocks.run = {
+                ...mocks.run,
+                responseKind: "conversation",
+                conversationReply: content,
+                timings: { ...(mocks.run.timings || { requestAcceptedAt: mocks.run.createdAt }), firstPublicReplyAt },
+            };
+            mocks.events.push({ type: "run.conversation.updated", data: { content } });
             return mocks.run;
         });
         mocks.updateAgentRunTaskById.mockImplementation(async (_id, taskId, patch, eventType, expectedExecutionId) => {
@@ -329,6 +344,7 @@ describe("executeAgentRun backend settings", () => {
             ops: expect.arrayContaining([expect.objectContaining({ type: "add_node", id: "task-agent-run-0", nodeType: "task" }), expect.objectContaining({ type: "add_node", id: "output-agent-run-0-0", nodeType: "image" })]),
         });
         expect(mocks.run?.status).toBe("completed");
+        expect(mocks.run?.timings?.firstPublicReplyAt).toEqual(expect.any(Number));
     });
 
     it("does not complete the run when it is paused during a parallel batch", async () => {
@@ -634,6 +650,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(1);
         expect(mocks.run?.tasks[0]).toMatchObject({ status: "failed", attempts: 1, taskId: "child-error", childTasks: [{ id: "child-error", status: "failed", attempt: 1, error: "上游生成失败" }], error: "上游生成失败" });
         expect(mocks.run?.status).toBe("failed");
+        expect(mocks.run?.timings?.runCompletedAt).toEqual(expect.any(Number));
     });
 
     it("turns explicit canvas text-node content into a node result without calling the text task API", async () => {
@@ -933,6 +950,231 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.events.some((event) => event.type === "canvas.ops")).toBe(false);
         expect(mocks.events.find((event) => event.type === "run.completed")?.data).toMatchObject({ completed: 0, reply: "在的，你可以直接和我聊天，也可以让我操作当前画布。" });
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => /\/api\/(?:image|video|audio|text)-tasks/.test(String(url)))).toBe(false);
+        expect(mocks.run?.timings?.firstPublicReplyAt).toEqual(expect.any(Number));
+    });
+
+    it("streams automatic chat as accumulated public content before the upstream response closes", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "你好", responseLocale: "zh-CN" });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        let closeStream!: () => void;
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                const encoder = new TextEncoder();
+                controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"<conver"}}]}\n\n'));
+                controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"sation>\\n你好"}}]}\n\n'));
+                controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"，朋友"}}]}\n\n'));
+                closeStream = () => {
+                    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                    controller.close();
+                };
+            },
+        });
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.endsWith("/chat/completions")) return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        const execution = executeAgentRun(mocks.run, "http://localhost", "session=test");
+        await vi.waitFor(() => expect(mocks.events.filter((event) => event.type === "run.conversation.updated")).toHaveLength(2));
+
+        expect(mocks.run).toMatchObject({ status: "running", responseKind: "conversation", conversationReply: "你好，朋友" });
+        expect(mocks.events.filter((event) => event.type === "run.conversation.updated").map((event) => event.data)).toEqual([{ content: "你好" }, { content: "你好，朋友" }]);
+        const plannerBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls[0]?.[1]?.body));
+        expect(plannerBody).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+
+        closeStream();
+        await execution;
+
+        expect(mocks.run).toMatchObject({ status: "completed", responseKind: "conversation", conversationReply: "你好，朋友", tasks: [] });
+        expect(mocks.events.find((event) => event.type === "run.completed")?.data).toMatchObject({ completed: 0, reply: "你好，朋友" });
+        expect(mocks.events.some((event) => event.type === "run.planned")).toBe(false);
+    });
+
+    it("does not fail over or discard visible text when a conversation stream breaks after first content", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "xin chào", responseLocale: "vi" });
+        mocks.getAuthSettings.mockResolvedValue(plannerFailoverSettings("image-default", "image-default-channel"));
+        let failStream!: () => void;
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                const encoder = new TextEncoder();
+                controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"<conversation>\\nXin chào một phần"}}]}\n\n'));
+                failStream = () => controller.error(new Error("stream disconnected"));
+            },
+        });
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.includes("/planner-primary/") && url.endsWith("/chat/completions")) return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+            if (url.includes("/planner-backup/")) throw new Error("backup must not be called after public content");
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        const execution = executeAgentRun(mocks.run, "http://localhost", "session=test");
+        await vi.waitFor(() => expect(mocks.run?.conversationReply).toBe("Xin chào một phần"));
+        failStream();
+        await execution;
+
+        expect(mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/planner-backup/"))).toHaveLength(0);
+        expect(mocks.run).toMatchObject({ status: "failed", responseKind: "conversation", conversationReply: "Xin chào một phần" });
+        expect(mocks.run?.timings?.upstreamFirstByteAt).toEqual(expect.any(Number));
+        expect(mocks.events.find((event) => event.type === "run.failed")?.data).toEqual({ message: "Xin chào một phần", responseLocale: "vi", partialConversation: true });
+    });
+
+    it("fails over when an accepted stream breaks before a public discriminator completes", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "hello", responseLocale: "en" });
+        mocks.getAuthSettings.mockResolvedValue(plannerFailoverSettings("image-default", "image-default-channel"));
+        let failStream!: () => void;
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.includes("/planner-primary/") && url.endsWith("/chat/completions")) {
+                return new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"<con"}}]}\n\n'));
+                            failStream = () => controller.error(new Error("stream disconnected before discriminator"));
+                        },
+                    }),
+                    { headers: { "content-type": "text/event-stream" } },
+                );
+            }
+            if (url.includes("/planner-backup/") && url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: "<conversation>\nHello from backup" } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+            }
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        const execution = executeAgentRun(mocks.run, "http://localhost", "session=test");
+        await vi.waitFor(() => expect(mocks.run?.timings?.upstreamFirstByteAt).toEqual(expect.any(Number)));
+        failStream();
+        await execution;
+
+        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ final: false, currentAttempt: { attemptNumber: 1, acceptance: "response" } }));
+        expect(mocks.run).toMatchObject({ status: "completed", conversationReply: "Hello from backup" });
+        expect(mocks.run?.plannerAttempts).toEqual([
+            expect.objectContaining({ status: "failed", requestAcceptance: "response", firstByteMs: expect.any(Number) }),
+            expect.objectContaining({ status: "succeeded", resultKind: "conversation" }),
+        ]);
+    });
+
+    it("fails over before the first public conversation frame", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "hello", responseLocale: "en" });
+        mocks.getAuthSettings.mockResolvedValue(plannerFailoverSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.includes("/planner-primary/") && url.endsWith("/chat/completions")) return new Response("unavailable", { status: 502 });
+            if (url.includes("/planner-backup/") && url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: "<conversation>\nHello from backup" } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+            }
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({ status: "completed", conversationReply: "Hello from backup" });
+        expect(mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/planner-"))).toHaveLength(2);
+        expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ status: "failed", requestAcceptance: "response" }), expect.objectContaining({ status: "succeeded", resultKind: "conversation" })]);
+    });
+
+    it("marks a completed invalid SSE attempt failed before using the backup channel", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "hello", responseLocale: "en" });
+        mocks.getAuthSettings.mockResolvedValue(plannerFailoverSettings("image-default", "image-default-channel"));
+        mocks.resolveSystemAiTextFailure.mockImplementation(async () => ({ state: mocks.finishSystemAiTextAttempt.mock.calls.length > 0 ? "safe_to_failover" : "closed" }));
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.includes("/planner-primary/") && url.endsWith("/chat/completions")) {
+                const invalidFrame = JSON.stringify({ choices: [{ delta: { content: "<generation>\nnot-json" } }] });
+                return new Response(`data: ${invalidFrame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+            }
+            if (url.includes("/planner-backup/") && url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: "<conversation>\nHello from backup" } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+            }
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
+        expect(mocks.run).toMatchObject({ status: "completed", conversationReply: "Hello from backup" });
+        expect(mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/planner-"))).toHaveLength(2);
+    });
+
+    it("uses the configured site title only when the user explicitly asks about identity", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "Bạn là ai?", responseLocale: "vi" });
+        const configuredSettings = canvasSettings("image-default", "image-default-channel") as unknown as { site: { title: string } };
+        configuredSettings.site = { title: "ACME Studio" };
+        mocks.getAuthSettings.mockResolvedValue(configuredSettings as never);
+        const frame = JSON.stringify({ choices: [{ delta: { content: "<conversation>\nTôi là trợ lý AI của ACME Studio." } }] });
+        mocks.fetchInternalApi.mockResolvedValue(new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } }));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const plannerBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls[0]?.[1]?.body)) as { messages: Array<{ role: string; content: string }> };
+        expect(plannerBody.messages[0]?.content).toContain("用户本轮已明确询问平台或助手身份，可使用站点名称 ACME Studio");
+        expect(mocks.run?.conversationReply).toBe("Tôi là trợ lý AI của ACME Studio.");
+    });
+
+    it("does not send the configured site title for an ordinary greeting", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "xin chào", responseLocale: "vi" });
+        const configuredSettings = canvasSettings("image-default", "image-default-channel") as unknown as { site: { title: string } };
+        configuredSettings.site = { title: "ACME Studio" };
+        mocks.getAuthSettings.mockResolvedValue(configuredSettings as never);
+        const frame = JSON.stringify({ choices: [{ delta: { content: "<conversation>\nXin chào! Tôi có thể giúp gì cho bạn?" } }] });
+        mocks.fetchInternalApi.mockResolvedValue(new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } }));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const plannerBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls[0]?.[1]?.body)) as { messages: Array<{ content: string }> };
+        expect(plannerBody.messages[0]?.content).not.toContain("ACME Studio");
+        expect(mocks.run?.conversationReply).not.toMatch(/ACME Studio|HOTX AI|VOZEB PRO/i);
+    });
+
+    it("buffers a routed generation plan and executes it without exposing planner JSON", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "Tạo một ảnh bìa biển lúc hoàng hôn", responseLocale: "vi" });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = canvasPlan("image-default");
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: `<generation>\n${JSON.stringify(plan)}` } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+            }
+            if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-routed-generation" } });
+            if (url.endsWith("/api/image-tasks/child-routed-generation")) return Response.json({ task: { status: "success", result: { remoteUrl: "https://cdn.example.com/routed.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({ status: "completed", responseKind: "generation" });
+        expect(mocks.run?.timings?.firstPublicReplyAt).toEqual(expect.any(Number));
+        expect(mocks.events.find((event) => event.type === "run.planned")?.data).toMatchObject({ reply: "Đã nhận yêu cầu. Tôi sẽ hoàn thành nội dung sáng tạo theo đúng yêu cầu của bạn." });
+        expect(mocks.events.some((event) => event.type === "run.conversation.updated")).toBe(false);
+        expect(mocks.events.some((event) => JSON.stringify(event).includes("<generation>"))).toBe(false);
+        expect(mocks.events.some((event) => JSON.stringify(event).includes('"deliverables"'))).toBe(false);
+        expect(mocks.fetchInternalApi.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toBe(true);
+        expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ status: "succeeded", resultKind: "generation", firstByteMs: expect.any(Number) })]);
+    });
+
+    it("keeps explicitly selected creation types on the existing structured planner path", async () => {
+        mocks.run = runFixture({
+            surface: "chat",
+            projectId: undefined,
+            snapshot: undefined,
+            prompt: "Tạo ảnh bìa",
+            responseLocale: "vi",
+            generationPreferences: { mode: "image", image: { size: "16:9" } },
+        });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(canvasPlan("image-default")) }] });
+            if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-explicit-mode" } });
+            if (url.endsWith("/api/image-tasks/child-explicit-mode")) return Response.json({ task: { status: "success", result: { remoteUrl: "https://cdn.example.com/explicit.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const plannerBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls.find(([url]) => String(url).endsWith("/chat/completions"))?.[1]?.body));
+        expect(plannerBody).not.toHaveProperty("stream");
+        expect(mocks.run).toMatchObject({ status: "completed", responseKind: "generation" });
+        expect(mocks.run?.timings?.firstPublicReplyAt).toEqual(expect.any(Number));
     });
 
     it("falls back to structured Chat Completions when Responses returns prose", async () => {

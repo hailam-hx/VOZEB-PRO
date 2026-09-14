@@ -7,6 +7,7 @@ export type AgentFunctionCallResult = {
     arguments: string;
     protocol?: TextPlanningProtocol;
     elapsedMs?: number;
+    firstByteMs?: number;
     pointsCost?: number;
     pointsRemaining?: number;
     pointsRecordId?: string;

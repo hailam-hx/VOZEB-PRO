@@ -1,7 +1,7 @@
 "use client";
 
 import { nanoid } from "nanoid";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeGenerationPreferences, type CreativeMessage, type CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
@@ -25,6 +25,7 @@ import {
 } from "@/services/api/creative";
 import { getMaterializedCreativeProject, materializeCreativeProjectHandoff, type MaterializedCreativeProject } from "@/services/creative-project-handoff";
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
+import type { AppLocale } from "@/i18n/config";
 
 import { createConversationIdFromSearch, latestResumableAgentRun } from "./create-conversation-navigation";
 import { getCreateDraftAttachment, useCreateDraftAttachmentsStore } from "./use-create-draft-attachments-store";
@@ -55,6 +56,7 @@ const MESSAGE_PAGE_SIZE = 50;
 
 export function useCreateAgent() {
     const t = useTranslations("create");
+    const locale = useLocale() as AppLocale;
     const streamRef = useRef<(() => void) | null>(null);
     const conversationGenerationRef = useRef(0);
     const activeConversationRef = useRef<string | undefined>(undefined);
@@ -327,40 +329,56 @@ export function useCreateAgent() {
             submittingRef.current = true;
             setActiveRunId(run.id);
             setActiveRunStatus(run.status);
-            streamRef.current = watchCreativeAgentRun(run.id, {
-                onProgress: (text) => {
-                    if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) updateAssistant(assistantMessageId, text);
+            streamRef.current = watchCreativeAgentRun(
+                run.id,
+                {
+                    onConversation: (content) => {
+                        if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
+                        setRunDetails((current) => ({
+                            ...current,
+                            [run.id]: {
+                                ...(current[run.id] || run),
+                                responseKind: "conversation",
+                                conversationReply: content,
+                            },
+                        }));
+                        updateAssistant(assistantMessageId, content);
+                    },
+                    onProgress: (text) => {
+                        if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) updateAssistant(assistantMessageId, text);
+                    },
+                    onStatus: (status) => {
+                        if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) setActiveRunStatus(status);
+                    },
+                    onTaskCompleted: () => {
+                        if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) void refreshAssets(run.conversationId, generation).catch(() => undefined);
+                    },
+                    onTerminal: (status, text) => {
+                        if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
+                        updateAssistant(assistantMessageId, text, status === "completed" ? "completed" : status);
+                        setSending(false);
+                        submittingRef.current = false;
+                        setActiveRunId(undefined);
+                        setActiveRunStatus(undefined);
+                        streamRef.current = null;
+                        void Promise.all([refreshConversation(run.conversationId, generation), refreshConversations()]);
+                    },
+                    onConnectionError: (text) => {
+                        if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
+                        updateAssistant(assistantMessageId, text, "running");
+                        streamRef.current = null;
+                    },
+                    onProjectHandoff: (handoff) => {
+                        if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
+                        setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, metadata: { ...item.metadata, projectHandoff: handoff } } : item)));
+                        void materializeProject(handoff, generation).catch(() => undefined);
+                    },
                 },
-                onStatus: (status) => {
-                    if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) setActiveRunStatus(status);
-                },
-                onTaskCompleted: () => {
-                    if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) void refreshAssets(run.conversationId, generation).catch(() => undefined);
-                },
-                onTerminal: (status, text) => {
-                    if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
-                    updateAssistant(assistantMessageId, text, status === "completed" ? "completed" : status);
-                    setSending(false);
-                    submittingRef.current = false;
-                    setActiveRunId(undefined);
-                    setActiveRunStatus(undefined);
-                    streamRef.current = null;
-                    void Promise.all([refreshConversation(run.conversationId, generation), refreshConversations()]);
-                },
-                onConnectionError: (text) => {
-                    if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
-                    updateAssistant(assistantMessageId, text, "running");
-                    streamRef.current = null;
-                },
-                onProjectHandoff: (handoff) => {
-                    if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
-                    setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, metadata: { ...item.metadata, projectHandoff: handoff } } : item)));
-                    void materializeProject(handoff, generation).catch(() => undefined);
-                },
-            });
+                locale,
+            );
             return true;
         },
-        [isCurrentConversation, materializeProject, refreshAssets, refreshConversation, refreshConversations, updateAssistant],
+        [isCurrentConversation, locale, materializeProject, refreshAssets, refreshConversation, refreshConversations, updateAssistant],
     );
 
     useEffect(() => {
@@ -473,7 +491,7 @@ export function useCreateAgent() {
                         sequence: sequence + 1,
                         role: "assistant",
                         status: "running",
-                        content: agentRequirementAcknowledgement(content, "chat", assetIds.length > 0),
+                        content: agentRequirementAcknowledgement(content, "chat", assetIds.length > 0, locale),
                         metadata: {},
                         createdAt: now,
                         updatedAt: now,

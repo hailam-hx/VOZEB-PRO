@@ -3,8 +3,8 @@ import { nanoid } from "nanoid";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { systemAiIdempotencyKey, systemAiUsageRequestFingerprint } from "@/lib/server/system-ai-billing";
 import { systemAiTextUsageContext } from "@/lib/server/generation-usage-context";
-import { getAgentRun, updateAgentRunById, type AgentRun, type AgentRunPlannerAttempt } from "@/lib/server/agent-run-store";
-import { agentPlannerSystemPrompt, agentPlanReply, buildAgentPlannerInput, conversationFallbackReply, plannerAgentSkills, prioritizeAgentPlannerModels, selectAgentSkills, taskPlanSummary } from "@/lib/server/agent-run-surface-policy";
+import { getAgentRun, updateAgentRunById, updateAgentRunConversationContent, type AgentRun, type AgentRunPlannerAttempt } from "@/lib/server/agent-run-store";
+import { agentPlannerSystemPrompt, agentPlanReply, buildAgentPlannerInput, conversationFallbackReply, isDirectAgentIdentityQuestion, plannerAgentSkills, prioritizeAgentPlannerModels, selectAgentSkills, taskPlanSummary } from "@/lib/server/agent-run-surface-policy";
 import { getCreativeAssetsByIds, getCreativeConversationContext, listRecentCreativeMediaAssets } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { parseAgentPlanCall, type AgentFunctionCallResult } from "./agent-function-call";
@@ -22,6 +22,7 @@ import {
     planToOps,
     releaseFunctionCall,
     requestFunctionCall,
+    requestRoutedFunctionCall,
     resolveAgentTaskBinding,
     resolveAgentTaskWithFallback,
     validateManualAgentModels,
@@ -60,9 +61,10 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
     };
     controllers.set(run.id, controller);
     try {
+        const executionStartedAt = Date.now();
         const claimed = await updateAgentRunById(
             run.id,
-            { status: "running", executionId, timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), ...(run.tasks.length ? {} : { planningStartedAt: Date.now() }) } },
+            { status: "running", executionId, timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), executionStartedAt, ...(run.tasks.length ? {} : { planningStartedAt: executionStartedAt }) } },
             { type: run.tasks.length ? "run.resumed" : "run.planning" },
             ["planning", "running"],
         );
@@ -103,10 +105,19 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 throw new Error("所选模型不支持当前生成参数");
             });
             await updateAgentRunById(run.id, {}, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId);
-            const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply: plan.reply } } : { type: "run.planned", data: { reply: plan.reply, tasks: tasks.map(taskPlanSummary) } };
+            const plannedAt = Date.now();
+            const reply = agentPlanReply(plan, tasks, claimed.surface, claimed.responseLocale);
+            const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply } } : { type: "run.planned", data: { reply, tasks: tasks.map(taskPlanSummary) } };
             await updateAgentRunById(
                 run.id,
-                { tasks, foundation: plan.foundation, reviewed: false, plannerAudit: buildAgentRunPlannerAudit({ mode: "direct", skills }), timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now() } },
+                {
+                    tasks,
+                    responseKind: "generation",
+                    foundation: plan.foundation,
+                    reviewed: false,
+                    plannerAudit: buildAgentRunPlannerAudit({ mode: "direct", skills }),
+                    timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), firstPublicReplyAt: claimed.timings?.firstPublicReplyAt || plannedAt, planningCompletedAt: plannedAt },
+                },
                 event,
                 ["running"],
                 executionId,
@@ -121,10 +132,11 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const fallbackExample = agentPlanFallbackExample(availableModels);
         const plannerContext = buildAgentPlannerInput(claimed, conversationContext!, referencedAssets, referenceSource, skillOptions, availableModels, settings);
         if (!(await updateAgentRunById(run.id, { plannerContext: plannerContext.summary }, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId))) return;
+        const identitySiteTitle = isDirectAgentIdentityQuestion(claimed.prompt) ? settings.site?.title?.trim() || "HOTX AI" : undefined;
         const planningInput = [
             {
                 role: "system",
-                content: agentPlannerSystemPrompt(claimed.surface, fallbackExample),
+                content: agentPlannerSystemPrompt(claimed.surface, fallbackExample, { siteTitle: identitySiteTitle, responseLocale: claimed.responseLocale }),
             },
             {
                 role: "user",
@@ -155,7 +167,12 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             throw new TextPlanningRequestError(succeededWithoutPlan ? "Agent 规划结果未完整持久化" : interruptedAttempt.error || "Agent 规划请求接收状态未知", 502, false, succeededWithoutPlan ? "response" : "unknown");
         }
         const requestFingerprint = systemAiUsageRequestFingerprint({ userId: run.userId, businessRequestId, logicalModel: model, capability: "text", payload: { input: planningInput, tool: agentPlanTool.name } });
+        const routedChat = claimed.surface === "chat" && !claimed.generationPreferences?.mode && !claimed.selectedSkillIds?.length;
         let plan: Awaited<ReturnType<typeof parseAgentPlanCall>> | undefined;
+        let conversationReply: string | undefined;
+        let acceptedRequestStartedAt: number | undefined;
+        let acceptedFirstByteMs: number | undefined;
+        let acceptedFirstContentMs: number | undefined;
         let latestPlanningError: unknown;
         const rankedCandidates = rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })));
         for (const candidate of rankedCandidates) {
@@ -181,23 +198,89 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     startedAt,
                 },
             ];
-            if (!(await updateAgentRunById(run.id, { plannerAttempts }, undefined, ["running"], executionId))) return;
+            if (!(await updateAgentRunById(run.id, { plannerAttempts, timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), executionStartedAt, upstreamRequestStartedAt: startedAt } }, undefined, ["running"], executionId))) return;
             let receivedResponse = false;
+            let streamedConversationContent = "";
+            let routedResponseHeaders: Headers | undefined;
+            let observedFirstByteMs: number | undefined;
+            let observedFirstContentMs: number | undefined;
             try {
-                const planCall = await requestFunctionCall(origin, cookie, candidate, planningInput, agentPlanTool, "create_agent_plan", controller.signal, run.userId, model, false, usageContext);
+                const planCall = routedChat
+                    ? await requestRoutedFunctionCall(
+                          origin,
+                          cookie,
+                          candidate,
+                          planningInput,
+                          agentPlanTool,
+                          controller.signal,
+                          model,
+                          usageContext,
+                          async (content, firstContentMs) => {
+                              streamedConversationContent = content;
+                              observedFirstContentMs ??= firstContentMs ?? Date.now() - startedAt;
+                              if (!(await updateAgentRunConversationContent(run.id, content, executionId))) throw new Error("Agent 对话流已停止");
+                          },
+                          (headers) => {
+                              routedResponseHeaders = headers;
+                          },
+                          async (firstByteMs) => {
+                              observedFirstByteMs ??= firstByteMs;
+                              if (
+                                  !(await updateAgentRunById(
+                                      run.id,
+                                      {
+                                          timings: {
+                                              ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }),
+                                              executionStartedAt,
+                                              upstreamRequestStartedAt: startedAt,
+                                              upstreamFirstByteAt: startedAt + firstByteMs,
+                                          },
+                                      },
+                                      undefined,
+                                      ["running"],
+                                      executionId,
+                                  ))
+                              )
+                                  throw new Error("Agent 对话流已停止");
+                          },
+                      )
+                    : await requestFunctionCall(origin, cookie, candidate, planningInput, agentPlanTool, "create_agent_plan", controller.signal, run.userId, model, false, usageContext);
                 receivedResponse = true;
-                plan = await parseAgentPlanCall(planCall, () => voidFunctionCall(planCall), undefined, {
-                    allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),
-                    requiredGenerationMode: claimed.generationPreferences?.mode,
-                });
-                if (plan) {
+                if ("kind" in planCall && planCall.kind === "conversation") {
+                    conversationReply = planCall.content.trim();
                     acceptedPlan = { userId: claimed.userId, model, channelId: candidate.channel.id, upstreamModel: candidate.upstreamModel, call: planCall };
+                    acceptedRequestStartedAt = startedAt;
+                    acceptedFirstByteMs = planCall.firstByteMs;
+                    acceptedFirstContentMs = planCall.firstContentMs;
                     plannerAttempts = finishPlannerAttempt(plannerAttempts, auditAttemptNo, {
                         status: "succeeded",
                         requestAcceptance: "response",
                         protocol: planCall.protocol,
                         elapsedMs: planCall.elapsedMs,
+                        firstByteMs: planCall.firstByteMs,
+                        firstContentMs: planCall.firstContentMs,
+                        resultKind: "conversation",
                     });
+                } else {
+                    plan = await parseAgentPlanCall(planCall, () => voidFunctionCall(planCall), undefined, {
+                        allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),
+                        requiredGenerationMode: claimed.generationPreferences?.mode,
+                    });
+                    if (plan) {
+                        acceptedPlan = { userId: claimed.userId, model, channelId: candidate.channel.id, upstreamModel: candidate.upstreamModel, call: planCall };
+                        acceptedRequestStartedAt = startedAt;
+                        acceptedFirstByteMs = planCall.firstByteMs;
+                        plannerAttempts = finishPlannerAttempt(plannerAttempts, auditAttemptNo, {
+                            status: "succeeded",
+                            requestAcceptance: "response",
+                            protocol: planCall.protocol,
+                            elapsedMs: planCall.elapsedMs,
+                            firstByteMs: planCall.firstByteMs,
+                            resultKind: plan.intent,
+                        });
+                    }
+                }
+                if (conversationReply || plan) {
                     if (!(await updateAgentRunById(run.id, { plannerAttempts }, undefined, ["running"], executionId))) {
                         await releaseAcceptedPlan();
                         return;
@@ -205,30 +288,47 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 }
                 break;
             } catch (error) {
-                if (controller.signal.aborted) throw error;
+                const routedResponseIsSse = routedResponseHeaders?.get("content-type")?.toLowerCase().includes("text/event-stream");
+                if (routedResponseHeaders && (!routedResponseIsSse || error instanceof TextPlanningRequestError)) {
+                    await finishSystemAiTextAttempt(routedResponseHeaders, { status: controller.signal.aborted ? "canceled" : "failed" });
+                }
+                if (controller.signal.aborted) {
+                    await resolveSystemAiTextFailure({
+                        userId: run.userId,
+                        businessId: businessRequestId,
+                        reason: "Agent 对话已取消",
+                        final: true,
+                        currentAttempt: { attemptNumber, acceptance: routedResponseHeaders ? "response" : "unknown" },
+                    });
+                    throw error;
+                }
                 latestPlanningError = error;
-                const acceptance = receivedResponse ? "response" : error instanceof TextPlanningRequestError ? error.requestAcceptance : "unknown";
+                const acceptance = receivedResponse || routedResponseHeaders || streamedConversationContent ? "response" : error instanceof TextPlanningRequestError ? error.requestAcceptance : "unknown";
                 const resolution = await resolveSystemAiTextFailure({
                     userId: run.userId,
                     businessId: businessRequestId,
                     reason: error instanceof Error ? error.message : "Agent 规划请求状态未知",
-                    final: false,
+                    final: Boolean(streamedConversationContent),
                     currentAttempt: { attemptNumber, acceptance },
                 });
                 plannerAttempts = finishPlannerAttempt(plannerAttempts, auditAttemptNo, {
                     status: "failed",
                     requestAcceptance: acceptance,
                     error: safePlannerError(error),
+                    ...(observedFirstByteMs !== undefined ? { firstByteMs: observedFirstByteMs } : {}),
+                    ...(observedFirstContentMs !== undefined ? { firstContentMs: observedFirstContentMs } : {}),
+                    ...(streamedConversationContent ? { resultKind: "conversation" as const } : {}),
                 });
                 if (!(await updateAgentRunById(run.id, { plannerAttempts }, undefined, ["running"], executionId))) return;
+                if (streamedConversationContent) throw error;
                 if (resolution.state !== "safe_to_failover") throw error;
             }
         }
-        if (!plan) {
+        if (!plan && !conversationReply) {
             await resolveSystemAiTextFailure({ userId: run.userId, businessId: businessRequestId, reason: latestPlanningError instanceof Error ? latestPlanningError.message : "没有可用的文本模型渠道", final: true });
             throw latestPlanningError instanceof Error ? latestPlanningError : new Error("没有可用的文本模型渠道");
         }
-        if (claimed.surface === "canvas") plan = normalizeCanvasPlanForSelection(plan, claimed.snapshot, claimed.prompt);
+        if (claimed.surface === "canvas" && plan) plan = normalizeCanvasPlanForSelection(plan, claimed.snapshot, claimed.prompt);
         const plannerAudit = buildAgentRunPlannerAudit({
             mode: "model",
             logicalModelId: model,
@@ -244,20 +344,69 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             await releaseAcceptedPlan();
             return;
         }
-        if (plan.intent === "conversation") {
+        if (conversationReply) {
+            const completedAt = Date.now();
             const completed = await updateAgentRunById(
                 run.id,
                 {
                     status: "completed",
+                    responseKind: "conversation",
+                    conversationReply,
                     tasks: [],
                     reviewed: true,
                     plannerAudit,
                     plannerAttempts,
                     plannerFailure: undefined,
                     executionId: undefined,
-                    timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now(), allResultsReadyAt: Date.now(), runCompletedAt: Date.now() },
+                    timings: {
+                        ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }),
+                        executionStartedAt,
+                        ...(acceptedRequestStartedAt ? { upstreamRequestStartedAt: acceptedRequestStartedAt } : {}),
+                        ...(acceptedRequestStartedAt !== undefined && acceptedFirstByteMs !== undefined ? { upstreamFirstByteAt: acceptedRequestStartedAt + acceptedFirstByteMs } : {}),
+                        firstPublicReplyAt: claimed.timings?.firstPublicReplyAt || (acceptedRequestStartedAt !== undefined && acceptedFirstContentMs !== undefined ? acceptedRequestStartedAt + acceptedFirstContentMs : completedAt),
+                        planningCompletedAt: completedAt,
+                        allResultsReadyAt: completedAt,
+                        runCompletedAt: completedAt,
+                    },
                 },
-                { type: "run.completed", data: { completed: 0, reply: plan.reply?.trim() || conversationFallbackReply(claimed.surface) } },
+                { type: "run.completed", data: { completed: 0, reply: conversationReply } },
+                ["running"],
+                executionId,
+            );
+            if (!completed) {
+                await releaseAcceptedPlan();
+                return;
+            }
+            await settleAcceptedPlan();
+            return;
+        }
+        if (!plan) throw new Error("没有可用的文本模型渠道");
+        if (plan.intent === "conversation") {
+            const completedAt = Date.now();
+            const completed = await updateAgentRunById(
+                run.id,
+                {
+                    status: "completed",
+                    responseKind: "conversation",
+                    conversationReply: plan.reply?.trim() || conversationFallbackReply(claimed.surface, claimed.responseLocale),
+                    tasks: [],
+                    reviewed: true,
+                    plannerAudit,
+                    plannerAttempts,
+                    plannerFailure: undefined,
+                    executionId: undefined,
+                    timings: {
+                        ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }),
+                        executionStartedAt,
+                        ...(acceptedRequestStartedAt ? { upstreamRequestStartedAt: acceptedRequestStartedAt } : {}),
+                        ...(acceptedRequestStartedAt !== undefined && acceptedFirstByteMs !== undefined ? { upstreamFirstByteAt: acceptedRequestStartedAt + acceptedFirstByteMs } : {}),
+                        firstPublicReplyAt: claimed.timings?.firstPublicReplyAt || completedAt,
+                        planningCompletedAt: completedAt,
+                        allResultsReadyAt: completedAt,
+                        runCompletedAt: completedAt,
+                    },
+                },
+                { type: "run.completed", data: { completed: 0, reply: plan.reply?.trim() || conversationFallbackReply(claimed.surface, claimed.responseLocale) } },
                 ["running"],
                 executionId,
             );
@@ -278,19 +427,29 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         });
         plan = { ...plan, deliverables: plan.deliverables.map((deliverable, index) => ({ ...deliverable, ...(tasks[index]?.model ? { model: tasks[index].model } : {}) })) };
         const projectHandoff = normalizeAgentProjectHandoff(plan, claimed.surface, referencedAssets, claimed.prompt);
-        const reply = agentPlanReply({ ...plan, projectHandoff }, tasks, claimed.surface);
+        const reply = agentPlanReply({ ...plan, projectHandoff }, tasks, claimed.surface, claimed.responseLocale);
         const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply } } : { type: "run.planned", data: { reply, tasks: tasks.map(taskPlanSummary), projectHandoff } };
+        const planningCompletedAt = Date.now();
         const planned = await updateAgentRunById(
             run.id,
             {
                 tasks,
+                responseKind: "generation",
+                conversationReply: undefined,
                 foundation: plan.foundation,
                 projectHandoff,
                 reviewed: tasks.length ? claimed.reviewed : true,
                 plannerAudit,
                 plannerAttempts,
                 plannerFailure: undefined,
-                timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now() },
+                timings: {
+                    ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }),
+                    executionStartedAt,
+                    ...(acceptedRequestStartedAt ? { upstreamRequestStartedAt: acceptedRequestStartedAt } : {}),
+                    ...(acceptedRequestStartedAt !== undefined && acceptedFirstByteMs !== undefined ? { upstreamFirstByteAt: acceptedRequestStartedAt + acceptedFirstByteMs } : {}),
+                    firstPublicReplyAt: claimed.timings?.firstPublicReplyAt || planningCompletedAt,
+                    planningCompletedAt,
+                },
             },
             event,
             ["running"],
@@ -313,11 +472,12 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const latest = await getAgentRun(run.id);
         if (latest && !["paused", "cancelled"].includes(latest.status)) {
             const message = toSafeGenerationErrorMessage(failure, "Agent 执行失败");
+            const partialConversation = latest.responseKind === "conversation" && Boolean(latest.conversationReply?.trim());
             const plannerFailure = !latest.tasks.length && !latest.plannerAudit ? { message, failedAt: Date.now() } : latest.plannerFailure;
             await updateAgentRunById(
                 run.id,
                 { status: "failed", executionId: undefined, ...(plannerFailure ? { plannerFailure } : {}), timings: { ...(latest.timings || { requestAcceptedAt: latest.createdAt }), runCompletedAt: Date.now() } },
-                { type: "run.failed", data: { message } },
+                { type: "run.failed", data: { message: partialConversation ? latest.conversationReply!.trim() : message, responseLocale: latest.responseLocale, ...(partialConversation ? { partialConversation: true } : {}) } },
                 ["planning", "running"],
                 executionId,
             );

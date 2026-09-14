@@ -115,6 +115,87 @@ async function mockExistingCreativeConversation(page: Page) {
     return id;
 }
 
+async function mockControlledStreamingConversation(page: Page) {
+    const timestamp = Date.now();
+    const conversationId = `e2e-streaming-${randomUUID()}`;
+    const runId = `e2e-streaming-run-${randomUUID()}`;
+    const conversation = {
+        id: conversationId,
+        userId: "e2e-user",
+        surface: "chat",
+        source: "agent",
+        title: "Streaming conversation",
+        status: "active",
+        contextSummary: "",
+        contextSummaryThroughSequence: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        lastMessageAt: timestamp,
+    };
+    let assistantStatus = "running";
+    let assistantContent = "Đang chờ phản hồi";
+    let responseKind: "conversation" | undefined;
+    const run = () => ({
+        id: runId,
+        conversationId,
+        inputMessageId: "e2e-streaming-user",
+        assistantMessageId: "e2e-streaming-assistant",
+        status: assistantStatus === "completed" ? "completed" : "running",
+        ...(responseKind ? { responseKind, conversationReply: assistantContent } : {}),
+        assetIds: [],
+        tasks: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+    });
+    const messages = () => [
+        { id: "e2e-streaming-user", conversationId, runId, sequence: 1, role: "user", status: "completed", content: "xin chào", metadata: {}, createdAt: timestamp, updatedAt: timestamp },
+        { id: "e2e-streaming-assistant", conversationId, runId, sequence: 2, role: "assistant", status: assistantStatus, content: assistantContent, metadata: {}, createdAt: timestamp + 1, updatedAt: timestamp + 1 },
+    ];
+
+    await page.addInitScript(() => {
+        class ControlledEventSource extends EventTarget {
+            static agentSource: EventTarget | undefined;
+            onopen: (() => void) | null = null;
+            onerror: (() => void) | null = null;
+            constructor(readonly url: string) {
+                super();
+                if (url.includes("/api/agent/runs/")) ControlledEventSource.agentSource = this;
+                queueMicrotask(() => this.onopen?.());
+            }
+            close() {}
+        }
+        Object.defineProperty(window, "EventSource", { configurable: true, value: ControlledEventSource });
+        Object.defineProperty(window, "__emitAgentRunEvent", {
+            configurable: true,
+            value: (type: string, payload: unknown) => ControlledEventSource.agentSource?.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(payload) })),
+        });
+    });
+    await page.route(/\/api\/creative\/conversations(?:\?.*)?$/, (route) => route.fulfill({ json: { code: 0, data: { conversations: [conversation], hasMore: false }, msg: "OK" } }));
+    await page.route(/\/api\/public\/gallery(?:\?.*)?$/, (route) => route.fulfill({ json: { code: 0, data: { items: [] }, msg: "OK" } }));
+    await page.route(/\/api\/notifications\/interactions(?:\?.*)?$/, (route) => route.fulfill({ json: { code: 0, data: { items: [], unreadCount: 0 }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/creative/conversations/${conversationId}$`), (route) => route.fulfill({ json: { code: 0, data: { conversation }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/creative/conversations/${conversationId}/messages(?:\\?.*)?$`), (route) => route.fulfill({ json: { code: 0, data: { messages: messages() }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/creative/conversations/${conversationId}/assets$`), (route) => route.fulfill({ json: { code: 0, data: { assets: [] }, msg: "OK" } }));
+    await page.route(new RegExp(`/api/agent/runs/${runId}$`), (route) => route.fulfill({ json: { code: 0, data: { run: run() }, msg: "OK" } }));
+
+    return {
+        conversationId,
+        emit(type: string, payload: unknown) {
+            const content = type === "run.conversation.updated" && payload && typeof payload === "object" && "data" in payload && payload.data && typeof payload.data === "object" && "content" in payload.data ? payload.data.content : undefined;
+            if (typeof content === "string") {
+                responseKind = "conversation";
+                assistantContent = content;
+            }
+            return page.evaluate(([eventType, eventPayload]) => (window as typeof window & { __emitAgentRunEvent: (type: string, payload: unknown) => void }).__emitAgentRunEvent(eventType, eventPayload), [type, payload] as const);
+        },
+        persistCompleted(content: string) {
+            assistantStatus = "completed";
+            responseKind = "conversation";
+            assistantContent = content;
+        },
+    };
+}
+
 async function mockAgentConversationSwitchRace(page: Page) {
     const timestamp = Date.now();
     const conversationA = {
@@ -946,6 +1027,39 @@ test("creative composer opens menus upward after entering a conversation", async
     await openComposerPopover(modeTrigger, modePopover);
     const [triggerRect, popoverRect] = await Promise.all([modeTrigger.evaluate((element) => element.getBoundingClientRect().toJSON()), modePopover.evaluate((element) => element.getBoundingClientRect().toJSON())]);
     expect(popoverRect.bottom, "conversation mode popover should open above its trigger").toBeLessThanOrEqual(triggerRect.top + 1);
+});
+
+test("creative conversation replaces streamed frames and restores the persisted reply", async ({ page }) => {
+    const browserErrors: string[] = [];
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+    page.on("console", (message) => {
+        if (message.type() === "error") browserErrors.push(message.text());
+    });
+    const fixture = await mockControlledStreamingConversation(page);
+    await page.goto(`/create?conversationId=${fixture.conversationId}`, { waitUntil: "domcontentloaded" });
+    await waitForCreativeComposerReady(page);
+    await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible();
+
+    await fixture.emit("run.conversation.updated", { data: { content: "Xin" } });
+    await expect(page.getByText("Xin", { exact: true })).toBeVisible();
+    await expect(page.getByText("Xin chào", { exact: true })).toHaveCount(0);
+
+    await fixture.emit("run.conversation.updated", { data: { content: "Xin chào" } });
+    await expect(page.getByText("Xin chào", { exact: true })).toBeVisible();
+    await expect(page.getByText("Xin", { exact: true })).toHaveCount(0);
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await waitForCreativeComposerReady(page);
+    await expect(page.getByText("Xin chào", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible();
+
+    fixture.persistCompleted("Xin chào");
+    await fixture.emit("run.completed", { data: { completed: 0, reply: "Xin chào" } });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await waitForCreativeComposerReady(page);
+    await expect(page.getByText("Xin chào", { exact: true })).toBeVisible();
+    await expectNoHorizontalOverflow(page, "streamed Agent conversation");
+    expect(browserErrors).toEqual([]);
 });
 
 test("switching conversations keeps the previous Agent run isolated and resumable", async ({ page }) => {

@@ -83,6 +83,109 @@ describe("统一创作 Agent 事件流", () => {
         expect(terminal).toEqual([{ status: "failed", text: "视频渠道暂时不可用" }]);
     });
 
+    it("forwards accumulated conversation frames so the client can replace instead of append", () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const progress: string[] = [];
+        const conversation: string[] = [];
+        watchCreativeAgentRun("run-conversation", {
+            onProgress: (text) => progress.push(text),
+            onConversation: (text) => conversation.push(text),
+            onTerminal: () => undefined,
+            onConnectionError: () => undefined,
+        });
+
+        FakeEventSource.instance.emit("run.conversation.updated", { data: { content: "Xin" } });
+        FakeEventSource.instance.emit("run.conversation.updated", { data: { content: "Xin chào" } });
+
+        expect(conversation).toEqual(["Xin", "Xin chào"]);
+        expect(progress).toEqual([]);
+    });
+
+    it("localizes waiting and cancellation copy for the current /create locale", () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const progress: string[] = [];
+        const terminal: unknown[] = [];
+        watchCreativeAgentRun(
+            "run-vietnamese",
+            {
+                onProgress: (text) => progress.push(text),
+                onTerminal: (status, text) => terminal.push({ status, text }),
+                onConnectionError: () => undefined,
+            },
+            "vi",
+        );
+
+        FakeEventSource.instance.emit("run.planning", {});
+        FakeEventSource.instance.emit("task.running", { data: {} });
+        FakeEventSource.instance.emit("task.waiting", { data: {} });
+        FakeEventSource.instance.emit("task.child.completed", { data: { completedCount: 1, totalCount: 2 } });
+        FakeEventSource.instance.emit("task.completed", { data: {} });
+        FakeEventSource.instance.emit("run.cancelled", {});
+
+        expect(progress).toEqual([
+            "Đang hiểu yêu cầu và chọn năng lực sáng tạo phù hợp",
+            "Đang xử lý “Tác vụ sáng tạo”",
+            "“Tác vụ sáng tạo” vẫn đang được xử lý ở upstream; hệ thống sẽ tiếp tục khôi phục",
+            "“Tác vụ sáng tạo” đã hoàn tất 1/2",
+            "“Tác vụ sáng tạo” đã hoàn tất",
+        ]);
+        expect(terminal).toEqual([{ status: "cancelled", text: "Tác vụ Agent đã bị hủy." }]);
+    });
+
+    it("keeps the accumulated conversation visible through reconnect and replay", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    code: 0,
+                    data: {
+                        run: { id: "run-partial", conversationId: "conversation", inputMessageId: "input", assistantMessageId: "assistant", status: "running", responseKind: "conversation", conversationReply: "Xin chào một phần", assetIds: [], tasks: [] },
+                    },
+                    msg: "OK",
+                }),
+            ),
+        );
+        const progress: string[] = [];
+        watchCreativeAgentRun(
+            "run-partial",
+            {
+                onProgress: (text) => progress.push(text),
+                onTerminal: () => undefined,
+                onConnectionError: () => undefined,
+            },
+            "vi",
+        );
+
+        FakeEventSource.instance.emit("run.conversation.updated", { data: { content: "Xin chào một phần" } });
+        FakeEventSource.instance.onerror?.();
+        await vi.waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
+        FakeEventSource.instance.onopen?.();
+
+        expect(progress).toEqual(["Xin chào một phần"]);
+    });
+
+    it("retains streamed conversation text when cancellation becomes terminal", () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const progress: string[] = [];
+        const terminal: unknown[] = [];
+        watchCreativeAgentRun(
+            "run-cancel-partial",
+            {
+                onProgress: (text) => progress.push(text),
+                onTerminal: (status, text) => terminal.push({ status, text }),
+                onConnectionError: () => undefined,
+            },
+            "vi",
+        );
+
+        FakeEventSource.instance.emit("run.conversation.updated", { data: { content: "Nội dung đã nhận" } });
+        FakeEventSource.instance.emit("run.cancelled", {});
+
+        expect(progress).toEqual(["Nội dung đã nhận"]);
+        expect(terminal).toEqual([{ status: "cancelled", text: "Nội dung đã nhận" }]);
+    });
+
     it("shows a persisted upstream waiting reason without closing the stream", () => {
         vi.stubGlobal("EventSource", FakeEventSource);
         const progress: string[] = [];
@@ -172,7 +275,17 @@ describe("统一创作 Agent 事件流", () => {
                 Response.json({
                     code: 0,
                     data: {
-                        run: { id: "run-failed", conversationId: "conversation", inputMessageId: "input", assistantMessageId: "assistant", status: "failed", assetIds: [], tasks: [{ id: "video", title: "视频", status: "failed", error: "上游明确失败" }] },
+                        run: {
+                            id: "run-failed",
+                            conversationId: "conversation",
+                            inputMessageId: "input",
+                            assistantMessageId: "assistant",
+                            status: "failed",
+                            responseKind: "conversation",
+                            conversationReply: "Xin chào một phần",
+                            assetIds: [],
+                            tasks: [{ id: "video", title: "视频", status: "failed", error: "上游明确失败" }],
+                        },
                     },
                     msg: "OK",
                 }),
@@ -186,7 +299,7 @@ describe("统一创作 Agent 事件流", () => {
         });
 
         FakeEventSource.instance.onerror?.();
-        await vi.waitFor(() => expect(terminal).toEqual([{ status: "failed", text: "上游明确失败" }]));
+        await vi.waitFor(() => expect(terminal).toEqual([{ status: "failed", text: "Xin chào một phần" }]));
 
         expect(FakeEventSource.instance.closed).toBe(true);
     });

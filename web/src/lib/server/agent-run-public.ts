@@ -1,6 +1,8 @@
 import type { CreativeRunEvent } from "@/lib/creative-runtime-contract";
 import { toSafeGenerationErrorMessage } from "./generation-errors";
 import type { AgentRun, AgentRunTask } from "./agent-run-store";
+import { isAppLocale } from "@/i18n/config";
+import { agentRunCopy } from "@/lib/agent-run-copy";
 
 export function publicAgentRun(run: AgentRun) {
     return {
@@ -11,6 +13,7 @@ export function publicAgentRun(run: AgentRun) {
         surface: run.surface,
         projectId: run.projectId,
         status: run.status,
+        ...(run.responseKind === "conversation" ? { responseKind: run.responseKind, conversationReply: run.conversationReply } : {}),
         prompt: run.publicPrompt || run.prompt,
         referencedAssetIds: run.referencedAssetIds || [],
         selectedSkillIds: run.selectedSkillIds,
@@ -27,12 +30,23 @@ export function publicAgentRun(run: AgentRun) {
 
 export function publicAgentRunSnapshot(run: AgentRun) {
     const value = publicAgentRun(run);
-    return { id: value.id, status: value.status, tasks: value.tasks, cancellation: value.cancellation, timings: value.timings, updatedAt: value.updatedAt };
+    return {
+        id: value.id,
+        status: value.status,
+        tasks: value.tasks,
+        cancellation: value.cancellation,
+        timings: value.timings,
+        ...(value.responseKind === "conversation" ? { responseKind: value.responseKind, conversationReply: value.conversationReply } : {}),
+        updatedAt: value.updatedAt,
+    };
 }
 
 export function publicAgentRunEvent(event: CreativeRunEvent): CreativeRunEvent {
     if (event.type.startsWith("run.review.")) return { ...event, data: undefined };
-    if (event.type === "run.failed") return { ...event, data: { message: "Agent 执行失败" } };
+    if (event.type === "run.failed") {
+        const data = recordValue(event.data);
+        return { ...event, data: { message: data.partialConversation === true && textValue(data.message) ? textValue(data.message) : agentRunCopy(isAppLocale(data.responseLocale) ? data.responseLocale : undefined).failed } };
+    }
     if (event.type === "run.cancel.pending") return { ...event, data: { pendingCount: arrayValue(recordValue(event.data).pendingTaskIds).length } };
     if (event.type === "canvas.ops") {
         const data = recordValue(event.data);

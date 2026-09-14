@@ -1,4 +1,5 @@
 import type { AuthSettings } from "@/lib/auth/store";
+import type { AppLocale } from "@/i18n/config";
 import type { CreativeAsset, CreativeConversationContext, CreativeSurface } from "@/lib/creative-runtime-contract";
 import { creativeAssetReferenceAliases, orderCreativeAssetsByIds } from "@/lib/creative-asset-references";
 import type { AgentRun, AgentRunPlannerContextSummary, AgentRunTask } from "@/lib/server/agent-run-store";
@@ -20,13 +21,21 @@ export function plannerAgentSkills(settings: AuthSettings, run: Pick<AgentRun, "
     return selectAgentSkills(settings, run.surface, run.selectedSkillIds || []);
 }
 
-export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string) {
+export function isDirectAgentIdentityQuestion(prompt: string) {
+    const normalized = prompt.normalize("NFC").trim().toLocaleLowerCase().replace(/[?？!！.。]+$/u, "").trim();
+    return /^(?:bạn là ai|ban la ai|bạn tên gì|ban ten gi|who are you|what are you|what(?:'s| is) your name|你是谁|你叫什么名字|这是什么平台|这个平台叫什么|đây là (?:nền tảng|trang web|ứng dụng) gì|what (?:site|platform|app) is this)$/u.test(normalized);
+}
+
+export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string, options: { siteTitle?: string; responseLocale?: AppLocale } = {}) {
     const identity =
         surface === "canvas"
-            ? "你是 HOTX AI 画布创作 Agent，也能进行普通对话。"
+            ? "你是画布创作 Agent，也能进行普通对话。"
             : surface === "drama"
-              ? "你是 HOTX AI 短剧项目创作 Agent，负责围绕当前项目规划文本、图片、视频和音频产物，也能进行普通对话。"
-              : "你是 HOTX AI 统一创作 Agent，负责通过一个对话入口规划并生成文本、图片、视频和音频产物，也能进行普通对话。";
+              ? "你是短剧项目创作 Agent，负责围绕当前项目规划文本、图片、视频和音频产物，也能进行普通对话。"
+              : "你是统一创作 Agent，负责通过一个对话入口规划并生成文本、图片、视频和音频产物，也能进行普通对话。";
+    const siteTitle = options.siteTitle?.trim();
+    const fallbackLanguage = options.responseLocale === "en" ? "英语" : options.responseLocale === "zh-CN" ? "简体中文" : "越南语";
+    const responseRule = `${siteTitle ? `用户本轮已明确询问平台或助手身份，可使用站点名称 ${siteTitle} 回答。` : "当前不是直接的身份询问，禁止主动自称、介绍或猜测站点品牌。"}reply 优先使用用户本轮消息的语言；无法判断时使用${fallbackLanguage}。`;
     const surfaceRules =
         surface === "canvas"
             ? "明确要求创建、修改、删除、移动、连接画布节点，或生成媒体产物时为 generation。用户要求修改已有画布产物时必须填写该节点真实 targetNodeId。选中文本/提示词节点并要求修改、优化或改写时，只规划一个 type=text 的原位编辑任务，targetNodeId 必须是该文本节点；除非用户同时明确要求生成媒体，否则禁止规划图片、视频或音频任务。canvasSnapshot.selectedNodeIds 是用户本轮明确选中并展示在输入框中的附件：非空时，当前编辑任务必须优先且只能从这些节点选择 targetNodeId，禁止被 conversationContext 的上一张、旧主体或其他未选中画布节点覆盖；只有本轮没有选中节点时，才允许结合会话记忆选择旧节点。"
@@ -41,7 +50,7 @@ export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExamp
         surface === "chat"
             ? "只有用户原文明确要求创建、建立或整理成画布/短剧项目时才填写 projectHandoff；生成短视频、短片、图片或系列媒体不等于创建项目，必须省略 projectHandoff。只做明确项目交接且无需新产物时允许 deliverables=[]。projectHandoff.assetIds 只能引用 referencedAssets，当前 Run 新生成的资产会由服务端自动合并。"
             : "当前入口不得填写 projectHandoff。";
-    return `${identity}先结合 conversationContext 的长期摘要和近期消息理解用户的自然语言、指代和连续创作关系，再判断 intent：问候、闲聊、能力咨询、使用说明和知识问答为 conversation；${surfaceRules}conversation 必须 deliverables=[]、decisions=[]，直接在 reply 回答。generationPreferences.mode 非空时代表用户本轮明确选择的产物类型，必须按该类型执行 generation，deliverables 只能使用该媒体类型；generationPreferences 中该类型的尺寸、画质、时长、音色和格式是用户本轮明确参数，不得改选。视频 generationPreferences.referenceMode、firstFrameAssetId 和 lastFrameAssetId 是用户显式指定的首尾帧角色，必须规划视频任务且不得猜测、交换、删除或改成普通参考图；服务端会强制注入对应资产。generation 必须先形成 foundation：brief 说明目标、受众、使用场景、核心信息、约束和参考素材策略；direction 给出一个明确推荐的风格、构图/镜头、色彩、光线、视觉关键词和避免事项。${projectRule}${handoffRule}requestedSkillIds 非空时必须使用且只使用这些技能；requestedSkillIds 为空时 skillIds 必须为空，不得自动选择任何普通 Skill。没有 Skill 时仍需执行提示词优化、视觉方向、模型选择和参数规划。referenceContext.source=current-turn-explicit 表示 referencedAssets 是本轮用户明确附件，必须优先且排他；其中 alias 是用户正文中的通用引用名，必须严格按 alias 对应的真实 id 理解“@图片1 做什么、@图片2 做什么”等逐素材指令，不得按标题、数组偶然顺序或文本相似度猜测。source=conversation-memory-candidates 表示它们只是同会话最近成功媒体候选，只有自然语义明确延续、修改、变体或保持上一轮主体/场景时，才把确需使用的资产 ID 写入 deliverable.assetIds，新主题、独立创作或无法确认时不得引用。随后规划整套 deliverables 和依赖顺序，并主动从 availableModels 中为每个产物选择能力匹配的逻辑模型，决定画幅、质量、数量、时长、音色或格式。只能引用 referencedAssets 中存在的资产 ID；需要使用一个或多个资产时，将它们写入对应 deliverable.assetIds。type=audio 时，deliverable.prompt 只能填写最终需要合成并朗读的原文，不得加入朗读、配音、音色指令、标题、引号、foundation、Skill、依赖说明或其他元数据，也不得依赖其他 deliverable 在运行时改写这段原文；其他 deliverable 的 prompt 必须执行同一 foundation，保持主体、信息、色彩和视觉语言一致。不要盲目照抄默认值，默认值只在没有更明确判断时作为兜底。reply 用自然中文概括推荐方向；decisions 用 2–6 项说明“选择了什么、为什么”；每个 deliverable 必须填写 model。优先调用 create_agent_plan；若渠道不支持工具调用，必须直接返回与函数参数完全一致的单个 JSON 对象，不要 Markdown 或额外文本，严格仿照这个完整结构：${fallbackExample}。不得暴露隐藏思维链，只输出可验证的决策摘要。`;
+    return `${identity}${responseRule}先结合 conversationContext 的长期摘要和近期消息理解用户的自然语言、指代和连续创作关系，再判断 intent：问候、闲聊、能力咨询、使用说明和知识问答为 conversation；${surfaceRules}conversation 必须 deliverables=[]、decisions=[]，直接在 reply 回答。generationPreferences.mode 非空时代表用户本轮明确选择的产物类型，必须按该类型执行 generation，deliverables 只能使用该媒体类型；generationPreferences 中该类型的尺寸、画质、时长、音色和格式是用户本轮明确参数，不得改选。视频 generationPreferences.referenceMode、firstFrameAssetId 和 lastFrameAssetId 是用户显式指定的首尾帧角色，必须规划视频任务且不得猜测、交换、删除或改成普通参考图；服务端会强制注入对应资产。generation 必须先形成 foundation：brief 说明目标、受众、使用场景、核心信息、约束和参考素材策略；direction 给出一个明确推荐的风格、构图/镜头、色彩、光线、视觉关键词和避免事项。${projectRule}${handoffRule}requestedSkillIds 非空时必须使用且只使用这些技能；requestedSkillIds 为空时 skillIds 必须为空，不得自动选择任何普通 Skill。没有 Skill 时仍需执行提示词优化、视觉方向、模型选择和参数规划。referenceContext.source=current-turn-explicit 表示 referencedAssets 是本轮用户明确附件，必须优先且排他；其中 alias 是用户正文中的通用引用名，必须严格按 alias 对应的真实 id 理解“@图片1 做什么、@图片2 做什么”等逐素材指令，不得按标题、数组偶然顺序或文本相似度猜测。source=conversation-memory-candidates 表示它们只是同会话最近成功媒体候选，只有自然语义明确延续、修改、变体或保持上一轮主体/场景时，才把确需使用的资产 ID 写入 deliverable.assetIds，新主题、独立创作或无法确认时不得引用。随后规划整套 deliverables 和依赖顺序，并主动从 availableModels 中为每个产物选择能力匹配的逻辑模型，决定画幅、质量、数量、时长、音色或格式。只能引用 referencedAssets 中存在的资产 ID；需要使用一个或多个资产时，将它们写入对应 deliverable.assetIds。type=audio 时，deliverable.prompt 只能填写最终需要合成并朗读的原文，不得加入朗读、配音、音色指令、标题、引号、foundation、Skill、依赖说明或其他元数据，也不得依赖其他 deliverable 在运行时改写这段原文；其他 deliverable 的 prompt 必须执行同一 foundation，保持主体、信息、色彩和视觉语言一致。不要盲目照抄默认值，默认值只在没有更明确判断时作为兜底。decisions 用 2–6 项说明“选择了什么、为什么”；每个 deliverable 必须填写 model。优先调用 create_agent_plan；若渠道不支持工具调用，必须直接返回与函数参数完全一致的单个 JSON 对象，不要 Markdown 或额外文本，严格仿照这个完整结构：${fallbackExample}。不得暴露隐藏思维链，只输出可验证的决策摘要。`;
 }
 
 export function agentPlannerInput(
@@ -72,8 +81,11 @@ export function buildAgentPlannerInput(
     const payload = {
         requirement: run.prompt,
         conversationContext: {
-            summary: conversationContext.summary,
-            recentMessages: conversationContext.recentMessages.map((item) => ({ role: item.role, content: item.content, sequence: item.sequence })),
+            summary: stripLegacyCannedGreeting(conversationContext.summary),
+            recentMessages: conversationContext.recentMessages.flatMap((item) => {
+                const content = item.role === "assistant" ? stripLegacyCannedGreeting(item.content) : item.content;
+                return content ? [{ role: item.role, content, sequence: item.sequence }] : [];
+            }),
         },
         surface: run.surface,
         ...(run.projectId ? { projectId: run.projectId } : {}),
@@ -97,6 +109,10 @@ export function buildAgentPlannerInput(
             omitted: { modelIds: [], skillIds: [], assetIds: [], recentMessageSequences: [] },
         },
     };
+}
+
+function stripLegacyCannedGreeting(content: string) {
+    return content.replace(/你好[！!]?我是\s*VOZEB PRO[，,]可以帮你规划和生成文本、图片、视频或音频内容[，,]也可以随时回答问题[。.]?/giu, "").trim();
 }
 
 function plannerModelSummary(model: { id: string; name: string; capability: string; capabilityProfile?: unknown; generationParameters?: unknown }) {
@@ -190,7 +206,17 @@ export function taskPlanSummary(task: AgentRunTask) {
     return { id: task.id, title: task.title, type: task.type, model: task.model, dependencies: task.dependencies, referenceAssetIds: task.references?.map((item) => item.assetId).filter(Boolean) || [] };
 }
 
-export function conversationFallbackReply(surface: CreativeSurface) {
+export function conversationFallbackReply(surface: CreativeSurface, locale: AppLocale = "zh-CN") {
+    if (locale === "vi") {
+        if (surface === "canvas") return "Tôi đang đây. Bạn có thể hỏi điều mình muốn biết hoặc yêu cầu tôi thao tác trên Canvas hiện tại.";
+        if (surface === "drama") return "Tôi đang đây. Bạn có thể hỏi về dự án hiện tại hoặc yêu cầu tôi tiếp tục sáng tạo nhân vật, bối cảnh, storyboard hay nội dung đa phương tiện.";
+        return "Tôi đang đây. Bạn có thể hỏi điều mình muốn biết hoặc mô tả nội dung cần sáng tạo.";
+    }
+    if (locale === "en") {
+        if (surface === "canvas") return "I’m here. Ask me anything or tell me what to change on the current Canvas.";
+        if (surface === "drama") return "I’m here. Ask about the current project or tell me to continue with characters, scenes, storyboards, or media.";
+        return "I’m here. Ask me anything or describe what you want to create.";
+    }
     if (surface === "canvas") return "在的，你可以直接告诉我想了解什么，或让我操作当前画布。";
     if (surface === "drama") return "在的，你可以直接询问当前项目，也可以让我继续创作角色、场景、分镜或媒体产物。";
     return "在的，你可以直接告诉我想了解什么，或描述你想创作的内容。";
@@ -223,8 +249,20 @@ export function creativeAssetContext(asset: CreativeAsset, alias?: string) {
     return [alias ? `引用别名：@${alias}` : "", `资产 ID：${asset.id}`, `类型：${asset.type}`, `标题：${asset.title}`, content ? `文本：${content}` : "", url ? `媒体地址：${url}` : ""].filter(Boolean).join("；");
 }
 
-export function agentPlanReply(_plan: AgentPlan, tasks: AgentRunTask[], surface: CreativeSurface) {
+export function agentPlanReply(_plan: AgentPlan, tasks: AgentRunTask[], surface: CreativeSurface, locale: AppLocale = "zh-CN") {
     const hasReferences = tasks.some((task) => task.targetNodeId || task.references?.length);
+    if (locale === "vi") {
+        if (surface === "canvas" && tasks.length === 1 && tasks[0]?.type === "text" && tasks[0].targetNodeId) return "Đã nhận yêu cầu. Tôi sẽ chỉnh sửa trực tiếp nút prompt hiện tại và không tự động tạo ảnh.";
+        if (surface === "canvas") return hasReferences ? "Đã nhận yêu cầu. Tôi sẽ hoàn thành nội dung trên Canvas dựa trên tư liệu tham chiếu hiện tại." : "Đã nhận yêu cầu. Tôi sẽ hoàn thành nội dung trên Canvas theo đúng yêu cầu của bạn.";
+        if (surface === "drama") return hasReferences ? "Đã nhận yêu cầu. Tôi sẽ tiếp tục sáng tạo dựa trên tư liệu hiện có của dự án." : "Đã nhận yêu cầu. Tôi sẽ tiếp tục hoàn thành nội dung dự án theo đúng yêu cầu của bạn.";
+        return hasReferences ? "Đã nhận yêu cầu. Tôi sẽ hoàn thành nội dung sáng tạo dựa trên tư liệu tham chiếu hiện tại." : "Đã nhận yêu cầu. Tôi sẽ hoàn thành nội dung sáng tạo theo đúng yêu cầu của bạn.";
+    }
+    if (locale === "en") {
+        if (surface === "canvas" && tasks.length === 1 && tasks[0]?.type === "text" && tasks[0].targetNodeId) return "Got it. I’ll edit the current prompt node directly without generating an image automatically.";
+        if (surface === "canvas") return hasReferences ? "Got it. I’ll complete this Canvas request using the current references." : "Got it. I’ll complete this Canvas request as requested.";
+        if (surface === "drama") return hasReferences ? "Got it. I’ll continue using the current project materials." : "Got it. I’ll continue this project request as requested.";
+        return hasReferences ? "Got it. I’ll complete this creative request using the current references." : "Got it. I’ll complete this creative request as requested.";
+    }
     if (surface === "canvas" && tasks.length === 1 && tasks[0]?.type === "text" && tasks[0].targetNodeId) return "已收到，我会直接修改当前提示词节点，不会自动生成图片。";
     if (surface === "canvas") return hasReferences ? "已收到，我会基于当前参考素材完成这次画布创作。" : "已收到，我会按你的要求完成这次画布创作。";
     if (surface === "drama") return hasReferences ? "已收到，我会基于当前项目素材继续创作。" : "已收到，我会按你的要求继续完成项目创作。";

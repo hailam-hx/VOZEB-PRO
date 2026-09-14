@@ -1,5 +1,5 @@
 import { createStreamingUsageAccumulator } from "@/lib/server/usage-billing-adapter";
-import { attachUsageProviderEvidence, finishUsageProviderAttempt, releaseUsageBilling, settleCancelledUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
+import { attachUsageProviderEvidence, finishUsageProviderAttempt, settleCancelledUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
 
 export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billing: UsageBilling, attemptNumber: number) {
     const reader = body.getReader();
@@ -15,7 +15,6 @@ export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billin
             } else {
                 await finishUsageProviderAttempt({ billing, attemptNumber, status, normalizedUsage: usage });
                 if (status === "canceled") await settleCancelledUsageBilling({ billing, description: "用户取消已由上游接受的文本生成", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
-                else await releaseUsageBilling({ billing, reason: "上游文本流读取失败" });
             }
         } catch (error) {
             console.error("System API text usage settlement failed", error instanceof Error ? error.message : error);

@@ -148,4 +148,42 @@ describe("publicAgentRun", () => {
         expect(JSON.stringify(event)).not.toContain("无效 JSON");
         expect(JSON.stringify(event)).not.toContain("plannerFailure");
     });
+
+    it("localizes sanitized failures without exposing their internal cause", () => {
+        const event = publicAgentRunEvent({ id: "3-vi", runId: "run", type: "run.failed", data: { message: "secret", responseLocale: "vi" }, createdAt: 1 });
+
+        expect(event.data).toEqual({ message: "Agent thực thi thất bại" });
+        expect(JSON.stringify(event)).not.toContain("secret");
+    });
+
+    it("keeps only already-published conversation text in a partial stream failure event", () => {
+        const event = publicAgentRunEvent({ id: "4", runId: "run", type: "run.failed", data: { message: "Xin chào một phần", partialConversation: true, plannerFailure: "secret" }, createdAt: 1 });
+
+        expect(event.data).toEqual({ message: "Xin chào một phần" });
+        expect(JSON.stringify(event)).not.toContain("plannerFailure");
+    });
+
+    it("includes public conversation content in run snapshots for refresh and reconnect", () => {
+        const run = publicAgentRun({
+            id: "run-conversation",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "hello",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "running",
+            responseKind: "conversation",
+            conversationReply: "Hello so far",
+            tasks: [],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+
+        expect(run).toMatchObject({ responseKind: "conversation", conversationReply: "Hello so far" });
+    });
 });

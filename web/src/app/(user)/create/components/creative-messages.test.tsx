@@ -497,6 +497,54 @@ describe("CreativeMessages", () => {
         expect(markup).not.toContain("正在处理「图片生成」");
     });
 
+    it("shows accumulated conversation content while the run is still streaming", () => {
+        const message: CreativeMessage = {
+            id: "streaming-assistant",
+            conversationId: "conversation-one",
+            runId: "streaming-run",
+            sequence: 2,
+            role: "assistant",
+            status: "running",
+            content: "Xin chào",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 2,
+        };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[message]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "streaming-run": {
+                            id: "streaming-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: "streaming-user",
+                            assistantMessageId: message.id,
+                            status: "running",
+                            responseKind: "conversation",
+                            conversationReply: "Xin chào",
+                            assetIds: [],
+                            tasks: [],
+                        },
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+
+        expect(markup).toContain("Xin chào");
+        expect(markup).not.toContain('data-testid="creative-generation-waiting"');
+    });
+
     it("restores the original text before retrying an initial submission failure", () => {
         const userMessage: CreativeMessage = {
             id: "temporary-user",

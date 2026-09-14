@@ -75,6 +75,8 @@ describe("Agent Run resume concurrency", () => {
             plannerAttempts,
             plannerFailure: { message: "文本模型返回了无效 JSON", failedAt: 200 },
             plannerAudit: { logicalModelId: "old" },
+            responseKind: "conversation",
+            conversationReply: "partial answer",
         };
         mocks.getAgentRun.mockResolvedValue(run);
         mocks.countActive.mockResolvedValue(0);
@@ -96,6 +98,8 @@ describe("Agent Run resume concurrency", () => {
                 plannerAttempts,
                 plannerFailure: undefined,
                 plannerAudit: undefined,
+                responseKind: undefined,
+                conversationReply: undefined,
                 timings: { requestAcceptedAt: 10 },
             }),
             { type: "run.retry.requested" },

@@ -14,7 +14,10 @@ export type TextPlanningCandidate = {
     capabilityProfile?: { timeoutMs?: number; supportsIdempotency?: boolean };
 };
 export type TextPlanningTool = { name: string; description: string; parameters: Record<string, unknown> };
-export type TextPlanningCall = { arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number };
+export type TextPlanningCall = { arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number; firstByteMs?: number };
+export type RoutedTextCall =
+    | { kind: "conversation"; content: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number; firstByteMs?: number; firstContentMs?: number }
+    | { kind: "generation"; arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number; firstByteMs?: number };
 
 type RuntimeState = {
     preferred?: TextPlanningProtocol;
@@ -39,11 +42,19 @@ export type StructuredTextRequest = {
     onInvalidResponse?: (headers: Headers) => Promise<unknown>;
 };
 
+export type RoutedTextRequest = StructuredTextRequest & {
+    onConversationContent?: (content: string, firstContentMs?: number) => void | Promise<void>;
+    onResponse?: (headers: Headers) => void | Promise<void>;
+    onFirstByte?: (elapsedMs: number) => void | Promise<void>;
+};
+
 type ProtocolRequest = {
     protocol: TextPlanningProtocol;
     path: string;
     body: Record<string, unknown>;
     resultField?: string;
+    idempotencyScope?: string;
+    supportsStreaming?: boolean;
 };
 
 const FAILURE_COOLDOWN_MS = 30_000;
@@ -78,9 +89,22 @@ export async function requestStructuredText(input: StructuredTextRequest): Promi
     const request = planningProtocolRequest(input.candidate, planningMessages(input));
     try {
         const response = await requestTextProtocol(input, request);
-        return await readStructuredResponse(input, request, response, startedAt);
+        return await readStructuredResponse(input, request, response, startedAt, Date.now() - startedAt);
     } catch (error) {
         recordTextFailure(input.candidate, error);
+        throw error;
+    }
+}
+
+export async function requestRoutedText(input: RoutedTextRequest): Promise<RoutedTextCall> {
+    const startedAt = Date.now();
+    const request = routedProtocolRequest(input.candidate, routedMessages(input));
+    try {
+        const response = await requestTextProtocol(input, request);
+        await input.onResponse?.(response.headers);
+        return await readRoutedResponse(input, request, response, startedAt);
+    } catch (error) {
+        if (!input.signal?.aborted) recordTextFailure(input.candidate, error);
         throw error;
     }
 }
@@ -104,7 +128,25 @@ function planningProtocolRequest(candidate: TextPlanningCandidate, messages: Arr
     if (resolved.kind === "responses") return responsesRequest(candidate.upstreamModel, messages, resolved.path);
     if (resolved.kind === "gemini") return geminiRequest(candidate.upstreamModel, resolved.path, messages);
     if (resolved.kind === "custom") return customRequest(candidate.upstreamModel, resolved.path, resolved.requestTemplate!, resolved.resultField!, messages);
-    return chatRequest(candidate.upstreamModel, messages, resolved.path);
+    return { ...chatRequest(candidate.upstreamModel, messages, resolved.path), supportsStreaming: resolved.providerKind === "chat" };
+}
+
+function routedProtocolRequest(candidate: TextPlanningCandidate, messages: Array<{ role: string; content: string }>): ProtocolRequest {
+    const request = planningProtocolRequest(candidate, messages);
+    if (request.protocol === "custom" || request.supportsStreaming === false) return { ...request, idempotencyScope: `${request.protocol}-routed-json` };
+    if (request.protocol === "gemini") {
+        return {
+            ...request,
+            path: geminiSsePath(request.path),
+            body: request.body,
+            idempotencyScope: "gemini-routed-stream",
+        };
+    }
+    return {
+        ...request,
+        body: { ...request.body, stream: true, ...(request.protocol === "chat" ? { stream_options: { include_usage: true } } : {}) },
+        idempotencyScope: `${request.protocol}-routed-stream`,
+    };
 }
 
 function chatRequest(model: string, messages: Array<{ role: string; content: string }>, path = "/chat/completions"): ProtocolRequest {
@@ -142,7 +184,7 @@ async function requestTextProtocol(input: StructuredTextRequest, request: Protoc
     const headers = new Headers(input.headers);
     headers.set("content-type", "application/json");
     if (input.cookie) headers.set("cookie", input.cookie);
-    scopeProtocolIdempotency(headers, request.protocol);
+    scopeProtocolIdempotency(headers, request.protocol, request.idempotencyScope);
     const timeoutSignal = AbortSignal.timeout(resolveModelRequestTimeoutMs(input.candidate, "text"));
     const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
     try {
@@ -153,14 +195,14 @@ async function requestTextProtocol(input: StructuredTextRequest, request: Protoc
     }
 }
 
-function scopeProtocolIdempotency(headers: Headers, protocol: TextPlanningProtocol) {
+function scopeProtocolIdempotency(headers: Headers, protocol: TextPlanningProtocol, scope = `${protocol}-json`) {
     for (const name of ["idempotency-key", "x-client-request-id"]) {
         const value = headers.get(name)?.trim();
-        if (value) headers.set(name, `${value}:${protocol}-json`);
+        if (value) headers.set(name, `${value}:${scope}`);
     }
 }
 
-async function readStructuredResponse(input: StructuredTextRequest, request: ProtocolRequest, response: Response, startedAt: number): Promise<TextPlanningCall> {
+async function readStructuredResponse(input: StructuredTextRequest, request: ProtocolRequest, response: Response, startedAt: number, firstByteMs: number): Promise<TextPlanningCall> {
     if (!response.ok) {
         const raw = await response.text();
         throw new TextPlanningRequestError(safeUpstreamError(raw, response.status), response.status, retryableStatus(response.status));
@@ -181,7 +223,167 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
     }
     const elapsedMs = Date.now() - startedAt;
     recordTextSuccess(input.candidate, request.protocol, elapsedMs);
-    return { arguments: argumentsText, headers: response.headers, protocol: request.protocol, elapsedMs };
+    return { arguments: argumentsText, headers: response.headers, protocol: request.protocol, elapsedMs, firstByteMs };
+}
+
+async function readRoutedResponse(input: RoutedTextRequest, request: ProtocolRequest, response: Response, startedAt: number): Promise<RoutedTextCall> {
+    if (!response.ok) {
+        const raw = await response.text();
+        throw new TextPlanningRequestError(safeUpstreamError(raw, response.status), response.status, retryableStatus(response.status));
+    }
+    if (request.protocol === "custom" || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+        const firstByteMs = Date.now() - startedAt;
+        await input.onFirstByte?.(firstByteMs);
+        const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+        if (!payload) {
+            await input.onInvalidResponse?.(response.headers);
+            throw new TextPlanningRequestError("文本模型返回了无效 JSON");
+        }
+        const output = readProtocolArguments(payload, input.tool.name, request, true);
+        return finishRoutedOutput(input, request, response.headers, output, startedAt, firstByteMs);
+    }
+    if (!response.body) throw new TextPlanningRequestError("文本模型没有返回有效流");
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    let output = "";
+    let visible = "";
+    let firstByteMs: number | undefined;
+    let firstContentMs: number | undefined;
+    for (;;) {
+        const next = await reader.read();
+        if (next.done) break;
+        if (firstByteMs === undefined) {
+            firstByteMs = Date.now() - startedAt;
+            await input.onFirstByte?.(firstByteMs);
+        }
+        buffer += next.value;
+        const frames = takeSseFrames(buffer);
+        buffer = frames.rest;
+        for (const frame of frames.values) {
+            if (frame === "[DONE]") continue;
+            const payload = parseRecord(frame);
+            if (!payload) continue;
+            output += streamedText(payload, request.protocol);
+            const routed = routeOutput(output);
+            if (routed.kind !== "conversation" || routed.content === visible) continue;
+            visible = routed.content;
+            firstContentMs ??= Date.now() - startedAt;
+            await input.onConversationContent?.(visible, firstContentMs);
+        }
+    }
+    if (buffer.trim()) {
+        for (const frame of takeSseFrames(`${buffer}\n\n`).values) {
+            const payload = parseRecord(frame);
+            if (payload) output += streamedText(payload, request.protocol);
+        }
+    }
+    const result = finishRoutedOutput(input, request, response.headers, output, startedAt, firstByteMs, firstContentMs);
+    if (result.kind === "conversation" && result.content !== visible) await input.onConversationContent?.(result.content, result.firstContentMs);
+    return result;
+}
+
+function finishRoutedOutput(input: RoutedTextRequest, request: ProtocolRequest, headers: Headers, output: string, startedAt: number, firstByteMs?: number, firstContentMs?: number): RoutedTextCall {
+    const routed = routeOutput(output, true);
+    const elapsedMs = Date.now() - startedAt;
+    if (routed.kind === "generation") {
+        const argumentsText = strictJsonObjectText(routed.content);
+        if (!argumentsText) throw new TextPlanningRequestError("模型没有返回有效的创作计划", 502, false);
+        recordTextSuccess(input.candidate, request.protocol, elapsedMs);
+        return { kind: "generation", arguments: argumentsText, headers, protocol: request.protocol, elapsedMs, firstByteMs };
+    }
+    if (routed.kind !== "conversation") throw new TextPlanningRequestError("文本模型没有返回有效的结果类型", 502, false);
+    const content = routed.content.trim();
+    if (!content) throw new TextPlanningRequestError("文本模型没有返回有效内容", 502, false);
+    recordTextSuccess(input.candidate, request.protocol, elapsedMs);
+    return { kind: "conversation", content, headers, protocol: request.protocol, elapsedMs, firstByteMs, firstContentMs };
+}
+
+function routeOutput(value: string, final = false): { kind: "pending" | "invalid"; content: "" } | { kind: "conversation" | "generation"; content: string } {
+    const output = value.trimStart();
+    const conversation = "<conversation>";
+    const generation = "<generation>";
+    if (conversation.startsWith(output) || generation.startsWith(output)) return { kind: "pending", content: "" };
+    if (output.startsWith(conversation)) {
+        const content = output.slice(conversation.length).replace(/^\s*\r?\n?/, "");
+        if (final) return startsWithJsonContainer(content) || hasSecondaryDiscriminator(content) || hasPlanShapedJson(content) ? { kind: "invalid", content: "" } : { kind: "conversation", content };
+        const protectedAt = protectedConversationSuffixStart(content);
+        return { kind: "conversation", content: protectedAt < 0 ? content : content.slice(0, protectedAt).trimEnd() };
+    }
+    if (output.startsWith(generation)) return { kind: "generation", content: output.slice(generation.length).replace(/^\s*\r?\n?/, "") };
+    if (output.startsWith("{")) return { kind: "generation", content: output };
+    if ("```json".startsWith(output.toLowerCase()) || "```".startsWith(output)) return { kind: "pending", content: "" };
+    if (output.startsWith("```")) return output.endsWith("```") ? { kind: "generation", content: output } : { kind: "pending", content: "" };
+    return { kind: "invalid", content: "" };
+}
+
+function protectedConversationSuffixStart(content: string) {
+    let protectedAt = content.indexOf("{");
+    const firstContentAt = content.search(/\S/u);
+    if (firstContentAt >= 0 && content[firstContentAt] === "[") protectedAt = protectedAt < 0 ? firstContentAt : Math.min(protectedAt, firstContentAt);
+    const lower = content.toLowerCase();
+    const markers = ["```json", "<generation>", "<conversation>", "</conversation>"];
+    for (let index = 0; index < lower.length; index += 1) {
+        const suffix = lower.slice(index);
+        if (markers.some((marker) => marker.startsWith(suffix) || suffix.startsWith(marker))) protectedAt = protectedAt < 0 ? index : Math.min(protectedAt, index);
+    }
+    return protectedAt;
+}
+
+function startsWithJsonContainer(content: string) {
+    return /^[\s]*[\[{]/u.test(content);
+}
+
+function hasSecondaryDiscriminator(content: string) {
+    return /<\/?conversation>|<generation>/iu.test(content);
+}
+
+function hasPlanShapedJson(content: string) {
+    return /"intent"\s*:\s*"(?:conversation|generation)"|"(?:deliverables|foundation|decisions|projectHandoff|skillIds)"\s*:/iu.test(content);
+}
+
+function geminiSsePath(path: string) {
+    const target = new URL(path, "http://internal.invalid");
+    target.pathname = target.pathname.replace(/:generateContent$/i, ":streamGenerateContent");
+    target.searchParams.set("alt", "sse");
+    return `${target.pathname}${target.search}`;
+}
+
+function takeSseFrames(value: string) {
+    const normalized = value.replace(/\r\n/g, "\n");
+    const blocks = normalized.split("\n\n");
+    const rest = blocks.pop() || "";
+    const values = blocks
+        .map((block) =>
+            block
+                .split("\n")
+                .filter((line) => line.startsWith("data:"))
+                .map((line) => line.slice(5).trimStart())
+                .join("\n"),
+        )
+        .filter(Boolean);
+    return { values, rest };
+}
+
+function streamedText(payload: Record<string, unknown>, protocol: TextPlanningProtocol) {
+    if (protocol === "responses") return payload.type === "response.output_text.delta" && typeof payload.delta === "string" ? payload.delta : "";
+    if (protocol === "gemini")
+        return records(record(firstRecord(payload.candidates)?.content)?.parts)
+            .map((part) => (typeof part.text === "string" ? part.text : ""))
+            .join("");
+    const delta = record(firstRecord(payload.choices)?.delta);
+    if (typeof delta?.content === "string") return delta.content;
+    return records(delta?.content)
+        .map((item) => (typeof item.text === "string" ? item.text : ""))
+        .join("");
+}
+
+function parseRecord(value: string) {
+    try {
+        const parsed = JSON.parse(value) as unknown;
+        return record(parsed);
+    } catch {
+        return undefined;
+    }
 }
 
 function readProtocolArguments(payload: Record<string, unknown>, toolName: string, request: ProtocolRequest, allowNaturalLanguage = false) {
@@ -196,6 +398,12 @@ function readProtocolArguments(payload: Record<string, unknown>, toolName: strin
 
 function planningMessages(input: StructuredTextRequest) {
     const instruction = `请先在模型内部完成需求理解、约束分析、模型选择、任务拆分与依赖规划，再只返回一个严格 JSON 对象，作为 ${input.tool.name} 的最终参数。任务用途：${input.tool.description}。不要使用 Markdown、代码围栏、解释或额外文字。JSON 必须符合以下 Schema：${JSON.stringify(input.tool.parameters)}`;
+    if (input.messages[0]?.role === "system") return [{ ...input.messages[0], content: `${instruction}\n\n${input.messages[0].content}` }, ...input.messages.slice(1)];
+    return [{ role: "system", content: instruction }, ...input.messages];
+}
+
+function routedMessages(input: StructuredTextRequest) {
+    const instruction = `先判断本轮是普通对话还是创作任务。普通问候、闲聊、能力咨询、使用说明和知识问答必须以 <conversation> 开头，换行后直接回答；不得输出计划 JSON。需要创建或修改文本、图片、视频或音频产物时必须以 <generation> 开头，换行后只输出一个符合以下 Schema 的严格 JSON 对象：${JSON.stringify(input.tool.parameters)}。两个标记只能选择一个，不要输出 Markdown、代码围栏或额外解释。`;
     if (input.messages[0]?.role === "system") return [{ ...input.messages[0], content: `${instruction}\n\n${input.messages[0].content}` }, ...input.messages.slice(1)];
     return [{ role: "system", content: instruction }, ...input.messages];
 }

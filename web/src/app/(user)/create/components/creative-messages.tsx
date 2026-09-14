@@ -150,13 +150,14 @@ export function CreativeMessages({
                 const referencedAssets = item.role === "user" ? messageAssetIds(item).flatMap((id) => assetById.get(id) || []) : [];
                 const itemAssets = [...referencedAssets, ...(assetsByMessage.get(item.id) || []), ...(item.runId ? assetsByMessage.get(item.runId) || [] : [])].filter((asset, index, list) => list.findIndex((current) => current.id === asset.id) === index);
                 const handoff = isCreativeProjectHandoff(item.metadata.projectHandoff) ? item.metadata.projectHandoff : null;
-                const displayContent = item.status === "failed" ? t("creationTaskFailed") : formatMessage(item.content);
+                const run = item.runId ? runDetails[item.runId] : undefined;
+                const hasConversationReply = run?.responseKind === "conversation" && Boolean(item.content.trim());
+                const displayContent = item.status === "failed" && !hasConversationReply ? t("creationTaskFailed") : formatMessage(item.content);
                 const textAssetContent = itemAssets
                     .filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim())
                     .map((asset) => formatAgentArtifactText(asset.textContent!))
                     .join("\n\n");
                 const downloads = agentAssetDownloads(itemAssets, { image: t("generatedImage"), video: t("generatedVideo") });
-                const run = item.runId ? runDetails[item.runId] : undefined;
                 const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
                 const failedRound = failedRoundsByAssistantId.get(item.id);
                 return (
@@ -164,7 +165,7 @@ export function CreativeMessages({
                         {item.role === "assistant" ? <CreativeAssistantAvatar className="mt-0" logoUrl={site.logoUrl} /> : null}
                         <div className={cn("min-w-0", item.role === "user" ? "max-w-[520px] text-right" : "min-w-0 flex-1")}>
                             {item.role === "user" && itemAssets.length ? <CreativeRoundReferenceStrip assets={itemAssets} /> : null}
-                            {item.role === "assistant" && item.status === "running" ? (
+                            {item.role === "assistant" && item.status === "running" && !hasConversationReply ? (
                                 <CreativeGenerationWaiting run={run} message={item} />
                             ) : textAssetContent && item.role === "assistant" && item.status === "completed" ? null : (
                                 <div
