@@ -181,6 +181,24 @@ describe("admin generation controls", () => {
         expect(applied.mock.lastCall?.[0].logicalModels[0].bindings[0].capabilityProfile).toEqual({ timeoutMs: 120_000, streamingTimeouts: { connectMs: 500 } });
     });
 
+    it("commits a previously invalid stage draft when a later overall timeout makes it valid", async () => {
+        const applied = vi.fn();
+        const host = await render(<LogicalModelHarness channels={textChannels} logicalModels={textModels({ timeoutMs: 120_000 })} defaultModels={textDefaults} onApplied={applied} />);
+        const user = userEvent.setup();
+
+        await openVideoEditor(host);
+        const connectTimeout = fieldInput("连接超时（秒）");
+        await user.click(connectTimeout);
+        await user.type(connectTimeout, "200");
+        await user.tab();
+        const overallTimeout = fieldInput("请求超时（秒）");
+        await user.clear(overallTimeout);
+        await user.type(overallTimeout, "300");
+        await user.click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "应用修改") as HTMLButtonElement);
+
+        expect(applied.mock.lastCall?.[0].logicalModels[0].bindings[0].capabilityProfile).toEqual({ timeoutMs: 300_000, streamingTimeouts: { connectMs: 200_000 } });
+    });
+
     it("moves a synchronized physical model into the current logical model as a fallback binding", async () => {
         const channels = [
             {

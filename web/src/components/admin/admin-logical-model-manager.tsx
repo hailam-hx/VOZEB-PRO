@@ -19,6 +19,8 @@ type Props = {
     onChange: (value: { logicalModels: LogicalModel[]; defaultModels: SystemDefaultModels }) => void;
 };
 
+type StreamingTimeoutDrafts = Partial<Record<keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]>, string>>;
+
 const capabilityOptions: Array<{ label: string; value: LogicalModelCapability }> = [
     { label: "文本", value: "text" },
     { label: "图片", value: "image" },
@@ -39,6 +41,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [editingId, setEditingId] = useState("");
     const [draft, setDraft] = useState<LogicalModel | null>(null);
+    const [streamingTimeoutDrafts, setStreamingTimeoutDrafts] = useState<Record<string, StreamingTimeoutDrafts>>({});
     const [fallbackBindingKey, setFallbackBindingKey] = useState("");
     const [query, setQuery] = useState("");
     const [capabilityFilter, setCapabilityFilter] = useState<LogicalModelCapability | "all">("all");
@@ -76,6 +79,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
     const openEdit = (model: LogicalModel) => {
         setEditingId(model.id);
         setDraft(cloneLogicalModel(model));
+        setStreamingTimeoutDrafts({});
         setFallbackBindingKey("");
         setDrawerOpen(true);
     };
@@ -97,9 +101,16 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
             message.error("请填写前端展示昵称");
             return;
         }
-        const movedBindings = new Set(draft.bindings.map(physicalBindingKey));
+        const committedBindings = draft.bindings.map((binding) => commitStreamingTimeoutDrafts(binding, draft.capability, streamingTimeoutDrafts[binding.id]));
+        const invalidBinding = committedBindings.find((result) => result.error);
+        if (invalidBinding?.error) {
+            message.error(invalidBinding.error);
+            return;
+        }
+        const nextDraft = { ...draft, bindings: committedBindings.map((result) => result.binding!) };
+        const movedBindings = new Set(nextDraft.bindings.map(physicalBindingKey));
         const nextModels = logicalModels.flatMap((model) => {
-            if (model.id === editingId) return [cloneLogicalModel({ ...draft, name })];
+            if (model.id === editingId) return [cloneLogicalModel({ ...nextDraft, name })];
             const bindings = model.bindings.filter((binding) => !movedBindings.has(physicalBindingKey(binding)));
             return bindings.length ? [{ ...model, bindings }] : [];
         });
@@ -286,6 +297,8 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                                         binding={binding}
                                         capability={draft.capability}
                                         channels={channels}
+                                        streamingTimeoutDrafts={streamingTimeoutDrafts[binding.id] || {}}
+                                        onStreamingTimeoutDraftsChange={(next) => setStreamingTimeoutDrafts((current) => ({ ...current, [binding.id]: next }))}
                                         onChange={(patch) => setDraft((current) => (current ? { ...current, bindings: current.bindings.map((item) => (item.id === binding.id ? { ...item, ...patch } : item)) } : current))}
                                     />
                                 ))}
@@ -298,14 +311,27 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
     );
 }
 
-function BindingEditor({ binding, capability, channels, onChange }: { binding: LogicalModelBinding; capability: LogicalModelCapability; channels: SystemModelChannel[]; onChange: (patch: Partial<LogicalModelBinding>) => void }) {
+function BindingEditor({
+    binding,
+    capability,
+    channels,
+    streamingTimeoutDrafts,
+    onStreamingTimeoutDraftsChange,
+    onChange,
+}: {
+    binding: LogicalModelBinding;
+    capability: LogicalModelCapability;
+    channels: SystemModelChannel[];
+    streamingTimeoutDrafts: StreamingTimeoutDrafts;
+    onStreamingTimeoutDraftsChange: (next: StreamingTimeoutDrafts) => void;
+    onChange: (patch: Partial<LogicalModelBinding>) => void;
+}) {
     const { message } = App.useApp();
     const channel = channels.find((item) => item.id === binding.channelId);
     const profile = binding.capabilityProfile || {};
     const effectiveAsync = profile.supportsAsync ?? (capability === "image" || capability === "video");
     const timeoutSeconds = profile.timeoutMs ? Math.round(profile.timeoutMs / 1000) : undefined;
     const defaultTimeoutSeconds = resolveModelRequestTimeoutMs(undefined, capability) / 1000;
-    const [streamingTimeoutDrafts, setStreamingTimeoutDrafts] = useState<Partial<Record<keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]>, string>>>({});
     const updateProfile = (patch: Partial<LogicalModelCapabilityProfile>) => onChange({ capabilityProfile: { ...profile, ...patch } });
     const updateOverallTimeout = (value: number | null) => {
         const timeoutMs = value ? Math.floor(Number(value) * 1000) : undefined;
@@ -469,7 +495,7 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                                             inputMode="decimal"
                                             value={streamingTimeoutDrafts[key] ?? (profile.streamingTimeouts?.[key] ? String(profile.streamingTimeouts[key]! / 1000) : "")}
                                             placeholder="留空"
-                                            onChange={(event) => setStreamingTimeoutDrafts((current) => ({ ...current, [key]: event.target.value }))}
+                                            onChange={(event) => onStreamingTimeoutDraftsChange({ ...streamingTimeoutDrafts, [key]: event.target.value })}
                                             onBlur={() => commitStreamingTimeout(key)}
                                         />
                                     </LabeledControl>
@@ -494,6 +520,25 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
 
 function streamingTimeoutLabel(value: keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]> | string) {
     return ({ connectMs: "连接超时", firstByteMs: "首字节超时", firstTextMs: "首段文本超时", idleMs: "空闲超时" } as Record<string, string>)[value] || "流式阶段超时";
+}
+
+function commitStreamingTimeoutDrafts(binding: LogicalModelBinding, capability: LogicalModelCapability, drafts: StreamingTimeoutDrafts | undefined) {
+    if (!drafts || !Object.keys(drafts).length) return { binding };
+    const profile = binding.capabilityProfile || {};
+    const streamingTimeouts = { ...profile.streamingTimeouts };
+    for (const [key, value] of Object.entries(drafts) as Array<[keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]>, string]>) {
+        if (!value.trim()) {
+            delete streamingTimeouts[key];
+            continue;
+        }
+        const timeoutMs = Math.floor(Number(value) * 1000);
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { error: `${streamingTimeoutLabel(key)}必须是正数秒` };
+        streamingTimeouts[key] = timeoutMs;
+    }
+    const overallTimeoutMs = resolveModelRequestTimeoutMs({ capabilityProfile: profile }, capability);
+    const exceeded = Object.entries(streamingTimeouts).find(([, stageTimeoutMs]) => Number(stageTimeoutMs) > overallTimeoutMs);
+    if (exceeded) return { error: `${streamingTimeoutLabel(exceeded[0])}不能超过总请求超时` };
+    return { binding: { ...binding, capabilityProfile: { ...profile, streamingTimeouts: Object.keys(streamingTimeouts).length ? streamingTimeouts : undefined } } };
 }
 
 function GenerationCapabilityEditor({
