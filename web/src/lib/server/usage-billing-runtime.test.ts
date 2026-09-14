@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { normalizeBillableUsage } from "@/lib/billing/pricing";
 import { emptyDb } from "@/lib/auth/store-normalizers";
 import { readAuthDb, writeAuthDb } from "@/lib/auth/store-repository";
+import { meteredTextResponseBody } from "./system-ai-metered-text-stream";
 
 import {
     attachUsageProviderUpstreamTaskId,
@@ -69,6 +70,31 @@ afterAll(() => {
 });
 
 describe("usage billing runtime", () => {
+    it("keeps a failed text attempt hold active when its stream is closed before failover", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "text-task:stream-failover",
+            requestFingerprint: createHash("sha256").update("stream-failover").digest("hex"),
+            logicalModelId: "text-model",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1.5" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", cachedInputTokens: "0", maxOutputTokens: "128" }),
+            description: "文本生成预留",
+        });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "vendor", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        const source = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode('data: {"error":{"message":"fixture"}}\n\n'));
+            },
+        });
+        const reader = meteredTextResponseBody(source, billing, 1).getReader();
+        await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed" });
+        await reader.cancel("failed attempt cleanup");
+        const db = await readAuthDb();
+        expect(db.walletHolds[0].status).toBe("active");
+        expect(db.providerUsageAttempts[0].status).toBe("failed");
+        expect(db.usageCharges).toEqual([]);
+    });
+
     it("settles an active business hold immediately when its persisted task succeeds", async () => {
         const billing = await reservation("terminal-success");
         await recordUsageProviderAttempt({

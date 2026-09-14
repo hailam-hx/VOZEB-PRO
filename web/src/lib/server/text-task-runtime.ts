@@ -5,19 +5,21 @@ import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { fetchInternalApi, isInternalApiBaseUrl } from "@/lib/server/internal-origin";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationModelId } from "@/lib/server/generation-channel";
-import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
-import { getTextTask, transitionTextTask, type TextTask, type TextTaskConfig } from "@/lib/server/text-task-store";
+import { recordChannelRuntimeFailure, recordChannelRuntimeSuccess } from "@/lib/server/channel-runtime-health";
+import { acceptTextTaskSnapshot, closeTextTaskAttempt, openTextTaskAttempt, getTextTask, transitionTextTask, type TextTask, type TextTaskConfig, type TextTaskSnapshotUpdate } from "@/lib/server/text-task-store";
 import { updateTextTask } from "@/lib/server/text-task-store";
 import type { AiTextMessage } from "@/types/ai";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, type SystemAiUsageContextDraft } from "@/lib/server/system-ai-billing";
 import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
-import { buildProviderRequest, isProviderBusinessError, providerQueryPaths, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
+import { buildProviderRequest, isProviderBusinessError, providerQueryPaths, readProviderString } from "@/lib/server/provider-task-config";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { attachSystemAiUsageUpstreamTask, finishSystemAiTextAttempt, releaseUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { resolveTextProtocol, type ResolvedTextProtocol } from "@/lib/server/text-protocol-resolver";
 import { refundTextTask, textTaskRefundIdempotencyKey } from "@/lib/server/text-task-refund";
+import { normalizeTextStream } from "@/lib/server/text-stream-protocol";
+import { createTextSnapshotWriter, registerTextTaskAttempt, type TextTaskSnapshotHook, type TextTaskTimeoutPolicy } from "@/lib/server/text-task-stream-control";
 
 configureServerProxyDispatcher();
 
@@ -31,50 +33,35 @@ export type TextTaskStep = { state: "pending"; status: string; upstreamTaskId: s
 
 type ResponseInputContent = { type: "input_text"; text: string } | { type: "input_image"; image_url: string };
 type ResponseInputItem = { role: "system" | "user" | "assistant"; content: string | ResponseInputContent[] };
-type ResponseApiPayload = {
-    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
-    output_text?: string;
-    error?: { message?: string };
-    code?: number;
-    msg?: string;
-};
-type ChatCompletionPayload = {
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
-    error?: { message?: string };
-    code?: number;
-    msg?: string;
-};
 type GeminiPart = {
     text?: string;
     inlineData?: { mimeType?: string; data?: string };
     fileData?: { mimeType?: string; fileUri?: string };
 };
-type GeminiPayload = {
-    candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
-    error?: { message?: string };
-    promptFeedback?: { blockReason?: string };
-};
-type ClaudePayload = {
-    content?: Array<{ type?: string; text?: string }>;
-    error?: { message?: string };
+
+type TextTaskRuntimeOptions = { onSnapshot?: TextTaskSnapshotHook; signal?: AbortSignal };
+type AttemptRuntime = {
+    control: ReturnType<typeof registerTextTaskAttempt>;
+    writer: ReturnType<typeof createTextSnapshotWriter>;
+    snapshot: TextTaskSnapshotUpdate;
+    response?: Response;
+    usagePayload?: unknown;
 };
 
-export async function runTextTaskStep(task: TextTask, origin: string, cookie: string): Promise<TextTaskStep> {
+export async function runTextTaskStep(task: TextTask, origin: string, cookie: string, options: TextTaskRuntimeOptions = {}): Promise<TextTaskStep> {
     const current = await getTextTask(task.id);
     if (!current || current.status === "success") return { state: "completed" };
     if (current.status === "error" || current.status === "cancelled") return { state: "failed", error: current.error || "文本任务已结束" };
     const running = current.status === "pending" ? await transitionTextTask(current, ["pending"], { status: "running" }) : current;
     if (!running) return { state: "failed", error: "文本任务状态已变化" };
-    if (running.upstream?.id) return queryCustomTextTaskStep(running, origin, cookie);
+    if (running.upstream?.id) return queryCustomTextTaskStep(running, origin, cookie, options);
 
     const candidates = [running.config, ...(running.candidateConfigs || [])];
-    let attempts = running.attempts || [];
-    let latestError: unknown;
+    let latestError = "没有可用的文本渠道";
     for (const [index, config] of candidates.entries()) {
-        const started = startGenerationAttempt(attempts, { channelId: config.channelId, model: generationModelId(config), capability: "text" });
-        attempts = started.attempts;
-        const candidateTask = { ...running, config, candidateConfigs: candidates.slice(index + 1), attemptNo: started.attempt.attemptNo, attempts };
-        await updateTextTask(task.id, { config, candidateConfigs: candidateTask.candidateConfigs, attemptNo: candidateTask.attemptNo, attempts });
+        const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/"), preserveNativeProtocol: true });
+        const candidateTask = await openTextTaskAttempt((await getTextTask(task.id)) || running, config, protocol.kind, candidates.slice(index + 1));
+        if (!candidateTask) return { state: "failed", error: "文本任务状态已变化" };
         await scheduleGenerationTask("text", task.id, {
             executionPhase: "submitting",
             channelId: config.channelId,
@@ -83,68 +70,139 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
             nextPollAt: Date.now(),
             lastUpstreamStatus: "submitting",
         });
+        const runtime = createAttemptRuntime(candidateTask, protocol.supportsStreaming, options);
         try {
-            const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/"), preserveNativeProtocol: true });
-            const result = await runResolvedTextTask(candidateTask, origin, cookie, protocol);
+            runtime.control.signal.throwIfAborted();
+            const result = protocol.kind === "custom" ? await createCustomTextTaskStep(candidateTask, origin, cookie, protocol, runtime) : await runNativeTextTask(candidateTask, origin, cookie, protocol, runtime);
+            runtime.control.completed();
             if ("state" in result) {
                 const billing = hasSystemAiCharge(result) ? { pointsCost: result.pointsCost, pointsRecordId: result.pointsRecordId, refunded: false } : undefined;
                 await updateTextTask(task.id, { upstream: { id: result.upstreamTaskId, createPath: result.createPath }, billing });
+                runtime.writer.push(runtime.snapshot);
+                await runtime.writer.flush();
+                runtime.control.signal.throwIfAborted();
                 return { state: "pending", status: result.status, upstreamTaskId: result.upstreamTaskId, createPath: result.createPath };
             }
-            return completeTextTask(candidateTask, result.content, result, attempts);
+            runtime.snapshot = { ...runtime.snapshot, content: result.content, milestones: { ...runtime.snapshot.milestones, stream_completed: Date.now() } };
+            runtime.writer.push(runtime.snapshot);
+            await runtime.writer.flush();
+            runtime.control.signal.throwIfAborted();
+            return await completeTextTask(candidateTask, result.content, result);
         } catch (error) {
-            latestError = error;
-            const message = toSafeGenerationErrorMessage(error, "文本生成失败");
+            runtime.control.completed();
+            runtime.writer.push(runtime.snapshot);
+            await runtime.writer.flush();
+            const reason = runtime.control.signal.aborted ? runtime.control.signal.reason : error;
+            const message = publicTextError(reason);
+            latestError = message;
             const latest = await getTextTask(task.id);
-            if (latest?.status === "cancelled" || latest?.status === "success") return latest.status === "success" ? { state: "completed" } : { state: "failed", error: latest.error || "任务已取消" };
-            if (error instanceof GenerationSubmissionUncertainError) return failTextTask((await getTextTask(task.id)) || candidateTask, message, attempts);
-            if (!(error instanceof GenerationSubmissionSafeFailure)) return failTextTask((await getTextTask(task.id)) || candidateTask, generationSubmissionUncertainError(error, message).message, attempts);
-            attempts = finishGenerationAttempt(attempts, candidateTask.attemptNo, { status: "failed", error: message });
-            await updateTextTask(task.id, { attempts, attemptNo: candidateTask.attemptNo });
+            if (latest?.activeAttemptId !== candidateTask.activeAttemptId || latest?.status === "success") return latest?.status === "success" ? { state: "completed" } : { state: "failed", error: "文本任务状态已变化" };
+            const cancelled = latest?.status === "cancelled" || (runtime.control.signal.aborted && !isTextRequestTimeout(reason));
+            if (cancelled) return await cancelRunningTextTask(latest || candidateTask, runtime.response?.headers);
+            if (runtime.response) await finishSystemAiTextAttempt(runtime.response.headers, { status: "failed", reason: message, payload: runtime.usagePayload });
+            await closeTextTaskAttempt(task.id, candidateTask.activeAttemptId!, "failed", { error: message }, activeRevision(latest));
+            if (config.channelId) recordChannelRuntimeFailure(config.channelId, "text", message);
+            // Once public text exists, a provider change would overwrite an answer the user has seen.
+            if (runtime.snapshot.content || (!protocol.supportsStreaming && !(error instanceof GenerationSubmissionSafeFailure)) || (error instanceof GenerationSubmissionUncertainError && !isTextRequestTimeout(reason)))
+                return failTextTask((await getTextTask(task.id)) || candidateTask, message);
+        } finally {
+            await runtime.response?.body?.cancel().catch(() => undefined);
+            runtime.control.dispose();
         }
     }
-    return failTextTask((await getTextTask(task.id)) || running, latestError instanceof Error ? latestError.message : "没有可用的文本渠道", attempts);
+    return failTextTask((await getTextTask(task.id)) || running, latestError);
 }
 
-function runResolvedTextTask(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol) {
-    if (protocol.kind === "custom") return createCustomTextTaskStep(task, origin, cookie, protocol);
-    if (protocol.kind === "responses") return runOpenAiResponsesTask(task, origin, cookie, protocol);
-    if (protocol.kind === "gemini") return runGeminiTextTask(task, origin, cookie, protocol);
-    if (protocol.kind === "claude") return runClaudeTextTask(task, origin, cookie, protocol);
-    return runOpenAiChatCompletionTask(task, origin, cookie, protocol);
+function createAttemptRuntime(task: TextTask, streaming: boolean, options: TextTaskRuntimeOptions): AttemptRuntime {
+    const profile = task.config.capabilityProfile as { timeoutMs?: number; streamingTimeouts?: { connectMs?: number; firstByteMs?: number; firstTextMs?: number; idleMs?: number } } | undefined;
+    const timeouts = profile?.streamingTimeouts;
+    const policy: TextTaskTimeoutPolicy = {
+        connectTimeoutMs: timeouts?.connectMs,
+        firstByteTimeoutMs: timeouts?.firstByteMs,
+        firstTextTimeoutMs: timeouts?.firstTextMs,
+        idleTimeoutMs: timeouts?.idleMs,
+        overallTimeoutMs: profile?.timeoutMs || resolveModelRequestTimeoutMs(task.config, "text"),
+    };
+    const control = registerTextTaskAttempt(task.id, task.activeAttemptId!, policy, streaming, options.signal);
+    const attempt = task.attempts?.find((item) => item.id === task.activeAttemptId);
+    return {
+        control,
+        writer: createTextSnapshotWriter((revision, snapshot) => acceptTextTaskSnapshot(task.id, task.activeAttemptId!, revision, snapshot), options.onSnapshot, attempt?.revision || 0),
+        snapshot: { content: "", milestones: { ...attempt?.milestones, upstream_started: attempt?.milestones.upstream_started ?? Date.now() } },
+    };
 }
 
-async function runOpenAiResponsesTask(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol) {
+async function runNativeTextTask(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol, runtime: AttemptRuntime) {
+    if (protocol.kind === "custom") throw new Error("文本流协议无效");
     const config = task.config;
     const headers = taskHeaders(config, cookie, pointsIdempotencyKey(task, protocol));
     headers.set("content-type", "application/json");
-    const response = await submissionFetch(config, taskUrl(config, protocol.path, origin), {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ model: config.model, input: toResponseInput(withSystemMessage(config, task.messages)) }),
-        cache: "no-store",
-    });
-    if (!response.ok) {
-        const errorMessage = await readFetchError(response, "文本生成失败");
-        throw new GenerationSubmissionSafeFailure(errorMessage, response.status);
+    headers.set("accept", "text/event-stream");
+    const messages = withSystemMessage(config, task.messages);
+    let body: Record<string, unknown>;
+    if (protocol.kind === "responses") body = { model: config.model, input: toResponseInput(messages), stream: true };
+    else if (protocol.kind === "gemini") body = toGeminiBody(config, task.messages);
+    else if (protocol.kind === "claude") {
+        const system = messages
+            .filter((message) => message.role === "system")
+            .map((message) => readMessageText(message.content))
+            .join("\n\n");
+        body = { model: config.model, max_tokens: requiredTextOutputLimit(config), messages: toChatMessages(messages.filter((message) => message.role !== "system")), stream: true, ...(system ? { system } : {}) };
+        if (!config.baseUrl.startsWith("/")) {
+            headers.delete("authorization");
+            headers.set("x-api-key", config.apiKey);
+            headers.set("anthropic-version", "2023-06-01");
+        }
+    } else body = { model: config.model, messages: toChatMessages(messages), stream: true, stream_options: { include_usage: true } };
+    const url = new URL(taskUrl(config, protocol.path, origin, protocol.kind === "gemini" ? "gemini" : config.apiFormat));
+    if (protocol.kind === "gemini") {
+        url.pathname = url.pathname.replace(/:generateContent$/i, ":streamGenerateContent");
+        url.searchParams.set("alt", "sse");
     }
-    const payload = await parseTextSubmissionJson<ResponseApiPayload>(task, response);
-    try {
-        validateResponsePayload(payload);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : "文本生成失败";
-        await finishSystemAiTextAttempt(response.headers, { status: "failed", payload });
-        throw new GenerationSubmissionSafeFailure(message);
+    const response = await fetchTextAttempt(config, url.href, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" }, runtime);
+    for await (const event of normalizeTextStream(response, protocol.kind)) {
+        runtime.control.signal.throwIfAborted();
+        if (event.type === "error") throw new GenerationSubmissionSafeFailure(event.message, event.status);
+        if (event.type === "usage") {
+            runtime.snapshot = { ...runtime.snapshot, usage: { inputTokens: event.inputTokens, outputTokens: event.outputTokens, totalTokens: event.totalTokens } };
+        }
+        if (event.type === "text_delta" && event.text) {
+            runtime.control.text();
+            runtime.snapshot = { ...runtime.snapshot, content: runtime.snapshot.content + event.text, milestones: { ...runtime.snapshot.milestones, first_text: runtime.snapshot.milestones?.first_text ?? Date.now() } };
+            runtime.writer.push(runtime.snapshot);
+        }
     }
-    const content = parseOpenAiContent(payload);
-    if (!content.trim()) {
-        await finishSystemAiTextAttempt(response.headers, { status: "failed", payload });
-        throw new GenerationSubmissionSafeFailure("文本模型没有返回有效内容");
-    }
-    return { content, ...readBilling(response.headers), usageHeaders: response.headers, usagePayload: payload };
+    if (!runtime.snapshot.content.trim()) throw new GenerationSubmissionSafeFailure("文本模型没有返回有效内容");
+    return { content: runtime.snapshot.content, ...readBilling(response.headers), usageHeaders: response.headers };
 }
 
-async function createCustomTextTaskStep(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol) {
+async function fetchTextAttempt(config: TextTaskConfig, url: string, init: RequestInit, runtime: AttemptRuntime) {
+    const response = await submissionFetch(config, url, { ...init, signal: runtime.control.signal });
+    runtime.control.connected();
+    runtime.response = response;
+    if (!response.body) return response;
+    const body = response.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+                if (chunk.byteLength) {
+                    runtime.control.byte();
+                    runtime.snapshot = { ...runtime.snapshot, milestones: { ...runtime.snapshot.milestones, first_byte: runtime.snapshot.milestones?.first_byte ?? Date.now() } };
+                }
+                controller.enqueue(chunk);
+            },
+        }),
+        { signal: runtime.control.signal },
+    );
+    runtime.response = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    return runtime.response;
+}
+
+function publicTextError(error: unknown) {
+    if (isTextRequestTimeout(error)) return "文本模型响应超时";
+    return error instanceof GenerationSubmissionSafeFailure ? toSafeGenerationErrorMessage(error, "文本生成失败") : "文本生成中断，请重试";
+}
+
+async function createCustomTextTaskStep(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol, runtime: AttemptRuntime) {
     const config = task.config;
     const createPath = protocol.path;
     const messages = toChatMessages(withSystemMessage(config, task.messages));
@@ -162,7 +220,7 @@ async function createCustomTextTaskStep(task: TextTask, origin: string, cookie: 
     }
     const headers = taskHeaders(config, cookie, pointsIdempotencyKey(task, protocol));
     headers.set("content-type", "application/json");
-    const response = await submissionFetch(config, taskUrl(config, createPath, origin), { method: "POST", headers, body: JSON.stringify(payload), cache: "no-store" });
+    const response = await fetchTextAttempt(config, taskUrl(config, createPath, origin), { method: "POST", headers, body: JSON.stringify(payload), cache: "no-store" }, runtime);
     if (!response.ok) {
         const message = await readFetchError(response, "自定义文本接口调用失败");
         const responseError = generationSubmissionResponseError(response.status, message);
@@ -170,9 +228,9 @@ async function createCustomTextTaskStep(task: TextTask, origin: string, cookie: 
         throw responseError;
     }
     const data = await parseTextSubmissionJson<unknown>(task, response);
+    runtime.usagePayload = data;
     if (isProviderBusinessError(data)) {
-        await finishSystemAiTextAttempt(response.headers, { status: "failed", payload: data });
-        throw new GenerationSubmissionSafeFailure(readProviderError(data) || "自定义文本接口返回失败");
+        throw new GenerationSubmissionSafeFailure("自定义文本接口返回失败");
     }
     const content = readProviderString(data, protocol.resultField, TEXT_RESULT_KEYS);
     if (content) return { content, ...readBilling(response.headers), usageHeaders: response.headers, usagePayload: data };
@@ -184,27 +242,45 @@ async function createCustomTextTaskStep(task: TextTask, origin: string, cookie: 
     throw new GenerationSubmissionUncertainError("自定义文本接口没有按配置返回内容或任务 ID");
 }
 
-async function queryCustomTextTaskStep(task: TextTask, origin: string, cookie: string): Promise<TextTaskStep> {
+async function queryCustomTextTaskStep(task: TextTask, origin: string, cookie: string, options: TextTaskRuntimeOptions): Promise<TextTaskStep> {
     const config = task.config;
     const upstream = task.upstream;
-    if (!upstream?.id) return failTextTask(task, "文本任务缺少上游任务 ID", task.attempts || []);
-    let lastError = "";
-    for (const path of providerQueryPaths(config.advancedConfig, upstream.id, [])) {
-        const response = await taskFetch(config, taskUrl(config, path, origin), { headers: taskHeaders(config, cookie), cache: "no-store" });
-        if (!response.ok) {
-            lastError = await readFetchError(response, "自定义文本任务查询失败");
-            continue;
+    if (!upstream?.id) return failTextTask(task, "文本任务缺少上游任务 ID");
+    const runtime = createAttemptRuntime(task, false, options);
+    try {
+        let lastError = "";
+        for (const path of providerQueryPaths(config.advancedConfig, upstream.id, [])) {
+            const response = await fetchTextAttempt(config, taskUrl(config, path, origin), { headers: taskHeaders(config, cookie), cache: "no-store" }, runtime);
+            if (!response.ok) {
+                lastError = await readFetchError(response, "自定义文本任务查询失败");
+                continue;
+            }
+            const data = (await response.json().catch(() => null)) as unknown;
+            runtime.control.signal.throwIfAborted();
+            runtime.control.completed();
+            if (!data || isProviderBusinessError(data)) return failTextTask(task, "自定义文本任务查询失败");
+            const content = readProviderString(data, config.advancedConfig?.resultField, TEXT_RESULT_KEYS);
+            if (content) {
+                runtime.writer.push({ content, milestones: { ...runtime.snapshot.milestones, stream_completed: Date.now() } });
+                await runtime.writer.flush();
+                runtime.control.signal.throwIfAborted();
+                return await completeTextTask(task, content, task.billing || {});
+            }
+            const status = readProviderString(data, config.advancedConfig?.statusField, TASK_STATUS_KEYS).toLowerCase();
+            if (FAILED_TASK_STATUSES.has(status)) return failTextTask(task, "自定义文本任务执行失败");
+            if (PENDING_TASK_STATUSES.has(status)) return { state: "pending", status: status || "processing", upstreamTaskId: upstream.id, createPath: upstream.createPath };
+            return failTextTask(task, "自定义文本任务已结束但没有返回内容");
         }
-        const data = (await response.json().catch(() => null)) as unknown;
-        if (!data || isProviderBusinessError(data)) return failTextTask(task, readProviderError(data) || "自定义文本任务查询失败", task.attempts || []);
-        const content = readProviderString(data, config.advancedConfig?.resultField, TEXT_RESULT_KEYS);
-        if (content) return completeTextTask(task, content, task.billing || {}, task.attempts || []);
-        const status = readProviderString(data, config.advancedConfig?.statusField, TASK_STATUS_KEYS).toLowerCase();
-        if (FAILED_TASK_STATUSES.has(status)) return failTextTask(task, readProviderError(data) || "自定义文本任务执行失败", task.attempts || []);
-        if (PENDING_TASK_STATUSES.has(status)) return { state: "pending", status: status || "processing", upstreamTaskId: upstream.id, createPath: upstream.createPath };
-        return failTextTask(task, "自定义文本任务已结束但没有返回内容", task.attempts || []);
+        throw new Error(lastError || "自定义文本任务查询失败");
+    } catch (error) {
+        await runtime.writer.flush();
+        if (runtime.control.signal.aborted && !isTextRequestTimeout(runtime.control.signal.reason)) return cancelRunningTextTask((await getTextTask(task.id)) || task, runtime.response?.headers);
+        // An uncertain polling response cannot authorize a second upstream submission.
+        throw error;
+    } finally {
+        await runtime.response?.body?.cancel().catch(() => undefined);
+        runtime.control.dispose();
     }
-    throw new Error(lastError || "自定义文本任务查询失败");
 }
 
 export async function queryCancelledTextTaskUpstreamStep(task: TextTask, origin: string, cookie: string) {
@@ -234,115 +310,14 @@ function readMessageText(content: AiTextMessage["content"]) {
     return content.map((item) => (item.type === "text" ? item.text : item.image_url.url)).join("\n");
 }
 
-async function runOpenAiChatCompletionTask(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol) {
-    const config = task.config;
-    const headers = taskHeaders(config, cookie, pointsIdempotencyKey(task, protocol));
-    headers.set("content-type", "application/json");
-    const response = await submissionFetch(config, taskUrl(config, protocol.path, origin), {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ model: config.model, messages: toChatMessages(withSystemMessage(config, task.messages)) }),
-        cache: "no-store",
-    });
-    if (!response.ok) {
-        const message = await readFetchError(response, "文本生成失败");
-        throw new GenerationSubmissionSafeFailure(message, response.status);
-    }
-    const payload = await parseTextSubmissionJson<ChatCompletionPayload>(task, response);
-    try {
-        validateChatCompletionPayload(payload);
-    } catch (error) {
-        await finishSystemAiTextAttempt(response.headers, { status: "failed", payload });
-        throw new GenerationSubmissionSafeFailure(error instanceof Error ? error.message : "文本生成失败");
-    }
-    const content = parseChatCompletionContent(payload);
-    if (!content.trim()) {
-        await finishSystemAiTextAttempt(response.headers, { status: "failed", payload });
-        throw new GenerationSubmissionSafeFailure("文本模型没有返回有效内容");
-    }
-    return { content, ...readBilling(response.headers), usageHeaders: response.headers, usagePayload: payload };
-}
-
-async function runGeminiTextTask(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol) {
-    const config = task.config;
-    const response = await submissionFetch(config, taskUrl(config, protocol.path, origin, "gemini"), {
-        method: "POST",
-        headers: geminiHeaders(config, cookie, pointsIdempotencyKey(task, protocol)),
-        body: JSON.stringify(toGeminiBody(config, task.messages)),
-        cache: "no-store",
-    });
-    if (!response.ok) {
-        const message = await readFetchError(response, "文本生成失败");
-        throw new GenerationSubmissionSafeFailure(message, response.status);
-    }
-    const payload = await parseTextSubmissionJson<GeminiPayload>(task, response);
-    try {
-        validateGeminiPayload(payload);
-    } catch (error) {
-        await finishSystemAiTextAttempt(response.headers, { status: "failed", payload });
-        throw new GenerationSubmissionSafeFailure(error instanceof Error ? error.message : "Gemini 文本生成失败");
-    }
-    const content = parseGeminiContent(payload);
-    if (!content.trim()) {
-        await finishSystemAiTextAttempt(response.headers, { status: "failed", payload });
-        throw new GenerationSubmissionSafeFailure("Gemini 没有返回有效文本内容");
-    }
-    return { content, ...readBilling(response.headers), usageHeaders: response.headers, usagePayload: payload };
-}
-
-async function runClaudeTextTask(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol) {
-    const config = task.config;
-    const messages = toChatMessages(withSystemMessage(config, task.messages));
-    const system = messages
-        .filter((message) => message.role === "system")
-        .map((message) => readMessageText(message.content))
-        .join("\n\n");
-    const headers = taskHeaders(config, cookie, pointsIdempotencyKey(task, protocol));
-    headers.set("content-type", "application/json");
-    const response = await submissionFetch(config, taskUrl(config, protocol.path, origin), {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-            model: config.model,
-            max_tokens: requiredTextOutputLimit(config),
-            ...(system ? { system } : {}),
-            messages: messages.filter((message) => message.role !== "system"),
-        }),
-        cache: "no-store",
-    });
-    if (!response.ok) {
-        const message = await readFetchError(response, "文本生成失败");
-        throw new GenerationSubmissionSafeFailure(message, response.status);
-    }
-    const payload = await parseTextSubmissionJson<ClaudePayload>(task, response);
-    const content = payload.content
-        ?.map((item) => (item.type === "text" && typeof item.text === "string" ? item.text : ""))
-        .join("")
-        .trim();
-    if (!content) {
-        await finishSystemAiTextAttempt(response.headers, { status: "failed", payload });
-        throw new GenerationSubmissionSafeFailure(payload.error?.message || "Claude 没有返回有效文本内容");
-    }
-    return { content, ...readBilling(response.headers), usageHeaders: response.headers, usagePayload: payload };
-}
-
-async function completeTextTask(
-    task: TextTask,
-    content: string,
-    billing: { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string; usageHeaders?: Headers; usagePayload?: unknown },
-    attempts: NonNullable<TextTask["attempts"]>,
-): Promise<TextTaskStep> {
-    const succeeded = finishGenerationAttempt(attempts, task.attemptNo || attempts.at(-1)?.attemptNo || 1, {
-        status: "succeeded",
-        pointsCost: billing.pointsCost,
-        pointsRecordId: billing.pointsRecordId,
-    });
+async function completeTextTask(task: TextTask, content: string, billing: { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string; usageHeaders?: Headers; usagePayload?: unknown }): Promise<TextTaskStep> {
     const current = await getTextTask(task.id);
     if (!current || current.status === "cancelled") {
         if (current?.status === "cancelled" && current.billing?.pointsRecordId) await refundTextTask(current);
         else if (hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
-        return { state: "failed", error: current?.error || "文本任务已取消" };
+        return current ? cancelRunningTextTask(current, billing.usageHeaders) : { state: "failed", error: "文本任务已取消" };
     }
+    if (current.activeAttemptId !== task.activeAttemptId) return { state: "failed", error: "文本任务状态已变化" };
     const completed = await transitionTextTask(current, ["running"], {
         status: "success",
         result: { content: content || "没有返回内容" },
@@ -351,13 +326,17 @@ async function completeTextTask(
         config: clearSecret(current.config),
         billing: hasSystemAiCharge(billing) ? { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, refunded: false } : current.billing,
     });
-    await updateTextTask(task.id, { config: clearSecret(current.config), candidateConfigs: [], attempts: succeeded, attemptNo: task.attemptNo || succeeded.at(-1)?.attemptNo });
+    if (completed) {
+        await closeTextTaskAttempt(task.id, task.activeAttemptId!, "succeeded", { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId }, activeRevision(current));
+        await updateTextTask(task.id, { config: clearSecret(current.config), candidateConfigs: [] });
+        if (current.config.channelId) recordChannelRuntimeSuccess(current.config.channelId, "text");
+    }
     if (!completed && hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
     if (completed && billing.usageHeaders) await finishSystemAiTextAttempt(billing.usageHeaders, { status: "succeeded", payload: billing.usagePayload });
     return completed ? { state: "completed" } : { state: "failed", error: "文本任务状态已变化" };
 }
 
-async function failTextTask(task: TextTask, error: string, attempts: NonNullable<TextTask["attempts"]>): Promise<TextTaskStep> {
+async function failTextTask(task: TextTask, error: string): Promise<TextTaskStep> {
     const current = (await getTextTask(task.id)) || task;
     if (current.status === "success") return { state: "completed" };
     if (current.status === "cancelled") return { state: "failed", error: current.error || "文本任务已取消" };
@@ -366,20 +345,31 @@ async function failTextTask(task: TextTask, error: string, attempts: NonNullable
         await updateTextTask(current.id, { billing: { ...current.billing, refunded: true } });
     }
     const message = toSafeGenerationErrorMessage(error, "文本生成失败");
-    const failedAttempts = finishGenerationAttempt(attempts, current.attemptNo || attempts.at(-1)?.attemptNo || 1, {
-        status: "failed",
-        error: message,
-        pointsCost: current.billing?.pointsCost,
-        pointsRecordId: current.billing?.pointsRecordId,
-    });
+    if (current.activeAttemptId) await closeTextTaskAttempt(task.id, current.activeAttemptId, "failed", { error: message, pointsCost: current.billing?.pointsCost, pointsRecordId: current.billing?.pointsRecordId }, activeRevision(current));
     await transitionTextTask(current, ["pending", "running"], { status: "error", error: message, messages: [], config: clearSecret(current.config), billing: current.billing ? { ...current.billing, refunded: true } : undefined });
-    await updateTextTask(current.id, { config: clearSecret(current.config), candidateConfigs: [], attempts: failedAttempts, attemptNo: failedAttempts.at(-1)?.attemptNo });
+    await updateTextTask(current.id, { config: clearSecret(current.config), candidateConfigs: [] });
     await releaseUsageBillingForBusiness(current.userId, `text-task:${current.id}`, message);
     return { state: "failed", error: message };
 }
 
 export function markTextTaskFailed(task: TextTask, error: string) {
-    return failTextTask(task, error, task.attempts || []);
+    return failTextTask(task, error);
+}
+
+async function cancelRunningTextTask(task: TextTask, headers?: Headers): Promise<TextTaskStep> {
+    const cancelled = task.status === "cancelled" ? task : await transitionTextTask(task, ["pending", "running"], { status: "cancelled", error: "任务已取消", messages: [], config: clearSecret(task.config) });
+    if (!cancelled) return { state: "failed", error: "文本任务状态已变化" };
+    const closed = await closeTextTaskAttempt(task.id, task.activeAttemptId!, "cancelled", { error: "任务已取消" }, activeRevision(task));
+    if (closed) {
+        if (headers) await finishSystemAiTextAttempt(headers, { status: "canceled", reason: "任务已取消" });
+        else await releaseUsageBillingForBusiness(task.userId, `text-task:${task.id}`, "任务已取消");
+        await updateTextTask(task.id, { config: clearSecret(task.config), candidateConfigs: [] });
+    }
+    return { state: "failed", error: "任务已取消" };
+}
+
+function activeRevision(task: TextTask | null) {
+    return task?.attempts?.find((attempt) => attempt.id === task.activeAttemptId)?.revision;
 }
 
 function clearSecret(config: TextTaskConfig): TextTaskConfig {
@@ -428,60 +418,9 @@ function geminiTextContent(content: AiTextMessage["content"]) {
     return content.map((item) => (item.type === "text" ? item.text : item.image_url.url)).join("\n");
 }
 
-function parseOpenAiContent(payload: ResponseApiPayload) {
-    return (
-        payload.output_text ||
-        payload.output
-            ?.flatMap((item) => (item.type === "message" ? item.content || [] : []))
-            .map((item) => item.text || "")
-            .join("") ||
-        ""
-    );
-}
-
-function parseChatCompletionContent(payload: ChatCompletionPayload) {
-    return payload.choices?.map((choice) => readChatContent(choice.message?.content)).join("") || "";
-}
-
-function readChatContent(content?: string | Array<{ type?: string; text?: string }>) {
-    if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return "";
-    return content.map((item) => item.text || "").join("");
-}
-
-function parseGeminiContent(payload: GeminiPayload) {
-    return (
-        payload.candidates
-            ?.flatMap((candidate) => candidate.content?.parts || [])
-            .map((part) => part.text || "")
-            .join("") || ""
-    );
-}
-
-function validateResponsePayload(payload: ResponseApiPayload) {
-    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "请求失败");
-    if (payload.error?.message) throw new Error(payload.error.message);
-}
-
-function validateChatCompletionPayload(payload: ChatCompletionPayload) {
-    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "请求失败");
-    if (payload.error?.message) throw new Error(payload.error.message);
-}
-
-function validateGeminiPayload(payload: GeminiPayload) {
-    if (payload.error?.message) throw new Error(payload.error.message);
-    if (payload.promptFeedback?.blockReason) throw new Error(`Gemini 拒绝了本次请求：${payload.promptFeedback.blockReason}`);
-}
-
 async function readFetchError(response: Response, fallback: string) {
-    const text = await response.text();
-    if (!text) return readStatusError(response.status, fallback);
-    try {
-        const payload = JSON.parse(text) as { error?: { message?: string }; msg?: string; response?: { error?: { message?: string } } };
-        return payload.msg || payload.error?.message || payload.response?.error?.message || readStatusError(response.status, fallback);
-    } catch {
-        return text.slice(0, 300) || readStatusError(response.status, fallback);
-    }
+    await response.body?.cancel();
+    return readStatusError(response.status, fallback);
 }
 
 function readStatusError(status: number | undefined, fallback: string) {
@@ -565,12 +504,6 @@ async function parseTextSubmissionJson<T>(task: TextTask, response: Response): P
 async function persistTextResponseBilling(task: TextTask, headers: Headers) {
     const billing = readSystemAiBilling(headers);
     if (hasSystemAiCharge(billing)) await updateTextTask(task.id, { billing: { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, refunded: false } });
-}
-
-function geminiHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKey?: string | SystemAiUsageContextDraft) {
-    const headers = taskHeaders(config, cookie, pointsIdempotencyKey);
-    headers.set("content-type", "application/json");
-    return headers;
 }
 
 function pointsIdempotencyKey(task: TextTask, protocol: ResolvedTextProtocol) {
