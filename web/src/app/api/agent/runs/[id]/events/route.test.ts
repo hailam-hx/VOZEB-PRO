@@ -85,6 +85,18 @@ describe("Agent Run SSE", () => {
         expect(mocks.listCreativeRunEvents).toHaveBeenCalledWith("run", "11");
     });
 
+    it("wakes persisted cancellation recovery while a text parent is paused", async () => {
+        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "paused", cancellation: { requestedAt: 1, pendingChildTaskIds: ["text"] }, tasks: [], updatedAt: 4 });
+        mocks.listCreativeRunEvents.mockResolvedValue([]);
+        mocks.recover.mockResolvedValue({});
+        const controller = new AbortController();
+        const response = await GET(new Request("http://localhost/api/agent/runs/run/events", { signal: controller.signal }), { params: Promise.resolve({ id: "run" }) });
+        const reader = response.body!.getReader();
+        await reader.read();
+        controller.abort();
+        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["run"] }));
+    });
+
     it("does not expose internal prompts, results, review details or execution identity", async () => {
         mocks.getAgentRun.mockResolvedValue({
             id: "run",

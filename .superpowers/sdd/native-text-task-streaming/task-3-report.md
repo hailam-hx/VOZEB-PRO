@@ -84,3 +84,44 @@ The first also fails when run alone; the failure is absent downstream creation a
 - Root/Task 4 owns aggregate build, full quality gates, UTF-8 release verification, and desktop/mobile browser checks including `/create` and Canvas. This subtask has component markup and jsdom hook coverage, not a completed real-browser layout matrix.
 - Tests used in-memory/file-store test adapters, fake EventSource, and local stream/TCP fixtures. There were no configured upstream calls and no live-provider billing.
 - The abort registry coordinates route/runtime module instances inside one process; durable cancellation remains the cross-process state authority.
+
+## Review fix round 1 — integration and replay
+
+All four review findings are addressed. This round used receiving-code-review, systematic-debugging, TDD, and verification-before-completion: controlled failing interleavings were reproduced before the corresponding production fixes, followed by focused and broader verification. No subagents or real providers were used.
+
+### Corrections
+
+1. **Cross-attempt reconciliation ordering.** The shared tracker records local observation checkpoints. An asynchronous API reconciliation captures its checkpoint before reading; if a newer observation overtakes it, the stale read cannot replace/retire the active attempt. Both watchers also ignore that read's obsolete terminal run status, so it cannot close the new attempt's stream. Ordered SSE snapshots use the current checkpoint. These are private client bookkeeping values, not new public fields or SSE IDs.
+2. **Independent visible snapshot restoration.** Retained visible text merges by its own attempt/revision, independently of the active attempt's revision. Replaying retry start at revision 0 no longer prevents restoration of the old partial. Once the active attempt has nonempty text, an older attempt's visible snapshot cannot replace it.
+3. **Durable terminal readiness.** TextTask GET and accepted cancellation PATCH remain publicly nonterminal until the existing persisted execution phase reaches `completed`. Task payload termination, writer flushing, authoritative attempt closure and AgentRun mirroring can therefore finish before parent polling observes terminal. Cancellation retains the active worker lease; another recovery worker cannot close the attempt before its writer has a chance to flush. Scheduler eligibility now includes terminal TextTasks whose execution phase is unfinished, so interruption between payload termination and publication is recoverable after lease expiry. No synthetic revision, process-only completion barrier, new polling interval or retry count was introduced.
+4. **Interrupted recovery reconciliation.** Submission-interrupted, exception, already-terminal and cancelled recovery exits close any still-open authoritative terminal attempt and mirror its retained partial/terminal revision before releasing the completed phase. A failed ownership CAS cannot authorize closing a newer still-running attempt.
+
+The durable readiness boundary also exposed the existing parent cancel handler's manual-reconfirm behavior. At root's direction this round adds automatic single-request cancellation for runs cancelling text children. The persisted paused parent receives a `cancel_requested` schedule; its recovery confirms/delivers outstanding cancellation intent, advances only cancelled/terminal children, checks their durable readiness, and finalizes the run. It cannot accidentally start an unsubmitted generation while trying to cancel it. Existing scheduler backoff/batching and SSE wakeups are reused, and old executor releases cannot overwrite the cancellation phase. Media-only cancellation response behavior and all media retry behavior remain unchanged.
+
+### RED / GREEN evidence
+
+| Regression | Observed RED before fix | GREEN evidence |
+| --- | --- | --- |
+| Delayed snapshot after new attempt event | Tracker adopted old attempt and stopped accepting current content | Shared tracker and API replay suites pass |
+| Retry-start revision 0 followed by retained-partial snapshot | Missing retained partial; Canvas callback received no text | Helper and Canvas restore tests pass |
+| Delayed failed API read after retry begins | Watcher closed before receiving new text | Both watcher reconciliation paths reject superseded termination; API running/failed variants pass |
+| Public terminal before publication, unfinished terminal recovery, interrupted exit mirroring | Combined route/scheduler/recovery run: **10 failed, 32 passed**; raw terminal returned, terminal tasks not claimed, mirror not called | GET covers success/error/cancelled; recovery pauses publication and proves no completed lease release yet |
+| Failure loses ownership to newer running attempt | Recovery still closed/mirrored it and completed its lease | Recovery rejects stale cleanup without closing, mirroring or releasing |
+| Single cancellation needs automatic parent finalization | **2 failures**: paused cancellation not claimable and child publication never reached | One real cancel Route Handler call plus controlled recovery reaches final cancelled run only after the child publication promise resolves |
+| Old worker release overwrites cancellation phase | Non-cancellation release cleared the persisted cancellation schedule | Scheduler requires cancellation-authorized release for that phase |
+| Delayed cancellation delivery | Cancellation recovery called the generation runtime for a pending child | Recovery sends cancellation first; generation runtime is never invoked |
+
+Additional controlled integration checks exercise native TextTask runtime success/error/cancelled publication pauses through the real public GET handler. The parent executor then verifies that the public nonterminal phase cannot terminate the run, and its terminal event follows the text publication readiness boundary.
+
+### Final verification for this round
+
+All commands ran from `web` using `PATH=/Users/jake/.nvm/versions/node/v22.23.2/bin:$PATH`.
+
+- The 19-file focused command above, plus `src/lib/server/generation-task-store.test.ts` and `src/lib/server/generation-task-scheduler.test.ts`: **21 files, 265 tests passed**.
+- `npm test -- src/lib/server/agent-run-executor.test.ts -t 'publication readiness|restarts a failed text'`: **4 passed**.
+- Full `npm test -- src/lib/server/agent-run-executor.test.ts`: **68 passed, the same 4 baseline failures** listed above. Those tests and planner production behavior were not modified.
+- `npm run typecheck`: **passed**.
+- ESLint of all 21 changed TypeScript source/test files: **0 errors, 9 existing unused-variable warnings**. Their locations are outside this round's changed lines; they were left untouched.
+- Prettier applied to changed files; `git diff --check`: **passed**.
+
+The browser gap is unchanged: this round verifies EventSource consumers, components, public endpoints, real runtime interleavings and scheduler/recovery fixtures, but does not claim the desktop/390px/430px `/create` and Canvas live-browser matrix. Root/Task 4 owns that aggregate matrix and full release gates. PostgreSQL query contracts are covered with mocked query assertions; this round did not run a live PostgreSQL database or external upstream.

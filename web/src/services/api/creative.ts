@@ -218,10 +218,13 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
             return;
         }
         try {
+            const textCheckpoint = textTasks.checkpoint();
             const run = await getCreativeAgentRun(runId);
             if (settled) return;
+            const superseded = textTasks.checkpoint() !== textCheckpoint;
+            textTasks.restore(run.tasks, textCheckpoint);
+            if (superseded) return publishStatus(copy.runningInBackground);
             handlers.onStatus?.(run.status);
-            textTasks.restore(run.tasks);
             publishConversation(run.conversationReply);
             if (run.status === "completed") return finish("completed", run.conversationReply);
             if (run.status === "failed") return finish("failed", run.conversationReply || run.tasks.find((task) => task.status === "failed")?.error || copy.failed);
@@ -284,7 +287,7 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
     listen("run.failed", ({ data }) => finish("failed", text(data?.message) || copy.failed));
     listen("run.cancelled", () => finish("cancelled", copy.cancelled));
     listen("run.snapshot", (payload) => {
-        textTasks.restore(payload.tasks);
+        textTasks.restore(payload.tasks, textTasks.checkpoint());
         if (payload.status && ["planning", "running", "paused", "completed", "failed", "cancelled"].includes(payload.status)) handlers.onStatus?.(payload.status as CreativeAgentRun["status"]);
         publishConversation(payload.conversationReply);
         if (payload.status === "completed") finish("completed", payload.conversationReply);

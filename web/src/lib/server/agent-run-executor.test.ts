@@ -432,6 +432,22 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.tasks[0]).toMatchObject({ status: "completed", taskId: "text-existing", result: { content: "重试后完成的文章" } });
     });
 
+    it.each(["success", "error", "cancelled"])("does not terminate a text parent before the %s publication readiness boundary", async (status) => {
+        mocks.run = runWithTasks([{ id: "article", title: "文章", type: "text", model: "planner", prompt: "写文章", count: 1, dependencies: [], status: "running", attempts: 1, taskId: "text-existing" }]);
+        mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
+        let published = false;
+        mocks.fetchInternalApi.mockImplementation(async () => Response.json({ task: { status: published ? status : "running", executionPhase: published ? "completed" : "submitting", result: published ? { content: "最终公开正文" } : undefined } }));
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+        expect(mocks.run?.status).toBe("running");
+        expect(mocks.events.some((event) => ["run.completed", "run.failed", "run.cancelled"].includes(event.type))).toBe(false);
+        mocks.events.push({ type: "task.text.updated", data: { content: "最终公开正文", revision: 2, status: status === "success" ? "completed" : status === "error" ? "failed" : "cancelled" } });
+        published = true;
+        await executeAgentRun(mocks.run!, "http://localhost", "session=test");
+        expect(mocks.run?.status).toBe(status === "success" ? "completed" : "failed");
+        const terminal = mocks.events.findIndex((event) => ["run.completed", "run.failed", "run.cancelled"].includes(event.type));
+        expect(terminal).toBeGreaterThan(mocks.events.findIndex((event) => event.type === "task.text.updated"));
+    });
+
     it("keeps polling an existing manual child after the selected model is disabled", async () => {
         mocks.run = {
             ...runWithTasks([{ ...imageTask("manual-existing"), model: "image-low", status: "running", attempts: 1, taskId: "child-manual-existing" }]),

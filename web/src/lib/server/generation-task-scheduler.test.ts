@@ -72,6 +72,24 @@ describe("generation task scheduler", () => {
         await expect(claimDueGenerationTasks({ workerId: "review-worker", now: 1_000 })).resolves.toEqual([expect.objectContaining({ id: "review", status: "success", executionPhase: "review_pending" })]);
     });
 
+    it("recovers a paused Agent only for a persisted cancellation request", async () => {
+        mocks.records = [
+            { ...record("cancel-agent", 900), type: "agent", status: "paused", executionPhase: "cancel_requested", payload: { cancellation: { pendingChildTaskIds: ["text"] } } },
+            { ...record("paused-agent", 900), type: "agent", status: "paused", executionPhase: "polling" },
+        ];
+        expect((await claimDueGenerationTasks({ workerId: "worker", now: 1_000 })).map((task) => task.id)).toEqual(["cancel-agent"]);
+        expect(await releaseGenerationTaskLease("agent", "cancel-agent", "worker", { executionPhase: "completed", nextPollAt: undefined })).toBeNull();
+        expect(await releaseGenerationTaskLease("agent", "cancel-agent", "worker", { executionPhase: "completed", nextPollAt: undefined }, { cancellation: true })).not.toBeNull();
+    });
+
+    it.each(["success", "error", "cancelled"])("recovers unpublished terminal text %s only after its worker lease expires", async (status) => {
+        mocks.records = [{ ...record("text", 900), type: "text", status, executionPhase: "submitting", workerId: "interrupted", leaseUntil: 2_000 }];
+        expect(await claimDueGenerationTasks({ workerId: "recovery", now: 1_000 })).toEqual([]);
+        expect(await claimDueGenerationTasks({ workerId: "recovery", now: 2_001 })).toEqual([expect.objectContaining({ id: "text", status })]);
+        await releaseGenerationTaskLease("text", "text", "recovery", { executionPhase: "completed", nextPollAt: undefined });
+        expect(await claimDueGenerationTasks({ workerId: "recovery", now: 100_000 })).toEqual([]);
+    });
+
     it("claims a due voice cloning task", async () => {
         mocks.records = [{ ...record("voice-clone", 900), type: "voice-clone", status: "pending", executionPhase: "created" }];
 
@@ -87,6 +105,8 @@ describe("generation task scheduler", () => {
         await releaseGenerationTaskLease("image", "due", "worker-one", { executionPhase: "polling", nextPollAt: 2_000 });
 
         expect(String(mocks.transactionQuery.mock.calls[0]?.[0])).toContain("FOR UPDATE SKIP LOCKED");
+        expect(String(mocks.transactionQuery.mock.calls[0]?.[0])).toContain("task_type = 'text' AND status IN ('success', 'error', 'cancelled')");
+        expect(String(mocks.transactionQuery.mock.calls[0]?.[0])).toContain("status = 'paused' AND execution_phase = 'cancel_requested'");
         expect(mocks.transactionQuery.mock.calls[0]?.[1]).toEqual([new Date(1_000), 20, "worker-one", ["due"], new Date(91_000)]);
         expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("worker_id = $3");
         expect(mocks.postgresQuery.mock.calls[0]?.[1]).toHaveLength(14);

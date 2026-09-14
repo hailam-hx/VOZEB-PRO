@@ -94,7 +94,8 @@ async function cancelAgentRun(request: Request, run: AgentRun) {
     );
     if (!stopping) return NextResponse.json({ code: 409, data: null, msg: "Agent 状态已变化，请刷新后重试" }, { status: 409 });
     abortAgentRun(run.id);
-    await scheduleGenerationTask("agent", stopping.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "cancel_requested" });
+    const recoverCancellation = children.some((child) => child.type === "text");
+    await scheduleGenerationTask("agent", stopping.id, { executionPhase: recoverCancellation ? "cancel_requested" : "completed", nextPollAt: recoverCancellation ? Date.now() : undefined, lastUpstreamStatus: "cancel_requested" }, { cancellation: true });
 
     const results = await Promise.all(children.map((child) => cancelChildTask(child, origin, cookie)));
     const pending = results.filter((result) => !result.confirmed);
@@ -106,13 +107,17 @@ async function cancelAgentRun(request: Request, run: AgentRun) {
             { type: "run.cancel.pending", data: { pendingTaskIds: pending.map((result) => result.taskId) } },
             ["paused"],
         );
+        if (recoverCancellation) {
+            after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [run.id] }));
+            return NextResponse.json({ code: 0, data: { run: publicAgentRun(updated || stopping), pendingCount: pending.length }, msg: "任务正在取消" });
+        }
         return NextResponse.json({ code: 502, data: { run: publicAgentRun(updated || stopping), pendingCount: pending.length }, msg: "部分子任务取消状态尚未确认，请稍后再次取消" }, { status: 502 });
     }
 
     const latest = (await getAgentRun(run.id)) || stopping;
     const cancelled = await setAgentRunStatus(latest, "cancelled");
     if (!cancelled) return NextResponse.json({ code: 409, data: null, msg: "Agent 状态已变化，请刷新后重试" }, { status: 409 });
-    await scheduleGenerationTask("agent", cancelled.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "cancel" });
+    await scheduleGenerationTask("agent", cancelled.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "cancel" }, { cancellation: true });
     return NextResponse.json({ code: 0, data: { run: publicAgentRun(cancelled) }, msg: "OK" });
 }
 

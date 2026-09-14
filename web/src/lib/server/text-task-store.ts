@@ -175,7 +175,7 @@ export function transitionTextTask(
 ) {
     const next = { ...patch, ...(["success", "error", "cancelled"].includes(patch.status) ? { milestones: { ...task.milestones, task_completed: Date.now() } } : {}) };
     const revision = task.attempts?.find((attempt) => attempt.id === task.activeAttemptId)?.revision;
-    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, next, GENERATION_TASK_RETENTION_MS, executionPatch, { activeAttemptId: task.activeAttemptId, revision });
+    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, next, GENERATION_TASK_RETENTION_MS, executionPatch, { activeAttemptId: task.activeAttemptId, revision }, patch.status === "cancelled");
 }
 
 export function touchTextTask(id: string) {

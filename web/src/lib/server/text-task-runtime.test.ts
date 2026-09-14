@@ -13,12 +13,18 @@ const mocks = vi.hoisted(() => ({
     releaseUsage: vi.fn(),
     attachUpstream: vi.fn(),
     mutateTask: vi.fn(),
+    getSchedule: vi.fn(),
+    currentUser: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.schedule }));
-vi.mock("@/lib/server/generation-task-store", () => ({ mutateStoredGenerationTask: mocks.mutateTask }));
+vi.mock("@/lib/server/generation-task-store", () => ({ mutateStoredGenerationTask: mocks.mutateTask, getStoredGenerationTaskRecord: mocks.getSchedule }));
+vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.currentUser }));
+vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: vi.fn() }));
+vi.mock("@/lib/server/points-response", () => ({ pointsResponseHeaders: () => new Headers() }));
+vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: vi.fn() }));
 vi.mock("@/lib/server/text-task-store", async (importOriginal) => ({
     ...(await importOriginal<typeof import("./text-task-store")>()),
     getTextTask: mocks.getTask,
@@ -36,6 +42,7 @@ import { maintenanceWorkerContext } from "./maintenance-auth";
 import { markTextTaskFailed, runTextTaskStep, taskHeaders } from "./text-task-runtime";
 import { cancelTextTaskAttempt } from "./text-task-stream-control";
 import { acceptTextTaskSnapshot, closeTextTaskAttempt, openTextTaskAttempt, type TextTask, type TextTaskConfig } from "./text-task-store";
+import { GET as readPublicTextTask } from "@/app/api/text-tasks/[id]/route";
 
 describe("text task runtime recovery", () => {
     let state: TextTask;
@@ -43,6 +50,8 @@ describe("text task runtime recovery", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         state = textTask(customConfig("channel-one", "https://one.example"));
+        mocks.currentUser.mockResolvedValue({ id: state.userId, role: "user" });
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "submitting" });
         mocks.getTask.mockImplementation(async () => state);
         mocks.mutateTask.mockImplementation(async (_type: string, _id: string, _ttl: number, mutate: (task: TextTask) => TextTask | null) => {
             const next = mutate(state);
@@ -130,6 +139,41 @@ describe("text task runtime recovery", () => {
         expect(lifecycle.map((task) => task.attempts!.at(-1)!.status)).toEqual(["running", "succeeded"]);
         expect(lifecycle[0].attempts![0]).toMatchObject({ revision: 0, content: "" });
         expect(lifecycle[1].attempts![0].revision).toBe(state.visibleTextSnapshot!.revision);
+    });
+
+    it.each(["success", "error", "cancelled"])("keeps parent polling nonterminal while %s publication is suspended", async (status) => {
+        state = textTask(openAiConfig("one", "https://one.example"));
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(chatFrame("公开正文") + (status === "error" ? 'data: {"error":{"message":"fixture failure"}}\n\n' : "data: [DONE]\n\n"))));
+        let release!: () => void;
+        let reached!: () => void;
+        const publication = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const reachedPublication = new Promise<void>((resolve) => {
+            reached = resolve;
+        });
+        const execution = runTextTaskStep(state, "http://localhost", "", {
+            onSnapshot(task) {
+                if (status === "cancelled") cancelTextTaskAttempt(task.id, task.activeAttemptId!);
+            },
+            async onAttemptState(task) {
+                if (task.attempts?.at(-1)?.status !== "running") {
+                    reached();
+                    await publication;
+                }
+            },
+        });
+        await reachedPublication;
+        const read = async () => (await (await readPublicTextTask(new Request(`http://localhost/api/text-tasks/${state.id}`), { params: Promise.resolve({ id: state.id }) })).json()).task;
+        try {
+            expect((await read()).status).toBe("running");
+            expect(state.visibleTextSnapshot?.content).toBe("公开正文");
+        } finally {
+            release();
+            await execution;
+        }
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "completed" });
+        expect((await read()).status).toBe(status);
     });
 
     it("publishes incremental snapshots before EOF with stable execution identity", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentTextStatusText, applyAgentTextEvent, type AgentTextState } from "./agent-text-stream";
+import { agentTextStatusText, applyAgentTextEvent, createAgentTextTracker, type AgentTextState } from "./agent-text-stream";
 
 describe("Agent text snapshot replay", () => {
     const frame = (attemptId: string, revision: number, content: string, status = "streaming") => ({ runId: "run", taskId: "child", parentTaskId: "parent", attemptId, revision, content, status });
@@ -24,5 +24,26 @@ describe("Agent text snapshot replay", () => {
 
     it("labels cancellation immediately even while the attempt's final snapshot is flushing", () => {
         expect(agentTextStatusText({ textStatus: "streaming" }, "cancelled", "en")).toBe("The Agent task was cancelled.");
+    });
+
+    it("does not retire an unseen current attempt when an older restore arrives after its event", () => {
+        const states: AgentTextState[] = [];
+        const tracker = createAgentTextTracker("run", (_id, state) => states.push(state));
+        tracker.event(frame("current", 0, ""), true);
+        tracker.restore([{ id: "parent", type: "text", activeAttemptId: "old", textRevision: 8, visibleTextSnapshot: { attemptId: "old", revision: 8, content: "旧内容", status: "failed" } }]);
+        tracker.event(frame("current", 1, "新内容"));
+        expect(states.at(-1)).toMatchObject({ activeAttemptId: "current", visibleTextSnapshot: { content: "新内容" } });
+        expect(states.some((state) => state.activeAttemptId === "old")).toBe(false);
+    });
+
+    it("restores an independently versioned old partial at the same retry revision", () => {
+        const states: AgentTextState[] = [];
+        const tracker = createAgentTextTracker("run", (_id, state) => states.push(state));
+        tracker.event(frame("retry", 0, ""), true);
+        tracker.restore([{ id: "parent", type: "text", activeAttemptId: "retry", textRevision: 0, visibleTextSnapshot: { attemptId: "old", revision: 8, content: "保留的旧内容", status: "failed" } }]);
+        expect(states.at(-1)).toMatchObject({ activeAttemptId: "retry", textRevision: 0, visibleTextSnapshot: { attemptId: "old", content: "保留的旧内容" } });
+        tracker.event(frame("retry", 1, "新内容"));
+        tracker.restore([{ id: "parent", type: "text", activeAttemptId: "retry", textRevision: 0, visibleTextSnapshot: { attemptId: "old", revision: 9, content: "迟到旧内容", status: "failed" } }]);
+        expect(states.at(-1)?.visibleTextSnapshot?.content).toBe("新内容");
     });
 });

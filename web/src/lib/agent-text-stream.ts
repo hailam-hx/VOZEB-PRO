@@ -1,3 +1,6 @@
+import { agentRunCopy } from "@/lib/agent-run-copy";
+import type { AppLocale } from "@/i18n/config";
+
 export type AgentTextSnapshot = { attemptId: string; revision: number; content: string; status: "streaming" | "completed" | "failed" | "cancelled" };
 export type AgentTextState = { activeAttemptId?: string; textRevision?: number; textStatus?: AgentTextSnapshot["status"]; visibleTextSnapshot?: AgentTextSnapshot };
 export type AgentTextEvent = AgentTextSnapshot & { runId: string; taskId: string; parentTaskId: string };
@@ -23,6 +26,8 @@ export function applyAgentTextEvent<T extends AgentTextState>(state: T, value: u
 export function createAgentTextTracker(runId: string, onChange?: (parentTaskId: string, state: AgentTextState) => void) {
     const states = new Map<string, AgentTextState>();
     const retired = new Map<string, Set<string>>();
+    const observations = new Map<string, number>();
+    let checkpoint = 0;
     const publish = (id: string, next: AgentTextState) => {
         const current = states.get(id);
         if (next === current) return;
@@ -32,9 +37,11 @@ export function createAgentTextTracker(runId: string, onChange?: (parentTaskId: 
             retired.set(id, ids);
         }
         states.set(id, next);
+        observations.set(id, ++checkpoint);
         onChange?.(id, next);
     };
     return {
+        checkpoint: () => checkpoint,
         event(value: unknown, started = false) {
             if (!value || typeof value !== "object") return;
             const event = value as AgentTextEvent;
@@ -44,17 +51,24 @@ export function createAgentTextTracker(runId: string, onChange?: (parentTaskId: 
             const next = applyAgentTextEvent(base, event);
             if (next !== base) publish(event.parentTaskId, next);
         },
-        restore(tasks?: Array<AgentTextState & { id: string; type?: string; status?: string }>) {
+        restore(tasks?: Array<AgentTextState & { id: string; type?: string; status?: string }>, observedAt = 0) {
             for (const task of tasks || []) {
                 if (task.type !== "text" || !task.activeAttemptId || retired.get(task.id)?.has(task.activeAttemptId)) continue;
                 const current = states.get(task.id);
-                if (current?.activeAttemptId === task.activeAttemptId && (current.textRevision ?? -1) >= (task.textRevision ?? -1)) continue;
-                const { activeAttemptId, textRevision, visibleTextSnapshot } = task;
+                const sameAttempt = current?.activeAttemptId === task.activeAttemptId;
+                // A read started before a newer observation cannot change attempt identity.
+                if (current && !sameAttempt && (observations.get(task.id) || 0) > observedAt) continue;
+                const { activeAttemptId, textRevision } = task;
                 const textStatus = task.textStatus || (task.status === "failed" || task.status === "cancelled" || task.status === "completed" ? task.status : "streaming");
-                publish(task.id, { activeAttemptId, textRevision, textStatus, visibleTextSnapshot: visibleTextSnapshot || current?.visibleTextSnapshot });
+                let next = sameAttempt && (current.textRevision ?? -1) >= (textRevision ?? -1) ? current : { activeAttemptId, textRevision, textStatus, visibleTextSnapshot: current?.visibleTextSnapshot };
+                const visible = task.visibleTextSnapshot;
+                const previous = next.visibleTextSnapshot;
+                // Retained text has its own attempt/revision, independent of the active revision.
+                if (visible?.content && (!previous || (visible.attemptId === previous.attemptId && visible.revision > previous.revision) || (visible.attemptId === activeAttemptId && previous.attemptId !== activeAttemptId))) {
+                    next = { ...next, visibleTextSnapshot: visible };
+                }
+                publish(task.id, next);
             }
         },
     };
 }
-import { agentRunCopy } from "@/lib/agent-run-copy";
-import type { AppLocale } from "@/i18n/config";

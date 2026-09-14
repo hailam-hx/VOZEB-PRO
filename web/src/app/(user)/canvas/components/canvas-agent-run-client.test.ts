@@ -60,6 +60,29 @@ describe("Canvas Agent 事件流", () => {
         expect(content).toEqual(["正文", "正文部分"]);
     });
 
+    it("restores the retained partial after replaying the same retry start revision", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const content: string[] = [];
+        const promise = watchCanvasAgentRun("run", {
+            onPlan: () => undefined,
+            onAssistant: () => undefined,
+            onStage: () => undefined,
+            onPaused: () => undefined,
+            onOps: () => undefined,
+            onTextTask: (_id, state) => {
+                if (state.visibleTextSnapshot) content.push(state.visibleTextSnapshot.content);
+            },
+        });
+        FakeEventSource.instance.emit("task.attempt.started", { data: { runId: "run", parentTaskId: "parent", taskId: "child", attemptId: "retry", revision: 0, content: "", status: "streaming" } });
+        FakeEventSource.instance.emit("run.snapshot", {
+            status: "running",
+            tasks: [{ id: "parent", type: "text", status: "running", activeAttemptId: "retry", textRevision: 0, visibleTextSnapshot: { attemptId: "old", revision: 2, content: "保留的旧正文", status: "failed" } }],
+        });
+        FakeEventSource.instance.emit("run.failed", {});
+        await promise;
+        expect(content).toEqual(["保留的旧正文"]);
+    });
+
     it("reports thinking stages and the final returned message", async () => {
         vi.stubGlobal("EventSource", FakeEventSource);
         const stages: CanvasAgentRunStage[] = [];

@@ -539,6 +539,7 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
     ttlMs: number,
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
     attemptGuard?: { activeAttemptId?: string; revision?: number },
+    preserveExecutionLease = false,
 ): Promise<T | null> {
     const updatedAt = Date.now();
     const nextPatch = { ...patch, updatedAt };
@@ -558,8 +559,8 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
                  last_poll_at = CASE WHEN $9::boolean THEN COALESCE($17, last_poll_at) ELSE last_poll_at END,
                  last_upstream_status = CASE WHEN $9::boolean THEN COALESCE($18, last_upstream_status) ELSE last_upstream_status END,
                  result_payload = CASE WHEN $9::boolean THEN COALESCE($19::jsonb, result_payload) ELSE result_payload END,
-                 worker_id = CASE WHEN $9::boolean THEN NULL ELSE worker_id END,
-                 lease_until = CASE WHEN $9::boolean THEN NULL ELSE lease_until END
+                 worker_id = CASE WHEN $9::boolean AND NOT $23::boolean THEN NULL ELSE worker_id END,
+                 lease_until = CASE WHEN $9::boolean AND NOT $23::boolean THEN NULL ELSE lease_until END
              WHERE id = $1 AND task_type = $2 AND user_id = $3 AND status = ANY($4::text[]) AND expires_at > now()
                AND (NOT $20::boolean OR ((payload->>'activeAttemptId') IS NOT DISTINCT FROM $21::text
                  AND ($21::text IS NULL OR EXISTS (
@@ -590,6 +591,7 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
                 Boolean(attemptGuard),
                 attemptGuard?.activeAttemptId || null,
                 attemptGuard?.revision ?? null,
+                preserveExecutionLease,
             ],
         );
         return result.rows[0]?.payload || null;
@@ -611,7 +613,7 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
                 updatedAt,
                 expiresAt: updatedAt + ttlMs,
                 ...(execution ? applyExecutionPatch(execution) : {}),
-                ...(execution ? { workerId: undefined, leaseUntil: undefined } : {}),
+                ...(execution && !preserveExecutionLease ? { workerId: undefined, leaseUntil: undefined } : {}),
             };
         }),
     );

@@ -58,6 +58,48 @@ describe("统一创作 Agent 事件流", () => {
         expect(states.map((state) => state.visibleTextSnapshot?.content)).toEqual(["已保存部分", "已保存部分", "新的正文"]);
     });
 
+    it.each(["running", "failed"])("does not replace or terminate a new attempt with an older in-flight %s reconciliation", async (status) => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        let finishRead!: (response: Response) => void;
+        let readStarted!: () => void;
+        const reading = new Promise<void>((resolve) => {
+            readStarted = resolve;
+        });
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(() => {
+                readStarted();
+                return new Promise<Response>((resolve) => {
+                    finishRead = resolve;
+                });
+            }),
+        );
+        const states: Array<{ activeAttemptId?: string; visibleTextSnapshot?: { content: string } }> = [];
+        let reconciled!: () => void;
+        const reconciliationFinished = new Promise<void>((resolve) => {
+            reconciled = resolve;
+        });
+        const onTerminal = vi.fn(() => reconciled());
+        const stop = watchCreativeAgentRun("run", {
+            onProgress: (message) => {
+                if (message === "任务仍在后台运行，正在恢复连接") reconciled();
+            },
+            onTerminal,
+            onConnectionError: () => undefined,
+            onTextTask: (_id, state) => states.push(state),
+        });
+        FakeEventSource.instance.onerror?.();
+        await reading;
+        FakeEventSource.instance.emit("task.attempt.started", { data: { runId: "run", taskId: "child", parentTaskId: "parent", attemptId: "new", revision: 0, content: "", status: "streaming" } });
+        finishRead(Response.json({ code: 0, data: { run: { status, tasks: [{ id: "parent", type: "text", activeAttemptId: "old", textRevision: 2, visibleTextSnapshot: { attemptId: "old", revision: 2, content: "旧内容", status: "failed" } }] } } }));
+        await reconciliationFinished;
+        FakeEventSource.instance.emit("task.text.updated", { data: { runId: "run", taskId: "child", parentTaskId: "parent", attemptId: "new", revision: 1, content: "新的正文", status: "streaming" } });
+        expect(states.at(-1)).toMatchObject({ activeAttemptId: "new", visibleTextSnapshot: { content: "新的正文" } });
+        expect(states.some((state) => state.activeAttemptId === "old")).toBe(false);
+        expect(onTerminal).not.toHaveBeenCalled();
+        stop();
+    });
+
     it("returns planning, task and final replies to one conversation", () => {
         vi.stubGlobal("EventSource", FakeEventSource);
         const progress: string[] = [];

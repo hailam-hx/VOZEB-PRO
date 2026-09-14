@@ -80,7 +80,8 @@ describe("mutateStoredGenerationTask", () => {
         expect(sql).toContain("payload->>'activeAttemptId'");
         expect(sql).toContain("(attempt->>'revision')::numeric = $22::numeric");
         expect(sql).toContain("execution_phase =");
-        expect(values?.slice(-3)).toEqual([true, "attempt-one", 2]);
+        expect(values?.slice(-4)).toEqual([true, "attempt-one", 2, false]);
+        expect(sql).toContain("$9::boolean AND NOT $23::boolean");
     });
 
     it("removes only one stable bounded batch of expired file tasks", async () => {

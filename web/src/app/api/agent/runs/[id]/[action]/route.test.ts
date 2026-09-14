@@ -221,7 +221,7 @@ describe("Agent Run resume concurrency", () => {
         expect(response.status).toBe(502);
         await expect(response.json()).resolves.toMatchObject({ data: { run: { status: "paused", cancellation: { pendingCount: 1 } }, pendingCount: 1 } });
         expect(mocks.setAgentRunStatus).not.toHaveBeenCalled();
-        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "cancel_requested" }));
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "cancel_requested" }), { cancellation: true });
     });
 
     it("confirms an already accepted child cancellation through GET on retry", async () => {

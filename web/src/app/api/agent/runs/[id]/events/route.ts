@@ -73,7 +73,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
                         close();
                         return;
                     }
-                    if (current.status === "planning" || current.status === "running") wakeRecovery();
+                    if (current.status === "planning" || current.status === "running" || (current.status === "paused" && current.cancellation)) wakeRecovery();
                     await waitForCreativeRunEvent(run.id, 2_500, request.signal);
                     current = await getAgentRun(run.id);
                     if (!closed && Date.now() - lastHeartbeatAt >= 15_000) {

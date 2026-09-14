@@ -9,13 +9,15 @@ import { createVoiceCloneUpstreamStep, markVoiceCloneFailed, queryVoiceCloneUpst
 import { getVoiceCloneTask } from "@/lib/server/voice-profile-store";
 import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResult, queryCancelledImageTaskUpstreamStep, queryImageTaskUpstreamStep } from "@/lib/server/image-task-runtime";
 import { getImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
-import { getTextTask, updateTextTask } from "@/lib/server/text-task-store";
+import { closeTextTaskAttempt, getTextTask, updateTextTask, type TextTask } from "@/lib/server/text-task-store";
 import { markTextTaskFailed, queryCancelledTextTaskUpstreamStep, runTextTaskStep } from "@/lib/server/text-task-runtime";
 import { mirrorAgentTextTaskSnapshot } from "@/lib/server/agent-run-store";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import { executeAgentRun } from "@/lib/server/agent-run-executor";
 import { processAgentRunReview } from "@/lib/server/agent-run-execution";
-import { getAgentRun, type AgentRun } from "@/lib/server/agent-run-store";
+import { getAgentRun, setAgentRunStatus, updateAgentRunById, type AgentRun } from "@/lib/server/agent-run-store";
+import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { hasCancellableUpstreamTaskId, isCancellationExecutionPhase, requestUpstreamGenerationCancellation, type GenerationCancellationTarget } from "@/lib/server/generation-task-cancellation-service";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { refundAudioTask } from "@/lib/server/audio-task-refund";
@@ -203,6 +205,7 @@ async function queryCancelledUpstream(target: GenerationCancellationTarget, orig
 async function finishCancelledLease(target: GenerationCancellationTarget, lease: GenerationTaskLease, workerId: string, status: string) {
     if (status !== "cancel_unconfirmed" && status !== "cancelled_task_missing") await refundCancelledTask(target);
     await finalizeUsageBillingForBusiness({ userId: target.userId, businessId: `${target.type}-task:${target.taskId}` });
+    if (target.type === "text") await reconcileTerminalTextTask(await getTextTask(target.taskId));
     await releaseGenerationTaskLease(lease.type, lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: status }, { cancellation: true });
     await redactCancelledTaskSecret(target).catch((error) => console.warn("Cancelled generation task secret cleanup failed", { taskId: target.taskId, type: target.type, error: safeError(error) }));
 }
@@ -255,6 +258,53 @@ function cancellationSubmissionPhase(lease: GenerationTaskLease) {
 
 async function processAgentLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
     const run = await getAgentRun(lease.id);
+    if (run?.status === "paused" && run.cancellation && lease.executionPhase === "cancel_requested") {
+        const childIds = run.cancellation.pendingChildTaskIds;
+        const cancelledChildIds = await Promise.all(
+            childIds.map(async (id) => {
+                const parent = run.tasks.find((task) => task.taskId === id || task.taskIds?.includes(id) || task.childTasks?.some((child) => child.id === id));
+                if (!parent || !["text", "image", "video", "audio"].includes(parent.type)) return null;
+                const type = parent.type as "text" | "image" | "video" | "audio";
+                let child = await getStoredGenerationTaskRecord(type, id);
+                if (child && ["pending", "running"].includes(child.status)) {
+                    const response = await fetchInternalApi(`${origin}/api/${type}-tasks/${encodeURIComponent(id)}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json", cookie: cookie || maintenanceWorkerContext(run.userId) },
+                        body: JSON.stringify({ status: "cancelled", ...(type === "text" && parent.activeAttemptId ? { attemptId: parent.activeAttemptId } : {}) }),
+                    });
+                    await response.body?.cancel().catch(() => undefined);
+                    child = await getStoredGenerationTaskRecord(type, id);
+                }
+                return child && ["success", "error", "cancelled"].includes(child.status) ? id : null;
+            }),
+        );
+        // Cancellation recovery must never start an unsubmitted generation.
+        await recoverAgentChildren(
+            cancelledChildIds.filter((id): id is string => Boolean(id)),
+            run,
+            workerId,
+            origin,
+            cookie,
+        );
+        const pending = (
+            await Promise.all(
+                childIds.map(async (id) => {
+                    const parent = run.tasks.find((task) => task.taskId === id || task.taskIds?.includes(id) || task.childTasks?.some((child) => child.id === id));
+                    if (!parent || !["text", "image", "video", "audio"].includes(parent.type)) return id;
+                    const child = await getStoredGenerationTaskRecord(parent.type as "text" | "image" | "video" | "audio", id);
+                    return child && (!["success", "error", "cancelled"].includes(child.status) || (parent.type === "text" && child.executionPhase !== "completed")) ? id : null;
+                }),
+            )
+        ).filter((id): id is string => Boolean(id));
+        if (!pending.length) {
+            await setAgentRunStatus(run, "cancelled");
+            await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "cancelled" }, { cancellation: true });
+            return "completed";
+        }
+        if (pending.length !== childIds.length) await updateAgentRunById(run.id, { cancellation: { ...run.cancellation, pendingChildTaskIds: pending } }, { type: "run.cancel.pending", data: { pendingTaskIds: pending } }, ["paused"]);
+        await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "cancel_requested", nextPollAt: generationTaskNextPollAt({ submittedAt: run.cancellation.requestedAt }), lastUpstreamStatus: "cancel_pending" }, { cancellation: true });
+        return "pending";
+    }
     if (run?.status === "completed" && !run.reviewed && (lease.executionPhase === "review_pending" || lease.executionPhase === "reviewing")) {
         const result = await processAgentRunReview(run, origin, cookie || maintenanceWorkerContext(run.userId));
         await releaseGenerationTaskLease("agent", run.id, workerId, {
@@ -270,21 +320,13 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
     }
     try {
         const childTaskIds = pendingAgentChildTaskIds(run);
-        if (childTaskIds.length) {
-            const batchSize = (await getAuthSettings()).dataLifecycle.maintenanceBatchSize;
-            for (let offset = 0; offset < childTaskIds.length; offset += batchSize) {
-                const taskIds = childTaskIds.slice(offset, offset + batchSize);
-                await runGenerationTaskRecoveryBatch({
-                    origin,
-                    cookie: cookie || maintenanceWorkerContext(run.userId),
-                    limit: taskIds.length,
-                    taskIds,
-                    workerId: `${workerId}:children`.slice(0, 160),
-                });
-            }
-        }
+        await recoverAgentChildren(childTaskIds, run, workerId, origin, cookie);
         await executeAgentRun(run, origin, cookie || maintenanceWorkerContext(run.userId));
         const latest = await getAgentRun(run.id);
+        if (latest?.status === "paused" && latest.cancellation && (await getStoredGenerationTaskRecord("agent", run.id))?.executionPhase === "cancel_requested") {
+            await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "cancel_requested", nextPollAt: Date.now(), lastUpstreamStatus: "cancel_pending" }, { cancellation: true });
+            return "pending";
+        }
         if (!latest || latest.status === "completed" || latest.status === "failed" || latest.status === "cancelled" || latest.status === "paused") {
             await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: latest?.status || "missing" });
             return latest?.status === "completed" ? "completed" : "failed";
@@ -314,6 +356,15 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
     }
 }
 
+async function recoverAgentChildren(childTaskIds: string[], run: AgentRun, workerId: string, origin: string, cookie: string) {
+    if (!childTaskIds.length) return;
+    const batchSize = (await getAuthSettings()).dataLifecycle.maintenanceBatchSize;
+    for (let offset = 0; offset < childTaskIds.length; offset += batchSize) {
+        const taskIds = childTaskIds.slice(offset, offset + batchSize);
+        await runGenerationTaskRecoveryBatch({ origin, cookie: cookie || maintenanceWorkerContext(run.userId), limit: taskIds.length, taskIds, workerId: `${workerId}:children`.slice(0, 160) });
+    }
+}
+
 export function pendingAgentChildTaskIds(run: Pick<AgentRun, "tasks">) {
     return Array.from(
         new Set(
@@ -329,12 +380,14 @@ export function pendingAgentChildTaskIds(run: Pick<AgentRun, "tasks">) {
 async function processTextLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
     const task = await getTextTask(lease.id);
     if (!task || task.status === "success" || task.status === "error" || task.status === "cancelled") {
+        await reconcileTerminalTextTask(task);
         await releaseGenerationTaskLease("text", lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined });
         return task?.status === "success" ? "completed" : "failed";
     }
     if (lease.executionPhase === "submitting" && task.status === "running" && !task.upstream?.id) {
         const reason = "文本任务在提交阶段中断，未取得上游任务 ID";
         await markTextTaskFailed(task, reason);
+        await reconcileTerminalTextTask(await getTextTask(task.id));
         await releaseGenerationTaskLease("text", lease.id, workerId, {
             executionPhase: "completed",
             nextPollAt: undefined,
@@ -361,6 +414,7 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
             return "completed";
         }
         if (step.state === "failed") {
+            if ((await getTextTask(task.id))?.status === "cancelled") return processCancelledLease({ ...lease, status: "cancelled", executionPhase: "cancel_requested" }, workerId, origin);
             await releaseGenerationTaskLease("text", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "failed" });
             return "failed";
         }
@@ -384,6 +438,7 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
         if (!upstreamTaskId) {
             const reason = safeFailureReason(error, "文本任务创建结果未知");
             await markTextTaskFailed(latest || task, reason);
+            await reconcileTerminalTextTask(await getTextTask(task.id));
             await releaseGenerationTaskLease("text", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: "submission_outcome_unknown" });
             return "failed";
         }
@@ -398,6 +453,16 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
         console.warn("Text task recovery deferred", { taskId: task.id, error: safeError(error) });
         return "deferred";
     }
+}
+
+async function reconcileTerminalTextTask(task: TextTask | null) {
+    if (!task) return;
+    if (task.status === "pending" || task.status === "running") throw new Error("文本任务状态已变化，等待重新协调");
+    const attempt = task.attempts?.find((item) => item.id === task.activeAttemptId);
+    const status = task.status === "success" ? "succeeded" : task.status === "cancelled" ? "cancelled" : "failed";
+    const closed = attempt?.status === "running" ? await closeTextTaskAttempt(task.id, attempt.id, status, { error: task.error }, attempt.revision) : task;
+    if (!closed) throw new Error("文本任务状态已变化，等待重新协调");
+    await mirrorAgentTextTaskSnapshot(closed);
 }
 
 async function processImageLease(lease: GenerationTaskLease, workerId: string, origin: string, publicOrigin: string, cookie: string): Promise<RecoveryResult> {

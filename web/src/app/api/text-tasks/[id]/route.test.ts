@@ -62,11 +62,17 @@ describe("GET /api/text-tasks/[id]", () => {
         const active = registerTextTaskAttempt(task.id, opened.activeAttemptId!, {}, true);
         const stale = registerTextTaskAttempt(task.id, "previous", {}, true);
         mocks.getTextTask.mockResolvedValue(opened);
+        const record = mocks.records[0] as Record<string, unknown>;
+        record.workerId = "stream-worker";
+        record.leaseUntil = Date.now() + 90_000;
+        const leaseUntil = record.leaseUntil;
         try {
             const response = await PATCH(new Request(`http://localhost/api/text-tasks/${task.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }), {
                 params: Promise.resolve({ id: task.id }),
             });
             expect(response.status).toBe(200);
+            expect((await response.json()).task).toMatchObject({ status: "running", executionPhase: "cancel_requested" });
+            expect(mocks.records[0]).toMatchObject({ workerId: "stream-worker", leaseUntil });
             expect(active.signal.aborted).toBe(true);
             expect(stale.signal.aborted).toBe(false);
         } finally {
@@ -97,6 +103,16 @@ describe("GET /api/text-tasks/[id]", () => {
 
         expect(response.status).toBe(200);
         expect(after).toHaveBeenCalledOnce();
+    });
+
+    it.each(["success", "error", "cancelled"])("withholds %s from parent polling until durable terminal publication completes", async (status) => {
+        mocks.getTextTask.mockResolvedValue({ id: "text-one", userId: "user", status, result: { content: "最终正文" }, error: "失败", config: { model: "text-model" } });
+        mocks.getSchedule.mockResolvedValue({ executionPhase: status === "cancelled" ? "cancel_requested" : "submitting" });
+        const read = () => GET(new Request("http://localhost/api/text-tasks/text-one"), { params: Promise.resolve({ id: "text-one" }) });
+        expect((await (await read()).json()).task).toMatchObject({ status: "running" });
+        expect(after).toHaveBeenCalledOnce();
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "completed" });
+        expect((await (await read()).json()).task.status).toBe(status);
     });
 
     it("does not wake a completed task", async () => {

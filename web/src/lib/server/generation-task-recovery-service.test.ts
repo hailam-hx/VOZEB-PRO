@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
     executeAgentRun: vi.fn(),
     processAgentRunReview: vi.fn(),
     getAgentRun: vi.fn(),
+    updateAgentRun: vi.fn(),
+    setAgentRunStatus: vi.fn(),
+    getRecord: vi.fn(),
+    fetchInternal: vi.fn(),
     getImageTask: vi.fn(),
     updateImageTask: vi.fn(),
     createImageTaskUpstreamStep: vi.fn(),
@@ -30,6 +34,8 @@ const mocks = vi.hoisted(() => ({
     getTextTask: vi.fn(),
     updateTextTask: vi.fn(),
     runTextTaskStep: vi.fn(),
+    markTextTaskFailed: vi.fn(),
+    closeTextTaskAttempt: vi.fn(),
     mirrorText: vi.fn(),
     requestCancellation: vi.fn(),
     refundImageTask: vi.fn(),
@@ -48,9 +54,13 @@ vi.mock("@/lib/server/generation-task-scheduler", () => ({
     scheduleGenerationTask: mocks.schedule,
     generationTaskNextPollAt: vi.fn(() => 20_000),
 }));
-vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.executeAgentRun }));
+vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.executeAgentRun, abortAgentRun: vi.fn() }));
 vi.mock("@/lib/server/agent-run-execution", () => ({ processAgentRunReview: mocks.processAgentRunReview }));
-vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, mirrorAgentTextTaskSnapshot: mocks.mirrorText }));
+vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, mirrorAgentTextTaskSnapshot: mocks.mirrorText, updateAgentRunById: mocks.updateAgentRun, setAgentRunStatus: mocks.setAgentRunStatus }));
+vi.mock("@/lib/server/generation-task-store", () => ({ getStoredGenerationTaskRecord: mocks.getRecord }));
+vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternal, resolveInternalOrigin: () => "http://localhost" }));
+vi.mock("@/lib/auth/session", () => ({ getCurrentUser: async () => ({ id: "user" }) }));
+vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: vi.fn() }));
 vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn((userId: string) => `worker-context:${userId}`) }));
 vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: mocks.failVideoTask, persistVideoTaskResult: vi.fn(), queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
 vi.mock("@/lib/server/video-task-store", () => ({ getVideoTask: mocks.getVideoTask }));
@@ -75,8 +85,8 @@ vi.mock("@/lib/server/image-task-runtime", () => ({
     queryImageTaskUpstreamStep: mocks.queryImageTaskUpstreamStep,
 }));
 vi.mock("@/lib/server/image-task-store", () => ({ getImageTask: mocks.getImageTask, updateImageTask: mocks.updateImageTask }));
-vi.mock("@/lib/server/text-task-runtime", () => ({ queryCancelledTextTaskUpstreamStep: mocks.queryCancelledTextTaskUpstreamStep, runTextTaskStep: mocks.runTextTaskStep }));
-vi.mock("@/lib/server/text-task-store", () => ({ getTextTask: mocks.getTextTask, updateTextTask: mocks.updateTextTask }));
+vi.mock("@/lib/server/text-task-runtime", () => ({ queryCancelledTextTaskUpstreamStep: mocks.queryCancelledTextTaskUpstreamStep, runTextTaskStep: mocks.runTextTaskStep, markTextTaskFailed: mocks.markTextTaskFailed }));
+vi.mock("@/lib/server/text-task-store", () => ({ getTextTask: mocks.getTextTask, updateTextTask: mocks.updateTextTask, closeTextTaskAttempt: mocks.closeTextTaskAttempt }));
 vi.mock("@/lib/server/model-request-policy", () => ({ resolveModelRequestTimeoutMs: vi.fn(() => 180_000) }));
 vi.mock("@/lib/server/image-task-refund", () => ({ refundImageTask: mocks.refundImageTask }));
 vi.mock("@/lib/server/video-task-refund", () => ({ refundVideoTask: mocks.refundVideoTask }));
@@ -91,8 +101,139 @@ vi.mock("@/lib/server/generation-task-cancellation-service", () => ({
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings, getFreshAuthSettings: mocks.getFreshAuthSettings }));
 
 import { runGenerationTaskRecoveryBatch } from "./generation-task-recovery-service";
+import { POST as cancelAgentRun } from "@/app/api/agent/runs/[id]/[action]/route";
 
 describe("generation task recovery service", () => {
+    it("delivers persisted cancellation before recovery can execute an unsubmitted text child", async () => {
+        let status = "pending";
+        const run = {
+            id: "agent-one",
+            userId: "user",
+            status: "paused",
+            cancellation: { requestedAt: 1, pendingChildTaskIds: ["text"] },
+            tasks: [{ id: "parent", type: "text", status: "running", taskId: "text", activeAttemptId: "attempt" }],
+            createdAt: 1_000,
+        };
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.getTextTask.mockImplementation(async () => ({ id: "text", userId: "user", status, config: { model: "text", apiFormat: "openai" } }));
+        mocks.getRecord.mockImplementation(async () => ({ status, executionPhase: status === "pending" ? "created" : "completed" }));
+        mocks.claim
+            .mockResolvedValueOnce([{ ...lease(), status: "paused", executionPhase: "cancel_requested" }])
+            .mockImplementationOnce(async () => [{ ...lease(), id: "text", type: "text", status, executionPhase: status === "pending" ? "created" : "cancel_requested" }]);
+        mocks.runTextTaskStep.mockResolvedValueOnce({ state: "pending", status: "submitted", upstreamTaskId: "must-not-start", createPath: "/jobs" });
+        mocks.fetchInternal.mockImplementationOnce(async () => {
+            status = "cancelled";
+            return Response.json({ task: { status: "running", executionPhase: "cancel_requested" } });
+        });
+        await runGenerationTaskRecoveryBatch({ origin: "http://localhost", workerId: "worker" });
+        expect(mocks.runTextTaskStep).not.toHaveBeenCalled();
+        expect(mocks.fetchInternal).toHaveBeenCalledWith("http://localhost/api/text-tasks/text", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "cancelled", attemptId: "attempt" }) }));
+        expect(mocks.setAgentRunStatus).toHaveBeenCalledWith(run, "cancelled");
+    });
+
+    it("finishes one Agent cancel request automatically only after its text child publishes terminal text", async () => {
+        let run = { id: "agent-one", userId: "user", status: "running", tasks: [{ id: "parent", type: "text", status: "running", taskId: "text", activeAttemptId: "attempt" }], createdAt: 1_000 };
+        let task = { id: "text", userId: "user", status: "cancelled", config: { model: "text", apiFormat: "openai" }, activeAttemptId: "attempt", attempts: [{ id: "attempt", revision: 1, status: "running", content: "取消前正文" }] };
+        let phase = "cancel_requested";
+        mocks.getAgentRun.mockImplementation(async () => run);
+        mocks.updateAgentRun.mockImplementation(async (_id, patch) => (run = { ...run, ...patch }));
+        mocks.setAgentRunStatus.mockImplementation(async (_run, status) => (run = { ...run, status }));
+        mocks.fetchInternal.mockResolvedValue(Response.json({ task: { status: "running", executionPhase: "cancel_requested" } }));
+        const response = await cancelAgentRun(new Request("http://localhost/api/agent/runs/agent-one/cancel", { method: "POST" }), { params: Promise.resolve({ id: "agent-one", action: "cancel" }) });
+        mocks.claim.mockResolvedValueOnce([{ ...lease(), status: "paused", executionPhase: "cancel_requested" }]).mockResolvedValueOnce([{ ...lease(), id: "text", type: "text", status: "cancelled", executionPhase: "cancel_requested" }]);
+        mocks.getTextTask.mockImplementation(async () => task);
+        mocks.getRecord.mockImplementation(async () => ({ status: "cancelled", executionPhase: phase }));
+        mocks.closeTextTaskAttempt.mockImplementation(async () => (task = { ...task, attempts: [{ ...task.attempts[0], revision: 2, status: "cancelled" }] }));
+        mocks.release.mockImplementation(async (type, _id, _worker, patch) => {
+            if (type === "text") phase = patch.executionPhase;
+            return {};
+        });
+        let publish!: () => void;
+        let reached!: () => void;
+        const publication = new Promise<void>((resolve) => {
+            publish = resolve;
+        });
+        const reachedPublication = new Promise<void>((resolve) => {
+            reached = resolve;
+        });
+        mocks.mirrorText.mockImplementationOnce(async () => {
+            reached();
+            await publication;
+        });
+        const recovery = runGenerationTaskRecoveryBatch({ origin: "http://localhost", workerId: "worker" });
+        await Promise.race([recovery, reachedPublication]);
+        try {
+            expect(mocks.mirrorText).toHaveBeenCalled();
+            expect(run.status).toBe("paused");
+            expect(mocks.setAgentRunStatus).not.toHaveBeenCalled();
+        } finally {
+            publish();
+            await recovery;
+        }
+        expect(response.status).toBe(200);
+        expect(run.status).toBe("cancelled");
+        expect(mocks.fetchInternal.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1);
+        expect(mocks.executeAgentRun).not.toHaveBeenCalled();
+    });
+
+    it("does not close a newer running attempt after interrupted failure loses its CAS", async () => {
+        const task = { id: "text-newer", userId: "user", status: "running", config: { model: "text", apiFormat: "openai" }, activeAttemptId: "newer", attempts: [{ id: "newer", status: "running", revision: 3, content: "更新的正文" }] };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, type: "text", status: "running", executionPhase: "submitting" }]);
+        mocks.getTextTask.mockResolvedValue(task);
+        mocks.markTextTaskFailed.mockResolvedValueOnce({ state: "failed", error: "状态已变化" });
+        mocks.closeTextTaskAttempt.mockResolvedValueOnce({ ...task, attempts: [{ ...task.attempts[0], status: "failed" }] });
+        await expect(runGenerationTaskRecoveryBatch({ origin: "http://localhost", workerId: "worker" })).rejects.toThrow();
+        expect(mocks.closeTextTaskAttempt).not.toHaveBeenCalled();
+        expect(mocks.mirrorText).not.toHaveBeenCalled();
+        expect(mocks.release).not.toHaveBeenCalled();
+    });
+
+    it.each(["submitting", "exception", "terminal", "cancelled"])("reconciles authoritative partial text before releasing a %s recovery exit", async (exit) => {
+        let task = {
+            id: "text-partial",
+            userId: "user",
+            status: exit === "terminal" ? "error" : exit === "cancelled" ? "cancelled" : "running",
+            config: { model: "text", apiFormat: "openai" },
+            activeAttemptId: "attempt",
+            attempts: [{ id: "attempt", revision: 2, status: "running", content: "中断前正文" }],
+            visibleTextSnapshot: { attemptId: "attempt", revision: 2, content: "中断前正文" },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, type: "text", status: task.status, executionPhase: exit === "cancelled" ? "cancel_requested" : exit === "exception" ? "created" : "submitting" }]);
+        mocks.getTextTask.mockImplementation(async () => structuredClone(task));
+        mocks.markTextTaskFailed.mockImplementation(async () => {
+            task = { ...task, status: "error", attempts: [{ ...task.attempts[0], status: "failed", revision: 3 }], visibleTextSnapshot: { ...task.visibleTextSnapshot, revision: 3 } };
+        });
+        mocks.closeTextTaskAttempt.mockImplementation(async (_id, _attemptId, status) => {
+            task = { ...task, attempts: [{ ...task.attempts[0], status, revision: 3 }], visibleTextSnapshot: { ...task.visibleTextSnapshot, revision: 3 } };
+            return structuredClone(task);
+        });
+        if (exit === "exception") mocks.runTextTaskStep.mockRejectedValueOnce(new Error("worker interrupted"));
+        let publish!: () => void;
+        let reached!: () => void;
+        const reachedPublication = new Promise<void>((resolve) => {
+            reached = resolve;
+        });
+        const publication = new Promise<void>((resolve) => {
+            publish = resolve;
+        });
+        mocks.mirrorText.mockImplementationOnce(async () => {
+            reached();
+            await publication;
+        });
+        const recovery = runGenerationTaskRecoveryBatch({ origin: "http://localhost", workerId: "worker" });
+        await Promise.race([reachedPublication, recovery]);
+        try {
+            expect(mocks.mirrorText).toHaveBeenCalledWith(
+                expect.objectContaining({ visibleTextSnapshot: { attemptId: "attempt", revision: 3, content: "中断前正文" }, attempts: [expect.objectContaining({ status: exit === "cancelled" ? "cancelled" : "failed", revision: 3 })] }),
+            );
+            expect(mocks.release).not.toHaveBeenCalled();
+        } finally {
+            publish();
+            await recovery;
+        }
+        expect(mocks.release).toHaveBeenCalledWith("text", task.id, "worker", expect.objectContaining({ executionPhase: "completed" }), ...(exit === "cancelled" ? [{ cancellation: true }] : []));
+    });
+
     it("forwards accepted text while the recovery execution is still running", async () => {
         const task = { id: "text-live", userId: "user", status: "pending", config: { model: "text", apiFormat: "openai" } };
         mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, type: "text", status: "pending", executionPhase: "created" }]);
@@ -111,6 +252,10 @@ describe("generation task recovery service", () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.mirrorText.mockReset();
+        mocks.closeTextTaskAttempt.mockReset();
+        mocks.runTextTaskStep.mockReset();
+        mocks.fetchInternal.mockReset();
         mocks.release.mockResolvedValue({});
         mocks.renew.mockResolvedValue(1);
         mocks.getAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });

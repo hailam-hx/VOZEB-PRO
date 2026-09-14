@@ -29,7 +29,9 @@ export async function GET(request: Request, context: RouteContext) {
     if (!task || (task.userId !== currentUser.id && currentUser.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
     const schedule = await getStoredGenerationTaskRecord("text", task.id);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
-    if (task.status === "pending" || task.status === "running" || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"))) {
+    // Payload termination can precede publication; recovery closes the phase only after mirroring.
+    const status = executionPhase === "completed" || task.status === "pending" ? task.status : "running";
+    if (status === "pending" || status === "running") {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id] }));
     }
@@ -41,10 +43,10 @@ export async function GET(request: Request, context: RouteContext) {
         {
             task: {
                 id: settledTask.id,
-                status: settledTask.status,
+                status,
                 model: generationModelId(settledTask.config),
-                result: settledTask.result,
-                error: settledTask.error,
+                result: status === "success" ? settledTask.result : undefined,
+                error: status === "error" || status === "cancelled" ? settledTask.error : undefined,
                 executionPhase,
             },
         },
@@ -78,7 +80,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const origin = resolveInternalOrigin(new URL(request.url).origin);
     after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id] }));
     const refreshedUser = await getCurrentUser(request);
-    return NextResponse.json({ task: { id: cancelled.id, status: cancelled.status, model: generationModelId(cancelled.config), result: cancelled.result, error: cancelled.error } }, { headers: pointsResponseHeaders(refreshedUser) });
+    return NextResponse.json({ task: { id: cancelled.id, status: "running", executionPhase: "cancel_requested", model: generationModelId(cancelled.config) } }, { headers: pointsResponseHeaders(refreshedUser) });
 }
 
 function settledExecutionPhase(status: string) {

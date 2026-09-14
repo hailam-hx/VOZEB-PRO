@@ -61,9 +61,12 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, option
                 return;
             }
             try {
+                const textCheckpoint = textTasks.checkpoint();
                 const run = await getCreativeAgentRun(runId);
                 if (settled) return;
-                textTasks.restore(run.tasks);
+                const superseded = textTasks.checkpoint() !== textCheckpoint;
+                textTasks.restore(run.tasks, textCheckpoint);
+                if (superseded) return reportStage({ key: "reconnecting", resumeKey: latestStageKey, text: t("runningReconnect") });
                 if (run.status === "completed") {
                     handlers.onAssistant(t("runCompleted"), latestOutput);
                     finish();
@@ -176,7 +179,7 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, option
         });
         listen("run.snapshot", (event) => {
             const payload = read<{ status?: string; tasks?: Array<AgentTextState & { id: string; type?: string; title?: string; status?: string; error?: string }> }>(event);
-            textTasks.restore(payload.tasks);
+            textTasks.restore(payload.tasks, textTasks.checkpoint());
             if (payload.status === "cancelled") {
                 handlers.onAssistant(t("runCancelled"));
                 finish();
