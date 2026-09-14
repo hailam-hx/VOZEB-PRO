@@ -25,11 +25,7 @@ describe("normalized text stream protocol over TCP", () => {
         const events: unknown[] = [];
         for await (const event of normalizeTextStream(await fetch(origin), "gemini")) events.push(event);
 
-        expect(events).toEqual([
-            { type: "text_delta", text: "你好" },
-            { type: "usage", inputTokens: 4, outputTokens: 2, totalTokens: 6 },
-            { type: "completed" },
-        ]);
+        expect(events).toEqual([{ type: "text_delta", text: "你好" }, { type: "usage", inputTokens: 4, outputTokens: 2, totalTokens: 6 }, { type: "completed" }]);
     });
 });
 

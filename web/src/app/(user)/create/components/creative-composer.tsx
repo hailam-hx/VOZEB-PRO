@@ -20,7 +20,7 @@ import { CREATE_AGENT_PROMPT_MAX_LENGTH } from "@/lib/create-agent-prompt";
 import { creativeComposerPopoverOverflow, useCreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
 import { shouldShowVideoFrameControls } from "./creative-composer-video-mode";
-import { creativeAssetMentionAtCursor, creativeAssetMentionCandidates, creativeAssetMentionDeletionAtKey, creativeAssetMentionSegments, replaceCreativeAssetMention, type CreativeAssetMentionSegment } from "./creative-asset-mention";
+import { creativeAssetMentionAtCursor, creativeAssetMentionCandidates, creativeAssetMentionDeletionAtKey, creativeAssetMentionSegments, type CreativeAssetMentionSegment } from "./creative-asset-mention";
 import { CreativeAssetMentionPicker } from "./creative-asset-mention-picker";
 import { CreativeGenerationControls, type CreativeModelOption } from "./creative-generation-controls";
 import { CreativeModeIcon, creativeModeOptions, type CreativeGenerationPreferencePatch } from "@/components/creative-generation-preferences";
@@ -104,7 +104,7 @@ export function CreativeComposer({
     referenceCapabilityState: CreativeGenerationCapabilityState;
     uploading: boolean;
     onRemoveAttachment: (id: string) => void;
-    onReferenceAsset: (id: string) => void;
+    onReferenceAsset: (asset: CreativeAsset, mention: { value: string; cursor: number }) => { accepted: false } | { accepted: true; cursor: number };
     onSelectSkill: (skill: SkillOption) => void;
     onRemoveSkill: () => void;
     onToggleModel: (model: CreativeModelOption) => void;
@@ -232,13 +232,10 @@ export function CreativeComposer({
     };
 
     const selectMentionAsset = (asset: CreativeAsset) => {
-        const nextAssetIds = selectedAssetIds.includes(asset.id) ? selectedAssetIds : [...selectedAssetIds, asset.id];
-        const alias = creativeAssetReferenceAliases(referenceAliasAssets, nextAssetIds).get(asset.id);
-        if (!alias) return;
         const currentValue = inputRef.current?.resizableTextArea?.textArea?.value ?? value;
-        const result = replaceCreativeAssetMention(currentValue, caretRef.current, alias);
-        onReferenceAsset(asset.id);
-        updateComposerValue(result.value, result.cursor);
+        const result = onReferenceAsset(asset, { value: currentValue, cursor: caretRef.current });
+        if (!result.accepted) return;
+        caretRef.current = result.cursor;
         setMentionQuery(null);
         focusComposerAt(result.cursor);
     };

@@ -1,27 +1,31 @@
 import { createTextSseDecoder, TEXT_STREAM_COMPLETED, TEXT_STREAM_FAILED } from "./text-sse-decoder";
-import { classifyTextStreamTermination, createTextStreamDiagnostics, type TextStreamDiagnosticContext } from "./text-stream-diagnostics";
+import { classifyTextStreamTermination, createTextStreamDiagnostics, type TextStreamDiagnosticContext, type TextStreamTransportDiagnostic } from "./text-stream-diagnostics";
 
 export type TextStreamProtocol = "chat" | "responses" | "gemini" | "claude";
 
 export type NormalizedTextStreamEvent =
     { type: "text_delta"; text: string } | { type: "usage"; inputTokens?: number; outputTokens?: number; totalTokens?: number } | { type: "completed" } | { type: "error"; message: string; status?: number; contract?: true };
 
-type TextStreamOptions = { onFirstByte?: () => void | Promise<void>; signal?: AbortSignal; diagnosticContext?: TextStreamDiagnosticContext };
+type TextStreamOptions = { onFirstByte?: () => void | Promise<void>; signal?: AbortSignal; diagnosticContext?: TextStreamDiagnosticContext; onDiagnostic?: (diagnostic: TextStreamTransportDiagnostic) => void };
 type UsageState = { inputTokens?: number; outputTokens?: number };
 
 export async function* normalizeTextStream(response: Response, protocol: TextStreamProtocol, options: TextStreamOptions = {}): AsyncGenerator<NormalizedTextStreamEvent> {
+    const diagnostics = createTextStreamDiagnostics(protocol, options.diagnosticContext, options.onDiagnostic);
     if (!response.ok) {
         await response.text();
+        diagnostics?.finish("provider_error", undefined, options.signal);
         reportDiagnostic(protocol, "http_error", response.status);
         yield { type: "error", message: `文本流请求失败（HTTP ${response.status}）`, status: response.status };
         return;
     }
     const contentType = response.headers.get("content-type")?.toLowerCase() || "";
     if (!contentType.includes("text/event-stream")) {
+        diagnostics?.finish("provider_error", undefined, options.signal);
         yield { type: "error", message: `文本流协议预期 SSE 响应，但上游返回了 ${contentType || "未知内容类型"}`, contract: true };
         return;
     }
     if (!response.body) {
+        diagnostics?.finish("provider_error", undefined, options.signal);
         yield { type: "error", message: "文本流协议没有返回响应体", contract: true };
         return;
     }
@@ -34,7 +38,6 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
     let firstByte = false;
     const usageState: UsageState = {};
     const consume = (frame: string) => streamEvents(frame, protocol, usageState);
-    const diagnostics = createTextStreamDiagnostics(protocol, options.diagnosticContext);
     try {
         reading: for (;;) {
             const next = await reader.read();
@@ -52,7 +55,10 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
                 const parsed = consume(frame);
                 completed ||= parsed.completed;
                 for (const event of parsed.events) {
-                    if (event.type === "error") failed = true;
+                    if (event.type === "error") {
+                        failed = true;
+                        diagnostics?.finish("provider_error", undefined, options.signal);
+                    }
                     yield event;
                 }
                 if (completed || failed) break reading;

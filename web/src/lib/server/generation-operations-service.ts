@@ -45,6 +45,9 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
     const plannerAttempts = agentPlannerAttempts(payload.plannerAttempts);
     const latestPlannerAttempt = plannerAttempts?.at(-1);
     const plannerFailure = agentPlannerFailure(payload.plannerFailure);
+    const planningFinalization = agentPlanningFinalization(payload.planningFinalization);
+    const failureStage = agentFailureStage(payload.failureStage);
+    const agentTiming = record.type === "agent" ? agentRuntimeTiming(payload.timings) : undefined;
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(object) : [];
     const failedTask = tasks.find((task) => task.status === "failed" && text(task.id));
     const model = firstText(
@@ -107,6 +110,9 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         plannerAudit,
         plannerAttempts,
         plannerFailure,
+        planningFinalization,
+        failureStage,
+        agentTiming,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         canCancel: record.type !== "voice-clone" && (record.status === "pending" || record.status === "running" || record.status === "paused"),
@@ -184,7 +190,52 @@ function generationAttempts(value: unknown): AdminGenerationAttempt[] | undefine
             ...(attemptUsage(item.usage) ? { usage: attemptUsage(item.usage) } : {}),
             ...(attemptMilestones(item.milestones) ? { milestones: attemptMilestones(item.milestones) } : {}),
             ...(attemptLatency(item.latency) ? { latency: attemptLatency(item.latency) } : {}),
+            ...(attemptTransportDiagnostic(item.transportDiagnostic) ? { transportDiagnostic: attemptTransportDiagnostic(item.transportDiagnostic) } : {}),
         }));
+}
+
+function attemptTransportDiagnostic(value: unknown): AdminGenerationAttempt["transportDiagnostic"] | undefined {
+    const source = object(value);
+    const termination = source.connectionTermination;
+    if (!["normal_eof", "protocol_terminal", "application_abort", "socket_reset", "body_timeout", "read_error", "provider_error"].includes(String(termination))) return undefined;
+    const rootError = diagnosticError(source.rootError);
+    return {
+        connectionTermination: termination as NonNullable<AdminGenerationAttempt["transportDiagnostic"]>["connectionTermination"],
+        framesReceived: nonNegativeNumber(source.framesReceived) || 0,
+        bytesReceived: nonNegativeNumber(source.bytesReceived) || 0,
+        ...(positiveTimestamp(source.lastUpstreamFrameAt) ? { lastUpstreamFrameAt: positiveTimestamp(source.lastUpstreamFrameAt) } : {}),
+        ...(positiveTimestamp(source.lastTextDeltaAt) ? { lastTextDeltaAt: positiveTimestamp(source.lastTextDeltaAt) } : {}),
+        ...(text(source.finishReason) ? { finishReason: text(source.finishReason).slice(0, 120) } : {}),
+        terminalSeen: source.terminalSeen === true,
+        doneMarkerSeen: source.doneMarkerSeen === true,
+        usageSeen: source.usageSeen === true,
+        ...(nonNegativeNumber(source.elapsedMs) !== undefined ? { elapsedMs: nonNegativeNumber(source.elapsedMs) } : {}),
+        ...(rootError ? { rootError } : {}),
+    };
+}
+
+function diagnosticError(value: unknown): NonNullable<NonNullable<AdminGenerationAttempt["transportDiagnostic"]>["rootError"]> | undefined {
+    const source = object(value);
+    const cause = object(source.cause);
+    const result = {
+        ...(text(source.name) ? { name: text(source.name).slice(0, 120) } : {}),
+        ...(text(source.message) ? { message: text(source.message).slice(0, 500) } : {}),
+        ...(text(source.code) ? { code: text(source.code).slice(0, 120) } : {}),
+        ...(typeof source.errno === "string" || typeof source.errno === "number" ? { errno: source.errno } : {}),
+        ...(text(source.syscall) ? { syscall: text(source.syscall).slice(0, 120) } : {}),
+        ...(Object.keys(cause).length
+            ? {
+                  cause: {
+                      ...(text(cause.name) ? { name: text(cause.name).slice(0, 120) } : {}),
+                      ...(text(cause.message) ? { message: text(cause.message).slice(0, 500) } : {}),
+                      ...(text(cause.code) ? { code: text(cause.code).slice(0, 120) } : {}),
+                      ...(typeof cause.errno === "string" || typeof cause.errno === "number" ? { errno: cause.errno } : {}),
+                      ...(text(cause.syscall) ? { syscall: text(cause.syscall).slice(0, 120) } : {}),
+                  },
+              }
+            : {}),
+    };
+    return Object.keys(result).length ? result : undefined;
 }
 
 function attemptProtocol(value: unknown): AdminGenerationAttempt["protocol"] | undefined {
@@ -286,6 +337,9 @@ function agentPlannerAttempts(value: unknown): AdminGenerationTask["plannerAttem
         const startedAt = Number(source.startedAt);
         const completedAt = Number(source.completedAt);
         const elapsedMs = Number(source.elapsedMs);
+        const firstByteMs = Number(source.firstByteMs);
+        const firstContentMs = Number(source.firstContentMs);
+        const resultKind: "conversation" | "generation" | undefined = source.resultKind === "conversation" || source.resultKind === "generation" ? source.resultKind : undefined;
         return [
             {
                 attemptNo,
@@ -299,11 +353,53 @@ function agentPlannerAttempts(value: unknown): AdminGenerationTask["plannerAttem
                 startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : 0,
                 ...(Number.isFinite(completedAt) && completedAt > 0 ? { completedAt } : {}),
                 ...(Number.isFinite(elapsedMs) && elapsedMs >= 0 ? { elapsedMs } : {}),
+                ...(Number.isFinite(firstByteMs) && firstByteMs >= 0 ? { firstByteMs } : {}),
+                ...(Number.isFinite(firstContentMs) && firstContentMs >= 0 ? { firstContentMs } : {}),
+                ...(resultKind ? { resultKind } : {}),
                 ...(text(source.error) ? { error: text(source.error).slice(0, 1000) } : {}),
             },
         ];
     });
     return attempts.length ? attempts.toSorted((left, right) => left.attemptNo - right.attemptNo) : undefined;
+}
+
+function agentPlanningFinalization(value: unknown): AdminGenerationTask["planningFinalization"] {
+    const source = object(value);
+    const planningCycle = Number(source.planningCycle);
+    const attemptNumber = Number(source.attemptNumber);
+    const updatedAt = Number(source.updatedAt);
+    const status = source.status === "pending" || source.status === "settled" || source.status === "failed" ? source.status : undefined;
+    if (!status || !Number.isSafeInteger(planningCycle) || planningCycle <= 0 || !Number.isSafeInteger(attemptNumber) || attemptNumber <= 0 || !Number.isFinite(updatedAt) || updatedAt <= 0) return undefined;
+    return {
+        planningCycle,
+        status,
+        attemptNumber,
+        ...(text(source.errorCode) ? { errorCode: text(source.errorCode).slice(0, 120) } : {}),
+        ...(text(source.error) ? { error: text(source.error).slice(0, 1000) } : {}),
+        ...(typeof source.retryable === "boolean" ? { retryable: source.retryable } : {}),
+        updatedAt,
+    };
+}
+
+function agentFailureStage(value: unknown): AdminGenerationTask["failureStage"] {
+    return value === "planning" || value === "planner_settlement" || value === "task_dispatch" || value === "task_execution" ? value : undefined;
+}
+
+function agentRuntimeTiming(value: unknown): AdminGenerationTask["agentTiming"] {
+    const timings = object(value);
+    const elapsed = (start: unknown, end: unknown) => {
+        const startAt = positiveTimestamp(start);
+        const endAt = positiveTimestamp(end);
+        return startAt !== undefined && endAt !== undefined && endAt >= startAt ? endAt - startAt : undefined;
+    };
+    const result = {
+        requestToPlannerUpstreamMs: elapsed(timings.requestAcceptedAt, timings.upstreamRequestStartedAt),
+        plannerTtfbMs: elapsed(timings.upstreamRequestStartedAt, timings.upstreamFirstByteAt),
+        plannerDurationMs: elapsed(timings.planningStartedAt, timings.planningCompletedAt),
+        plannerSettlementMs: elapsed(timings.plannerSettlementStartedAt, timings.plannerSettlementCompletedAt),
+        childDispatchMs: elapsed(timings.plannerSettlementCompletedAt || timings.planningCompletedAt, timings.firstTaskSubmittedAt),
+    };
+    return Object.values(result).some((item) => item !== undefined) ? result : undefined;
 }
 
 function agentPlannerFailure(value: unknown): AdminGenerationTask["plannerFailure"] {

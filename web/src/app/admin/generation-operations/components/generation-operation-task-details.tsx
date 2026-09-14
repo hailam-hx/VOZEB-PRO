@@ -44,6 +44,9 @@ export function GenerationTaskRuntimeSummary({ task, compact = false }: { task: 
                 {task.provider ? <RuntimeFact label="Provider" value={task.provider} /> : null}
                 {task.queryPath ? <RuntimeFact label="查询路径" value={task.queryPath} /> : null}
             </div>
+            {task.failureStage ? <div className="mt-1 text-[11px] text-red-600 dark:text-red-300">失败阶段：{agentFailureStageLabel(task.failureStage)}</div> : null}
+            {task.planningFinalization ? <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">规划结算：{plannerFinalizationLabel(task.planningFinalization)}</div> : null}
+            {task.agentTiming ? <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">Agent 时序 {agentTimingLabel(task.agentTiming)}</div> : null}
             <TextAttemptTimeline task={task} />
             <AgentPlannerAttemptTimeline task={task} />
         </div>
@@ -71,12 +74,44 @@ function TextAttemptTimeline({ task }: { task: AdminGenerationTask }) {
                         {attempt.latency ? <div className="mt-1">{textAttemptLatencyLabel(attempt.latency)}</div> : null}
                         {attempt.usage ? <div className="mt-1">用量 {textAttemptUsageLabel(attempt.usage)}</div> : null}
                         {attempt.milestones ? <div className="mt-1">里程碑 {textAttemptMilestonesLabel(attempt.milestones)}</div> : null}
+                        {attempt.transportDiagnostic ? <div className="mt-1">传输 {textAttemptTransportLabel(attempt.transportDiagnostic)}</div> : null}
+                        {attempt.transportDiagnostic?.rootError ? <div className="mt-1 break-words">根错误 {textAttemptRootErrorLabel(attempt.transportDiagnostic.rootError)}</div> : null}
                         {attempt.error ? <div className="mt-1 text-red-600 dark:text-red-300">{attempt.error}</div> : null}
                     </div>
                 ))}
             </div>
         </div>
     );
+}
+
+function textAttemptTransportLabel(diagnostic: NonNullable<NonNullable<AdminGenerationTask["attempts"]>[number]["transportDiagnostic"]>) {
+    const termination = {
+        normal_eof: "正常 EOF",
+        protocol_terminal: "协议终止",
+        application_abort: "应用中止",
+        socket_reset: "Socket 重置",
+        body_timeout: "Body 超时",
+        read_error: "读取错误",
+        provider_error: "上游错误",
+    }[diagnostic.connectionTermination];
+    return [
+        termination,
+        `${diagnostic.framesReceived} 帧`,
+        `${diagnostic.bytesReceived} 字节`,
+        diagnostic.finishReason ? `finish ${diagnostic.finishReason}` : "",
+        `terminal ${diagnostic.terminalSeen ? "是" : "否"}`,
+        `[DONE] ${diagnostic.doneMarkerSeen ? "是" : "否"}`,
+        `usage ${diagnostic.usageSeen ? "是" : "否"}`,
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+function textAttemptRootErrorLabel(error: NonNullable<NonNullable<NonNullable<AdminGenerationTask["attempts"]>[number]["transportDiagnostic"]>["rootError"]>) {
+    const identity = [error.name, error.message].filter(Boolean).join(": ");
+    const fields = [identity, error.code, error.errno === undefined ? "" : `errno ${error.errno}`, error.syscall ? `syscall ${error.syscall}` : ""];
+    if (error.cause) fields.push(`cause ${error.cause.name || "未知"}`, error.cause.message, error.cause.code, error.cause.errno === undefined ? "" : `errno ${error.cause.errno}`, error.cause.syscall ? `syscall ${error.cause.syscall}` : "");
+    return fields.filter(Boolean).join(" · ");
 }
 
 function textAttemptLatencyLabel(latency: NonNullable<NonNullable<AdminGenerationTask["attempts"]>[number]["latency"]>) {
@@ -145,12 +180,50 @@ function AgentPlannerAttemptTimeline({ task }: { task: AdminGenerationTask }) {
                         <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
                             {planningProtocolLabel(attempt.protocol)} · {plannerElapsedLabel(attempt.elapsedMs)} · {attempt.requestAcceptance === "response" ? "已收到响应" : attempt.requestAcceptance === "unknown" ? "接收状态未知" : "等待响应"}
                         </div>
+                        {attempt.firstByteMs !== undefined || attempt.firstContentMs !== undefined || attempt.resultKind ? (
+                            <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                {[
+                                    attempt.firstByteMs === undefined ? "" : `TTFB ${plannerElapsedLabel(attempt.firstByteMs)}`,
+                                    attempt.firstContentMs === undefined ? "" : `TTFT ${plannerElapsedLabel(attempt.firstContentMs)}`,
+                                    attempt.resultKind ? `结果 ${attempt.resultKind === "conversation" ? "对话" : "生成计划"}` : "",
+                                ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                            </div>
+                        ) : null}
                         {attempt.error ? <div className="mt-1 text-[11px] leading-4 text-red-600 dark:text-red-300">{attempt.error}</div> : null}
                     </div>
                 ))}
             </div>
         </div>
     );
+}
+
+function agentFailureStageLabel(stage: NonNullable<AdminGenerationTask["failureStage"]>) {
+    return { planning: "规划", planner_settlement: "规划结算", task_dispatch: "子任务派发", task_execution: "子任务执行" }[stage];
+}
+
+function plannerFinalizationLabel(finalization: NonNullable<AdminGenerationTask["planningFinalization"]>) {
+    return [
+        finalization.status === "settled" ? "已结算" : finalization.status === "pending" ? "待结算" : "失败",
+        `尝试 ${finalization.attemptNumber}`,
+        finalization.errorCode || "",
+        finalization.retryable === undefined ? "" : finalization.retryable ? "可重试" : "不可重试",
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+function agentTimingLabel(timing: NonNullable<AdminGenerationTask["agentTiming"]>) {
+    return [
+        timing.requestToPlannerUpstreamMs === undefined ? "" : `请求→上游 ${plannerElapsedLabel(timing.requestToPlannerUpstreamMs)}`,
+        timing.plannerTtfbMs === undefined ? "" : `Planner TTFB ${plannerElapsedLabel(timing.plannerTtfbMs)}`,
+        timing.plannerDurationMs === undefined ? "" : `Planner ${plannerElapsedLabel(timing.plannerDurationMs)}`,
+        timing.plannerSettlementMs === undefined ? "" : `结算 ${plannerElapsedLabel(timing.plannerSettlementMs)}`,
+        timing.childDispatchMs === undefined ? "" : `派发 ${plannerElapsedLabel(timing.childDispatchMs)}`,
+    ]
+        .filter(Boolean)
+        .join(" · ");
 }
 
 export function generationTaskPointsLabel(task: AdminGenerationTask) {

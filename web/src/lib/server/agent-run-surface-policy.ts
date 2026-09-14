@@ -22,11 +22,16 @@ export function plannerAgentSkills(settings: AuthSettings, run: Pick<AgentRun, "
 }
 
 export function isDirectAgentIdentityQuestion(prompt: string) {
-    const normalized = prompt.normalize("NFC").trim().toLocaleLowerCase().replace(/[?？!！.。]+$/u, "").trim();
+    const normalized = prompt
+        .normalize("NFC")
+        .trim()
+        .toLocaleLowerCase()
+        .replace(/[?？!！.。]+$/u, "")
+        .trim();
     return /^(?:bạn là ai|ban la ai|bạn tên gì|ban ten gi|who are you|what are you|what(?:'s| is) your name|你是谁|你叫什么名字|这是什么平台|这个平台叫什么|đây là (?:nền tảng|trang web|ứng dụng) gì|what (?:site|platform|app) is this)$/u.test(normalized);
 }
 
-export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string, options: { siteTitle?: string; responseLocale?: AppLocale } = {}) {
+export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string, options: { siteTitle?: string; responseLocale?: AppLocale; compactText?: boolean } = {}) {
     const identity =
         surface === "canvas"
             ? "你是画布创作 Agent，也能进行普通对话。"
@@ -36,6 +41,8 @@ export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExamp
     const siteTitle = options.siteTitle?.trim();
     const fallbackLanguage = options.responseLocale === "en" ? "英语" : options.responseLocale === "zh-CN" ? "简体中文" : "越南语";
     const responseRule = `${siteTitle ? `用户本轮已明确询问平台或助手身份，可使用站点名称 ${siteTitle} 回答。` : "当前不是直接的身份询问，禁止主动自称、介绍或猜测站点品牌。"}reply 优先使用用户本轮消息的语言；无法判断时使用${fallbackLanguage}。`;
+    if (options.compactText)
+        return `${identity}${responseRule}先结合 conversationContext 判断本轮意图。问候、闲聊、能力咨询、使用说明和知识问答必须选择 conversation，deliverables=[] 并直接在 reply 回答。明确要求撰写、改写或修改文本时选择 generation，只规划 type=text 的 deliverable；从 availableModels 选择文本逻辑模型并把完整写作要求放入 deliverable.prompt。不得规划图片、视频、音频、项目交接或内部分析产物。优先调用 create_agent_plan；若渠道不支持工具调用，只返回与函数参数一致的严格 JSON，仿照：${fallbackExample}。不要输出 Markdown、代码围栏、解释、隐藏思维链或额外字段。`;
     const surfaceRules =
         surface === "canvas"
             ? "明确要求创建、修改、删除、移动、连接画布节点，或生成媒体产物时为 generation。用户要求修改已有画布产物时必须填写该节点真实 targetNodeId。选中文本/提示词节点并要求修改、优化或改写时，只规划一个 type=text 的原位编辑任务，targetNodeId 必须是该文本节点；除非用户同时明确要求生成媒体，否则禁止规划图片、视频或音频任务。canvasSnapshot.selectedNodeIds 是用户本轮明确选中并展示在输入框中的附件：非空时，当前编辑任务必须优先且只能从这些节点选择 targetNodeId，禁止被 conversationContext 的上一张、旧主体或其他未选中画布节点覆盖；只有本轮没有选中节点时，才允许结合会话记忆选择旧节点。"

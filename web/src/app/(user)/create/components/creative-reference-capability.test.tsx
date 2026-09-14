@@ -266,6 +266,32 @@ describe("/create reference capability controls", () => {
         expect(((await screen.findByRole("button", { name: "选择图片素材" })) as HTMLButtonElement).disabled).toBe(false);
         expect(screen.queryByText("没有匹配的图片、视频或音频")).toBeNull();
     });
+
+    it("keeps the active mention untouched when the page rejects the asset reference", async () => {
+        const candidate = asset("candidate-image", "image");
+        const onChange = vi.fn();
+        const onReferenceAsset = vi.fn(() => ({ accepted: false as const }));
+        renderInteractive(
+            <CreativeComposer
+                {...composerProps()}
+                value="@图"
+                onChange={onChange}
+                referenceAssets={[candidate]}
+                onReferenceAsset={onReferenceAsset}
+                referenceCapabilityState={{ reason: "unsupported", parameters: profile({ referenceInputs: ["image"], maxReferenceImages: 2 }) }}
+            />,
+        );
+
+        const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+        textarea.setSelectionRange(2, 2);
+        fireEvent.click(textarea);
+        const option = await screen.findByRole("button", { name: "选择图片素材" });
+        fireEvent.click(option);
+
+        expect(onReferenceAsset).toHaveBeenCalledWith(candidate, { value: "@图", cursor: 2 });
+        expect(onChange).not.toHaveBeenCalled();
+        expect(screen.getByRole("button", { name: "选择图片素材" })).toBeTruthy();
+    });
 });
 
 function renderInteractive(element: ReactElement) {
@@ -300,7 +326,7 @@ function composerProps() {
         generationPreferences: {},
         uploading: false,
         onRemoveAttachment: vi.fn(),
-        onReferenceAsset: vi.fn(),
+        onReferenceAsset: vi.fn(() => ({ accepted: true as const, cursor: 0 })),
         onSelectSkill: vi.fn(),
         onRemoveSkill: vi.fn(),
         onToggleModel: vi.fn(),

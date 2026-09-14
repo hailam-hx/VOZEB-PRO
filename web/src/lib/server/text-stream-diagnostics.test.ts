@@ -12,10 +12,10 @@ describe("text stream transport diagnostics", () => {
         expect(classifyTextStreamTermination(error)).toBe(expected);
     });
 
-    it("classifies an aborted signal as an application abort even when the reader error is generic", () => {
+    it("distinguishes a configured body deadline from an application cancellation", () => {
         const controller = new AbortController();
         controller.abort(Object.assign(new Error("configured deadline"), { name: "TimeoutError", stage: "idle" }));
-        expect(classifyTextStreamTermination(new TypeError("terminated"), controller.signal)).toBe("application_abort");
+        expect(classifyTextStreamTermination(new TypeError("terminated"), controller.signal)).toBe("body_timeout");
     });
 
     it("preserves structured error fields while redacting credential-shaped values", () => {

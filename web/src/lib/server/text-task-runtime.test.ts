@@ -256,6 +256,15 @@ describe("text task runtime recovery", () => {
         expect(state.status).toBe("error");
         expect(state.visibleTextSnapshot?.content).toBe("保留部分");
         expect(state.attempts?.map((attempt) => attempt.status)).toEqual(["failed"]);
+        expect(state.attempts?.[0].transportDiagnostic).toMatchObject({
+            connectionTermination: "socket_reset",
+            framesReceived: 1,
+            bytesReceived: bytes.byteLength,
+            terminalSeen: false,
+            doneMarkerSeen: false,
+            usageSeen: false,
+            rootError: { name: "TypeError", message: "terminated", cause: { name: "SocketError", code: "UND_ERR_SOCKET", message: "other side closed" } },
+        });
         expect(warn).toHaveBeenCalledWith(
             "Text task failure diagnostic",
             expect.objectContaining({ event: "attempt_failed", runId: "run", taskId: state.id, parentTaskId: "parent", attemptId: state.activeAttemptId, protocol: "chat", hadPublicText: true, signalAborted: false }),

@@ -18,6 +18,19 @@ export type AdminGenerationAttempt = {
     usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
     milestones?: Partial<Record<"task_created" | "upstream_started" | "first_byte" | "first_text" | "stream_completed" | "task_completed", number>>;
     latency?: { firstByteMs?: number; firstTextMs?: number; streamMs?: number; generationMs?: number; finalizationMs?: number; totalMs?: number };
+    transportDiagnostic?: {
+        connectionTermination: "normal_eof" | "protocol_terminal" | "application_abort" | "socket_reset" | "body_timeout" | "read_error" | "provider_error";
+        framesReceived: number;
+        bytesReceived: number;
+        lastUpstreamFrameAt?: number;
+        lastTextDeltaAt?: number;
+        finishReason?: string;
+        terminalSeen: boolean;
+        doneMarkerSeen: boolean;
+        usageSeen: boolean;
+        elapsedMs?: number;
+        rootError?: { name?: string; message?: string; code?: string; errno?: string | number; syscall?: string; cause?: { name?: string; message?: string; code?: string; errno?: string | number; syscall?: string } };
+    };
 };
 
 export type AdminGenerationTask = {
@@ -76,9 +89,15 @@ export type AdminGenerationTask = {
         startedAt: number;
         completedAt?: number;
         elapsedMs?: number;
+        firstByteMs?: number;
+        firstContentMs?: number;
+        resultKind?: "conversation" | "generation";
         error?: string;
     }>;
     plannerFailure?: { message: string; failedAt: number };
+    planningFinalization?: { planningCycle: number; status: "pending" | "settled" | "failed"; attemptNumber: number; errorCode?: string; error?: string; retryable?: boolean; updatedAt: number };
+    failureStage?: "planning" | "planner_settlement" | "task_dispatch" | "task_execution";
+    agentTiming?: { requestToPlannerUpstreamMs?: number; plannerTtfbMs?: number; plannerDurationMs?: number; plannerSettlementMs?: number; childDispatchMs?: number };
     createdAt: number;
     updatedAt: number;
     canCancel: boolean;

@@ -6,6 +6,7 @@ import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenera
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 import type { ResolvedTextProtocolKind } from "@/lib/server/text-protocol-resolver";
+import type { TextStreamTransportDiagnostic } from "@/lib/server/text-stream-diagnostics";
 import { textTaskBillingBusinessId } from "./generation-usage-context";
 
 type TextTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
@@ -26,6 +27,7 @@ export type TextTaskAttempt = Omit<GenerationAttempt, "status"> & {
     usage?: TextTaskUsage;
     milestones: TextTaskMilestones;
     latency?: { firstByteMs?: number; firstTextMs?: number; streamMs?: number; generationMs?: number; finalizationMs?: number; totalMs?: number };
+    transportDiagnostic?: TextStreamTransportDiagnostic;
 };
 export type TextTaskSnapshotUpdate = { content: string; usage?: TextTaskUsage; milestones?: TextTaskMilestones };
 
@@ -120,7 +122,13 @@ export function acceptTextTaskSnapshot(id: string, attemptId: string, expectedRe
     });
 }
 
-export function closeTextTaskAttempt(id: string, attemptId: string, status: Exclude<TextTaskAttempt["status"], "running">, patch: Partial<Pick<TextTaskAttempt, "error" | "pointsCost" | "pointsRecordId" | "milestones">> = {}, expectedRevision?: number) {
+export function closeTextTaskAttempt(
+    id: string,
+    attemptId: string,
+    status: Exclude<TextTaskAttempt["status"], "running">,
+    patch: Partial<Pick<TextTaskAttempt, "error" | "pointsCost" | "pointsRecordId" | "milestones" | "transportDiagnostic">> = {},
+    expectedRevision?: number,
+) {
     return mutateStoredGenerationTask<TextTask>("text", id, GENERATION_TASK_RETENTION_MS, (task) => {
         const attempt = task.attempts?.find((item) => item.id === attemptId);
         if (task.activeAttemptId !== attemptId || !attempt || attempt.status !== "running" || (expectedRevision !== undefined && attempt.revision !== expectedRevision)) return null;

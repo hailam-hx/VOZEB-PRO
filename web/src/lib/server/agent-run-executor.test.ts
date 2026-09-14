@@ -766,7 +766,19 @@ describe("executeAgentRun backend settings", () => {
         const plan = canvasPlan("image-creative");
         mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
             if (url.endsWith("/responses")) return new Response("unsupported endpoint", { status: 404 });
-            if (url.endsWith("/chat/completions")) return Response.json({ choices: [{ message: { content: JSON.stringify(plan) } }] }, { headers: { "x-vozeb-pro-points-cost": "1.25", "x-vozeb-pro-points-record-id": "points-plan" } });
+            if (url.endsWith("/chat/completions"))
+                return Response.json(
+                    { choices: [{ message: { content: JSON.stringify(plan) } }] },
+                    {
+                        headers: {
+                            "x-vozeb-pro-points-cost": "1.25",
+                            "x-vozeb-pro-points-record-id": "points-plan",
+                            "x-vozeb-pro-usage-hold-id": "planner-hold",
+                            "x-vozeb-pro-usage-attempt-number": "1",
+                            "x-vozeb-pro-usage-request-fingerprint": "c".repeat(64),
+                        },
+                    },
+                );
             if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-planned" } });
             if (url.endsWith("/api/image-tasks/child-planned")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/planned.png" } } });
             throw new Error(`unexpected request: ${url}`);
@@ -1191,6 +1203,187 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ status: "succeeded", resultKind: "generation", firstByteMs: expect.any(Number) })]);
     });
 
+    it("persists a recoverable planner settlement failure before dispatching a text child", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "写剧本一个女跳舞", responseLocale: "zh-CN" });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = { intent: "generation", objective: "写一个独舞短剧本", deliverables: [{ id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", dependencies: [] }] };
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: `<generation>\n${JSON.stringify(plan)}` } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, {
+                    headers: {
+                        "content-type": "text/event-stream",
+                        "x-vozeb-pro-usage-hold-id": "planner-hold",
+                        "x-vozeb-pro-usage-attempt-number": "1",
+                        "x-vozeb-pro-usage-request-fingerprint": "a".repeat(64),
+                    },
+                });
+            }
+            throw new Error(`unexpected request: ${url}`);
+        });
+        mocks.finishSystemAiTextAttempt.mockRejectedValueOnce(new Error("database unavailable"));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({
+            status: "failed",
+            failureStage: "planner_settlement",
+            tasks: [expect.objectContaining({ id: "script", status: "ready" })],
+            planningFinalization: expect.objectContaining({ planningCycle: 1, status: "failed", holdId: "planner-hold", attemptNumber: 1, requestFingerprint: "a".repeat(64), errorCode: "Error" }),
+        });
+        expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).endsWith("/api/text-tasks"))).toBe(false);
+    });
+
+    it("persists planner_settlement when the ledger settles but the settled Run update fails", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "写剧本一个女跳舞", responseLocale: "zh-CN" });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = { intent: "generation", objective: "写一个独舞短剧本", deliverables: [{ id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", dependencies: [] }] };
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: `<generation>\n${JSON.stringify(plan)}` } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, {
+                    headers: {
+                        "content-type": "text/event-stream",
+                        "x-vozeb-pro-usage-hold-id": "planner-hold",
+                        "x-vozeb-pro-usage-attempt-number": "1",
+                        "x-vozeb-pro-usage-request-fingerprint": "f".repeat(64),
+                    },
+                });
+            }
+            throw new Error(`unexpected request: ${url}`);
+        });
+        let rejectedSettledWrite = false;
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch, event, allowedStatuses, expectedExecutionId) => {
+            if (!mocks.run || (allowedStatuses && !allowedStatuses.includes(mocks.run.status)) || (expectedExecutionId && mocks.run.executionId !== expectedExecutionId)) return null;
+            if (!rejectedSettledWrite && patch.planningFinalization?.status === "settled") {
+                rejectedSettledWrite = true;
+                throw Object.assign(new Error("Run store unavailable"), { code: "ECONNRESET" });
+            }
+            mocks.run = { ...mocks.run, ...patch };
+            if (event) mocks.events.push(event);
+            return mocks.run;
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledOnce();
+        expect(mocks.run).toMatchObject({
+            status: "failed",
+            failureStage: "planner_settlement",
+            planningFinalization: expect.objectContaining({ status: "failed", errorCode: "ECONNRESET", retryable: true }),
+            tasks: [expect.objectContaining({ id: "script", status: "ready" })],
+        });
+        expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).endsWith("/api/text-tasks"))).toBe(false);
+    });
+
+    it("settles a persisted planner attempt before resuming its ready text child", async () => {
+        mocks.run = runFixture({
+            surface: "chat",
+            projectId: undefined,
+            status: "running",
+            responseKind: "generation",
+            prompt: "写剧本一个女跳舞",
+            tasks: [{ id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", count: 1, dependencies: [], status: "ready", attempts: 0 }],
+            failureStage: "planner_settlement",
+            planningFinalization: { planningCycle: 1, status: "failed", holdId: "planner-hold", attemptNumber: 1, requestFingerprint: "b".repeat(64), errorCode: "Error", retryable: true, updatedAt: 10 },
+        });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        mocks.getTextTask.mockResolvedValue({ status: "success", result: { content: "完整剧本" }, executionPhase: "completed" });
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST" && url.endsWith("/api/text-tasks")) return Response.json({ task: { id: "text-script" } });
+            if (url.endsWith("/api/text-tasks/text-script")) return Response.json({ task: { status: "success", result: { content: "完整剧本" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.objectContaining({ get: expect.any(Function) }), { status: "succeeded" });
+        const settlementHeaders = (mocks.finishSystemAiTextAttempt.mock.calls as unknown as Array<[Headers, { status: string }]>)[0]?.[0];
+        expect(settlementHeaders.get("x-vozeb-pro-usage-hold-id")).toBe("planner-hold");
+        expect(mocks.run).toMatchObject({ status: "completed", failureStage: undefined, planningFinalization: expect.objectContaining({ status: "settled" }), tasks: [expect.objectContaining({ status: "completed", taskId: "text-script" })] });
+    });
+
+    it("settles and completes a persisted conversation reply without requesting the planner again", async () => {
+        mocks.run = runFixture({
+            surface: "chat",
+            projectId: undefined,
+            status: "running",
+            responseKind: "conversation",
+            conversationReply: "已保存的对话回答",
+            prompt: "你好",
+            tasks: [],
+            failureStage: "planner_settlement",
+            planningFinalization: { planningCycle: 1, status: "failed", holdId: "planner-hold", attemptNumber: 1, requestFingerprint: "9".repeat(64), errorCode: "settle_hold:ECONNRESET", retryable: true, updatedAt: 10 },
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledOnce();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+        expect(mocks.run).toMatchObject({ status: "completed", responseKind: "conversation", conversationReply: "已保存的对话回答", failureStage: undefined, planningFinalization: expect.objectContaining({ status: "settled" }) });
+        expect(mocks.events.filter((event) => event.type === "run.completed")).toHaveLength(1);
+    });
+
+    it("keeps an undispatched child ready so the same persisted plan can resume", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "写剧本一个女跳舞", responseLocale: "zh-CN" });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = { intent: "generation", objective: "写一个独舞短剧本", deliverables: [{ id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", dependencies: [] }] };
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: `<generation>\n${JSON.stringify(plan)}` } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+            }
+            if (init?.method === "POST" && url.endsWith("/api/text-tasks")) return new Response("dispatch unavailable", { status: 502 });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({
+            status: "failed",
+            failureStage: "task_dispatch",
+            tasks: [expect.objectContaining({ id: "script", status: "ready", attempts: 0, error: "dispatch unavailable" })],
+        });
+
+        mocks.run = { ...mocks.run!, status: "running", executionId: undefined };
+        mocks.getTextTask.mockResolvedValue({ status: "success", result: { content: "完整剧本" }, executionPhase: "completed" });
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST" && url.endsWith("/api/text-tasks")) return Response.json({ task: { id: "text-script" } });
+            if (url.endsWith("/api/text-tasks/text-script")) return Response.json({ task: { status: "success", result: { content: "完整剧本" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({ status: "completed", failureStage: undefined, tasks: [expect.objectContaining({ id: "script", status: "completed", attempts: 1, taskId: "text-script" })] });
+    });
+
+    it("uses the compact planner contract for an ordinary text-only creation", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "写剧本一个女跳舞", responseLocale: "zh-CN" });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = { intent: "generation", objective: "写一个独舞短剧本", deliverables: [{ id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", dependencies: [] }] };
+        mocks.getTextTask.mockResolvedValue({ status: "success", result: { content: "完整剧本" }, executionPhase: "completed" });
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: `<generation>\n${JSON.stringify(plan)}` } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+            }
+            if (init?.method === "POST" && url.endsWith("/api/text-tasks")) return Response.json({ task: { id: "text-script" } });
+            if (url.endsWith("/api/text-tasks/text-script")) return Response.json({ task: { status: "success", result: { content: "完整剧本" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const plannerBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls.find(([url]) => String(url).endsWith("/chat/completions"))?.[1]?.body)) as { messages: Array<{ content: string }> };
+        expect(plannerBody.messages[0].content).toContain('"properties":{"intent"');
+        expect(plannerBody.messages[0].content).not.toContain('"foundation"');
+        expect(plannerBody.messages[0].content).not.toContain('"decisions"');
+        expect(plannerBody.messages[0].content).not.toContain("发布会主视觉");
+        expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ resultKind: "generation", firstByteMs: expect.any(Number), firstContentMs: expect.any(Number) })]);
+        expect(mocks.run).toMatchObject({ status: "completed", tasks: [expect.objectContaining({ type: "text", status: "completed" })] });
+    });
+
     it("keeps explicitly selected creation types on the existing structured planner path", async () => {
         mocks.run = runFixture({
             surface: "chat",
@@ -1302,7 +1495,11 @@ describe("executeAgentRun backend settings", () => {
             if (!url.includes("/api/ai/system/dflop/")) throw new Error(`unexpected request: ${url}`);
             const model = (JSON.parse(String(init?.body)) as { model: string }).model;
             if (model === "gpt-5.6-sol") return new Response("not-json", { status: 200, headers: { "x-vozeb-pro-points-record-id": "failed-primary" } });
-            if (model === "gpt-6-astra") return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "备用模型已接管。")) }] });
+            if (model === "gpt-6-astra")
+                return Response.json(
+                    { output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "备用模型已接管。")) }] },
+                    { headers: { "x-vozeb-pro-usage-hold-id": "planner-hold", "x-vozeb-pro-usage-attempt-number": "2", "x-vozeb-pro-usage-request-fingerprint": "d".repeat(64) } },
+                );
             throw new Error(`unexpected model: ${model}`);
         });
 
@@ -1855,13 +2052,21 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.status).toBe("failed");
     });
 
-    it("releases the planning hold when persisting the conversation reply fails", async () => {
+    it("does not release a planning hold after the conversation plan and settlement were persisted", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockResolvedValue(
             Response.json(
                 { output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "在的。")) }] },
-                { headers: { "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-agent-free" } },
+                {
+                    headers: {
+                        "x-vozeb-pro-points-cost": "0",
+                        "x-vozeb-pro-points-record-id": "points-agent-free",
+                        "x-vozeb-pro-usage-hold-id": "planner-hold",
+                        "x-vozeb-pro-usage-attempt-number": "1",
+                        "x-vozeb-pro-usage-request-fingerprint": "e".repeat(64),
+                    },
+                },
             ),
         );
         mocks.updateAgentRunById.mockImplementation(async (_id, patch, event, allowedStatuses, expectedExecutionId) => {
@@ -1874,8 +2079,9 @@ describe("executeAgentRun backend settings", () => {
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
-        expect(mocks.resolveSystemAiTextFailure).toHaveBeenCalledWith(expect.objectContaining({ final: true }));
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "succeeded" });
+        expect(mocks.finishSystemAiTextAttempt).not.toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
+        expect(mocks.resolveSystemAiTextFailure).not.toHaveBeenCalled();
         expect(mocks.run?.status).toBe("failed");
     });
 

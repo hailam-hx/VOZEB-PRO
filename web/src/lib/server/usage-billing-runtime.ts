@@ -200,13 +200,49 @@ export async function attachUsageProviderEvidence(input: { billing: UsageBilling
 export async function finishSystemAiTextAttempt(headers: Headers, input: { status: "succeeded" | "failed" | "canceled"; payload?: unknown; normalizedUsage?: NormalizedUsage; reason?: string }) {
     const identity = readSystemAiUsageBilling(headers);
     if (!identity) return;
-    const billing = await loadUsageBilling(identity.holdId);
-    const attempts = await listProviderUsageAttemptsForHold(billing.holdId);
+    let hold: Awaited<ReturnType<typeof getWalletHoldById>>;
+    try {
+        hold = await getWalletHoldById(identity.holdId);
+    } catch (error) {
+        throw billingFinalizationStepError("load_hold", error);
+    }
+    if (!hold || (hold.status !== "active" && !(hold.status === "settled" && input.status === "succeeded"))) throw billingIntegrityError("load_hold", "usage_hold_missing_or_closed", "用量预留不存在或已经关闭");
+    if (hold.requestFingerprint !== identity.requestFingerprint) throw billingIntegrityError("load_hold", "usage_fingerprint_mismatch", "用量预留请求指纹不一致");
+    const billing = billingFromHold(hold);
+    let attempts: Awaited<ReturnType<typeof listProviderUsageAttemptsForHold>>;
+    try {
+        attempts = await listProviderUsageAttemptsForHold(billing.holdId);
+    } catch (error) {
+        throw billingFinalizationStepError("load_attempt", error);
+    }
     const attempt = attempts.find((item) => item.attemptNumber === identity.attemptNumber);
+    if (!attempt) throw billingIntegrityError("load_attempt", "usage_attempt_missing", "供应商尝试不存在");
     const usage = input.normalizedUsage || attempt?.observedUsage || (input.payload ? deriveProxyBillableUsage({ capability: "text", requestUsage: billing.snapshot.requestUsage, payload: input.payload }) : undefined);
-    await finishUsageProviderAttempt({ billing, attemptNumber: identity.attemptNumber, status: input.status, normalizedUsage: usage });
-    if (input.status === "succeeded") await settleUsageBilling({ billing, description: "文本生成用量结算", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
-    else if (input.status === "canceled") await settleCancelledUsageBilling({ billing, description: "用户取消已由上游接受的文本生成", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
+    try {
+        await finishUsageProviderAttempt({ billing, attemptNumber: identity.attemptNumber, status: input.status, normalizedUsage: usage });
+    } catch (error) {
+        throw billingFinalizationStepError("finish_attempt", error);
+    }
+    try {
+        if (input.status === "succeeded") await settleUsageBilling({ billing, description: "文本生成用量结算", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
+        else if (input.status === "canceled") await settleCancelledUsageBilling({ billing, description: "用户取消已由上游接受的文本生成", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
+    } catch (error) {
+        throw billingFinalizationStepError("settle_hold", error);
+    }
+}
+
+type BillingFinalizationStep = "load_hold" | "load_attempt" | "finish_attempt" | "settle_hold";
+
+function billingIntegrityError(step: BillingFinalizationStep, code: string, message: string) {
+    return Object.assign(new Error(message), { name: "UsageBillingIntegrityError", code: `${step}:${code}`, billingStage: step });
+}
+
+function billingFinalizationStepError(step: BillingFinalizationStep, error: unknown) {
+    if (error && typeof error === "object" && "billingStage" in error) return error;
+    const source = error instanceof Error ? error : new Error(String(error));
+    const record = source as Error & { code?: unknown };
+    const code = typeof record.code === "string" && record.code.trim() ? record.code.trim() : source.name || "error";
+    return Object.assign(new Error(source.message, { cause: source }), { name: "UsageBillingFinalizationError", code: `${step}:${code}`, billingStage: step });
 }
 
 export async function releaseUsageBillingForBusiness(userId: string, businessId: string, reason: string) {

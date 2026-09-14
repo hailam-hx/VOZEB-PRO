@@ -18,6 +18,7 @@ import { applyAgentTextEvent, type AgentTextState, type AgentTextEvent } from "@
 import { getTextTask, type TextTask } from "./text-task-store";
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
+export type AgentRunFailureStage = "planning" | "planner_settlement" | "task_dispatch" | "task_execution";
 export type AgentRunReviewStatus = "review_pending" | "reviewing" | "review_completed" | "review_unavailable";
 export type AgentRunReference = {
     assetId?: string;
@@ -114,6 +115,8 @@ export type AgentRun = {
     plannerAudit?: AgentRunPlannerAudit;
     plannerAttempts?: AgentRunPlannerAttempt[];
     plannerFailure?: AgentRunPlannerFailure;
+    planningFinalization?: AgentRunPlanningFinalization;
+    failureStage?: AgentRunFailureStage;
     cancellation?: AgentRunCancellation;
     timings?: AgentRunTimings;
     createdAt: number;
@@ -140,6 +143,17 @@ export type AgentRunPlannerFailure = {
     message: string;
     failedAt: number;
 };
+export type AgentRunPlanningFinalization = {
+    planningCycle: number;
+    status: "pending" | "settled" | "failed";
+    holdId: string;
+    attemptNumber: number;
+    requestFingerprint?: string;
+    errorCode?: string;
+    error?: string;
+    retryable?: boolean;
+    updatedAt: number;
+};
 export type AgentRunCancellation = {
     requestedAt: number;
     pendingChildTaskIds: string[];
@@ -158,6 +172,8 @@ export type AgentRunTimings = {
     upstreamFirstByteAt?: number;
     firstPublicReplyAt?: number;
     planningCompletedAt?: number;
+    plannerSettlementStartedAt?: number;
+    plannerSettlementCompletedAt?: number;
     firstTaskSubmittedAt?: number;
     firstResultReadyAt?: number;
     allResultsReadyAt?: number;
@@ -324,6 +340,8 @@ export async function updateAgentRunById(
             | "plannerAudit"
             | "plannerAttempts"
             | "plannerFailure"
+            | "planningFinalization"
+            | "failureStage"
             | "responseKind"
             | "conversationReply"
             | "cancellation"

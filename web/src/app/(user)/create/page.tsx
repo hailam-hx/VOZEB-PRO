@@ -30,7 +30,8 @@ import { CreativeConversationList } from "./components/creative-conversation-lis
 import { CreateInspirationGallery } from "./components/create-inspiration-gallery";
 import { CreativeMessages } from "./components/creative-messages";
 import { CreateWorkbenchOverview } from "./components/create-workbench-overview";
-import { publicCreativeAssetPrompt, remapCreativeAssetReferences } from "./components/creative-asset-mention";
+import { publicCreativeAssetPrompt, remapCreativeAssetReferences, replaceCreativeAssetMention } from "./components/creative-asset-mention";
+import { creativeAssetReferenceAliases } from "@/lib/creative-asset-references";
 import { createConversationHref, createConversationIdFromSearch } from "./create-conversation-navigation";
 import { useCreateAgent } from "./use-create-agent";
 
@@ -76,6 +77,8 @@ export default function CreatePage() {
     const promptMaxLength = publicSettings?.generationDefaults?.createPromptMaxLength || CREATE_AGENT_PROMPT_MAX_LENGTH;
     const siteTitle = resolveSiteTitle(publicSettings?.site?.title);
     const agent = useCreateAgent();
+    const selectedAssetIdsRef = useRef<string[]>(agent.selectedAssetIds);
+    selectedAssetIdsRef.current = agent.selectedAssetIds;
     const openAgentConversation = agent.openConversation;
     const newAgentConversation = agent.newConversation;
     const hasConversation = agent.messages.length > 0;
@@ -446,9 +449,10 @@ export default function CreatePage() {
     };
 
     const removeAttachment = (id: string) => {
-        const currentAssetIds = agent.selectedAssetIds;
+        const currentAssetIds = selectedAssetIdsRef.current;
         const nextAssetIds = currentAssetIds.filter((assetId) => assetId !== id);
         const nextPrompt = remapCreativeAssetReferences(promptValueRef.current, [...agent.assets, ...agent.selectedAssets], currentAssetIds, nextAssetIds);
+        selectedAssetIdsRef.current = nextAssetIds;
         agent.removeAttachment(id);
         if (nextPrompt !== promptValueRef.current) updatePrompt(nextPrompt);
         setGenerationPreferences((current) =>
@@ -465,22 +469,38 @@ export default function CreatePage() {
         );
     };
 
-    const toggleReferencedAsset = (id: string) => {
-        const currentAssetIds = agent.selectedAssetIds;
-        if (!currentAssetIds.includes(id)) {
-            const asset = agent.assets.find((item) => item.id === id);
-            if (asset && asset.type !== "text") {
-                const availability = creativeReferenceAdditionAvailability(referenceCapabilityState, agent.selectedAssets, asset.type);
-                if (!availability.supported) {
-                    message.warning(referenceCapabilityMessage(availability.reason, "maxReferenceImages" in availability ? availability.maxReferenceImages : undefined));
-                    return;
-                }
+    const updateReferencedAsset = (asset: CreativeAsset, shouldSelect: boolean, mention?: { value: string; cursor: number }) => {
+        const currentAssetIds = selectedAssetIdsRef.current;
+        if (shouldSelect && !currentAssetIds.includes(asset.id) && asset.type !== "text") {
+            const currentAssets = [...agent.assets, ...agent.selectedAssets].filter((item) => currentAssetIds.includes(item.id));
+            const availability = creativeReferenceAdditionAvailability(referenceCapabilityState, currentAssets, asset.type);
+            if (!availability.supported) {
+                message.warning(referenceCapabilityMessage(availability.reason, "maxReferenceImages" in availability ? availability.maxReferenceImages : undefined));
+                return { accepted: false as const };
             }
         }
-        const nextAssetIds = currentAssetIds.includes(id) ? currentAssetIds.filter((assetId) => assetId !== id) : [...currentAssetIds, id];
-        const nextPrompt = remapCreativeAssetReferences(promptValueRef.current, [...agent.assets, ...agent.selectedAssets], currentAssetIds, nextAssetIds);
-        agent.toggleAsset(id);
+        const nextAssetIds = shouldSelect ? (currentAssetIds.includes(asset.id) ? currentAssetIds : [...currentAssetIds, asset.id]) : currentAssetIds.filter((assetId) => assetId !== asset.id);
+        const aliasAssets = Array.from(new Map([...agent.assets, ...agent.selectedAssets, asset].map((item) => [item.id, item])).values());
+        const replacement = mention ? creativeAssetReferenceAliases(aliasAssets, nextAssetIds).get(asset.id) : undefined;
+        if (mention && !replacement) return { accepted: false as const };
+        const mentionResult = mention && replacement ? replaceCreativeAssetMention(mention.value, mention.cursor, replacement) : undefined;
+        const nextPrompt = mentionResult?.value ?? remapCreativeAssetReferences(promptValueRef.current, aliasAssets, currentAssetIds, nextAssetIds);
+        selectedAssetIdsRef.current = nextAssetIds;
+        if (shouldSelect && !currentAssetIds.includes(asset.id)) agent.selectAsset(asset.id);
+        else if (!shouldSelect && currentAssetIds.includes(asset.id)) agent.toggleAsset(asset.id);
         if (nextPrompt !== promptValueRef.current) updatePrompt(nextPrompt);
+        return { accepted: true as const, ...(mentionResult ? { cursor: Math.min(mentionResult.cursor, promptMaxLength) } : {}) };
+    };
+
+    const toggleReferencedAsset = (id: string) => {
+        const asset = [...agent.assets, ...agent.selectedAssets].find((item) => item.id === id);
+        if (!asset) return;
+        updateReferencedAsset(asset, !agent.selectedAssetIds.includes(id));
+    };
+
+    const referenceAssetFromMention = (asset: CreativeAsset, mention: { value: string; cursor: number }) => {
+        const result = updateReferencedAsset(asset, true, mention);
+        return result?.accepted && result.cursor !== undefined ? { accepted: true as const, cursor: result.cursor } : { accepted: false as const };
     };
 
     const setAwayFromLatestState = (away: boolean) => {
@@ -577,18 +597,7 @@ export default function CreatePage() {
             onPasteImages={(files) => void uploadAttachments(files)}
             referenceAssets={agent.assets}
             selectedAssetIds={agent.selectedAssetIds}
-            onReferenceAsset={(id) => {
-                if (agent.selectedAssetIds.includes(id)) return;
-                const asset = agent.assets.find((item) => item.id === id);
-                if (asset && asset.type !== "text") {
-                    const availability = creativeReferenceAdditionAvailability(referenceCapabilityState, agent.selectedAssets, asset.type);
-                    if (!availability.supported) {
-                        message.warning(referenceCapabilityMessage(availability.reason, "maxReferenceImages" in availability ? availability.maxReferenceImages : undefined));
-                        return;
-                    }
-                }
-                agent.selectAsset(id);
-            }}
+            onReferenceAsset={referenceAssetFromMention}
         />
     );
 

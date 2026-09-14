@@ -14,8 +14,27 @@ export type TextStreamDiagnosticContext = {
 
 export type TextStreamConnectionTermination = "normal_eof" | "protocol_terminal" | "application_abort" | "socket_reset" | "body_timeout" | "read_error" | "provider_error";
 
-export function createTextStreamDiagnostics(protocol: TextStreamProtocol, context?: TextStreamDiagnosticContext) {
-    if (!context || !textStreamDiagnosticsEnabled()) return undefined;
+export type TextStreamTransportDiagnostic = TextStreamDiagnosticContext & {
+    protocol: TextStreamProtocol;
+    startedAt: number;
+    lastUpstreamFrameAt?: number;
+    lastTextDeltaAt?: number;
+    framesReceived: number;
+    bytesReceived: number;
+    finishReason?: string;
+    terminalSeen: boolean;
+    doneMarkerSeen: boolean;
+    usageSeen: boolean;
+    event: "text_stream_transport";
+    connectionTermination: TextStreamConnectionTermination;
+    elapsedMs: number;
+    rootError?: ReturnType<typeof structuredRootError>;
+    abort?: { aborted: true; reason: ReturnType<typeof structuredRootError>; stage?: string | number };
+};
+
+export function createTextStreamDiagnostics(protocol: TextStreamProtocol, context?: TextStreamDiagnosticContext, onFinish?: (diagnostic: TextStreamTransportDiagnostic) => void) {
+    if (!context) return undefined;
+    const loggingEnabled = textStreamDiagnosticsEnabled();
     const startedAt = Date.now();
     let lastUpstreamFrameAt: number | undefined;
     let lastTextDeltaAt: number | undefined;
@@ -55,19 +74,20 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
             terminalSeen ||= metadata.terminalSeen;
             doneMarkerSeen ||= metadata.doneMarkerSeen;
             usageSeen ||= metadata.usageSeen;
-            console.info("Text stream frame diagnostic", {
-                ...snapshot(),
-                sequence: framesReceived,
-                observedAt,
-                frameBytes: new TextEncoder().encode(frame).byteLength,
-                eventType: metadata.eventType,
-                textDelta: metadata.textDelta,
-            });
+            if (loggingEnabled)
+                console.info("Text stream frame diagnostic", {
+                    ...snapshot(),
+                    sequence: framesReceived,
+                    observedAt,
+                    frameBytes: new TextEncoder().encode(frame).byteLength,
+                    eventType: metadata.eventType,
+                    textDelta: metadata.textDelta,
+                });
         },
         finish(connectionTermination: TextStreamConnectionTermination, error?: unknown, signal?: AbortSignal) {
             if (finished) return;
             finished = true;
-            const entry = {
+            const entry: TextStreamTransportDiagnostic = {
                 ...snapshot(),
                 event: "text_stream_transport",
                 connectionTermination,
@@ -75,8 +95,11 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
                 ...(error === undefined ? {} : { rootError: structuredRootError(error) }),
                 ...(signal?.aborted ? { abort: { aborted: true, reason: structuredRootError(signal.reason), stage: errorField(signal.reason, "stage") } } : {}),
             };
-            if (["socket_reset", "body_timeout", "read_error", "application_abort", "provider_error"].includes(connectionTermination)) console.warn("Text stream transport diagnostic", entry);
-            else console.info("Text stream transport diagnostic", entry);
+            onFinish?.(entry);
+            if (loggingEnabled) {
+                if (["socket_reset", "body_timeout", "read_error", "application_abort", "provider_error"].includes(connectionTermination)) console.warn("Text stream transport diagnostic", entry);
+                else console.info("Text stream transport diagnostic", entry);
+            }
         },
         sawProtocolTerminal() {
             return doneMarkerSeen || terminalSeen;
@@ -91,8 +114,11 @@ export function textStreamDiagnosticsEnabled() {
 export function classifyTextStreamTermination(error: unknown, signal?: AbortSignal): TextStreamConnectionTermination {
     const root = structuredRootError(error);
     const fields = [root.name, root.message, root.code, root.cause?.name, root.cause?.message, root.cause?.code].filter(Boolean).join(" ").toUpperCase();
+    const signalRoot = signal?.aborted ? structuredRootError(signal.reason) : undefined;
+    const signalFields = signalRoot ? [signalRoot.name, signalRoot.message, signalRoot.code, signalRoot.cause?.name, signalRoot.cause?.message, signalRoot.cause?.code].filter(Boolean).join(" ").toUpperCase() : "";
+    if (errorField(signal?.reason, "stage") !== undefined || fields.includes("UND_ERR_BODY_TIMEOUT") || fields.includes("BODYTIMEOUTERROR") || fields.includes("BODY TIMEOUT") || fields.includes("BODY TIMED OUT") || signalFields.includes("TIMEOUTERROR"))
+        return "body_timeout";
     if (signal?.aborted || root.name === "AbortError" || root.cause?.name === "AbortError" || fields.includes("UND_ERR_ABORTED")) return "application_abort";
-    if (fields.includes("UND_ERR_BODY_TIMEOUT") || fields.includes("BODYTIMEOUTERROR") || fields.includes("BODY TIMEOUT") || fields.includes("BODY TIMED OUT")) return "body_timeout";
     if (["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"].some((code) => fields.includes(code)) || fields.includes("SOCKETERROR") || fields.includes("SOCKET RESET")) return "socket_reset";
     return "read_error";
 }

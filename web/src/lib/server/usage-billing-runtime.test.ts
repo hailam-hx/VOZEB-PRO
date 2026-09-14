@@ -26,6 +26,7 @@ import { getStoredGenerationTaskRecord } from "./generation-task-store";
 import {
     attachUsageProviderUpstreamTaskId,
     finalizeUsageBillingForBusiness,
+    finishSystemAiTextAttempt,
     inspectPersistedUsageHold,
     recoverOrphanUsageHolds,
     finishUsageProviderAttempt,
@@ -86,6 +87,43 @@ afterAll(() => {
 });
 
 describe("usage billing runtime", () => {
+    it("reconciles an already settled system AI text attempt without charging twice", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "agent-plan:settlement-recovery",
+            requestFingerprint: "9".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "planner fixture",
+        });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }));
+
+        await finishSystemAiTextAttempt(headers, { status: "succeeded" });
+        await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).resolves.toBeUndefined();
+
+        const db = await readAuthDb();
+        expect(db.walletHolds).toEqual([expect.objectContaining({ id: billing.holdId, status: "settled" })]);
+        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "succeeded" })]);
+        expect(db.usageCharges).toHaveLength(1);
+    });
+
+    it("reports the exact planner billing integrity step when the provider attempt is missing", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "agent-plan:missing-attempt",
+            requestFingerprint: "8".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "planner integrity fixture",
+        });
+        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }));
+
+        await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).rejects.toMatchObject({ code: "load_attempt:usage_attempt_missing" });
+    });
+
     it("preserves protocol completion billing when HTTP transport cancellation loses the local cleanup reason", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",

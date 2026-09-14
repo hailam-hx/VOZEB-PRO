@@ -34,6 +34,7 @@ export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewC
 
 class AgentChildTaskTerminalError extends Error {}
 class AgentChildTaskDeferredError extends Error {}
+class AgentChildTaskDispatchError extends Error {}
 
 export async function canContinue(id: string, executionId: string) {
     const run = await getAgentRun(id);
@@ -147,6 +148,41 @@ export const agentPlanTool = {
         additionalProperties: false,
     },
 };
+
+export const agentTextPlanTool = {
+    type: "function",
+    name: "create_agent_plan",
+    description: "创建文本创作计划",
+    parameters: {
+        type: "object",
+        properties: {
+            intent: { type: "string", enum: ["conversation", "generation"] },
+            objective: { type: "string" },
+            reply: { type: "string" },
+            deliverables: {
+                type: "array",
+                minItems: 0,
+                items: {
+                    type: "object",
+                    properties: {
+                        id: { type: "string" },
+                        title: { type: "string" },
+                        type: { type: "string", enum: ["text"] },
+                        model: { type: "string" },
+                        prompt: { type: "string" },
+                        dependencies: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["title", "type", "model", "prompt"],
+                    additionalProperties: false,
+                },
+            },
+        },
+        required: ["intent", "objective", "deliverables"],
+        additionalProperties: false,
+    },
+};
+
+type AgentPlanTool = typeof agentPlanTool | typeof agentTextPlanTool;
 
 export function normalizeTasks(
     plan: AgentPlan,
@@ -497,6 +533,16 @@ export function agentPlanFallbackExample(models: ReturnType<typeof agentModelOpt
     });
 }
 
+export function agentTextPlanFallbackExample(models: ReturnType<typeof agentModelOptions>) {
+    const sample = models.find((model) => model.capability === "text");
+    return JSON.stringify({
+        intent: "generation",
+        objective: "写一篇结构完整的文本内容",
+        reply: "",
+        deliverables: [{ id: "text", title: "完整正文", type: "text", model: sample?.id || "", prompt: "根据用户要求写出完整正文", dependencies: [] }],
+    });
+}
+
 function textDefault(value: unknown) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -543,6 +589,7 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                     {
                         status: "completed",
                         executionId: undefined,
+                        failureStage: undefined,
                         ...(backgroundReview ? { reviewStatus: "review_pending" as const, reviewAttempts: completedRun.reviewAttempts || 0 } : {}),
                         timings: { ...(completedRun.timings || { requestAcceptedAt: completedRun.createdAt }), allResultsReadyAt: completedRun.timings?.allResultsReadyAt || Date.now(), runCompletedAt: Date.now() },
                     },
@@ -562,6 +609,7 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                     {
                         status: "completed",
                         executionId: undefined,
+                        failureStage: undefined,
                         tasks: terminalTasks,
                         timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), allResultsReadyAt: run.timings?.allResultsReadyAt || Date.now(), runCompletedAt: Date.now() },
                     },
@@ -573,7 +621,7 @@ export async function executeTasks(runId: string, origin: string, cookie: string
             }
             await updateAgentRunById(
                 runId,
-                { status: "failed", executionId: undefined, tasks: terminalTasks, timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), runCompletedAt: Date.now() } },
+                { status: "failed", executionId: undefined, failureStage: "task_execution", tasks: terminalTasks, timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), runCompletedAt: Date.now() } },
                 { type: "run.failed", data: { message: agentRunFailureMessage(terminalTasks, run.responseLocale), responseLocale: run.responseLocale } },
                 ["running"],
                 executionId,
@@ -643,7 +691,7 @@ export async function requestFunctionCall(
     cookie: string,
     candidate: TextPlanningCandidate,
     input: Array<{ role: string; content: string }>,
-    tool: typeof agentPlanTool,
+    tool: AgentPlanTool,
     name: string,
     signal: AbortSignal,
     _userId: string,
@@ -680,14 +728,14 @@ export async function requestRoutedFunctionCall(
     cookie: string,
     candidate: TextPlanningCandidate,
     input: Array<{ role: string; content: string }>,
-    tool: typeof agentPlanTool,
+    tool: AgentPlanTool,
     signal: AbortSignal,
     billingModel: string,
     usageContext: SystemAiUsageContextDraft | undefined,
     onConversationContent: (content: string, firstContentMs?: number) => void | Promise<void>,
     onResponse?: (headers: Headers) => void | Promise<void>,
     onFirstByte?: (elapsedMs: number) => void | Promise<void>,
-): Promise<(AgentFunctionCallResult & { kind: "conversation"; content: string; firstByteMs?: number; firstContentMs?: number }) | (AgentFunctionCallResult & { kind: "generation"; firstByteMs?: number })> {
+): Promise<(AgentFunctionCallResult & { kind: "conversation"; content: string; firstByteMs?: number; firstContentMs?: number }) | (AgentFunctionCallResult & { kind: "generation"; firstByteMs?: number; firstContentMs?: number })> {
     const requestHeaders = runtimeRequestHeaders(cookie, {
         "Content-Type": "application/json",
         ...systemAiBillingHeaders(billingModel, usageContext, candidate.upstreamModel),
@@ -711,7 +759,7 @@ export async function requestRoutedFunctionCall(
         usageAttemptNumber: usageContext?.attemptNumber,
     };
     if (result.kind === "conversation") return { ...call, kind: "conversation", content: result.content, firstByteMs: result.firstByteMs, firstContentMs: result.firstContentMs };
-    return { ...call, kind: "generation", firstByteMs: result.firstByteMs };
+    return { ...call, kind: "generation", firstByteMs: result.firstByteMs, firstContentMs: result.firstContentMs };
 }
 
 export function responseOutputText(payload: { output_text?: string; output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }) {
@@ -819,6 +867,13 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         }
         const message = toSafeGenerationErrorMessage(error, "生成任务失败");
         if (await canContinue(runId, executionId)) {
+            const latest = await getAgentRun(runId);
+            const latestTask = latest?.tasks.find((item) => item.id === task.id);
+            if (error instanceof AgentChildTaskDispatchError && latestTask && !agentTaskHasSubmittedChild(latestTask)) {
+                await patchTask(runId, task.id, { status: "ready", attempts: task.attempts, error: message }, "task.dispatch.failed", executionId);
+                await updateAgentRunById(runId, { failureStage: "task_dispatch" }, undefined, ["running"], executionId);
+                throw error;
+            }
             await patchTask(runId, task.id, { status: "failed", error: message }, "task.failed", executionId);
         }
         return "failed" as const;
@@ -954,11 +1009,16 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                 ...body,
                 context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
             };
-            const response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify(bodyForCopy), cache: "no-store" });
-            if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
+            let response: Response;
+            try {
+                response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify(bodyForCopy), cache: "no-store" });
+            } catch (error) {
+                throw new AgentChildTaskDispatchError(toSafeGenerationErrorMessage(error, "生成任务创建失败"));
+            }
+            if (!response.ok) throw new AgentChildTaskDispatchError((await response.text()) || "生成任务创建失败");
             const payload = (await response.json()) as { task?: { id?: string } };
             const createdTaskId = payload.task?.id;
-            if (!createdTaskId) throw new Error("生成任务未返回任务 ID");
+            if (!createdTaskId) throw new AgentChildTaskDispatchError("生成任务未返回任务 ID");
             taskId = createdTaskId;
             await linkAgentChildTask(run, task, taskId, attempt);
             child = { ...agentGenerationSelection(childTask), id: taskId, status: "pending", attempt };

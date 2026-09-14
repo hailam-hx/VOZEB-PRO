@@ -117,6 +117,88 @@ describe("Agent Run resume concurrency", () => {
         expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
     });
 
+    it("retries planner settlement in the same run without clearing its persisted plan", async () => {
+        const task = { id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", count: 1, dependencies: [], status: "ready", attempts: 0 };
+        const finalization = { planningCycle: 1, status: "failed", holdId: "planner-hold", attemptNumber: 2, requestFingerprint: "a".repeat(64), errorCode: "ECONNRESET", retryable: true, updatedAt: 20 };
+        const run = {
+            id: "run",
+            userId: "user",
+            status: "failed",
+            tasks: [task],
+            assetIds: [],
+            planningCycle: 1,
+            plannerAttempts: [{ attemptNo: 2 }],
+            planningFinalization: finalization,
+            failureStage: "planner_settlement",
+            timings: { requestAcceptedAt: 10, runCompletedAt: 20 },
+        };
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.countActive.mockResolvedValue(0);
+        mocks.getAuthSettings.mockReset().mockResolvedValue({ generationConcurrency: { agent: 2 } });
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...run, ...patch }));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "retry" }) });
+
+        expect(response.status).toBe(200);
+        expect(mocks.updateAgentRunById).toHaveBeenCalledWith(
+            "run",
+            expect.objectContaining({
+                status: "running",
+                tasks: [task],
+                planningCycle: 1,
+                plannerAttempts: run.plannerAttempts,
+                planningFinalization: finalization,
+                failureStage: "planner_settlement",
+                executionId: undefined,
+            }),
+            { type: "run.retry.requested" },
+            ["failed"],
+        );
+    });
+
+    it("resumes settlement for a persisted conversation reply without replanning it", async () => {
+        const finalization = { planningCycle: 1, status: "failed", holdId: "planner-hold", attemptNumber: 1, requestFingerprint: "b".repeat(64), errorCode: "settle_hold:ECONNRESET", retryable: true, updatedAt: 20 };
+        const run = {
+            id: "run",
+            userId: "user",
+            status: "failed",
+            tasks: [],
+            assetIds: [],
+            planningCycle: 1,
+            plannerAttempts: [{ attemptNo: 1 }],
+            planningFinalization: finalization,
+            failureStage: "planner_settlement",
+            responseKind: "conversation",
+            conversationReply: "已持久化的回答",
+            timings: { requestAcceptedAt: 10, runCompletedAt: 20 },
+        };
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.countActive.mockResolvedValue(0);
+        mocks.getAuthSettings.mockReset().mockResolvedValue({ generationConcurrency: { agent: 2 } });
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...run, ...patch }));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "retry" }) });
+
+        expect(response.status).toBe(200);
+        expect(mocks.updateAgentRunById).toHaveBeenCalledWith(
+            "run",
+            expect.objectContaining({
+                status: "running",
+                tasks: [],
+                planningCycle: 1,
+                plannerAttempts: run.plannerAttempts,
+                planningFinalization: finalization,
+                failureStage: "planner_settlement",
+            }),
+            { type: "run.retry.requested" },
+            ["failed"],
+        );
+        const retryPatch = mocks.updateAgentRunById.mock.calls[0]?.[1];
+        expect(retryPatch).not.toHaveProperty("responseKind");
+        expect(retryPatch).not.toHaveProperty("conversationReply");
+        await expect(response.json()).resolves.toMatchObject({ data: { run: { responseKind: "conversation", conversationReply: "已持久化的回答" } } });
+    });
+
     it("checks the latest concurrency limit before retrying a planning failure", async () => {
         mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "failed", tasks: [] });
         mocks.countActive.mockResolvedValue(1);

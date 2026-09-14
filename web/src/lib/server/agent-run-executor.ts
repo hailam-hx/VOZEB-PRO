@@ -1,10 +1,20 @@
 import { getAuthSettings } from "@/lib/auth/store";
 import { nanoid } from "nanoid";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
-import { systemAiIdempotencyKey, systemAiUsageRequestFingerprint } from "@/lib/server/system-ai-billing";
+import { readSystemAiUsageBilling, systemAiIdempotencyKey, systemAiUsageRequestFingerprint, systemAiUsageResponseHeaders } from "@/lib/server/system-ai-billing";
 import { systemAiTextUsageContext } from "@/lib/server/generation-usage-context";
-import { getAgentRun, updateAgentRunById, updateAgentRunConversationContent, type AgentRun, type AgentRunPlannerAttempt } from "@/lib/server/agent-run-store";
-import { agentPlannerSystemPrompt, agentPlanReply, buildAgentPlannerInput, conversationFallbackReply, isDirectAgentIdentityQuestion, plannerAgentSkills, prioritizeAgentPlannerModels, selectAgentSkills, taskPlanSummary } from "@/lib/server/agent-run-surface-policy";
+import { getAgentRun, updateAgentRunById, updateAgentRunConversationContent, type AgentRun, type AgentRunPlannerAttempt, type AgentRunPlanningFinalization } from "@/lib/server/agent-run-store";
+import {
+    agentPlannerSystemPrompt,
+    agentPlanReply,
+    buildAgentPlannerInput,
+    conversationFallbackReply,
+    isDirectAgentIdentityQuestion,
+    plannerAgentSkills,
+    prioritizeAgentPlannerModels,
+    selectAgentSkills,
+    taskPlanSummary,
+} from "@/lib/server/agent-run-surface-policy";
 import { getCreativeAssetsByIds, getCreativeConversationContext, listRecentCreativeMediaAssets } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { parseAgentPlanCall, type AgentFunctionCallResult } from "./agent-function-call";
@@ -14,6 +24,8 @@ import {
     agentTaskGenerationRequest,
     agentPlanFallbackExample,
     agentPlanTool,
+    agentTextPlanFallbackExample,
+    agentTextPlanTool,
     canContinue,
     directAgentPlan,
     executeTasks,
@@ -32,7 +44,7 @@ import { isExplicitProjectHandoffRequest, normalizeAgentProjectHandoff } from ".
 import { normalizeCanvasPlanForSelection } from "./agent-run-task-input";
 import { preferredTextPlanningProtocol, rankTextPlanningCandidates, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
 import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
-import { filterAgentPlannerModels } from "@/lib/server/agent-run-planning-profile";
+import { filterAgentPlannerModels, resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
 import { buildAgentRunPlannerAudit } from "@/lib/server/agent-run-audit";
 import { orderCreativeAssetsByIds } from "@/lib/creative-asset-references";
 
@@ -48,17 +60,13 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
     const controller = new AbortController();
     const executionId = nanoid();
     let acceptedPlan: { userId: string; model: string; channelId: string; upstreamModel: string; call: AgentFunctionCallResult } | undefined;
-    let planningPersisted = false;
+    let acceptedPlanPersisted = false;
     const releaseAcceptedPlan = async () => {
-        if (!acceptedPlan || planningPersisted) return;
+        if (!acceptedPlan || acceptedPlanPersisted) return;
         await releaseFunctionCall(acceptedPlan.userId, acceptedPlan.call, "Agent 规划结果未持久化");
         acceptedPlan = undefined;
     };
-    const settleAcceptedPlan = async () => {
-        if (!acceptedPlan || planningPersisted) return;
-        planningPersisted = true;
-        if (acceptedPlan.call.usageHeaders) await finishSystemAiTextAttempt(acceptedPlan.call.usageHeaders, { status: "succeeded" });
-    };
+    const acceptedPlanFinalization = () => plannerFinalization(acceptedPlan?.call.usageHeaders, normalizedPlanningCycle(run.planningCycle));
     controllers.set(run.id, controller);
     try {
         const executionStartedAt = Date.now();
@@ -69,8 +77,14 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             ["planning", "running"],
         );
         if (!claimed) return;
+        if (claimed.planningFinalization && claimed.responseKind === "conversation" && claimed.conversationReply?.trim()) {
+            if (!(await settlePlannerFinalization(run.id, claimed.planningFinalization, executionId))) return;
+            await completePersistedConversation(run.id, claimed, executionId, executionStartedAt);
+            return;
+        }
         if (claimed.tasks.length) {
             const settings = await getAuthSettings();
+            if (claimed.planningFinalization && !(await settlePlannerFinalization(run.id, claimed.planningFinalization, executionId))) return;
             await executeTasks(run.id, origin, cookie, executionId, settings);
             return;
         }
@@ -129,14 +143,17 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const model = settings.defaultModels.textModel;
         const candidates = resolveLogicalModelCandidates(settings, "text", model);
         if (!model || !candidates.length) throw new Error("后台尚未配置可用的默认文本模型");
-        const fallbackExample = agentPlanFallbackExample(availableModels);
+        const planningProfile = resolveAgentPlanningProfile(claimed);
+        const compactTextPlanner = planningProfile.complexity === "ordinary" && planningProfile.capabilities.size === 1 && planningProfile.capabilities.has("text");
+        const planTool = compactTextPlanner ? agentTextPlanTool : agentPlanTool;
+        const fallbackExample = compactTextPlanner ? agentTextPlanFallbackExample(availableModels) : agentPlanFallbackExample(availableModels);
         const plannerContext = buildAgentPlannerInput(claimed, conversationContext!, referencedAssets, referenceSource, skillOptions, availableModels, settings);
         if (!(await updateAgentRunById(run.id, { plannerContext: plannerContext.summary }, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId))) return;
         const identitySiteTitle = isDirectAgentIdentityQuestion(claimed.prompt) ? settings.site?.title?.trim() || "HOTX AI" : undefined;
         const planningInput = [
             {
                 role: "system",
-                content: agentPlannerSystemPrompt(claimed.surface, fallbackExample, { siteTitle: identitySiteTitle, responseLocale: claimed.responseLocale }),
+                content: agentPlannerSystemPrompt(claimed.surface, fallbackExample, { siteTitle: identitySiteTitle, responseLocale: claimed.responseLocale, compactText: compactTextPlanner }),
             },
             {
                 role: "user",
@@ -166,7 +183,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             });
             throw new TextPlanningRequestError(succeededWithoutPlan ? "Agent 规划结果未完整持久化" : interruptedAttempt.error || "Agent 规划请求接收状态未知", 502, false, succeededWithoutPlan ? "response" : "unknown");
         }
-        const requestFingerprint = systemAiUsageRequestFingerprint({ userId: run.userId, businessRequestId, logicalModel: model, capability: "text", payload: { input: planningInput, tool: agentPlanTool.name } });
+        const requestFingerprint = systemAiUsageRequestFingerprint({ userId: run.userId, businessRequestId, logicalModel: model, capability: "text", payload: { input: planningInput, tool: planTool.name } });
         const routedChat = claimed.surface === "chat" && !claimed.generationPreferences?.mode && !claimed.selectedSkillIds?.length;
         let plan: Awaited<ReturnType<typeof parseAgentPlanCall>> | undefined;
         let conversationReply: string | undefined;
@@ -211,7 +228,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                           cookie,
                           candidate,
                           planningInput,
-                          agentPlanTool,
+                          planTool,
                           controller.signal,
                           model,
                           usageContext,
@@ -244,7 +261,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                                   throw new Error("Agent 对话流已停止");
                           },
                       )
-                    : await requestFunctionCall(origin, cookie, candidate, planningInput, agentPlanTool, "create_agent_plan", controller.signal, run.userId, model, false, usageContext);
+                    : await requestFunctionCall(origin, cookie, candidate, planningInput, planTool, "create_agent_plan", controller.signal, run.userId, model, false, usageContext);
                 receivedResponse = true;
                 if ("kind" in planCall && planCall.kind === "conversation") {
                     conversationReply = planCall.content.trim();
@@ -267,15 +284,18 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                         requiredGenerationMode: claimed.generationPreferences?.mode,
                     });
                     if (plan) {
+                        const firstContentMs = "firstContentMs" in planCall ? planCall.firstContentMs : undefined;
                         acceptedPlan = { userId: claimed.userId, model, channelId: candidate.channel.id, upstreamModel: candidate.upstreamModel, call: planCall };
                         acceptedRequestStartedAt = startedAt;
                         acceptedFirstByteMs = planCall.firstByteMs;
+                        acceptedFirstContentMs = firstContentMs;
                         plannerAttempts = finishPlannerAttempt(plannerAttempts, auditAttemptNo, {
                             status: "succeeded",
                             requestAcceptance: "response",
                             protocol: planCall.protocol,
                             elapsedMs: planCall.elapsedMs,
                             firstByteMs: planCall.firstByteMs,
+                            firstContentMs,
                             resultKind: plan.intent,
                         });
                     }
@@ -346,10 +366,10 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         }
         if (conversationReply) {
             const completedAt = Date.now();
-            const completed = await updateAgentRunById(
+            const finalization = acceptedPlanFinalization();
+            const persisted = await updateAgentRunById(
                 run.id,
                 {
-                    status: "completed",
                     responseKind: "conversation",
                     conversationReply,
                     tasks: [],
@@ -357,7 +377,8 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     plannerAudit,
                     plannerAttempts,
                     plannerFailure: undefined,
-                    executionId: undefined,
+                    planningFinalization: finalization,
+                    failureStage: undefined,
                     timings: {
                         ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }),
                         executionStartedAt,
@@ -365,28 +386,29 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                         ...(acceptedRequestStartedAt !== undefined && acceptedFirstByteMs !== undefined ? { upstreamFirstByteAt: acceptedRequestStartedAt + acceptedFirstByteMs } : {}),
                         firstPublicReplyAt: claimed.timings?.firstPublicReplyAt || (acceptedRequestStartedAt !== undefined && acceptedFirstContentMs !== undefined ? acceptedRequestStartedAt + acceptedFirstContentMs : completedAt),
                         planningCompletedAt: completedAt,
-                        allResultsReadyAt: completedAt,
-                        runCompletedAt: completedAt,
+                        ...(finalization ? { plannerSettlementStartedAt: completedAt } : {}),
                     },
                 },
-                { type: "run.completed", data: { completed: 0, reply: conversationReply } },
+                undefined,
                 ["running"],
                 executionId,
             );
-            if (!completed) {
+            if (!persisted) {
                 await releaseAcceptedPlan();
                 return;
             }
-            await settleAcceptedPlan();
+            acceptedPlanPersisted = true;
+            if (finalization && !(await settlePlannerFinalization(run.id, finalization, executionId))) return;
+            await completePersistedConversation(run.id, persisted, executionId, executionStartedAt);
             return;
         }
         if (!plan) throw new Error("没有可用的文本模型渠道");
         if (plan.intent === "conversation") {
             const completedAt = Date.now();
-            const completed = await updateAgentRunById(
+            const finalization = acceptedPlanFinalization();
+            const persisted = await updateAgentRunById(
                 run.id,
                 {
-                    status: "completed",
                     responseKind: "conversation",
                     conversationReply: plan.reply?.trim() || conversationFallbackReply(claimed.surface, claimed.responseLocale),
                     tasks: [],
@@ -394,7 +416,8 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     plannerAudit,
                     plannerAttempts,
                     plannerFailure: undefined,
-                    executionId: undefined,
+                    planningFinalization: finalization,
+                    failureStage: undefined,
                     timings: {
                         ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }),
                         executionStartedAt,
@@ -402,19 +425,20 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                         ...(acceptedRequestStartedAt !== undefined && acceptedFirstByteMs !== undefined ? { upstreamFirstByteAt: acceptedRequestStartedAt + acceptedFirstByteMs } : {}),
                         firstPublicReplyAt: claimed.timings?.firstPublicReplyAt || completedAt,
                         planningCompletedAt: completedAt,
-                        allResultsReadyAt: completedAt,
-                        runCompletedAt: completedAt,
+                        ...(finalization ? { plannerSettlementStartedAt: completedAt } : {}),
                     },
                 },
-                { type: "run.completed", data: { completed: 0, reply: plan.reply?.trim() || conversationFallbackReply(claimed.surface, claimed.responseLocale) } },
+                undefined,
                 ["running"],
                 executionId,
             );
-            if (!completed) {
+            if (!persisted) {
                 await releaseAcceptedPlan();
                 return;
             }
-            await settleAcceptedPlan();
+            acceptedPlanPersisted = true;
+            if (finalization && !(await settlePlannerFinalization(run.id, finalization, executionId))) return;
+            await completePersistedConversation(run.id, persisted, executionId, executionStartedAt);
             return;
         }
         let tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize, claimed.generationPreferences);
@@ -430,6 +454,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const reply = agentPlanReply({ ...plan, projectHandoff }, tasks, claimed.surface, claimed.responseLocale);
         const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply } } : { type: "run.planned", data: { reply, tasks: tasks.map(taskPlanSummary), projectHandoff } };
         const planningCompletedAt = Date.now();
+        const finalization = acceptedPlanFinalization();
         const planned = await updateAgentRunById(
             run.id,
             {
@@ -442,6 +467,8 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 plannerAudit,
                 plannerAttempts,
                 plannerFailure: undefined,
+                planningFinalization: finalization,
+                failureStage: undefined,
                 timings: {
                     ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }),
                     executionStartedAt,
@@ -449,6 +476,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     ...(acceptedRequestStartedAt !== undefined && acceptedFirstByteMs !== undefined ? { upstreamFirstByteAt: acceptedRequestStartedAt + acceptedFirstByteMs } : {}),
                     firstPublicReplyAt: claimed.timings?.firstPublicReplyAt || planningCompletedAt,
                     planningCompletedAt,
+                    ...(finalization ? { plannerSettlementStartedAt: planningCompletedAt } : {}),
                 },
             },
             event,
@@ -459,7 +487,8 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             await releaseAcceptedPlan();
             return;
         }
-        await settleAcceptedPlan();
+        acceptedPlanPersisted = true;
+        if (finalization && !(await settlePlannerFinalization(run.id, finalization, executionId))) return;
         await executeTasks(run.id, origin, cookie, executionId, settings);
     } catch (error) {
         let failure = error;
@@ -474,9 +503,10 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             const message = toSafeGenerationErrorMessage(failure, "Agent 执行失败");
             const partialConversation = latest.responseKind === "conversation" && Boolean(latest.conversationReply?.trim());
             const plannerFailure = !latest.tasks.length && !latest.plannerAudit ? { message, failedAt: Date.now() } : latest.plannerFailure;
+            const failureStage = latest.failureStage || (!latest.tasks.length ? "planning" : latest.tasks.every((task) => task.status === "ready" && !task.taskId && !task.taskIds?.length) ? "task_dispatch" : "task_execution");
             await updateAgentRunById(
                 run.id,
-                { status: "failed", executionId: undefined, ...(plannerFailure ? { plannerFailure } : {}), timings: { ...(latest.timings || { requestAcceptedAt: latest.createdAt }), runCompletedAt: Date.now() } },
+                { status: "failed", executionId: undefined, failureStage, ...(plannerFailure ? { plannerFailure } : {}), timings: { ...(latest.timings || { requestAcceptedAt: latest.createdAt }), runCompletedAt: Date.now() } },
                 { type: "run.failed", data: { message: partialConversation ? latest.conversationReply!.trim() : message, responseLocale: latest.responseLocale, ...(partialConversation ? { partialConversation: true } : {}) } },
                 ["planning", "running"],
                 executionId,
@@ -485,6 +515,77 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
     } finally {
         if (controllers.get(run.id) === controller) controllers.delete(run.id);
     }
+}
+
+function plannerFinalization(headers: Headers | undefined, planningCycle: number): AgentRunPlanningFinalization | undefined {
+    if (!headers) return undefined;
+    const identity = readSystemAiUsageBilling(headers);
+    return identity ? { planningCycle, status: "pending", ...identity, updatedAt: Date.now() } : undefined;
+}
+
+async function settlePlannerFinalization(runId: string, finalization: AgentRunPlanningFinalization, executionId: string) {
+    if (finalization.status === "settled") return true;
+    try {
+        if (!finalization.requestFingerprint) throw Object.assign(new Error("Agent 规划用量结算标识不完整"), { code: "billing_identity_missing" });
+        const headers = new Headers(
+            systemAiUsageResponseHeaders({
+                holdId: finalization.holdId,
+                attemptNumber: finalization.attemptNumber,
+                requestFingerprint: finalization.requestFingerprint,
+            }),
+        );
+        await finishSystemAiTextAttempt(headers, { status: "succeeded" });
+        const completedAt = Date.now();
+        return Boolean(
+            await updateAgentRunById(
+                runId,
+                {
+                    planningFinalization: { ...finalization, status: "settled", errorCode: undefined, error: undefined, retryable: undefined, updatedAt: completedAt },
+                    failureStage: undefined,
+                    timings: { ...((await getAgentRun(runId))?.timings || { requestAcceptedAt: completedAt }), plannerSettlementCompletedAt: completedAt },
+                },
+                undefined,
+                ["running"],
+                executionId,
+            ),
+        );
+    } catch (error) {
+        const failure = plannerFinalizationFailure(error);
+        await updateAgentRunById(runId, { planningFinalization: { ...finalization, status: "failed", ...failure, updatedAt: Date.now() }, failureStage: "planner_settlement" }, undefined, ["running"], executionId);
+        throw error;
+    }
+}
+
+async function completePersistedConversation(runId: string, run: AgentRun, executionId: string, executionStartedAt: number) {
+    const completedAt = Date.now();
+    const latest = (await getAgentRun(runId)) || run;
+    const reply = latest.conversationReply?.trim() || conversationFallbackReply(latest.surface, latest.responseLocale);
+    return updateAgentRunById(
+        runId,
+        {
+            status: "completed",
+            executionId: undefined,
+            reviewed: true,
+            failureStage: undefined,
+            timings: {
+                ...(latest.timings || { requestAcceptedAt: latest.createdAt }),
+                executionStartedAt,
+                allResultsReadyAt: completedAt,
+                runCompletedAt: completedAt,
+            },
+        },
+        { type: "run.completed", data: { completed: 0, reply } },
+        ["running"],
+        executionId,
+    );
+}
+
+function plannerFinalizationFailure(error: unknown) {
+    const record = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+    const message = toSafeGenerationErrorMessage(error, "Agent 规划用量结算失败");
+    const errorCode = typeof record.code === "string" && record.code.trim() ? record.code.trim().slice(0, 120) : error instanceof Error && error.name ? error.name.slice(0, 120) : "planner_settlement_error";
+    const status = Number(record.status);
+    return { errorCode, error: message, retryable: ![400, 401, 403, 409, 422].includes(status) };
 }
 
 function normalizedPlanningCycle(value: number | undefined) {

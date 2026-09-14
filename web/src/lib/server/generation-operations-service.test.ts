@@ -176,6 +176,9 @@ describe("generation operations aggregation", () => {
                                 startedAt: 1000,
                                 completedAt: 1300,
                                 elapsedMs: 300,
+                                firstByteMs: 120,
+                                firstContentMs: 180,
+                                resultKind: "generation",
                                 error: "文本模型返回了无效 JSON",
                             },
                             {
@@ -194,6 +197,9 @@ describe("generation operations aggregation", () => {
                             },
                         ],
                         plannerFailure: { message: "模型没有返回所需的结构化结果", failedAt: 1800 },
+                        planningFinalization: { planningCycle: 1, status: "failed", holdId: "hold-one", attemptNumber: 2, errorCode: "ledger_unavailable", error: "结算账本暂时不可用", retryable: true, updatedAt: 1810 },
+                        failureStage: "planner_settlement",
+                        timings: { requestAcceptedAt: 900, planningStartedAt: 950, upstreamRequestStartedAt: 1000, upstreamFirstByteAt: 1120, planningCompletedAt: 1800, plannerSettlementStartedAt: 1800 },
                     },
                 },
             ],
@@ -213,9 +219,12 @@ describe("generation operations aggregation", () => {
             channelId: "dflop",
             plannerFailure: { message: "模型没有返回所需的结构化结果", failedAt: 1800 },
             plannerAttempts: [
-                expect.objectContaining({ attemptNo: 1, planningCycle: 1, upstreamModel: "gpt-5.6-sol", status: "failed", requestAcceptance: "response" }),
+                expect.objectContaining({ attemptNo: 1, planningCycle: 1, upstreamModel: "gpt-5.6-sol", status: "failed", requestAcceptance: "response", firstByteMs: 120, firstContentMs: 180, resultKind: "generation" }),
                 expect.objectContaining({ attemptNo: 2, planningCycle: 1, upstreamModel: "gpt-6-astra", status: "failed", requestAcceptance: "response" }),
             ],
+            planningFinalization: expect.objectContaining({ status: "failed", attemptNumber: 2, errorCode: "ledger_unavailable", retryable: true }),
+            failureStage: "planner_settlement",
+            agentTiming: { requestToPlannerUpstreamMs: 100, plannerTtfbMs: 120, plannerDurationMs: 850 },
         });
         expect(result.items[0].plannerAudit).toBeUndefined();
     });
@@ -288,6 +297,21 @@ describe("generation operations aggregation", () => {
                                 usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
                                 milestones: { upstream_started: 1000, first_byte: 1120, first_text: 1240, stream_completed: 4600 },
                                 latency: { firstByteMs: 120, firstTextMs: 240, streamMs: 3600, finalizationMs: 400, totalMs: 4000 },
+                                transportDiagnostic: {
+                                    source: "text_task_adapter",
+                                    protocol,
+                                    startedAt: 1000,
+                                    framesReceived: 42,
+                                    bytesReceived: 8192,
+                                    finishReason: "stop",
+                                    terminalSeen: true,
+                                    doneMarkerSeen: false,
+                                    usageSeen: true,
+                                    event: "text_stream_transport",
+                                    connectionTermination: "socket_reset",
+                                    elapsedMs: 3600,
+                                    rootError: { name: "TypeError", message: "terminated", cause: { name: "SocketError", message: "other side closed", code: "UND_ERR_SOCKET" } },
+                                },
                             },
                         ],
                     },
@@ -310,6 +334,7 @@ describe("generation operations aggregation", () => {
                 usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
                 milestones: { upstream_started: 1000, first_byte: 1120, first_text: 1240, stream_completed: 4600 },
                 latency: { firstByteMs: 120, firstTextMs: 240, streamMs: 3600, finalizationMs: 400, totalMs: 4000 },
+                transportDiagnostic: expect.objectContaining({ connectionTermination: "socket_reset", framesReceived: 42, bytesReceived: 8192, finishReason: "stop", terminalSeen: true, doneMarkerSeen: false, usageSeen: true }),
             }),
         ]);
     });

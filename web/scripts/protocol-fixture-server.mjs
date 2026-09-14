@@ -467,12 +467,7 @@ function sendTextStream(response, path, text) {
 }
 
 function sendSse(response, events) {
-    sendBytes(
-        response,
-        200,
-        "text/event-stream; charset=utf-8",
-        Buffer.from(events.map((event) => `data: ${typeof event === "string" ? event : JSON.stringify(event)}\n\n`).join("")),
-    );
+    sendBytes(response, 200, "text/event-stream; charset=utf-8", Buffer.from(events.map((event) => `data: ${typeof event === "string" ? event : JSON.stringify(event)}\n\n`).join("")));
 }
 
 function sendBytes(response, status, contentType, bytes, headers = {}) {

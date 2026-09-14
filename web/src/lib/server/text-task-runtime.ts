@@ -21,7 +21,7 @@ import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, ge
 import { resolveTextProtocol, type ResolvedTextProtocol } from "@/lib/server/text-protocol-resolver";
 import { refundTextTask, textTaskRefundIdempotencyKey } from "@/lib/server/text-task-refund";
 import { normalizeTextStream } from "@/lib/server/text-stream-protocol";
-import { structuredRootError, textStreamDiagnosticsEnabled } from "@/lib/server/text-stream-diagnostics";
+import { structuredRootError, textStreamDiagnosticsEnabled, type TextStreamTransportDiagnostic } from "@/lib/server/text-stream-diagnostics";
 import { createTextSnapshotWriter, registerTextTaskAttempt, type TextTaskSnapshotHook, type TextTaskTimeoutPolicy } from "@/lib/server/text-task-stream-control";
 
 configureServerProxyDispatcher();
@@ -50,6 +50,7 @@ type AttemptRuntime = {
     response?: Response;
     usagePayload?: unknown;
     usageAccumulator?: ReturnType<typeof createStreamingUsageAccumulator>;
+    transportDiagnostic?: TextStreamTransportDiagnostic;
 };
 
 export async function runTextTaskStep(task: TextTask, origin: string, cookie: string, options: TextTaskRuntimeOptions = {}): Promise<TextTaskStep> {
@@ -115,9 +116,9 @@ async function executeTextTaskStep(task: TextTask, origin: string, cookie: strin
             const latest = await getTextTask(task.id);
             if (latest?.activeAttemptId !== candidateTask.activeAttemptId || latest?.status === "success") return latest?.status === "success" ? { state: "completed" } : { state: "failed", error: "文本任务状态已变化" };
             const cancelled = latest?.status === "cancelled" || (runtime.control.signal.aborted && !isTextRequestTimeout(reason));
-            if (cancelled) return await cancelRunningTextTask(latest || candidateTask, runtime.response?.headers, runtime.usageAccumulator?.finish());
+            if (cancelled) return await cancelRunningTextTask(latest || candidateTask, runtime.response?.headers, runtime.usageAccumulator?.finish(), runtime.transportDiagnostic);
             if (runtime.response) await finishSystemAiTextAttempt(runtime.response.headers, { status: "failed", reason: message, payload: runtime.usagePayload, normalizedUsage: runtime.usageAccumulator?.finish() });
-            const closed = await closeTextTaskAttempt(task.id, candidateTask.activeAttemptId!, "failed", { error: message }, activeRevision(latest));
+            const closed = await closeTextTaskAttempt(task.id, candidateTask.activeAttemptId!, "failed", { error: message, transportDiagnostic: runtime.transportDiagnostic }, activeRevision(latest));
             if (!closed) return { state: "failed", error: "文本任务状态已变化" };
             if (textStreamDiagnosticsEnabled()) {
                 const closedAttempt = closed.attempts?.find((attempt) => attempt.id === candidateTask.activeAttemptId);
@@ -206,6 +207,9 @@ async function runNativeTextTask(task: TextTask, origin: string, cookie: string,
     const response = await fetchTextAttempt(config, url.href, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" }, runtime);
     for await (const event of normalizeTextStream(response, protocol.kind, {
         signal: runtime.control.signal,
+        onDiagnostic: (diagnostic) => {
+            runtime.transportDiagnostic = diagnostic;
+        },
         diagnosticContext: {
             source: "text_task_adapter",
             ...task.executionContext,
@@ -229,7 +233,7 @@ async function runNativeTextTask(task: TextTask, origin: string, cookie: string,
         }
     }
     if (!runtime.snapshot.content.trim()) throw new GenerationSubmissionSafeFailure("文本模型没有返回有效内容");
-    return { content: runtime.snapshot.content, ...readBilling(response.headers), usageHeaders: response.headers, normalizedUsage: runtime.usageAccumulator?.finish() };
+    return { content: runtime.snapshot.content, ...readBilling(response.headers), usageHeaders: response.headers, normalizedUsage: runtime.usageAccumulator?.finish(), transportDiagnostic: runtime.transportDiagnostic };
 }
 
 async function fetchTextAttempt(config: TextTaskConfig, url: string, init: RequestInit, runtime: AttemptRuntime) {
@@ -379,13 +383,13 @@ function readMessageText(content: AiTextMessage["content"]) {
 async function completeTextTask(
     task: TextTask,
     content: string,
-    billing: { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string; usageHeaders?: Headers; usagePayload?: unknown; normalizedUsage?: NormalizedUsage },
+    billing: { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string; usageHeaders?: Headers; usagePayload?: unknown; normalizedUsage?: NormalizedUsage; transportDiagnostic?: TextStreamTransportDiagnostic },
 ): Promise<TextTaskStep> {
     const current = await getTextTask(task.id);
     if (!current || current.status === "cancelled") {
         if (current?.status === "cancelled" && current.billing?.pointsRecordId) await refundTextTask(current);
         else if (hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
-        return current ? cancelRunningTextTask(current, billing.usageHeaders, billing.normalizedUsage) : { state: "failed", error: "文本任务已取消" };
+        return current ? cancelRunningTextTask(current, billing.usageHeaders, billing.normalizedUsage, billing.transportDiagnostic) : { state: "failed", error: "文本任务已取消" };
     }
     if (current.activeAttemptId !== task.activeAttemptId) return { state: "failed", error: "文本任务状态已变化" };
     const completed = await transitionTextTask(current, ["running"], {
@@ -397,7 +401,7 @@ async function completeTextTask(
         billing: hasSystemAiCharge(billing) ? { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, refunded: false } : current.billing,
     });
     if (completed) {
-        await closeTextTaskAttempt(task.id, task.activeAttemptId!, "succeeded", { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId }, activeRevision(current));
+        await closeTextTaskAttempt(task.id, task.activeAttemptId!, "succeeded", { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, transportDiagnostic: billing.transportDiagnostic }, activeRevision(current));
         await updateTextTask(task.id, { config: clearSecret(current.config), candidateConfigs: [] });
         if (current.config.channelId) recordChannelRuntimeSuccess(current.config.channelId, "text");
     }
@@ -425,10 +429,10 @@ export function markTextTaskFailed(task: TextTask, error: string) {
     return failTextTask(task, error);
 }
 
-async function cancelRunningTextTask(task: TextTask, headers?: Headers, normalizedUsage?: NormalizedUsage): Promise<TextTaskStep> {
+async function cancelRunningTextTask(task: TextTask, headers?: Headers, normalizedUsage?: NormalizedUsage, transportDiagnostic?: TextStreamTransportDiagnostic): Promise<TextTaskStep> {
     const cancelled = task.status === "cancelled" ? task : await transitionTextTask(task, ["pending", "running"], { status: "cancelled", error: "任务已取消", messages: [], config: clearSecret(task.config) });
     if (!cancelled) return { state: "failed", error: "文本任务状态已变化" };
-    const closed = await closeTextTaskAttempt(task.id, task.activeAttemptId!, "cancelled", { error: "任务已取消" }, activeRevision(task));
+    const closed = await closeTextTaskAttempt(task.id, task.activeAttemptId!, "cancelled", { error: "任务已取消", transportDiagnostic }, activeRevision(task));
     if (closed) {
         if (headers) await finishSystemAiTextAttempt(headers, { status: "canceled", reason: "任务已取消", normalizedUsage });
         else await releaseUsageBillingForBusiness(task.userId, textTaskBillingBusinessId(task), "任务已取消");

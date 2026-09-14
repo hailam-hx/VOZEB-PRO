@@ -18,7 +18,7 @@ export type TextPlanningTool = { name: string; description: string; parameters: 
 export type TextPlanningCall = { arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number; firstByteMs?: number };
 export type RoutedTextCall =
     | { kind: "conversation"; content: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number; firstByteMs?: number; firstContentMs?: number }
-    | { kind: "generation"; arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number; firstByteMs?: number };
+    | { kind: "generation"; arguments: string; headers: Headers; protocol: TextPlanningProtocol; elapsedMs: number; firstByteMs?: number; firstContentMs?: number };
 
 type RuntimeState = {
     preferred?: TextPlanningProtocol;
@@ -258,6 +258,7 @@ async function readRoutedResponse(input: RoutedTextRequest, request: ProtocolReq
         if (event.type === "completed" || event.type === "usage") continue;
         output += event.text;
         const routed = routeOutput(output);
+        if (routed.kind === "generation" && routed.content && firstContentMs === undefined) firstContentMs = Date.now() - startedAt;
         if (routed.kind !== "conversation" || routed.content === visible) continue;
         visible = routed.content;
         firstContentMs ??= Date.now() - startedAt;
@@ -271,17 +272,18 @@ async function readRoutedResponse(input: RoutedTextRequest, request: ProtocolReq
 function finishRoutedOutput(input: RoutedTextRequest, request: ProtocolRequest, headers: Headers, output: string, startedAt: number, firstByteMs?: number, firstContentMs?: number): RoutedTextCall {
     const routed = routeOutput(output, true);
     const elapsedMs = Date.now() - startedAt;
+    const resolvedFirstContentMs = firstContentMs ?? (routed.content ? elapsedMs : undefined);
     if (routed.kind === "generation") {
         const argumentsText = strictJsonObjectText(routed.content);
         if (!argumentsText) throw new TextPlanningRequestError("模型没有返回有效的创作计划", 502, false);
         recordTextSuccess(input.candidate, request.protocol, elapsedMs);
-        return { kind: "generation", arguments: argumentsText, headers, protocol: request.protocol, elapsedMs, firstByteMs };
+        return { kind: "generation", arguments: argumentsText, headers, protocol: request.protocol, elapsedMs, firstByteMs, firstContentMs: resolvedFirstContentMs };
     }
     if (routed.kind !== "conversation") throw new TextPlanningRequestError("文本模型没有返回有效的结果类型", 502, false);
     const content = routed.content.trim();
     if (!content) throw new TextPlanningRequestError("文本模型没有返回有效内容", 502, false);
     recordTextSuccess(input.candidate, request.protocol, elapsedMs);
-    return { kind: "conversation", content, headers, protocol: request.protocol, elapsedMs, firstByteMs, firstContentMs };
+    return { kind: "conversation", content, headers, protocol: request.protocol, elapsedMs, firstByteMs, firstContentMs: resolvedFirstContentMs };
 }
 
 function routeOutput(value: string, final = false): { kind: "pending" | "invalid"; content: "" } | { kind: "conversation" | "generation"; content: string } {
