@@ -913,7 +913,7 @@ describe("executeAgentRun backend settings", () => {
             deliverables: [{ ...canvasPlan("image-default").deliverables[0], assetIds: [memoryAsset.id] }],
         };
         mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
-            if (url.endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(plan) }] });
+            if (url.endsWith("/chat/completions")) return streamedAgentPlan(plan);
             if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-memory" } });
             if (url.endsWith("/api/image-tasks/child-memory")) return Response.json({ task: { status: "success", result: { remoteUrl: "https://cdn.example.com/continued.png" } } });
             throw new Error(`unexpected request: ${url}`);
@@ -957,7 +957,7 @@ describe("executeAgentRun backend settings", () => {
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         const plan = { ...canvasPlan("image-default"), deliverables: [{ ...canvasPlan("image-default").deliverables[0], assetIds: [] }] };
         mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
-            if (url.endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(plan) }] });
+            if (url.endsWith("/chat/completions")) return streamedAgentPlan(plan);
             if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-new-subject" } });
             if (url.endsWith("/api/image-tasks/child-new-subject")) return Response.json({ task: { status: "success", result: { remoteUrl: "https://cdn.example.com/new.png" } } });
             throw new Error(`unexpected request: ${url}`);
@@ -1511,7 +1511,7 @@ describe("executeAgentRun backend settings", () => {
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         const plan = { ...canvasPlan("image-default"), deliverables: [{ ...canvasPlan("image-default").deliverables[0], assetIds: ["asset-source", "asset-style"] }] };
         mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
-            if (url.endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(plan) }] });
+            if (url.endsWith("/chat/completions")) return streamedAgentPlan(plan);
             if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-chat" } });
             if (url.endsWith("/api/image-tasks/child-chat")) return Response.json({ task: { status: "success", result: { dataUrl: "data:image/png;base64,abc", remoteUrl: "https://cdn.example.com/result.png", mimeType: "image/png" } } });
             throw new Error(`unexpected request: ${url}`);
@@ -1782,7 +1782,7 @@ describe("executeAgentRun backend settings", () => {
             deliverables: [],
             projectHandoff: { surface: "drama", title: "都市悬疑", summary: "女主追查失踪案", style: "写实电影感", ratio: "9:16", assetIds: ["asset-source"] },
         };
-        mocks.fetchInternalApi.mockResolvedValue(Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(plan) }] }));
+        mocks.fetchInternalApi.mockResolvedValue(streamedAgentPlan(plan));
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
@@ -1937,4 +1937,10 @@ function testGenerationParameters(patch: Record<string, unknown> = {}) {
         formats: [],
         ...patch,
     };
+}
+
+function streamedAgentPlan(plan: unknown) {
+    return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: `<generation>\n${JSON.stringify(plan)}` } }] })}\n\ndata: [DONE]\n\n`, {
+        headers: { "content-type": "text/event-stream" },
+    });
 }
