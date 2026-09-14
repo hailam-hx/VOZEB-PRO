@@ -63,6 +63,35 @@ describe("admin settings model routing", () => {
         expect(mocks.setAuthSettings).not.toHaveBeenCalled();
     });
 
+    it("rejects a stage deadline above the resolved overall timeout after settings normalization", async () => {
+        const response = await PATCH(
+            request({
+                logicalModels: [
+                    {
+                        id: "writer",
+                        name: "Writer",
+                        capability: "text",
+                        enabled: true,
+                        bindings: [
+                            {
+                                id: "binding",
+                                channelId: "one",
+                                upstreamModel: "vendor/writer",
+                                enabled: true,
+                                priority: 1,
+                                capabilityProfile: { timeoutMs: 1_800_000, streamingTimeouts: { firstTextMs: 3_600_000 } },
+                            },
+                        ],
+                    },
+                ],
+            }),
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "逻辑模型 writer 的首段文本超时不能超过总请求超时" });
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
     it("deletes a channel together with stale logical bindings and defaults", async () => {
         const response = await PATCH(request({ systemChannels: [], logicalModels: savedSettings.logicalModels, defaultModels: savedSettings.defaultModels }));
         expect(response.status).toBe(200);

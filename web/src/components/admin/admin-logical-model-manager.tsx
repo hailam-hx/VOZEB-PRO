@@ -305,6 +305,7 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
     const effectiveAsync = profile.supportsAsync ?? (capability === "image" || capability === "video");
     const timeoutSeconds = profile.timeoutMs ? Math.round(profile.timeoutMs / 1000) : undefined;
     const defaultTimeoutSeconds = resolveModelRequestTimeoutMs(undefined, capability) / 1000;
+    const [streamingTimeoutDrafts, setStreamingTimeoutDrafts] = useState<Partial<Record<keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]>, string>>>({});
     const updateProfile = (patch: Partial<LogicalModelCapabilityProfile>) => onChange({ capabilityProfile: { ...profile, ...patch } });
     const updateOverallTimeout = (value: number | null) => {
         const timeoutMs = value ? Math.floor(Number(value) * 1000) : undefined;
@@ -313,7 +314,8 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
         if (exceeded) return message.error(`${streamingTimeoutLabel(exceeded[0])}不能超过总请求超时`);
         updateProfile({ timeoutMs });
     };
-    const updateStreamingTimeout = (key: keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]>, value: string) => {
+    const commitStreamingTimeout = (key: keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]>) => {
+        const value = streamingTimeoutDrafts[key] ?? (profile.streamingTimeouts?.[key] ? String(profile.streamingTimeouts[key]! / 1000) : "");
         if (!value.trim()) {
             const streamingTimeouts = { ...profile.streamingTimeouts };
             delete streamingTimeouts[key];
@@ -463,7 +465,13 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                                 {(["connectMs", "firstByteMs", "firstTextMs", "idleMs"] as const).map((key) => (
                                     <LabeledControl key={key} label={`${streamingTimeoutLabel(key)}（秒）`}>
-                                        <Input inputMode="decimal" value={profile.streamingTimeouts?.[key] ? String(profile.streamingTimeouts[key]! / 1000) : ""} placeholder="留空" onChange={(event) => updateStreamingTimeout(key, event.target.value)} />
+                                        <Input
+                                            inputMode="decimal"
+                                            value={streamingTimeoutDrafts[key] ?? (profile.streamingTimeouts?.[key] ? String(profile.streamingTimeouts[key]! / 1000) : "")}
+                                            placeholder="留空"
+                                            onChange={(event) => setStreamingTimeoutDrafts((current) => ({ ...current, [key]: event.target.value }))}
+                                            onBlur={() => commitStreamingTimeout(key)}
+                                        />
                                     </LabeledControl>
                                 ))}
                             </div>

@@ -287,10 +287,10 @@ function normalizeStreamingTimeouts(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const input = value as Record<string, unknown>;
     const timeouts = {
-        connectMs: timeoutMilliseconds(input.connectMs),
-        firstByteMs: timeoutMilliseconds(input.firstByteMs),
-        firstTextMs: timeoutMilliseconds(input.firstTextMs),
-        idleMs: timeoutMilliseconds(input.idleMs),
+        connectMs: positiveMilliseconds(input.connectMs),
+        firstByteMs: positiveMilliseconds(input.firstByteMs),
+        firstTextMs: positiveMilliseconds(input.firstTextMs),
+        idleMs: positiveMilliseconds(input.idleMs),
     };
     return Object.values(timeouts).some((item) => item !== undefined) ? timeouts : undefined;
 }
@@ -319,6 +319,11 @@ function positiveInteger(value: unknown) {
 function timeoutMilliseconds(value: unknown) {
     const number = Math.floor(Number(value));
     return Number.isFinite(number) && number > 0 ? Math.min(number, 30 * 60_000) : undefined;
+}
+
+function positiveMilliseconds(value: unknown) {
+    const number = Math.floor(Number(value));
+    return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
 function positiveNumber(value: unknown) {
