@@ -1,6 +1,24 @@
 import type { GenerationTaskType } from "@/lib/server/generation-task-store";
-import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import type { GenerationTaskExecutionPhase } from "@/lib/server/generation-task-scheduler";
+
+export type AdminGenerationAttempt = {
+    attemptNo: number;
+    channelId?: string;
+    model: string;
+    upstreamModel?: string;
+    status: "running" | "succeeded" | "failed" | "cancelled";
+    startedAt: number;
+    completedAt?: number;
+    pointsCost?: number;
+    pointsRecordId?: string;
+    error?: string;
+    providerTrace?: string;
+    protocol?: "responses" | "chat" | "gemini" | "custom";
+    transport?: "stream" | "buffered";
+    usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+    milestones?: Partial<Record<"task_created" | "upstream_started" | "first_byte" | "first_text" | "stream_completed" | "task_completed", number>>;
+    latency?: { firstByteMs?: number; firstTextMs?: number; streamMs?: number; generationMs?: number; finalizationMs?: number; totalMs?: number };
+};
 
 export type AdminGenerationTask = {
     id: string;
@@ -29,7 +47,7 @@ export type AdminGenerationTask = {
     leaseExpired: boolean;
     upstreamTaskId?: string;
     lastUpstreamStatus?: string;
-    attempts?: GenerationAttempt[];
+    attempts?: AdminGenerationAttempt[];
     prompt: string;
     error?: string;
     durationMs: number;

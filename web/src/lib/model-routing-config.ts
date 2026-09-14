@@ -4,6 +4,7 @@ import { inferModelCapability, isCreativeGenerationModel, normalizeModelId } fro
 import { channelConnectionReady, protocolCatalogCapability } from "@/lib/channel-protocol-registry";
 import { validatePricingRateCard } from "@/lib/billing/pricing";
 import { validateProviderCostUnit } from "@/lib/billing/money";
+import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 const DEFAULT_MODEL_SPECS: ReadonlyArray<{ capability: LogicalModelCapability; key: keyof SystemDefaultModels; audioOperation?: "speech" | "voice-clone" }> = [
     { capability: "text", key: "textModel" },
@@ -160,6 +161,8 @@ export function modelRoutingValidationErrors(logicalModels: LogicalModel[], chan
             else if (!channelSupportsModel(channel, binding.upstreamModel)) errors.push(`渠道 ${channel.name} 未启用上游模型 ${binding.upstreamModel}`);
             if (bindingKeys.has(key)) errors.push(`逻辑模型 ${model.id} 存在重复绑定`);
             bindingKeys.add(key);
+            const streamingTimeoutError = streamingTimeoutValidationError(model, binding);
+            if (streamingTimeoutError) errors.push(streamingTimeoutError);
         }
     }
     for (const { capability, key, audioOperation } of DEFAULT_MODEL_SPECS) {
@@ -269,6 +272,7 @@ function normalizeStoredCapabilityProfile(value: unknown): LogicalModelCapabilit
         supportsCancel: optionalBoolean(input.supportsCancel),
         supportsWebhook: optionalBoolean(input.supportsWebhook),
         timeoutMs: timeoutMilliseconds(input.timeoutMs),
+        streamingTimeouts: normalizeStreamingTimeouts(input.streamingTimeouts),
         concurrencyLimit: positiveInteger(input.concurrencyLimit),
         maxInputTokens: positiveInteger(input.maxInputTokens),
         maxOutputTokens: positiveInteger(input.maxOutputTokens),
@@ -277,6 +281,30 @@ function normalizeStoredCapabilityProfile(value: unknown): LogicalModelCapabilit
         unitCostCurrency: text(input.unitCostCurrency, 12) || undefined,
     };
     return Object.values(profile).some((item) => item !== undefined && (!Array.isArray(item) || item.length > 0)) ? profile : undefined;
+}
+
+function normalizeStreamingTimeouts(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    const timeouts = {
+        connectMs: timeoutMilliseconds(input.connectMs),
+        firstByteMs: timeoutMilliseconds(input.firstByteMs),
+        firstTextMs: timeoutMilliseconds(input.firstTextMs),
+        idleMs: timeoutMilliseconds(input.idleMs),
+    };
+    return Object.values(timeouts).some((item) => item !== undefined) ? timeouts : undefined;
+}
+
+function streamingTimeoutValidationError(model: LogicalModel, binding: LogicalModelBinding) {
+    const profile = normalizeStoredCapabilityProfile(binding.capabilityProfile);
+    const timeouts = profile?.streamingTimeouts;
+    if (!timeouts) return undefined;
+    const overallTimeoutMs = resolveModelRequestTimeoutMs({ capabilityProfile: profile }, model.capability);
+    const stageLabels = { connectMs: "连接", firstByteMs: "首字节", firstTextMs: "首段文本", idleMs: "空闲" } as const;
+    for (const [key, label] of Object.entries(stageLabels) as Array<[keyof typeof stageLabels, string]>) {
+        if ((timeouts[key] || 0) > overallTimeoutMs) return `逻辑模型 ${model.id} 的${label}超时不能超过总请求超时`;
+    }
+    return undefined;
 }
 
 function optionalBoolean(value: unknown) {

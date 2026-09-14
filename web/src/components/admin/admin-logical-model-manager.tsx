@@ -10,6 +10,7 @@ import { fullGenerationParametersPreset, normalizeGenerationParameters } from "@
 import { generationParametersStatus } from "@/lib/generation-defaults-validation";
 import { validateGenerationParametersInput } from "@/lib/generation-parameters-admin-validation";
 import { capabilityLabel, channelModelCapability, isLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
+import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 type Props = {
     channels: SystemModelChannel[];
@@ -303,8 +304,27 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
     const profile = binding.capabilityProfile || {};
     const effectiveAsync = profile.supportsAsync ?? (capability === "image" || capability === "video");
     const timeoutSeconds = profile.timeoutMs ? Math.round(profile.timeoutMs / 1000) : undefined;
-    const defaultTimeoutSeconds = capability === "image" ? 600 : capability === "text" ? 180 : 1800;
+    const defaultTimeoutSeconds = resolveModelRequestTimeoutMs(undefined, capability) / 1000;
     const updateProfile = (patch: Partial<LogicalModelCapabilityProfile>) => onChange({ capabilityProfile: { ...profile, ...patch } });
+    const updateOverallTimeout = (value: number | null) => {
+        const timeoutMs = value ? Math.floor(Number(value) * 1000) : undefined;
+        const overallTimeoutMs = resolveModelRequestTimeoutMs({ capabilityProfile: { ...profile, timeoutMs } }, capability);
+        const exceeded = Object.entries(profile.streamingTimeouts || {}).find(([, stageTimeoutMs]) => Number(stageTimeoutMs) > overallTimeoutMs);
+        if (exceeded) return message.error(`${streamingTimeoutLabel(exceeded[0])}不能超过总请求超时`);
+        updateProfile({ timeoutMs });
+    };
+    const updateStreamingTimeout = (key: keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]>, value: string) => {
+        if (!value.trim()) {
+            const streamingTimeouts = { ...profile.streamingTimeouts };
+            delete streamingTimeouts[key];
+            return updateProfile({ streamingTimeouts: Object.keys(streamingTimeouts).length ? streamingTimeouts : undefined });
+        }
+        const timeoutMs = Math.floor(Number(value) * 1000);
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return message.error(`${streamingTimeoutLabel(key)}必须是正数秒`);
+        const overallTimeoutMs = resolveModelRequestTimeoutMs({ capabilityProfile: profile }, capability);
+        if (timeoutMs > overallTimeoutMs) return message.error(`${streamingTimeoutLabel(key)}不能超过总请求超时`);
+        updateProfile({ streamingTimeouts: { ...profile.streamingTimeouts, [key]: timeoutMs } });
+    };
     const updateGenerationParameters = (patch: Partial<LogicalModelGenerationParameters>) => {
         const raw = { ...(binding.generationParameters || {}), ...patch };
         const error = validateGenerationParametersInput(raw);
@@ -435,16 +455,20 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
                         </>
                     ) : null}
                     <LabeledControl label="请求超时（秒）">
-                        <InputNumber
-                            className="w-full"
-                            min={5}
-                            max={1800}
-                            precision={0}
-                            value={timeoutSeconds}
-                            placeholder={`默认 ${defaultTimeoutSeconds} 秒`}
-                            onChange={(value) => updateProfile({ timeoutMs: value ? Number(value) * 1000 : undefined })}
-                        />
+                        <InputNumber className="w-full" min={5} max={1800} precision={0} value={timeoutSeconds} placeholder={`默认 ${defaultTimeoutSeconds} 秒`} onChange={updateOverallTimeout} />
                     </LabeledControl>
+                    {capability === "text" ? (
+                        <div className="col-span-full">
+                            <div className="mb-2 text-[11px] leading-5 text-stone-500 dark:text-stone-400">流式阶段超时留空时，仅使用总请求超时；已填写的阶段不能超过总请求超时。</div>
+                            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                {(["connectMs", "firstByteMs", "firstTextMs", "idleMs"] as const).map((key) => (
+                                    <LabeledControl key={key} label={`${streamingTimeoutLabel(key)}（秒）`}>
+                                        <Input inputMode="decimal" value={profile.streamingTimeouts?.[key] ? String(profile.streamingTimeouts[key]! / 1000) : ""} placeholder="留空" onChange={(event) => updateStreamingTimeout(key, event.target.value)} />
+                                    </LabeledControl>
+                                ))}
+                            </div>
+                        </div>
+                    ) : null}
                     <LabeledControl label="并发上限">
                         <InputNumber className="w-full" min={1} max={1000} precision={0} value={profile.concurrencyLimit} onChange={(value) => updateProfile({ concurrencyLimit: Number(value) || 1 })} />
                     </LabeledControl>
@@ -458,6 +482,10 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
             </div>
         </div>
     );
+}
+
+function streamingTimeoutLabel(value: keyof NonNullable<LogicalModelCapabilityProfile["streamingTimeouts"]> | string) {
+    return ({ connectMs: "连接超时", firstByteMs: "首字节超时", firstTextMs: "首段文本超时", idleMs: "空闲超时" } as Record<string, string>)[value] || "流式阶段超时";
 }
 
 function GenerationCapabilityEditor({

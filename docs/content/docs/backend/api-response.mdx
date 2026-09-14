@@ -203,7 +203,11 @@ Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutat
 - `GET/PATCH/DELETE /api/drama/projects/{id}`：读取、更新或删除当前用户拥有的短剧项目。
 - `GET /api/admin/generation-operations`：管理员按任务类型、状态、Surface、用户和关键词分页查询统一生成运营数据，并返回任务摘要与可探测渠道。
 
+文本绑定的 `capabilityProfile.timeoutMs` 是整体请求截止时间；有效正整数值与图片、视频、音频使用同一 `5 秒–30 分钟` 请求策略，无效或未配置的文本值回退为 3 分钟。文本绑定可额外保存可选 `streamingTimeouts: { connectMs, firstByteMs, firstTextMs, idleMs }`，四项均为正整数毫秒；后台编辑器以秒输入，留空不创建阶段截止时间，只使用整体截止时间。任一已配置阶段不得超过解析后的整体截止时间。阶段默认值、流式开关和上游协议能力不由这个档案补全，仍由协议解析器决定。
+
 短剧接口使用 `{ code, data, msg }`，服务端校验项目归属并保存完整项目聚合快照。生成运营接口只允许管理员访问；取消和重试继续调用现有任务控制接口，渠道运行状态只读取真实业务请求形成的运行时数据，不建立独立任务状态机。
+
+对文本任务，生成运维详情还会投影已持久化的候选尝试、协议与传输方式、阶段耗时、Token 用量、里程碑和错误，便于定位流式链路。该投影仅存在于管理员生成运维接口和界面；`/api/text-tasks/*` 的用户响应及 Agent SSE 继续使用公开字段白名单，不能返回这些内部诊断。
 
 ## 生成任务恢复、Worker 与回调
 

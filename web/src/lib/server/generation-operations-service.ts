@@ -1,6 +1,5 @@
-import type { AdminGenerationChannel, AdminGenerationOperationsPayload, AdminGenerationTask } from "@/lib/admin-generation-operations";
+import type { AdminGenerationAttempt, AdminGenerationChannel, AdminGenerationOperationsPayload, AdminGenerationTask } from "@/lib/admin-generation-operations";
 import { findPublicUserIdsByKeyword, getAuthSettings, getPublicUsersByIds } from "@/lib/auth/store";
-import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { getChannelRuntimeHealth, isChannelRuntimeCooling } from "@/lib/server/channel-runtime-health";
 import {
     generationTaskPointsCost,
@@ -165,7 +164,7 @@ function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
 }
 
-function generationAttempts(value: unknown): GenerationAttempt[] | undefined {
+function generationAttempts(value: unknown): AdminGenerationAttempt[] | undefined {
     if (!Array.isArray(value)) return undefined;
     return value
         .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
@@ -173,13 +172,65 @@ function generationAttempts(value: unknown): GenerationAttempt[] | undefined {
             attemptNo: Number(item.attemptNo) || 0,
             channelId: text(item.channelId) || undefined,
             model: text(item.model),
-            status: (item.status === "succeeded" || item.status === "failed" ? item.status : "running") as GenerationAttempt["status"],
+            ...(text(item.upstreamModel) ? { upstreamModel: text(item.upstreamModel) } : {}),
+            status: (item.status === "succeeded" || item.status === "failed" || item.status === "cancelled" ? item.status : "running") as AdminGenerationAttempt["status"],
             startedAt: Number(item.startedAt) || 0,
             completedAt: Number(item.completedAt) || undefined,
             pointsCost: Number(item.pointsCost) > 0 ? Number(item.pointsCost) : undefined,
             error: text(item.error) || undefined,
             providerTrace: text(item.providerTrace) || undefined,
+            ...(attemptProtocol(item.protocol) ? { protocol: attemptProtocol(item.protocol) } : {}),
+            ...(item.transport === "stream" || item.transport === "buffered" ? { transport: item.transport } : {}),
+            ...(attemptUsage(item.usage) ? { usage: attemptUsage(item.usage) } : {}),
+            ...(attemptMilestones(item.milestones) ? { milestones: attemptMilestones(item.milestones) } : {}),
+            ...(attemptLatency(item.latency) ? { latency: attemptLatency(item.latency) } : {}),
         }));
+}
+
+function attemptProtocol(value: unknown): AdminGenerationAttempt["protocol"] | undefined {
+    return value === "responses" || value === "chat" || value === "gemini" || value === "custom" ? value : undefined;
+}
+
+function attemptUsage(value: unknown): AdminGenerationAttempt["usage"] | undefined {
+    const source = object(value);
+    const usage = { inputTokens: nonNegativeNumber(source.inputTokens), outputTokens: nonNegativeNumber(source.outputTokens), totalTokens: nonNegativeNumber(source.totalTokens) };
+    return Object.values(usage).some((item) => item !== undefined) ? usage : undefined;
+}
+
+function attemptMilestones(value: unknown): AdminGenerationAttempt["milestones"] | undefined {
+    const source = object(value);
+    const milestones = {
+        task_created: positiveTimestamp(source.task_created),
+        upstream_started: positiveTimestamp(source.upstream_started),
+        first_byte: positiveTimestamp(source.first_byte),
+        first_text: positiveTimestamp(source.first_text),
+        stream_completed: positiveTimestamp(source.stream_completed),
+        task_completed: positiveTimestamp(source.task_completed),
+    };
+    return Object.values(milestones).some((item) => item !== undefined) ? milestones : undefined;
+}
+
+function attemptLatency(value: unknown): AdminGenerationAttempt["latency"] | undefined {
+    const source = object(value);
+    const latency = {
+        firstByteMs: nonNegativeNumber(source.firstByteMs),
+        firstTextMs: nonNegativeNumber(source.firstTextMs),
+        streamMs: nonNegativeNumber(source.streamMs),
+        generationMs: nonNegativeNumber(source.generationMs),
+        finalizationMs: nonNegativeNumber(source.finalizationMs),
+        totalMs: nonNegativeNumber(source.totalMs),
+    };
+    return Object.values(latency).some((item) => item !== undefined) ? latency : undefined;
+}
+
+function nonNegativeNumber(value: unknown) {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+function positiveTimestamp(value: unknown) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
 function agentPlannerAudit(value: unknown): AdminGenerationTask["plannerAudit"] {

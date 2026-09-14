@@ -18,6 +18,47 @@ import {
 const channel = (id: string, models: string[], enabled = true): SystemModelChannel => ({ id, name: id, baseUrl: `https://${id}.example.com/v1`, apiKey: "test-secret", apiFormat: "openai", models, enabled });
 
 describe("model routing config", () => {
+    it("persists the normalized text streaming stage deadlines on a binding", () => {
+        const models = normalizeLogicalModelsConfig(
+            [
+                {
+                    id: "writer",
+                    name: "Writer",
+                    capability: "text",
+                    enabled: true,
+                    bindings: [
+                        {
+                            id: "writer:one",
+                            channelId: "one",
+                            upstreamModel: "writer",
+                            enabled: true,
+                            priority: 1,
+                            capabilityProfile: { timeoutMs: 120_000, streamingTimeouts: { connectMs: 10_000.9, firstByteMs: 20_000, firstTextMs: 30_000, idleMs: 40_000 } },
+                        },
+                    ],
+                },
+            ],
+            [channel("one", ["writer"])],
+        );
+
+        expect(models[0]?.bindings[0]?.capabilityProfile).toEqual({ timeoutMs: 120_000, streamingTimeouts: { connectMs: 10_000, firstByteMs: 20_000, firstTextMs: 30_000, idleMs: 40_000 } });
+    });
+
+    it("rejects a configured streaming stage deadline beyond the resolved overall timeout", () => {
+        const channels = [channel("one", ["writer"])];
+        const models: LogicalModel[] = [
+            {
+                id: "writer",
+                name: "Writer",
+                capability: "text",
+                enabled: true,
+                bindings: [{ id: "writer:one", channelId: "one", upstreamModel: "writer", enabled: true, priority: 1, capabilityProfile: { streamingTimeouts: { firstTextMs: 180_001 } } }],
+            },
+        ];
+
+        expect(modelRoutingValidationErrors(models, channels, { textModel: "writer", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" })).toContain("逻辑模型 writer 的首段文本超时不能超过总请求超时");
+    });
+
     it("removes missing, unsupported, and duplicate bindings", () => {
         const channels = [channel("one", ["models/GPT-TEST"]), channel("two", ["gpt-test-2"], false)];
         const models: LogicalModel[] = [

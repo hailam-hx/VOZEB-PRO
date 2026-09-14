@@ -49,6 +49,47 @@ describe("generation operation task details", () => {
         expect(host.textContent).toContain("DFLOP OpenAI → gpt-5.6-sol");
         expect(host.textContent).toContain("Chat Completions · 320 毫秒 · 已收到响应");
     });
+
+    it("shows persisted text attempt timing, usage and error details only in generation operations", async () => {
+        const host = document.createElement("div");
+        document.body.append(host);
+        const root = createRoot(host);
+        roots.push(root);
+        const task: AdminGenerationTask = {
+            ...plannerFailureTask(),
+            id: "text-task",
+            type: "text",
+            attempts: [
+                {
+                    attemptNo: 1,
+                    model: "writer",
+                    upstreamModel: "writer-v2",
+                    status: "failed",
+                    startedAt: 1_000,
+                    completedAt: 5_000,
+                    protocol: "chat",
+                    transport: "stream",
+                    error: "上游流中断",
+                    usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
+                    latency: { firstByteMs: 120, firstTextMs: 240, streamMs: 3_600, finalizationMs: 400, totalMs: 4_000 },
+                },
+            ],
+        };
+
+        await act(async () =>
+            root.render(
+                <App>
+                    <GenerationTaskRuntimeSummary task={task} />
+                </App>,
+            ),
+        );
+
+        expect(host.textContent).toContain("文本尝试");
+        expect(host.textContent).toContain("流式 · Chat Completions");
+        expect(host.textContent).toContain("首字节 120 毫秒 · 首段文本 240 毫秒 · 流 3.6 秒");
+        expect(host.textContent).toContain("用量 输入 120 · 输出 80 · 合计 200 Token");
+        expect(host.textContent).toContain("上游流中断");
+    });
 });
 
 function plannerFailureTask(): AdminGenerationTask {

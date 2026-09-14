@@ -148,6 +148,20 @@ describe("admin generation controls", () => {
         });
     });
 
+    it("stores text streaming stage deadlines as seconds and keeps blank stages unset", async () => {
+        const applied = vi.fn();
+        const host = await render(<LogicalModelHarness channels={textChannels} logicalModels={textModels({ timeoutMs: 120_000 })} defaultModels={textDefaults} onApplied={applied} />);
+
+        await openVideoEditor(host);
+        expect(document.body.textContent).toContain("流式阶段超时留空时，仅使用总请求超时");
+        await act(async () => fireEvent.change(fieldInput("连接超时（秒）"), { target: { value: "10" } }));
+        await act(async () => fireEvent.change(fieldInput("首字节超时（秒）"), { target: { value: "20" } }));
+        await act(async () => fireEvent.change(fieldInput("首段文本超时（秒）"), { target: { value: "30" } }));
+        await userEvent.setup().click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "应用修改") as HTMLButtonElement);
+
+        expect(applied.mock.lastCall?.[0].logicalModels[0].bindings[0].capabilityProfile).toEqual({ timeoutMs: 120_000, streamingTimeouts: { connectMs: 10_000, firstByteMs: 20_000, firstTextMs: 30_000 } });
+    });
+
     it("moves a synchronized physical model into the current logical model as a fallback binding", async () => {
         const channels = [
             {

@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
     listStoredGenerationTaskRecords: vi.fn(),
     listStoredGenerationTaskRecordsByRunIds: vi.fn(),
     summarizeStoredAgentPerformance: vi.fn(),
-    generationTaskPointsCost: vi.fn((_payload: Record<string, unknown>) => 3),
+    generationTaskPointsCost: vi.fn<(payload: Record<string, unknown>) => number>(() => 3),
     findPublicUserIdsByKeyword: vi.fn(),
     getPublicUsersByIds: vi.fn(),
     getAuthSettings: vi.fn(),
@@ -263,6 +263,55 @@ describe("generation operations aggregation", () => {
         const result = await listAdminGenerationOperations({ page: 1 });
 
         expect(result.items[0].attempts?.[0]?.providerTrace).toBe("trace-123 [redacted-url]");
+    });
+
+    it("projects persisted text attempt timing and usage only into the admin operation payload", async () => {
+        mocks.listStoredGenerationTaskRecords.mockResolvedValue({
+            items: [
+                {
+                    ...task(),
+                    type: "text",
+                    payload: {
+                        config: { model: "writer" },
+                        attempts: [
+                            {
+                                attemptNo: 1,
+                                channelId: "channel-one",
+                                model: "writer",
+                                upstreamModel: "writer-v2",
+                                status: "failed",
+                                startedAt: 1000,
+                                completedAt: 5000,
+                                protocol: "chat",
+                                transport: "stream",
+                                error: "上游流中断",
+                                usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
+                                milestones: { upstream_started: 1000, first_byte: 1120, first_text: 1240, stream_completed: 4600 },
+                                latency: { firstByteMs: 120, firstTextMs: 240, streamMs: 3600, finalizationMs: 400, totalMs: 4000 },
+                            },
+                        ],
+                    },
+                },
+            ],
+            all: [],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            summary: { total: 1, active: 0, success: 0, failed: 1, averageDurationMs: 4000, totalPointsCost: 0, byType: { text: 1 }, byStatus: { error: 1 } },
+        });
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+
+        expect(result.items[0]?.attempts).toEqual([
+            expect.objectContaining({
+                upstreamModel: "writer-v2",
+                protocol: "chat",
+                transport: "stream",
+                usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
+                milestones: { upstream_started: 1000, first_byte: 1120, first_text: 1240, stream_completed: 4600 },
+                latency: { firstByteMs: 120, firstTextMs: 240, streamMs: 3600, finalizationMs: 400, totalMs: 4000 },
+            }),
+        ]);
     });
 });
 

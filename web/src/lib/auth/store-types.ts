@@ -117,11 +117,19 @@ export type LogicalModelGenerationParameters = {
     speedRange?: { min: number; max: number };
 };
 
+export type LogicalModelStreamingTimeouts = {
+    connectMs?: number;
+    firstByteMs?: number;
+    firstTextMs?: number;
+    idleMs?: number;
+};
+
 export type LogicalModelCapabilityProfile = {
     supportsAsync?: boolean;
     supportsCancel?: boolean;
     supportsWebhook?: boolean;
     timeoutMs?: number;
+    streamingTimeouts?: LogicalModelStreamingTimeouts;
     concurrencyLimit?: number;
     maxInputTokens?: number;
     maxOutputTokens?: number;

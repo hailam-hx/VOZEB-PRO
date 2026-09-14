@@ -44,9 +44,60 @@ export function GenerationTaskRuntimeSummary({ task, compact = false }: { task: 
                 {task.provider ? <RuntimeFact label="Provider" value={task.provider} /> : null}
                 {task.queryPath ? <RuntimeFact label="查询路径" value={task.queryPath} /> : null}
             </div>
+            <TextAttemptTimeline task={task} />
             <AgentPlannerAttemptTimeline task={task} />
         </div>
     );
+}
+
+function TextAttemptTimeline({ task }: { task: AdminGenerationTask }) {
+    if (task.type !== "text" || !task.attempts?.length) return null;
+    return (
+        <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+            <div className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">文本尝试</div>
+            <div className="mt-2 space-y-2">
+                {task.attempts.map((attempt) => (
+                    <div key={attempt.attemptNo} className="rounded-md border border-zinc-200 bg-zinc-50/70 p-2 text-[11px] leading-4 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                            <Tag className={generationOperationThemeClasses.neutralTag}>
+                                第 {attempt.attemptNo} 次 · {attempt.status === "succeeded" ? "成功" : attempt.status === "failed" ? "失败" : attempt.status === "cancelled" ? "已取消" : "执行中"}
+                            </Tag>
+                            {attempt.transport ? (
+                                <Tag className={generationOperationThemeClasses.neutralTag}>
+                                    {attempt.transport === "stream" ? "流式" : "缓冲"} · {planningProtocolLabel(attempt.protocol)}
+                                </Tag>
+                            ) : null}
+                        </div>
+                        {attempt.latency ? <div className="mt-1">{textAttemptLatencyLabel(attempt.latency)}</div> : null}
+                        {attempt.usage ? <div className="mt-1">用量 {textAttemptUsageLabel(attempt.usage)}</div> : null}
+                        {attempt.milestones ? <div className="mt-1">里程碑 {textAttemptMilestonesLabel(attempt.milestones)}</div> : null}
+                        {attempt.error ? <div className="mt-1 text-red-600 dark:text-red-300">{attempt.error}</div> : null}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function textAttemptLatencyLabel(latency: NonNullable<NonNullable<AdminGenerationTask["attempts"]>[number]["latency"]>) {
+    return [
+        latency.firstByteMs === undefined ? "" : `首字节 ${plannerElapsedLabel(latency.firstByteMs)}`,
+        latency.firstTextMs === undefined ? "" : `首段文本 ${plannerElapsedLabel(latency.firstTextMs)}`,
+        latency.streamMs === undefined ? "" : `流 ${plannerElapsedLabel(latency.streamMs)}`,
+        latency.finalizationMs === undefined ? "" : `收尾 ${plannerElapsedLabel(latency.finalizationMs)}`,
+        latency.totalMs === undefined ? "" : `总计 ${plannerElapsedLabel(latency.totalMs)}`,
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+function textAttemptUsageLabel(usage: NonNullable<NonNullable<AdminGenerationTask["attempts"]>[number]["usage"]>) {
+    return [usage.inputTokens === undefined ? "" : `输入 ${usage.inputTokens}`, usage.outputTokens === undefined ? "" : `输出 ${usage.outputTokens}`, usage.totalTokens === undefined ? "" : `合计 ${usage.totalTokens} Token`].filter(Boolean).join(" · ");
+}
+
+function textAttemptMilestonesLabel(milestones: NonNullable<NonNullable<AdminGenerationTask["attempts"]>[number]["milestones"]>) {
+    const labels = { upstream_started: "上游开始", first_byte: "首字节", first_text: "首段文本", stream_completed: "流完成", task_completed: "任务完成" } as const;
+    return (Object.entries(labels) as Array<[keyof typeof labels, string]>).flatMap(([key, label]) => (milestones[key] ? [`${label} ${operationTimeLabel(milestones[key])}`] : [])).join(" · ");
 }
 
 export function GenerationRequestSummary({ task }: { task: AdminGenerationTask }) {
