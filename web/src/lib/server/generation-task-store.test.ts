@@ -28,6 +28,7 @@ import {
     listStoredGenerationTaskRecords,
     queryStoredGenerationTasks,
     mutateStoredGenerationTask,
+    transitionStoredGenerationTask,
     summarizeStoredAgentPerformance,
     summarizeStoredGenerationTaskCosts,
     withGenerationConcurrencyLimit,
@@ -68,6 +69,18 @@ describe("mutateStoredGenerationTask", () => {
         ]);
 
         expect((mocks.records[0].payload as TestTask).events).toEqual(["first", "second"]);
+    });
+
+    it("applies attempt and revision guards in the same PostgreSQL execution-metadata update", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [], command: "UPDATE", rowCount: 0, oid: 0, fields: [] });
+        expect(await transitionStoredGenerationTask("text", "text-one", "user", ["running"], { status: "cancelled" }, 60_000, { executionPhase: "cancel_requested" }, { activeAttemptId: "attempt-one", revision: 2 })).toBeNull();
+        expect(postgresQuery).toHaveBeenCalledOnce();
+        const [sql, values] = vi.mocked(postgresQuery).mock.calls[0];
+        expect(sql).toContain("payload->>'activeAttemptId'");
+        expect(sql).toContain("(attempt->>'revision')::numeric = $22::numeric");
+        expect(sql).toContain("execution_phase =");
+        expect(values?.slice(-3)).toEqual([true, "attempt-one", 2]);
     });
 
     it("removes only one stable bounded batch of expired file tasks", async () => {

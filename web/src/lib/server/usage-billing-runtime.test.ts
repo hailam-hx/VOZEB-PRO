@@ -9,6 +9,10 @@ import { normalizeBillableUsage } from "@/lib/billing/pricing";
 import { emptyDb } from "@/lib/auth/store-normalizers";
 import { readAuthDb, writeAuthDb } from "@/lib/auth/store-repository";
 import { meteredTextResponseBody } from "./system-ai-metered-text-stream";
+import { createTextTask } from "./text-task-store";
+import { runTextTaskStep } from "./text-task-runtime";
+import { systemAiUsageResponseHeaders } from "./system-ai-billing";
+import * as outbound from "./safe-outbound-fetch";
 
 import {
     attachUsageProviderUpstreamTaskId,
@@ -59,6 +63,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -70,6 +75,54 @@ afterAll(() => {
 });
 
 describe("usage billing runtime", () => {
+    it("retains native streaming failure usage and nonzero supplier cost before EOF", async () => {
+        const task = await createTextTask({ userId: "user-one", messages: [{ role: "user", content: "fixture" }], config: { baseUrl: "https://fixture.example", apiFormat: "openai", apiKey: "fixture", model: "text-model" } });
+        const requestUsage = normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", cachedInputTokens: "0", maxOutputTokens: "128" });
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: `text-task:${task.id}`,
+            requestFingerprint: createHash("sha256").update(task.id).digest("hex"),
+            logicalModelId: "text-model",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1.5" }] },
+            requestUsage,
+            description: "文本预留",
+        });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "fixture",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: {
+                version: 1,
+                components: [
+                    { id: "input", dimension: "inputTokens", unitPrice: "0.1" },
+                    { id: "output", dimension: "outputTokens", unitPrice: "0.2" },
+                    { id: "cached", dimension: "cachedInputTokens", unitPrice: "0.01" },
+                ],
+            },
+            normalizedUsage: requestUsage,
+        });
+        const source = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(
+                    new TextEncoder().encode('data: {"choices":[{"delta":{"content":"部分"}}]}\n\ndata: {"usage":{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":1}}}\n\ndata: {"error":{"message":"fixture"}}\n\n'),
+                );
+            },
+        });
+        const response = new Response(meteredTextResponseBody(source, billing, 1), {
+            headers: { "content-type": "text/event-stream", ...systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }) },
+        });
+        vi.spyOn(outbound, "fetchSafeOutbound").mockResolvedValue(response);
+        await expect(runTextTaskStep(task, "http://internal", "")).resolves.toMatchObject({ state: "failed" });
+        const db = await readAuthDb();
+        expect(db.walletHolds[0].status).toBe("released");
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "failed", nativeCostAmount: "0.81", costUsd: "0.81", normalizedUsage: { inputTokens: "4", cachedInputTokens: "1", outputTokens: "2" } });
+        expect(db.usageCharges).toEqual([]);
+    });
+
     it("keeps a failed text attempt hold active when its stream is closed before failover", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",

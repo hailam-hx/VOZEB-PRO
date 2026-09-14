@@ -23,7 +23,7 @@ export type TextTaskAttempt = Omit<GenerationAttempt, "status"> & {
     content: string;
     usage?: TextTaskUsage;
     milestones: TextTaskMilestones;
-    latency?: { firstByteMs?: number; firstTextMs?: number; streamMs?: number; totalMs?: number };
+    latency?: { firstByteMs?: number; firstTextMs?: number; streamMs?: number; generationMs?: number; finalizationMs?: number; totalMs?: number };
 };
 export type TextTaskSnapshotUpdate = { content: string; usage?: TextTaskUsage; milestones?: TextTaskMilestones };
 
@@ -133,6 +133,8 @@ export function closeTextTaskAttempt(id: string, attemptId: string, status: Excl
                 firstByteMs: milestones.first_byte === undefined ? undefined : milestones.first_byte - start,
                 firstTextMs: milestones.first_text === undefined ? undefined : milestones.first_text - start,
                 streamMs: milestones.stream_completed === undefined ? undefined : milestones.stream_completed - start,
+                ...(milestones.first_text !== undefined && milestones.stream_completed !== undefined ? { generationMs: milestones.stream_completed - milestones.first_text } : {}),
+                ...(milestones.stream_completed !== undefined ? { finalizationMs: now - milestones.stream_completed } : {}),
                 totalMs: now - task.createdAt,
             },
         };
@@ -147,18 +149,12 @@ export async function getTextTask(id: string) {
 export function transitionTextTask(
     task: TextTask,
     allowedStatuses: TextTaskStatus[],
-    patch: Partial<Pick<TextTask, "config" | "messages" | "result" | "error" | "pointsRemaining" | "upstream" | "billing">> & { status: TextTaskStatus },
+    patch: Partial<Pick<TextTask, "config" | "candidateConfigs" | "messages" | "result" | "error" | "pointsRemaining" | "upstream" | "billing">> & { status: TextTaskStatus },
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
 ) {
     const next = { ...patch, ...(["success", "error", "cancelled"].includes(patch.status) ? { milestones: { ...task.milestones, task_completed: Date.now() } } : {}) };
-    if (task.activeAttemptId && !executionPatch) {
-        const revision = task.attempts?.find((attempt) => attempt.id === task.activeAttemptId)?.revision;
-        return mutateStoredGenerationTask<TextTask>("text", task.id, GENERATION_TASK_RETENTION_MS, (current) => {
-            if (!allowedStatuses.includes(current.status) || current.activeAttemptId !== task.activeAttemptId || current.attempts?.find((attempt) => attempt.id === task.activeAttemptId)?.revision !== revision) return null;
-            return { ...current, ...next };
-        });
-    }
-    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, next, GENERATION_TASK_RETENTION_MS, executionPatch);
+    const revision = task.attempts?.find((attempt) => attempt.id === task.activeAttemptId)?.revision;
+    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, next, GENERATION_TASK_RETENTION_MS, executionPatch, { activeAttemptId: task.activeAttemptId, revision });
 }
 
 export function touchTextTask(id: string) {

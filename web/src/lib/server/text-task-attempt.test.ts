@@ -11,6 +11,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
 }));
 
 import * as store from "./text-task-store";
+import { getStoredGenerationTaskRecord } from "./generation-task-store";
 
 describe("text attempt persistence", () => {
     beforeEach(() => {
@@ -62,6 +63,18 @@ describe("text attempt persistence", () => {
         expect(await store.closeTextTaskAttempt(task.id, opened!.activeAttemptId!, "failed", {}, 0)).toBeNull();
     });
 
+    it("derives generation and finalization latency only from available milestones", async () => {
+        const task = await create();
+        const opened = (await store.openTextTaskAttempt(task, task.config, "chat", []))!;
+        await store.acceptTextTaskSnapshot(task.id, opened.activeAttemptId!, 0, { content: "complete", milestones: { first_text: 200, stream_completed: 550 } });
+        const closed = (await store.closeTextTaskAttempt(task.id, opened.activeAttemptId!, "succeeded"))!;
+        expect(closed.attempts![0].latency).toMatchObject({ generationMs: 350, finalizationMs: closed.attempts![0].milestones.task_completed! - 550 });
+        const next = (await store.openTextTaskAttempt(closed, task.config, "chat", []))!;
+        const failed = (await store.closeTextTaskAttempt(task.id, next.activeAttemptId!, "failed"))!;
+        expect(failed.attempts![1].latency).not.toHaveProperty("generationMs");
+        expect(failed.attempts![1].latency).not.toHaveProperty("finalizationMs");
+    });
+
     it("rejects a terminal transition from an earlier attempt and records task completion only at terminal state", async () => {
         const task = await create();
         const first = await store.openTextTaskAttempt(task, task.config, "chat", []);
@@ -70,5 +83,19 @@ describe("text attempt persistence", () => {
         expect(await store.transitionTextTask(first!, ["pending"], { status: "success", result: { content: "迟到结果" } })).toBeNull();
         const completed = await store.transitionTextTask(next!, ["pending"], { status: "success" });
         expect(completed!.milestones?.task_completed).toEqual(expect.any(Number));
+    });
+
+    it("guards cancellation and execution metadata atomically against stale attempts and revisions", async () => {
+        const task = await create();
+        const first = await store.openTextTaskAttempt(task, task.config, "chat", []);
+        await store.closeTextTaskAttempt(task.id, first!.activeAttemptId!, "failed");
+        const next = await store.openTextTaskAttempt((await store.getTextTask(task.id))!, task.config, "chat", []);
+        const executionPatch = { executionPhase: "cancel_requested" as const, lastUpstreamStatus: "cancel_requested" };
+        expect(await store.transitionTextTask(first!, ["pending"], { status: "cancelled" }, executionPatch)).toBeNull();
+        const accepted = await store.acceptTextTaskSnapshot(task.id, next!.activeAttemptId!, 0, { content: "new" });
+        expect(await store.transitionTextTask(next!, ["pending"], { status: "cancelled" }, executionPatch)).toBeNull();
+        expect((await getStoredGenerationTaskRecord("text", task.id))!.executionPhase).toBe("created");
+        expect(await store.transitionTextTask(accepted!, ["pending"], { status: "cancelled" }, executionPatch)).not.toBeNull();
+        expect(await getStoredGenerationTaskRecord("text", task.id)).toMatchObject({ status: "cancelled", executionPhase: "cancel_requested", lastUpstreamStatus: "cancel_requested" });
     });
 });

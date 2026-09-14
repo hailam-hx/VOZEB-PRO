@@ -9,12 +9,14 @@ import { recordChannelRuntimeFailure, recordChannelRuntimeSuccess } from "@/lib/
 import { acceptTextTaskSnapshot, closeTextTaskAttempt, openTextTaskAttempt, getTextTask, transitionTextTask, type TextTask, type TextTaskConfig, type TextTaskSnapshotUpdate } from "@/lib/server/text-task-store";
 import { updateTextTask } from "@/lib/server/text-task-store";
 import type { AiTextMessage } from "@/types/ai";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, type SystemAiUsageContextDraft } from "@/lib/server/system-ai-billing";
+import { hasSystemAiCharge, readSystemAiBilling, readSystemAiUsageBilling, systemAiBillingHeaders, type SystemAiUsageContextDraft } from "@/lib/server/system-ai-billing";
 import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { buildProviderRequest, isProviderBusinessError, providerQueryPaths, readProviderString } from "@/lib/server/provider-task-config";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
-import { attachSystemAiUsageUpstreamTask, finishSystemAiTextAttempt, releaseUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
+import { attachSystemAiUsageUpstreamTask, finishSystemAiTextAttempt, loadUsageBilling, releaseUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
+import { createStreamingUsageAccumulator } from "@/lib/server/usage-billing-adapter";
+import type { NormalizedUsage } from "@/lib/billing/pricing";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { resolveTextProtocol, type ResolvedTextProtocol } from "@/lib/server/text-protocol-resolver";
 import { refundTextTask, textTaskRefundIdempotencyKey } from "@/lib/server/text-task-refund";
@@ -46,6 +48,7 @@ type AttemptRuntime = {
     snapshot: TextTaskSnapshotUpdate;
     response?: Response;
     usagePayload?: unknown;
+    usageAccumulator?: ReturnType<typeof createStreamingUsageAccumulator>;
 };
 
 export async function runTextTaskStep(task: TextTask, origin: string, cookie: string, options: TextTaskRuntimeOptions = {}): Promise<TextTaskStep> {
@@ -58,9 +61,10 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
 
     const candidates = [running.config, ...(running.candidateConfigs || [])];
     let latestError = "没有可用的文本渠道";
+    let ownedTask = running;
     for (const [index, config] of candidates.entries()) {
         const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/"), preserveNativeProtocol: true });
-        const candidateTask = await openTextTaskAttempt((await getTextTask(task.id)) || running, config, protocol.kind, candidates.slice(index + 1));
+        const candidateTask = await openTextTaskAttempt(ownedTask, config, protocol.kind, candidates.slice(index + 1));
         if (!candidateTask) return { state: "failed", error: "文本任务状态已变化" };
         await scheduleGenerationTask("text", task.id, {
             executionPhase: "submitting",
@@ -98,19 +102,21 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
             const latest = await getTextTask(task.id);
             if (latest?.activeAttemptId !== candidateTask.activeAttemptId || latest?.status === "success") return latest?.status === "success" ? { state: "completed" } : { state: "failed", error: "文本任务状态已变化" };
             const cancelled = latest?.status === "cancelled" || (runtime.control.signal.aborted && !isTextRequestTimeout(reason));
-            if (cancelled) return await cancelRunningTextTask(latest || candidateTask, runtime.response?.headers);
-            if (runtime.response) await finishSystemAiTextAttempt(runtime.response.headers, { status: "failed", reason: message, payload: runtime.usagePayload });
-            await closeTextTaskAttempt(task.id, candidateTask.activeAttemptId!, "failed", { error: message }, activeRevision(latest));
+            if (cancelled) return await cancelRunningTextTask(latest || candidateTask, runtime.response?.headers, runtime.usageAccumulator?.finish());
+            if (runtime.response) await finishSystemAiTextAttempt(runtime.response.headers, { status: "failed", reason: message, payload: runtime.usagePayload, normalizedUsage: runtime.usageAccumulator?.finish() });
+            const closed = await closeTextTaskAttempt(task.id, candidateTask.activeAttemptId!, "failed", { error: message }, activeRevision(latest));
+            if (!closed) return { state: "failed", error: "文本任务状态已变化" };
+            ownedTask = closed;
             if (config.channelId) recordChannelRuntimeFailure(config.channelId, "text", message);
             // Once public text exists, a provider change would overwrite an answer the user has seen.
             if (runtime.snapshot.content || (!protocol.supportsStreaming && !(error instanceof GenerationSubmissionSafeFailure)) || (error instanceof GenerationSubmissionUncertainError && !isTextRequestTimeout(reason)))
-                return failTextTask((await getTextTask(task.id)) || candidateTask, message);
+                return failTextTask(closed, message);
         } finally {
             await runtime.response?.body?.cancel().catch(() => undefined);
             runtime.control.dispose();
         }
     }
-    return failTextTask((await getTextTask(task.id)) || running, latestError);
+    return failTextTask(ownedTask, latestError);
 }
 
 function createAttemptRuntime(task: TextTask, streaming: boolean, options: TextTaskRuntimeOptions): AttemptRuntime {
@@ -173,7 +179,7 @@ async function runNativeTextTask(task: TextTask, origin: string, cookie: string,
         }
     }
     if (!runtime.snapshot.content.trim()) throw new GenerationSubmissionSafeFailure("文本模型没有返回有效内容");
-    return { content: runtime.snapshot.content, ...readBilling(response.headers), usageHeaders: response.headers };
+    return { content: runtime.snapshot.content, ...readBilling(response.headers), usageHeaders: response.headers, normalizedUsage: runtime.usageAccumulator?.finish() };
 }
 
 async function fetchTextAttempt(config: TextTaskConfig, url: string, init: RequestInit, runtime: AttemptRuntime) {
@@ -181,10 +187,16 @@ async function fetchTextAttempt(config: TextTaskConfig, url: string, init: Reque
     runtime.control.connected();
     runtime.response = response;
     if (!response.body) return response;
+    const usageIdentity = readSystemAiUsageBilling(response.headers);
+    if (usageIdentity && response.headers.get("content-type")?.includes("text/event-stream")) {
+        const billing = await loadUsageBilling(usageIdentity.holdId);
+        runtime.usageAccumulator = createStreamingUsageAccumulator("text", billing.snapshot.requestUsage);
+    }
     const body = response.body.pipeThrough(
         new TransformStream<Uint8Array, Uint8Array>({
             transform(chunk, controller) {
                 if (chunk.byteLength) {
+                    runtime.usageAccumulator?.push(chunk);
                     runtime.control.byte();
                     runtime.snapshot = { ...runtime.snapshot, milestones: { ...runtime.snapshot.milestones, first_byte: runtime.snapshot.milestones?.first_byte ?? Date.now() } };
                 }
@@ -233,7 +245,10 @@ async function createCustomTextTaskStep(task: TextTask, origin: string, cookie: 
         throw new GenerationSubmissionSafeFailure("自定义文本接口返回失败");
     }
     const content = readProviderString(data, protocol.resultField, TEXT_RESULT_KEYS);
-    if (content) return { content, ...readBilling(response.headers), usageHeaders: response.headers, usagePayload: data };
+    if (content) {
+        runtime.snapshot = { ...runtime.snapshot, milestones: { ...runtime.snapshot.milestones, first_text: Date.now() } };
+        return { content, ...readBilling(response.headers), usageHeaders: response.headers, usagePayload: data };
+    }
     const taskId = readProviderString(data, undefined, TASK_ID_KEYS);
     if (taskId && config.advancedConfig?.queryPath) {
         await attachSystemAiUsageUpstreamTask(response.headers, taskId);
@@ -261,7 +276,8 @@ async function queryCustomTextTaskStep(task: TextTask, origin: string, cookie: s
             if (!data || isProviderBusinessError(data)) return failTextTask(task, "自定义文本任务查询失败");
             const content = readProviderString(data, config.advancedConfig?.resultField, TEXT_RESULT_KEYS);
             if (content) {
-                runtime.writer.push({ content, milestones: { ...runtime.snapshot.milestones, stream_completed: Date.now() } });
+                const now = Date.now();
+                runtime.writer.push({ content, milestones: { ...runtime.snapshot.milestones, first_text: now, stream_completed: now } });
                 await runtime.writer.flush();
                 runtime.control.signal.throwIfAborted();
                 return await completeTextTask(task, content, task.billing || {});
@@ -310,12 +326,16 @@ function readMessageText(content: AiTextMessage["content"]) {
     return content.map((item) => (item.type === "text" ? item.text : item.image_url.url)).join("\n");
 }
 
-async function completeTextTask(task: TextTask, content: string, billing: { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string; usageHeaders?: Headers; usagePayload?: unknown }): Promise<TextTaskStep> {
+async function completeTextTask(
+    task: TextTask,
+    content: string,
+    billing: { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string; usageHeaders?: Headers; usagePayload?: unknown; normalizedUsage?: NormalizedUsage },
+): Promise<TextTaskStep> {
     const current = await getTextTask(task.id);
     if (!current || current.status === "cancelled") {
         if (current?.status === "cancelled" && current.billing?.pointsRecordId) await refundTextTask(current);
         else if (hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
-        return current ? cancelRunningTextTask(current, billing.usageHeaders) : { state: "failed", error: "文本任务已取消" };
+        return current ? cancelRunningTextTask(current, billing.usageHeaders, billing.normalizedUsage) : { state: "failed", error: "文本任务已取消" };
     }
     if (current.activeAttemptId !== task.activeAttemptId) return { state: "failed", error: "文本任务状态已变化" };
     const completed = await transitionTextTask(current, ["running"], {
@@ -332,23 +352,22 @@ async function completeTextTask(task: TextTask, content: string, billing: { poin
         if (current.config.channelId) recordChannelRuntimeSuccess(current.config.channelId, "text");
     }
     if (!completed && hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
-    if (completed && billing.usageHeaders) await finishSystemAiTextAttempt(billing.usageHeaders, { status: "succeeded", payload: billing.usagePayload });
+    if (completed && billing.usageHeaders) await finishSystemAiTextAttempt(billing.usageHeaders, { status: "succeeded", payload: billing.usagePayload, normalizedUsage: billing.normalizedUsage });
     return completed ? { state: "completed" } : { state: "failed", error: "文本任务状态已变化" };
 }
 
 async function failTextTask(task: TextTask, error: string): Promise<TextTaskStep> {
-    const current = (await getTextTask(task.id)) || task;
-    if (current.status === "success") return { state: "completed" };
-    if (current.status === "cancelled") return { state: "failed", error: current.error || "文本任务已取消" };
-    if (current.billing?.pointsRecordId && !current.billing.refunded) {
-        await refundUserPoints(current.userId, generationModelId(current.config), current.billing.pointsCost, "text", 1, undefined, current.billing.pointsRecordId);
-        await updateTextTask(current.id, { billing: { ...current.billing, refunded: true } });
-    }
+    if (task.status === "success") return { state: "completed" };
     const message = toSafeGenerationErrorMessage(error, "文本生成失败");
-    if (current.activeAttemptId) await closeTextTaskAttempt(task.id, current.activeAttemptId, "failed", { error: message, pointsCost: current.billing?.pointsCost, pointsRecordId: current.billing?.pointsRecordId }, activeRevision(current));
-    await transitionTextTask(current, ["pending", "running"], { status: "error", error: message, messages: [], config: clearSecret(current.config), billing: current.billing ? { ...current.billing, refunded: true } : undefined });
-    await updateTextTask(current.id, { config: clearSecret(current.config), candidateConfigs: [] });
-    await releaseUsageBillingForBusiness(current.userId, `text-task:${current.id}`, message);
+    // Never adopt a reloaded execution: only the originating attempt/revision may authorize cleanup.
+    const failed = await transitionTextTask(task, ["pending", "running"], { status: "error", error: message, messages: [], config: clearSecret(task.config), candidateConfigs: [] });
+    if (!failed) return { state: "failed", error: "文本任务状态已变化" };
+    if (failed.activeAttemptId) await closeTextTaskAttempt(task.id, failed.activeAttemptId, "failed", { error: message, pointsCost: failed.billing?.pointsCost, pointsRecordId: failed.billing?.pointsRecordId }, activeRevision(failed));
+    if (failed.billing?.pointsRecordId && !failed.billing.refunded) {
+        await refundUserPoints(failed.userId, generationModelId(failed.config), failed.billing.pointsCost, "text", 1, undefined, failed.billing.pointsRecordId);
+        await transitionTextTask(failed, ["error"], { status: "error", billing: { ...failed.billing, refunded: true } });
+    }
+    await releaseUsageBillingForBusiness(failed.userId, `text-task:${failed.id}`, message);
     return { state: "failed", error: message };
 }
 
@@ -356,12 +375,12 @@ export function markTextTaskFailed(task: TextTask, error: string) {
     return failTextTask(task, error);
 }
 
-async function cancelRunningTextTask(task: TextTask, headers?: Headers): Promise<TextTaskStep> {
+async function cancelRunningTextTask(task: TextTask, headers?: Headers, normalizedUsage?: NormalizedUsage): Promise<TextTaskStep> {
     const cancelled = task.status === "cancelled" ? task : await transitionTextTask(task, ["pending", "running"], { status: "cancelled", error: "任务已取消", messages: [], config: clearSecret(task.config) });
     if (!cancelled) return { state: "failed", error: "文本任务状态已变化" };
     const closed = await closeTextTaskAttempt(task.id, task.activeAttemptId!, "cancelled", { error: "任务已取消" }, activeRevision(task));
     if (closed) {
-        if (headers) await finishSystemAiTextAttempt(headers, { status: "canceled", reason: "任务已取消" });
+        if (headers) await finishSystemAiTextAttempt(headers, { status: "canceled", reason: "任务已取消", normalizedUsage });
         else await releaseUsageBillingForBusiness(task.userId, `text-task:${task.id}`, "任务已取消");
         await updateTextTask(task.id, { config: clearSecret(task.config), candidateConfigs: [] });
     }

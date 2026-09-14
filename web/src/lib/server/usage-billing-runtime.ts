@@ -196,13 +196,13 @@ export async function attachUsageProviderEvidence(input: { billing: UsageBilling
     });
 }
 
-export async function finishSystemAiTextAttempt(headers: Headers, input: { status: "succeeded" | "failed" | "canceled"; payload?: unknown; reason?: string }) {
+export async function finishSystemAiTextAttempt(headers: Headers, input: { status: "succeeded" | "failed" | "canceled"; payload?: unknown; normalizedUsage?: NormalizedUsage; reason?: string }) {
     const identity = readSystemAiUsageBilling(headers);
     if (!identity) return;
     const billing = await loadUsageBilling(identity.holdId);
     const attempts = await listProviderUsageAttemptsForHold(billing.holdId);
     const attempt = attempts.find((item) => item.attemptNumber === identity.attemptNumber);
-    const usage = attempt?.observedUsage || (input.payload ? deriveProxyBillableUsage({ capability: "text", requestUsage: billing.snapshot.requestUsage, payload: input.payload }) : undefined);
+    const usage = input.normalizedUsage || attempt?.observedUsage || (input.payload ? deriveProxyBillableUsage({ capability: "text", requestUsage: billing.snapshot.requestUsage, payload: input.payload }) : undefined);
     await finishUsageProviderAttempt({ billing, attemptNumber: identity.attemptNumber, status: input.status, normalizedUsage: usage });
     if (input.status === "succeeded") await settleUsageBilling({ billing, description: "文本生成用量结算", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
     else if (input.status === "canceled") await settleCancelledUsageBilling({ billing, description: "用户取消已由上游接受的文本生成", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });

@@ -33,9 +33,9 @@ vi.mock("@/lib/server/usage-billing-runtime", () => ({
 
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { maintenanceWorkerContext } from "./maintenance-auth";
-import { runTextTaskStep, taskHeaders } from "./text-task-runtime";
+import { markTextTaskFailed, runTextTaskStep, taskHeaders } from "./text-task-runtime";
 import { cancelTextTaskAttempt } from "./text-task-stream-control";
-import type { TextTask, TextTaskConfig } from "./text-task-store";
+import { acceptTextTaskSnapshot, closeTextTaskAttempt, openTextTaskAttempt, type TextTask, type TextTaskConfig } from "./text-task-store";
 
 describe("text task runtime recovery", () => {
     let state: TextTask;
@@ -53,11 +53,63 @@ describe("text task runtime recovery", () => {
             state = { ...state, ...patch };
             return state;
         });
-        mocks.transitionTask.mockImplementation(async (_task: TextTask, allowed: string[], patch: Partial<TextTask>) => {
-            if (!allowed.includes(state.status)) return null;
+        mocks.transitionTask.mockImplementation(async (task: TextTask, allowed: string[], patch: Partial<TextTask>) => {
+            const revision = (value: TextTask) => value.attempts?.find((attempt) => attempt.id === value.activeAttemptId)?.revision;
+            if (!allowed.includes(state.status) || state.activeAttemptId !== task.activeAttemptId || revision(state) !== revision(task)) return null;
             state = { ...state, ...patch };
             return state;
         });
+    });
+
+    it.each(["attempt", "revision"])("leaves a newer %s untouched when a delayed failure loses ownership", async (conflict) => {
+        const original = (await openTextTaskAttempt(state, state.config, "custom", [state.config]))!;
+        if (conflict === "attempt") {
+            await closeTextTaskAttempt(state.id, state.activeAttemptId!, "failed");
+            await openTextTaskAttempt(state, state.config, "custom", [state.config]);
+        } else await acceptTextTaskSnapshot(state.id, state.activeAttemptId!, 0, { content: "newer snapshot" });
+        state = { ...state, billing: { pointsCost: 3, pointsRecordId: "newer-charge", refunded: false } };
+        const before = structuredClone(state);
+
+        await markTextTaskFailed(original, "delayed old failure");
+
+        expect(state).toEqual(before);
+        expect(mocks.refund).not.toHaveBeenCalled();
+        expect(mocks.releaseUsage).not.toHaveBeenCalled();
+    });
+
+    it("does not clean up or refund after losing terminal revision CAS", async () => {
+        const original = (await openTextTaskAttempt(state, state.config, "custom", [state.config]))!;
+        state = { ...state, billing: { pointsCost: 3, pointsRecordId: "charge", refunded: false } };
+        mocks.transitionTask.mockImplementationOnce(async () => {
+            await acceptTextTaskSnapshot(state.id, state.activeAttemptId!, 0, { content: "concurrent snapshot" });
+            return null;
+        });
+
+        await markTextTaskFailed({ ...original, billing: state.billing }, "old failure");
+
+        expect(state.status).toBe("pending");
+        expect(state.attempts?.[0].status).toBe("running");
+        expect(state.config.apiKey).toBe(original.config.apiKey);
+        expect(state.candidateConfigs).toEqual([original.config]);
+        expect(state.billing?.refunded).toBe(false);
+        expect(mocks.refund).not.toHaveBeenCalled();
+        expect(mocks.releaseUsage).not.toHaveBeenCalled();
+    });
+
+    it("does not close or fail a newer execution while old provider billing settles", async () => {
+        state = textTask(openAiConfig("one", "https://one.example"), [openAiConfig("two", "https://two.example")]);
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(chatFrame("partial") + 'data: {"error":{"message":"fixture failure"}}\n\n')));
+        let newer!: TextTask;
+        mocks.finishUsage.mockImplementationOnce(async () => {
+            await closeTextTaskAttempt(state.id, state.activeAttemptId!, "failed");
+            newer = (await openTextTaskAttempt(state, state.config, "chat", state.candidateConfigs || []))!;
+        });
+
+        await runTextTaskStep(state, "http://internal", "");
+
+        expect(state).toEqual(newer);
+        expect(mocks.releaseUsage).not.toHaveBeenCalled();
+        expect(mocks.refund).not.toHaveBeenCalled();
     });
 
     afterEach(() => {
@@ -153,7 +205,7 @@ describe("text task runtime recovery", () => {
             }),
         ).resolves.toEqual({ state: "completed" });
         expect(snapshots).toEqual(["自定义结果"]);
-        expect(state.attempts?.[0]).toMatchObject({ transport: "buffered", protocol: "custom", revision: 1 });
+        expect(state.attempts?.[0]).toMatchObject({ transport: "buffered", protocol: "custom", revision: 1, milestones: { first_text: expect.any(Number) }, latency: { generationMs: expect.any(Number), finalizationMs: expect.any(Number) } });
     });
 
     it("keeps trailing usage and first-byte evidence on failure", async () => {
@@ -330,6 +382,7 @@ describe("text task runtime recovery", () => {
         expect(fetchMock).toHaveBeenCalledTimes(3);
         expect(state.status).toBe("success");
         expect(state.result?.content).toBe("最终结果");
+        expect(state.attempts?.[0]).toMatchObject({ milestones: { first_text: expect.any(Number) }, latency: { generationMs: 0, finalizationMs: expect.any(Number) } });
     });
 
     it("aborts a Custom polling read through the active attempt registry", async () => {

@@ -538,6 +538,7 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
     patch: Partial<T> & { status: string },
     ttlMs: number,
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
+    attemptGuard?: { activeAttemptId?: string; revision?: number },
 ): Promise<T | null> {
     const updatedAt = Date.now();
     const nextPatch = { ...patch, updatedAt };
@@ -560,6 +561,11 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
                  worker_id = CASE WHEN $9::boolean THEN NULL ELSE worker_id END,
                  lease_until = CASE WHEN $9::boolean THEN NULL ELSE lease_until END
              WHERE id = $1 AND task_type = $2 AND user_id = $3 AND status = ANY($4::text[]) AND expires_at > now()
+               AND (NOT $20::boolean OR ((payload->>'activeAttemptId') IS NOT DISTINCT FROM $21::text
+                 AND ($21::text IS NULL OR EXISTS (
+                   SELECT 1 FROM jsonb_array_elements(COALESCE(payload->'attempts', '[]'::jsonb)) AS attempt
+                   WHERE attempt->>'id' = $21::text AND (attempt->>'revision')::numeric = $22::numeric
+                 ))))
              RETURNING payload`,
             [
                 id,
@@ -581,6 +587,9 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
                 optionalDate(execution?.lastPollAt),
                 execution?.lastUpstreamStatus || null,
                 execution?.resultPayload ? JSON.stringify(execution.resultPayload) : null,
+                Boolean(attemptGuard),
+                attemptGuard?.activeAttemptId || null,
+                attemptGuard?.revision ?? null,
             ],
         );
         return result.rows[0]?.payload || null;
@@ -590,6 +599,10 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
     await mutateFileTasks((tasks) =>
         tasks.map((record) => {
             if (record.id !== id || record.type !== type || record.userId !== userId || record.expiresAt <= updatedAt || !allowed.has(record.status)) return record;
+            if (attemptGuard) {
+                const attempts = record.payload.attempts as Array<{ id: string; revision: number }> | undefined;
+                if (record.payload.activeAttemptId !== attemptGuard.activeAttemptId || (attemptGuard.activeAttemptId && attempts?.find((attempt) => attempt.id === attemptGuard.activeAttemptId)?.revision !== attemptGuard.revision)) return record;
+            }
             transitioned = { ...(record.payload as T), ...nextPatch };
             return {
                 ...record,
