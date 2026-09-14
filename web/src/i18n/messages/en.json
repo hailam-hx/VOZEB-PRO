@@ -872,6 +872,7 @@
         "creditSettlementHint": "Final settlement uses the selected model and actual usage",
         "composerPlaceholderCompact": "Enter your creative idea",
         "composerPlaceholder": "Enter an idea, script, or visual requirements",
+        "promptLengthUsage": "Used {current}/{max} characters",
         "addMaterial": "Add media",
         "continueAddMaterial": "Add more reference media",
         "referenceConversationAssets": "Reference assets from this conversation",

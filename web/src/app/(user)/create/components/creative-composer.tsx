@@ -169,8 +169,32 @@ export function CreativeComposer({
     const referenceDisabledReason = referenceAvailabilities.some((availability) => availability.supported)
         ? undefined
         : referenceAvailabilityMessage(t, referenceAvailabilities.find((availability) => "maxReferenceImages" in availability) || referenceAvailabilities[0]);
+    const promptLengthVisible = value.length >= Math.ceil(maxPromptLength * 0.9);
+    const promptLimitReached = value.length >= maxPromptLength;
+
+    const syncMentionPreviewScroll = (textarea?: HTMLTextAreaElement | null) => {
+        const preview = mentionHighlightRef.current;
+        if (!preview || !textarea) return;
+        preview.scrollTop = textarea.scrollTop;
+        preview.scrollLeft = textarea.scrollLeft;
+    };
 
     useEffect(() => setReady(true), []);
+
+    useEffect(() => {
+        if (!hasMentionReferences) return;
+        const textarea = inputRef.current?.resizableTextArea?.textArea;
+        const frame = window.requestAnimationFrame(() => syncMentionPreviewScroll(textarea));
+        return () => window.cancelAnimationFrame(frame);
+    }, [compact, hasMentionReferences, inputRef, value]);
+
+    useEffect(() => {
+        const textarea = inputRef.current?.resizableTextArea?.textArea;
+        if (!hasMentionReferences || !textarea || typeof ResizeObserver === "undefined") return;
+        const observer = new ResizeObserver(() => syncMentionPreviewScroll(textarea));
+        observer.observe(textarea);
+        return () => observer.disconnect();
+    }, [compact, hasMentionReferences, inputRef]);
 
     useEffect(() => {
         if (!compact) return;
@@ -232,7 +256,7 @@ export function CreativeComposer({
             styles={{ container: { padding: 0, borderRadius: 16, overflow: "hidden" } }}
             content={<CreativeAssetMentionPicker assets={mentionCandidates} selectedAssetIds={selectedAssetIds} referenceCapabilityState={referenceCapabilityState} selectedReferenceAssets={attachments} onSelect={selectMentionAsset} />}
         >
-            <div className="relative min-w-0 flex-1">
+            <div className="relative min-w-0 flex-1 overflow-hidden">
                 {hasMentionReferences ? <ComposerMentionPreview previewRef={mentionHighlightRef} segments={mentionSegments} assetsById={referenceAssetsById} /> : null}
                 <Input.TextArea
                     ref={inputRef}
@@ -249,16 +273,18 @@ export function CreativeComposer({
                         if (compactMode) onExpand?.();
                     }}
                     onBlur={(event) => {
-                        const scrollTop = event.currentTarget.scrollTop;
+                        const textarea = event.currentTarget;
                         window.requestAnimationFrame(() => {
-                            if (mentionHighlightRef.current) mentionHighlightRef.current.style.transform = `translate3d(0, -${scrollTop}px, 0)`;
+                            syncMentionPreviewScroll(textarea);
                         });
                     }}
-                    onChange={(event) => updateComposerValue(event.target.value, event.target.selectionStart)}
-                    onClick={(event) => updateMentionCursor(event.currentTarget.value, event.currentTarget.selectionStart)}
-                    onScroll={(event) => {
-                        if (mentionHighlightRef.current) mentionHighlightRef.current.style.transform = `translate3d(0, -${event.currentTarget.scrollTop}px, 0)`;
+                    onChange={(event) => {
+                        const textarea = event.currentTarget;
+                        updateComposerValue(textarea.value, textarea.selectionStart);
+                        window.requestAnimationFrame(() => syncMentionPreviewScroll(textarea));
                     }}
+                    onClick={(event) => updateMentionCursor(event.currentTarget.value, event.currentTarget.selectionStart)}
+                    onScroll={(event) => syncMentionPreviewScroll(event.currentTarget)}
                     onKeyUp={(event) => {
                         if (["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)) return;
                         updateMentionCursor(event.currentTarget.value, event.currentTarget.selectionStart);
@@ -661,6 +687,19 @@ export function CreativeComposer({
                             </Button>
                         </Tooltip>
                     </div>
+                    {promptLengthVisible ? (
+                        <Tooltip title={t("promptLengthUsage", { current: value.length, max: maxPromptLength })}>
+                            <span
+                                data-testid="creative-prompt-length"
+                                data-limit-reached={promptLimitReached ? "true" : "false"}
+                                role={promptLimitReached ? "status" : undefined}
+                                aria-label={t("promptLengthUsage", { current: value.length, max: maxPromptLength })}
+                                className={cn("shrink-0 whitespace-nowrap text-[11px] font-medium tabular-nums", promptLimitReached ? "text-[#c2414f] dark:text-[#f08a96]" : "text-[#7b8591] dark:text-[#929ca8]")}
+                            >
+                                {value.length}/{maxPromptLength}
+                            </span>
+                        </Tooltip>
+                    ) : null}
                     <CreativeCreditIndicator estimate={creditEstimate} />
                     <Tooltip title={busy ? t("stopGeneration") : t("send")}>
                         <Button

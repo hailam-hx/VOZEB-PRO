@@ -10,6 +10,73 @@ async function waitForCreativeComposerReady(page: Page) {
     await expect(page.getByRole("button", { name: /当前创作类型：/ })).toBeVisible({ timeout: 45_000 });
 }
 
+async function expectMentionPreviewScrollsInsideInput(page: Page, textarea: Locator, preview: Locator, label: string) {
+    await textarea.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await expect.poll(() => preview.evaluate((element) => element.scrollTop), { message: `${label} preview should start with the textarea` }).toBe(0);
+    await textarea.hover();
+    const scrollDistance = await textarea.evaluate((element) => element.scrollHeight);
+    await page.mouse.wheel(0, scrollDistance);
+    await expect.poll(() => textarea.evaluate((element) => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop)), { message: `${label} textarea should scroll to the end` }).toBeLessThanOrEqual(1);
+
+    const [inputState, previewState] = await Promise.all([
+        textarea.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                left: rect.left,
+                scrollTop: element.scrollTop,
+                scrollLeft: element.scrollLeft,
+                scrollHeight: element.scrollHeight,
+                clientHeight: element.clientHeight,
+            };
+        }),
+        preview.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return {
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                left: rect.left,
+                scrollTop: element.scrollTop,
+                scrollLeft: element.scrollLeft,
+                scrollHeight: element.scrollHeight,
+                clientHeight: element.clientHeight,
+                transform: style.transform,
+                visibility: style.visibility,
+                opacity: Number(style.opacity),
+            };
+        }),
+    ]);
+
+    expect(Math.abs(previewState.scrollTop - inputState.scrollTop), `${label} vertical scroll sync: ${JSON.stringify({ inputState, previewState })}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(previewState.scrollLeft - inputState.scrollLeft), `${label} horizontal scroll sync`).toBeLessThanOrEqual(1);
+    expect(previewState.transform, `${label} preview viewport transform`).toBe("none");
+    expect(Math.abs(previewState.top - inputState.top), `${label} preview top`).toBeLessThanOrEqual(1);
+    expect(Math.abs(previewState.right - inputState.right), `${label} preview right`).toBeLessThanOrEqual(1);
+    expect(Math.abs(previewState.bottom - inputState.bottom), `${label} preview bottom`).toBeLessThanOrEqual(1);
+    expect(Math.abs(previewState.left - inputState.left), `${label} preview left`).toBeLessThanOrEqual(1);
+    expect(previewState.scrollHeight, `${label} long preview content`).toBeGreaterThan(previewState.clientHeight);
+    expect(previewState.visibility).toBe("visible");
+    expect(previewState.opacity).toBeGreaterThan(0);
+}
+
+async function exerciseCanvasMentionScroll(page: Page, panel: Locator, label: string) {
+    const textarea = panel.getByRole("textbox", { name: "描述你想让 Agent 如何操作画布" });
+    await textarea.fill("@");
+    const picker = page.getByTestId("canvas-agent-mention-picker");
+    await expect(picker).toBeVisible();
+    await picker.getByRole("button", { name: "引用图片", exact: true }).click();
+    await expect(textarea).toHaveValue("@图片1 ");
+    await textarea.fill(`@图片1 ${Array.from({ length: 36 }, (_, index) => `第${index + 1}行画布提示词`).join("\n")}`);
+    await expectMentionPreviewScrollsInsideInput(page, textarea, panel.getByTestId("canvas-agent-mention-preview"), label);
+}
+
 async function mockCreativeImageUploads(page: Page, fileNames: string[], imageBuffer: Buffer) {
     const conversationId = `e2e-upload-${randomUUID()}`;
     const timestamp = Date.now();
@@ -761,10 +828,16 @@ test("Agent generation inputs apply immediately and reveal video frame slots", a
 });
 
 test("creative composer renders uploaded images as thumbnails instead of filename chips", async ({ page }, testInfo) => {
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+        if (message.type() === "error") consoleErrors.push(message.text());
+    });
     const imageBuffer = readFileSync("public/generation-smoke.webp");
     const projectName = testInfo.project.name.replace(/[^a-z0-9]+/gi, "-");
     const fileName = `${projectName}-reference.webp`;
     const requests = await mockCreativeImageUploads(page, [fileName], imageBuffer);
+    await page.route("**/api/public/gallery?**", (route) => route.fulfill({ json: { code: 0, data: { items: [] }, msg: "OK" } }));
+    await page.route("**/api/notifications/interactions?**", (route) => route.fulfill({ json: { code: 0, data: { items: [], unreadCount: 0 }, msg: "OK" } }));
 
     await page.goto("/create", { waitUntil: "domcontentloaded" });
     await waitForCreativeComposerReady(page);
@@ -804,6 +877,24 @@ test("creative composer renders uploaded images as thumbnails instead of filenam
     expect(requests.conversationCreates()).toBe(0);
     expect(requests.assetUploads()).toBe(0);
 
+    await textarea.fill(`@图片1 ${Array.from({ length: 36 }, (_, index) => `第${index + 1}行创作提示词`).join("\n")}`);
+    const mentionPreview = page.getByTestId("creative-composer-mention-preview");
+    await expectMentionPreviewScrollsInsideInput(page, textarea, mentionPreview, `${testInfo.project.name} /create mention`);
+    const maxLength = Number(await textarea.getAttribute("maxlength"));
+    const threshold = Math.ceil(maxLength * 0.9);
+    await textarea.fill(`@图片1 ${"字".repeat(threshold - "@图片1 ".length)}`);
+    await expect(page.getByTestId("creative-prompt-length")).toHaveText(`${threshold}/${maxLength}`);
+    await expect(page.getByTestId("creative-prompt-length")).toHaveAttribute("data-limit-reached", "false");
+    await textarea.fill(`@图片1 ${"字".repeat(maxLength - "@图片1 ".length)}`);
+    await expect(page.getByTestId("creative-prompt-length")).toHaveAttribute("data-limit-reached", "true");
+    await page.getByRole("button", { name: "切换到深色主题" }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await expect(mentionPreview).toHaveCSS("visibility", "visible");
+    await expectMentionPreviewScrollsInsideInput(page, textarea, mentionPreview, `${testInfo.project.name} /create mention dark`);
+    const [headingBox, mentionPreviewBox] = await Promise.all([page.getByRole("heading", { name: "HOTX AI 创作 Agent" }).boundingBox(), mentionPreview.boundingBox()]);
+    expect(mentionPreviewBox?.y || 0).toBeGreaterThanOrEqual((headingBox?.y || 0) + (headingBox?.height || 0));
+    await expectNoHorizontalOverflow(page, `${testInfo.project.name} /create mention dark`);
+
     const removeButton = page.getByRole("button", { name: `移除${fileName}` });
     const addButton = page.getByRole("button", { name: "继续添加参考素材" });
     await expect
@@ -840,6 +931,7 @@ test("creative composer renders uploaded images as thumbnails instead of filenam
         .toBe(true);
     await removeButton.click();
     await expect(preview).toBeHidden();
+    expect(consoleErrors).toEqual([]);
 });
 
 test("creative conversation keeps successful media rounds copy-only", async ({ page }, testInfo) => {
@@ -1244,6 +1336,12 @@ test("Agent text assets with emoji remain visible after hydration and refresh", 
 });
 
 test("creative workspaces remain usable without horizontal overflow in light and dark themes", async ({ page, request }) => {
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+        if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.route("**/api/public/gallery?**", (route) => route.fulfill({ json: { code: 0, data: { items: [] }, msg: "OK" } }));
+    await page.route("**/api/notifications/interactions?**", (route) => route.fulfill({ json: { code: 0, data: { items: [], unreadCount: 0 }, msg: "OK" } }));
     const created = await request.post("/api/drama/projects", { data: { title: "E2E 短剧项目", ratio: "9:16" } });
     expect(created.ok(), await created.text()).toBe(true);
     const project = ((await created.json()) as { data: { project: { id: string } } }).data.project;
@@ -1254,7 +1352,15 @@ test("creative workspaces remain usable without horizontal overflow in light and
                 viewport: { x: 40, y: 100, k: 1 },
                 nodes: [
                     { id: "responsive-config", type: "config", title: "生成配置", position: { x: 100, y: 100 }, width: 300, height: 220, metadata: { size: "1280x720" } },
-                    { id: "responsive-image", type: "image", title: "图片", position: { x: 100, y: 350 }, width: 260, height: 200, metadata: {} },
+                    {
+                        id: "responsive-image",
+                        type: "image",
+                        title: "图片",
+                        position: { x: 100, y: 350 },
+                        width: 260,
+                        height: 200,
+                        metadata: { content: "/generation-smoke.webp", serverUrl: "/generation-smoke.webp", naturalWidth: 512, naturalHeight: 512, mimeType: "image/webp" },
+                    },
                 ],
                 connections: [],
             },
@@ -1410,19 +1516,21 @@ test("creative workspaces remain usable without horizontal overflow in light and
         }
         if (route === canvasRoute) {
             await expect(page.locator("[data-canvas-surface]")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+            const agentPanel = page.getByLabel("Canvas Agent 对话面板");
             if ((page.viewportSize()?.width || 0) <= 768) {
                 await page.getByRole("button", { name: "打开 Agent", exact: true }).click();
-                const agentPanel = page.getByLabel("Canvas Agent 对话面板");
                 await expect(agentPanel).toBeVisible();
                 await expect.poll(async () => Math.round((await agentPanel.boundingBox())?.width || 0)).toBe(page.viewportSize()?.width || 0);
                 await expect(page.getByPlaceholder("描述你想让 Agent 如何操作画布")).toBeVisible();
-                await expectNoHorizontalOverflow(page, `${route} Agent`);
-                await page.getByRole("button", { name: "收起 Agent 面板" }).click();
             }
+            await expect(agentPanel).toBeVisible();
+            await exerciseCanvasMentionScroll(page, agentPanel, `${route} Agent`);
+            await expectNoHorizontalOverflow(page, `${route} Agent`);
+            await page.getByRole("button", { name: "收起 Agent 面板" }).click();
             await page.locator('[data-node-id="responsive-config"]').click({ position: { x: 32, y: 32 } });
             await expect.poll(() => page.locator('[contenteditable="true"]').evaluate((element) => document.activeElement === element)).toBe(true);
             await page.getByRole("button", { name: "关闭提示词组装" }).click();
-            await page.locator('[data-node-id="responsive-image"]').click({ position: { x: 32, y: 32 } });
+            await page.locator('.node-element[data-node-id="responsive-image"]').click({ position: { x: 32, y: 32 } });
             await page.getByRole("button", { name: "放大提示词输入" }).click();
             const promptDialog = page.getByRole("dialog", { name: "编辑提示词" });
             await expect(promptDialog).toBeVisible();
@@ -1445,12 +1553,19 @@ test("creative workspaces remain usable without horizontal overflow in light and
     await expectNoHorizontalOverflow(page, "/create dark");
     await page.goto(canvasRoute, { waitUntil: "domcontentloaded" });
     await expect(page.locator("[data-canvas-surface]")).toHaveCSS("background-color", "rgb(9, 11, 16)");
+    const darkCanvasAgentPanel = page.getByLabel("Canvas Agent 对话面板");
+    const openCanvasAgent = page.getByRole("button", { name: "打开 Agent", exact: true });
+    await expect.poll(async () => (await darkCanvasAgentPanel.isVisible().catch(() => false)) || (await openCanvasAgent.isVisible().catch(() => false))).toBe(true);
+    if (!(await darkCanvasAgentPanel.isVisible())) await openCanvasAgent.click();
+    await expect(darkCanvasAgentPanel).toBeVisible();
+    await exerciseCanvasMentionScroll(page, darkCanvasAgentPanel, `${canvasRoute} Agent dark`);
     await expectNoHorizontalOverflow(page, `${canvasRoute} dark`);
     await page.goto(dramaRoute, { waitUntil: "domcontentloaded" });
     await expect(page.locator("html")).toHaveClass(/dark/);
     await expect(page.locator("[data-drama-workspace]")).toBeVisible();
     await expect(page.locator(".workspace-shell")).toHaveCount(0);
     await expectNoHorizontalOverflow(page, `${dramaRoute} dark`);
+    expect(consoleErrors).toEqual([]);
 });
 
 test("admin user editor groups permission controls and keeps the footer visible", async ({ page }, testInfo) => {

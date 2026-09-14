@@ -37,12 +37,95 @@ beforeAll(() => {
 afterEach(() => cleanup());
 
 describe("/create reference capability controls", () => {
-    it("silently enforces the configured creative prompt limit without rendering a counter", () => {
-        renderInteractive(<CreativeComposer {...composerProps()} maxPromptLength={12} referenceCapabilityState={{ reason: "unconfigured" }} />);
+    it("shows the configured prompt usage only from ninety percent and marks the limit", () => {
+        const { rerender } = renderInteractive(<CreativeComposer {...composerProps()} value="1234567890" maxPromptLength={12} referenceCapabilityState={{ reason: "unconfigured" }} />);
 
         const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
         expect(textarea.maxLength).toBe(12);
-        expect(document.querySelector(".ant-input-data-count")).toBeNull();
+        expect(screen.queryByTestId("creative-prompt-length")).toBeNull();
+
+        rerender(
+            <NextIntlClientProvider locale="zh-CN" messages={loadMessages("zh-CN")} timeZone="UTC">
+                <App>
+                    <CreativeComposer {...composerProps()} value="12345678901" maxPromptLength={12} referenceCapabilityState={{ reason: "unconfigured" }} />
+                </App>
+            </NextIntlClientProvider>,
+        );
+        expect(screen.getByTestId("creative-prompt-length").textContent).toBe("11/12");
+        expect(screen.getByTestId("creative-prompt-length").getAttribute("data-limit-reached")).toBe("false");
+        expect(screen.getByTestId("creative-prompt-length").getAttribute("aria-label")).toBe("已使用 11/12 个字符");
+
+        rerender(
+            <NextIntlClientProvider locale="zh-CN" messages={loadMessages("zh-CN")} timeZone="UTC">
+                <App>
+                    <CreativeComposer {...composerProps()} value="123456789012" maxPromptLength={12} referenceCapabilityState={{ reason: "unconfigured" }} />
+                </App>
+            </NextIntlClientProvider>,
+        );
+        expect(screen.getByTestId("creative-prompt-length").getAttribute("data-limit-reached")).toBe("true");
+        expect(screen.getByTestId("creative-prompt-length").getAttribute("role")).toBe("status");
+    });
+
+    it("scrolls the mention preview content without moving its viewport", () => {
+        const image = asset("stable-image", "image");
+        renderInteractive(
+            <CreativeComposer
+                {...composerProps()}
+                value={`@图片1 ${"长提示词".repeat(80)}`}
+                attachments={[image]}
+                selectedAssetIds={[image.id]}
+                referenceCapabilityState={{ reason: "unsupported", parameters: profile({ referenceInputs: ["image"], maxReferenceImages: 2 }) }}
+            />,
+        );
+
+        const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+        const preview = screen.getByTestId("creative-composer-mention-preview");
+        textarea.scrollTop = 84;
+        textarea.scrollLeft = 12;
+        fireEvent.scroll(textarea);
+
+        expect(preview.scrollTop).toBe(84);
+        expect(preview.scrollLeft).toBe(12);
+        expect(preview.style.transform).toBe("");
+    });
+
+    it("rebinds mention scroll observation when the compact composer expands", async () => {
+        const originalResizeObserver = globalThis.ResizeObserver;
+        const observed: Element[] = [];
+        globalThis.ResizeObserver = class {
+            observe(target: Element) {
+                observed.push(target);
+            }
+            unobserve() {}
+            disconnect() {}
+        };
+        const image = asset("stable-image", "image");
+        const props = {
+            ...composerProps(),
+            value: "@图片1 长提示词",
+            attachments: [image],
+            selectedAssetIds: [image.id],
+            referenceCapabilityState: { reason: "unsupported" as const, parameters: profile({ referenceInputs: ["image"], maxReferenceImages: 2 }) },
+        };
+
+        try {
+            const { rerender } = renderInteractive(<CreativeComposer {...props} compact />);
+            const compactTextarea = screen.getByRole("textbox");
+            await waitFor(() => expect(observed).toContain(compactTextarea));
+
+            rerender(
+                <NextIntlClientProvider locale="zh-CN" messages={loadMessages("zh-CN")} timeZone="UTC">
+                    <App>
+                        <CreativeComposer {...props} compact={false} />
+                    </App>
+                </NextIntlClientProvider>,
+            );
+            const expandedTextarea = screen.getByRole("textbox");
+            expect(expandedTextarea).not.toBe(compactTextarea);
+            await waitFor(() => expect(observed).toContain(expandedTextarea));
+        } finally {
+            globalThis.ResizeObserver = originalResizeObserver;
+        }
     });
 
     it("disables upload and conversation-reference entry points when the active model is unconfigured", async () => {

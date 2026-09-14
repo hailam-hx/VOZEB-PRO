@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { loadMessages } from "@/i18n/messages";
 import { renderWithI18n } from "@/test/render-with-i18n";
 import { AgentChatComposer } from "./canvas-agent-chat-ui";
 
@@ -12,7 +17,27 @@ const baseProps = {
     onSubmit: vi.fn(),
 };
 
+afterEach(() => cleanup());
+
 describe("Canvas Agent image attachments", () => {
+    it("scrolls mention preview content without translating the overlay viewport", () => {
+        render(
+            <NextIntlClientProvider locale="zh-CN" messages={loadMessages("zh-CN")} timeZone="UTC">
+                <AgentChatComposer {...baseProps} prompt={`@图片1 ${"长提示词".repeat(80)}`} mentionAssets={[{ id: "image-1", title: "参考图", type: "image", url: "/reference.webp" }]} selectedReferenceIds={["image-1"]} />
+            </NextIntlClientProvider>,
+        );
+
+        const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+        const preview = screen.getByTestId("canvas-agent-mention-preview");
+        textarea.scrollTop = 64;
+        textarea.scrollLeft = 9;
+        fireEvent.scroll(textarea);
+
+        expect(preview.scrollTop).toBe(64);
+        expect(preview.scrollLeft).toBe(9);
+        expect(preview.style.transform).toBe("");
+    });
+
     it("renders the add-reference slot inside the input row instead of the bottom toolbar", () => {
         const markup = renderWithI18n(<AgentChatComposer {...baseProps} onAddFiles={vi.fn()} />);
 

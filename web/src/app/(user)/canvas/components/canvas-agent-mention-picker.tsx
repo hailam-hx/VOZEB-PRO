@@ -94,7 +94,7 @@ export function CanvasAgentMentionPreview({ segments, assetsById, previewRef, th
             ref={previewRef}
             data-testid="canvas-agent-mention-preview"
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 z-0 overflow-hidden whitespace-pre-wrap break-words px-1 py-1 text-sm leading-5 [font-family:inherit]"
+            className="pointer-events-none absolute inset-0 z-0 overflow-hidden whitespace-pre-wrap break-words px-1 py-1 text-sm !leading-5 [font-family:inherit]"
             style={{ color: theme.node.text }}
         >
             {segments.map((segment, index) => {

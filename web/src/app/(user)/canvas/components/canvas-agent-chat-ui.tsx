@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import { Button, Popover, Tooltip } from "antd";
 import { ArrowUp, Check, CheckCircle2, Circle, CircleAlert, Crosshair, LoaderCircle, Pause, Play, Plus, RotateCcw, Wrench, X, XCircle } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -324,6 +324,27 @@ export function AgentChatComposer({
     const referenceAliases = useMemo(() => canvasAgentReferenceAliases(mentionAssets, selectedReferenceIds), [mentionAssets, selectedReferenceIds]);
     const mentionSegments = useMemo(() => canvasAgentMentionSegments(prompt, referenceAliases), [prompt, referenceAliases]);
     const hasMentionReferences = mentionSegments.some((segment) => segment.referenced);
+    const syncMentionPreviewScroll = (textarea?: HTMLTextAreaElement | null) => {
+        const preview = mentionHighlightRef.current;
+        if (!preview || !textarea) return;
+        preview.scrollTop = textarea.scrollTop;
+        preview.scrollLeft = textarea.scrollLeft;
+    };
+
+    useEffect(() => {
+        if (!hasMentionReferences) return;
+        const frame = window.requestAnimationFrame(() => syncMentionPreviewScroll(textareaRef.current));
+        return () => window.cancelAnimationFrame(frame);
+    }, [hasMentionReferences, prompt]);
+
+    useEffect(() => {
+        const textarea = textareaRef.current;
+        if (!hasMentionReferences || !textarea || typeof ResizeObserver === "undefined") return;
+        const observer = new ResizeObserver(() => syncMentionPreviewScroll(textarea));
+        observer.observe(textarea);
+        return () => observer.disconnect();
+    }, [hasMentionReferences]);
+
     const updateComposerValue = (value: string, cursor: number) => {
         caretRef.current = cursor;
         onPromptChange(value);
@@ -485,19 +506,25 @@ export function AgentChatComposer({
                         styles={{ container: { padding: 0, borderRadius: 12, overflow: "hidden", background: theme.node.panel, border: `1px solid ${theme.toolbar.border}` } }}
                         content={<CanvasAgentMentionPicker assets={mentionCandidates} selectedNodeIds={selectedReferenceIds} theme={theme} onSelect={selectMentionAsset} />}
                     >
-                        <div className="relative min-w-0 flex-1">
+                        <div className="relative min-w-0 flex-1 overflow-hidden">
                             {hasMentionReferences ? <CanvasAgentMentionPreview segments={mentionSegments} assetsById={mentionAssetsById} previewRef={mentionHighlightRef} theme={theme} /> : null}
                             <textarea
                                 ref={textareaRef}
                                 value={prompt}
-                                onChange={(event) => updateComposerValue(event.target.value, event.target.selectionStart)}
+                                onChange={(event) => {
+                                    const textarea = event.currentTarget;
+                                    updateComposerValue(textarea.value, textarea.selectionStart);
+                                    window.requestAnimationFrame(() => syncMentionPreviewScroll(textarea));
+                                }}
                                 onClick={(event) => updateMentionCursor(event.currentTarget.value, event.currentTarget.selectionStart)}
                                 onKeyUp={(event) => {
                                     if (["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)) return;
                                     updateMentionCursor(event.currentTarget.value, event.currentTarget.selectionStart);
                                 }}
-                                onScroll={(event) => {
-                                    if (mentionHighlightRef.current) mentionHighlightRef.current.style.transform = `translate3d(0, -${event.currentTarget.scrollTop}px, 0)`;
+                                onScroll={(event) => syncMentionPreviewScroll(event.currentTarget)}
+                                onBlur={(event) => {
+                                    const textarea = event.currentTarget;
+                                    window.requestAnimationFrame(() => syncMentionPreviewScroll(textarea));
                                 }}
                                 onPaste={(event) => {
                                     if (!onAddFiles) return;
@@ -528,7 +555,7 @@ export function AgentChatComposer({
                                     }
                                     void onSubmit();
                                 }}
-                                className="thin-scrollbar relative z-[1] max-h-32 min-h-20 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 outline-none placeholder:opacity-45"
+                                className="thin-scrollbar relative z-[1] block max-h-32 min-h-20 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm !leading-5 outline-none placeholder:opacity-45"
                                 style={{ color: hasMentionReferences ? "transparent" : theme.node.text, caretColor: theme.node.text }}
                                 placeholder={placeholder}
                             />

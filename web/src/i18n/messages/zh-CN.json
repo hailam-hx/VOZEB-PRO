@@ -851,6 +851,7 @@
         "creditSettlementHint": "实际按最终模型与用量结算",
         "composerPlaceholderCompact": "输入你的创作想法",
         "composerPlaceholder": "输入你的创作想法、脚本或画面要求",
+        "promptLengthUsage": "已使用 {current}/{max} 个字符",
         "addMaterial": "添加素材",
         "continueAddMaterial": "继续添加参考素材",
         "referenceConversationAssets": "引用当前对话资产",

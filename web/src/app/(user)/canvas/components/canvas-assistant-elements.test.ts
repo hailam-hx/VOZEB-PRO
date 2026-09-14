@@ -60,7 +60,7 @@ describe("Canvas Agent current-turn references", () => {
 
         expect(composer).toContain("relative size-10");
         expect(composer).toContain("max-w-[44%]");
-        expect(composer).toContain('className="relative min-w-0 flex-1"');
+        expect(composer).toContain('className="relative min-w-0 flex-1 overflow-hidden"');
         expect(composer.indexOf('aria-label={t("assistant.currentReferences")}')).toBeGreaterThanOrEqual(0);
         expect(composer.indexOf('aria-label={t("assistant.currentReferences")}')).toBeLessThan(composer.indexOf("<Popover"));
         expect(composer.indexOf("<Popover")).toBeLessThan(composer.indexOf("<textarea"));

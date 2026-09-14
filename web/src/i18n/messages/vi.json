@@ -875,6 +875,7 @@
         "creditSettlementHint": "Quyết toán cuối cùng dựa trên mô hình và mức sử dụng thực tế",
         "composerPlaceholderCompact": "Nhập ý tưởng sáng tạo của bạn",
         "composerPlaceholder": "Nhập ý tưởng, kịch bản hoặc yêu cầu hình ảnh",
+        "promptLengthUsage": "Đã dùng {current}/{max} ký tự",
         "addMaterial": "Thêm tài liệu",
         "continueAddMaterial": "Thêm tài liệu tham khảo khác",
         "referenceConversationAssets": "Tham chiếu tài nguyên trong cuộc trò chuyện",
