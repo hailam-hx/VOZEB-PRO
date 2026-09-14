@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     claim: vi.fn(),
@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
     setAgentRunStatus: vi.fn(),
     getRecord: vi.fn(),
     fetchInternal: vi.fn(),
+    workerContext: vi.fn(),
+    sessionCookie: undefined as string | undefined,
     getImageTask: vi.fn(),
     updateImageTask: vi.fn(),
     createImageTaskUpstreamStep: vi.fn(),
@@ -59,9 +61,9 @@ vi.mock("@/lib/server/agent-run-execution", () => ({ processAgentRunReview: mock
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, mirrorAgentTextTaskSnapshot: mocks.mirrorText, updateAgentRunById: mocks.updateAgentRun, setAgentRunStatus: mocks.setAgentRunStatus }));
 vi.mock("@/lib/server/generation-task-store", () => ({ getStoredGenerationTaskRecord: mocks.getRecord }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternal, resolveInternalOrigin: () => "http://localhost" }));
-vi.mock("@/lib/auth/session", () => ({ getCurrentUser: async () => ({ id: "user" }) }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (mocks.sessionCookie ? { value: mocks.sessionCookie } : undefined) }) }));
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: vi.fn() }));
-vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn((userId: string) => `worker-context:${userId}`) }));
+vi.mock("@/lib/server/maintenance-auth", async (importOriginal) => ({ ...(await importOriginal<typeof import("./maintenance-auth")>()), maintenanceWorkerContext: mocks.workerContext }));
 vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: mocks.failVideoTask, persistVideoTaskResult: vi.fn(), queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
 vi.mock("@/lib/server/video-task-store", () => ({ getVideoTask: mocks.getVideoTask }));
 vi.mock("@/lib/server/audio-task-runtime", () => ({
@@ -98,13 +100,28 @@ vi.mock("@/lib/server/generation-task-cancellation-service", () => ({
     isCancellationExecutionPhase: vi.fn((value: string) => value === "cancel_requested" || value === "cancel_polling"),
     requestUpstreamGenerationCancellation: mocks.requestCancellation,
 }));
-vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings, getFreshAuthSettings: mocks.getFreshAuthSettings }));
+vi.mock("@/lib/auth/store", () => ({
+    getAuthSettings: mocks.getAuthSettings,
+    getFreshAuthSettings: mocks.getFreshAuthSettings,
+    getUserBySession: async (session: string | undefined) => (session === "fixture-session" ? { id: "user", status: "active", role: "user" } : null),
+    getPublicUsersByIds: async (ids: string[]) => (ids.includes("user") ? [{ id: "user", status: "active", role: "user" }] : []),
+}));
 
 import { runGenerationTaskRecoveryBatch } from "./generation-task-recovery-service";
 import { POST as cancelAgentRun } from "@/app/api/agent/runs/[id]/[action]/route";
+import { getCurrentUser } from "@/lib/auth/session";
 
 describe("generation task recovery service", () => {
-    it("delivers persisted cancellation before recovery can execute an unsubmitted text child", async () => {
+    it.each(["background", "worker-context", "browser-cookie"])("authenticates %s cancellation before recovery can execute an unsubmitted text child", async (credential) => {
+        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", "maintenance-fixture-token-0123456789abcdef");
+        vi.stubEnv("VOZEB_PRO_WORKER_TOKEN", "worker-fixture-token-0123456789abcdef");
+        const workerAuth = await vi.importActual<typeof import("./maintenance-auth")>("./maintenance-auth");
+        mocks.sessionCookie = undefined;
+        mocks.workerContext.mockImplementation(workerAuth.maintenanceWorkerContext);
+        const context = workerAuth.maintenanceWorkerContext("user");
+        const cookie = credential === "browser-cookie" ? "vozeb_pro_session=fixture-session" : credential === "worker-context" ? context : "";
+        // A signed runtime context is not itself a browser session credential.
+        expect(await getCurrentUser(new Request("http://localhost", { headers: { cookie: context } }))).toBeNull();
         let status = "pending";
         const run = {
             id: "agent-one",
@@ -121,11 +138,28 @@ describe("generation task recovery service", () => {
             .mockResolvedValueOnce([{ ...lease(), status: "paused", executionPhase: "cancel_requested" }])
             .mockImplementationOnce(async () => [{ ...lease(), id: "text", type: "text", status, executionPhase: status === "pending" ? "created" : "cancel_requested" }]);
         mocks.runTextTaskStep.mockResolvedValueOnce({ state: "pending", status: "submitted", upstreamTaskId: "must-not-start", createPath: "/jobs" });
-        mocks.fetchInternal.mockImplementationOnce(async () => {
+        let responseStatus = 0;
+        let receivedHeaders!: Headers;
+        mocks.fetchInternal.mockImplementationOnce(async (url: string, init: RequestInit) => {
+            receivedHeaders = new Headers(init.headers);
+            mocks.sessionCookie = receivedHeaders.get("cookie") === "vozeb_pro_session=fixture-session" ? "fixture-session" : undefined;
+            const user = await getCurrentUser(new Request(url, init));
+            if (!user) {
+                responseStatus = 401;
+                return Response.json({ error: "请先登录" }, { status: 401 });
+            }
+            responseStatus = 200;
             status = "cancelled";
             return Response.json({ task: { status: "running", executionPhase: "cancel_requested" } });
         });
-        await runGenerationTaskRecoveryBatch({ origin: "http://localhost", workerId: "worker" });
+        await runGenerationTaskRecoveryBatch({ origin: "http://localhost", workerId: "worker", cookie });
+        expect(responseStatus).toBe(200);
+        expect(status).toBe("cancelled");
+        if (credential === "browser-cookie") expect(receivedHeaders.get("cookie")).toBe("vozeb_pro_session=fixture-session");
+        else {
+            expect(receivedHeaders.has("cookie")).toBe(false);
+            expect(receivedHeaders.get("x-vozeb-pro-worker-user-id")).toBe("user");
+        }
         expect(mocks.runTextTaskStep).not.toHaveBeenCalled();
         expect(mocks.fetchInternal).toHaveBeenCalledWith("http://localhost/api/text-tasks/text", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "cancelled", attemptId: "attempt" }) }));
         expect(mocks.setAgentRunStatus).toHaveBeenCalledWith(run, "cancelled");
@@ -252,6 +286,9 @@ describe("generation task recovery service", () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.claim.mockReset();
+        mocks.sessionCookie = "fixture-session";
+        mocks.workerContext.mockImplementation((userId: string) => `worker-context:${userId}`);
         mocks.mirrorText.mockReset();
         mocks.closeTextTaskAttempt.mockReset();
         mocks.runTextTaskStep.mockReset();
@@ -262,6 +299,7 @@ describe("generation task recovery service", () => {
         mocks.getFreshAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });
         mocks.finalizeBilling.mockResolvedValue({ state: "settled" });
     });
+    afterEach(() => vi.unstubAllEnvs());
 
     it("returns without starting a heartbeat when no task is due", async () => {
         mocks.claim.mockResolvedValue([]);

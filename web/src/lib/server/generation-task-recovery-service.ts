@@ -12,7 +12,7 @@ import { getImageTask, updateImageTask, type ImageTask } from "@/lib/server/imag
 import { closeTextTaskAttempt, getTextTask, updateTextTask, type TextTask } from "@/lib/server/text-task-store";
 import { markTextTaskFailed, queryCancelledTextTaskUpstreamStep, runTextTaskStep } from "@/lib/server/text-task-runtime";
 import { mirrorAgentTextTaskSnapshot } from "@/lib/server/agent-run-store";
-import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
+import { maintenanceWorkerContext, maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { executeAgentRun } from "@/lib/server/agent-run-executor";
 import { processAgentRunReview } from "@/lib/server/agent-run-execution";
 import { getAgentRun, setAgentRunStatus, updateAgentRunById, type AgentRun } from "@/lib/server/agent-run-store";
@@ -267,9 +267,10 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
                 const type = parent.type as "text" | "image" | "video" | "audio";
                 let child = await getStoredGenerationTaskRecord(type, id);
                 if (child && ["pending", "running"].includes(child.status)) {
+                    const credential = cookie || maintenanceWorkerContext(run.userId);
                     const response = await fetchInternalApi(`${origin}/api/${type}-tasks/${encodeURIComponent(id)}`, {
                         method: "PATCH",
-                        headers: { "Content-Type": "application/json", cookie: cookie || maintenanceWorkerContext(run.userId) },
+                        headers: { "Content-Type": "application/json", ...(maintenanceWorkerContextHeaders(credential) || { cookie: credential }) },
                         body: JSON.stringify({ status: "cancelled", ...(type === "text" && parent.activeAttemptId ? { attemptId: parent.activeAttemptId } : {}) }),
                     });
                     await response.body?.cancel().catch(() => undefined);

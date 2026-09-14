@@ -125,3 +125,19 @@ All commands ran from `web` using `PATH=/Users/jake/.nvm/versions/node/v22.23.2/
 - Prettier applied to changed files; `git diff --check`: **passed**.
 
 The browser gap is unchanged: this round verifies EventSource consumers, components, public endpoints, real runtime interleavings and scheduler/recovery fixtures, but does not claim the desktop/390px/430px `/create` and Canvas live-browser matrix. Root/Task 4 owns that aggregate matrix and full release gates. PostgreSQL query contracts are covered with mocked query assertions; this round did not run a live PostgreSQL database or external upstream.
+
+## Review fix round 2 — background cancellation authentication
+
+The cancellation recovery PATCH now converts its runtime credential through the existing `maintenanceWorkerContextHeaders` helper. A signed worker context produces the established bearer authorization and worker-user headers, not a Cookie header; a browser session cookie is still forwarded as a cookie. This handles both a newly generated background context and a context forwarded from parent recovery without duplicating signing or authentication logic.
+
+The recovery test no longer mocks `getCurrentUser` unconditionally. Its dispatch fixture constructs the real Request and runs the production session resolver and worker-token/signature validation. Only ambient cookie storage, user/session data and external persistence/transport remain fixtures. Background cases have no browser session, and a control assertion proves a signed context placed in Cookie is rejected.
+
+TDD evidence:
+
+- RED: `npm test -- src/lib/server/generation-task-recovery-service.test.ts -t 'authenticates'` produced **2 failed, 1 passed** (26 skipped): both background and forwarded-worker-context cases received **401 instead of 200**. The browser-cookie case passed. An unused queued lease fixture from the first failed case was reset before repeating RED; both worker cases then failed specifically on the same 401 assertion.
+- GREEN: all three credential cases authorize the intended task owner, preserve browser-cookie behavior, cancel the child without starting generation, and reach parent cancellation. Worker requests have no Cookie header.
+- Focused recovery/auth boundary command including `generation-task-recovery-service`, `maintenance-auth`, `auth/session`, `internal-origin`, and `internal-origin.integration`: **5 files, 38 tests passed**.
+- The prior 21-file focused matrix plus those four auth/internal files: **25 files, 276 tests passed**.
+- `npm run typecheck`: **passed**. ESLint of the two changed TypeScript files: **0 errors, 1 unchanged unused-variable warning**. Prettier and `git diff --check`: **passed**.
+
+All verification used Node 22 and local fixtures. No real credentials, upstream providers, browser-session dependency or new polling/retry behavior was introduced. The previously documented four executor baseline failures and root-owned browser/live-database validation gap are unchanged.
