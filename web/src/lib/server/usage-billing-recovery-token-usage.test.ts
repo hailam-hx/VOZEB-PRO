@@ -31,7 +31,7 @@ describe("text usage recovery", () => {
         const reserve = calculatePricingReserve({ rateCard: saleRateSnapshot, usage: requestUsage });
         const snapshot: UsageBillingHoldSnapshot = {
             version: 1,
-            businessId: "text-task-one",
+            businessId: "text-task:text-task-one",
             originalRequestFingerprint: "a".repeat(64),
             logicalModelId: "text-model",
             capability: "text",
@@ -41,7 +41,7 @@ describe("text usage recovery", () => {
             reservedCredits: reserve.credits,
             recovery: { taskType: "text", taskId: "text-task-one" },
         };
-        const hold = { id: "hold-one", description: "text task", runtimeSnapshot: snapshot } as WalletHold;
+        const hold = { id: "hold-one", businessId: snapshot.businessId, description: "text task", runtimeSnapshot: snapshot } as WalletHold;
 
         const evidence = await inspectPersistedUsageHold(hold);
 
@@ -62,7 +62,7 @@ describe("text usage recovery", () => {
         const reserve = calculatePricingReserve({ rateCard: saleRateSnapshot, usage: requestUsage });
         const snapshot: UsageBillingHoldSnapshot = {
             version: 1,
-            businessId: "text-task-one",
+            businessId: "text-task:text-task-one",
             originalRequestFingerprint: "a".repeat(64),
             logicalModelId: "text-model",
             capability: "text",
@@ -78,7 +78,7 @@ describe("text usage recovery", () => {
                 observedUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "7", outputTokens: "3" }),
             },
         ]);
-        const hold = { id: "hold-one", description: "text task", runtimeSnapshot: snapshot } as WalletHold;
+        const hold = { id: "hold-one", businessId: snapshot.businessId, description: "text task", runtimeSnapshot: snapshot } as WalletHold;
 
         const evidence = await inspectPersistedUsageHold(hold);
 

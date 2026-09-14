@@ -5,7 +5,8 @@ import { validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/m
 import type { ProviderUsageAttempt, UsageBillingHoldSnapshot, WalletHold } from "@/lib/auth/store-types";
 import { readSystemAiUsageBilling } from "./system-ai-billing";
 import { deriveProxyBillableUsage } from "./usage-billing-adapter";
-import { getTextTask } from "./text-task-store";
+import { getTextTask, type TextTask } from "./text-task-store";
+import { textTaskBillingBusinessId } from "./generation-usage-context";
 import { getImageTask } from "./image-task-store";
 import { getVideoTask } from "./video-task-store";
 import { getAudioTask } from "./audio-task-store";
@@ -322,13 +323,29 @@ export async function inspectPersistedUsageHold(hold: WalletHold): Promise<Orpha
                   ? await getVoiceCloneTask(recovery.taskId)
                   : await getAudioTask(recovery.taskId);
     if (!task) return { state: "unknown", reason: "本地任务不存在，无法确认上游是否接收" };
-    if (task.status === "success") {
+    let status: string | undefined = task.status;
+    let error = task.error;
+    let upstreamTaskId = task.upstream?.id;
+    if (recovery.taskType === "text") {
+        const textTask = task as TextTask;
+        const attempt = textTask.attempts?.findLast((item) => item.billingBusinessId === hold.businessId);
+        if (textTaskBillingBusinessId(textTask) !== hold.businessId) {
+            // An explicit retry keeps the task ID, but cannot redefine a previous cycle's outcome.
+            status = attempt?.status;
+            error = attempt?.error;
+            upstreamTaskId = undefined;
+        } else if ((status === "pending" || status === "running") && attempt) {
+            // A failed candidate is not a failed cycle while same-cycle failover is still running.
+            return { state: "pending", upstreamTaskId };
+        }
+    }
+    if (status === "success" || status === "succeeded") {
         const actualUsage = await persistedActualUsage(hold.id, snapshot);
         return actualUsage ? { state: "succeeded", actualUsage, description: hold.description } : { state: "succeeded", derivedUsage: persistedDerivedUsage(recovery.taskType, task, snapshot), description: hold.description };
     }
-    if (task.status === "error") return { state: "failed", reason: task.error || "任务确认失败" };
-    if (task.status === "cancelled") return task.upstream?.id ? { state: "canceled", description: "用户取消已被上游接受的任务" } : { state: "not_received", reason: "任务在上游接收前取消" };
-    if (task.upstream?.id) return { state: "pending", upstreamTaskId: task.upstream.id };
+    if (status === "error" || status === "failed") return { state: "failed", reason: error || "任务确认失败" };
+    if (status === "cancelled") return upstreamTaskId ? { state: "canceled", description: "用户取消已被上游接受的任务" } : { state: "not_received", reason: "任务在上游接收前取消" };
+    if (upstreamTaskId) return { state: "pending", upstreamTaskId };
     return { state: "unknown", reason: "任务尚无稳定上游任务 ID" };
 }
 

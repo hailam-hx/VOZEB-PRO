@@ -10,7 +10,8 @@ import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { emptyDb } from "@/lib/auth/store-normalizers";
 import { readAuthDb, writeAuthDb } from "@/lib/auth/store-repository";
 import { meteredTextResponseBody } from "./system-ai-metered-text-stream";
-import { createTextTask, getTextTask, retryTextTask } from "./text-task-store";
+import { closeTextTaskAttempt, createTextTask, getTextTask, openTextTaskAttempt, retryTextTask, transitionTextTask } from "./text-task-store";
+import { textTaskBillingBusinessId, usageRecoveryIdentity } from "./generation-usage-context";
 import { runTextTaskStep } from "./text-task-runtime";
 import { systemAiUsageResponseHeaders, finalizeSystemAiUsageRequestHeaders } from "./system-ai-billing";
 import * as outbound from "./safe-outbound-fetch";
@@ -25,6 +26,7 @@ import { getStoredGenerationTaskRecord } from "./generation-task-store";
 import {
     attachUsageProviderUpstreamTaskId,
     finalizeUsageBillingForBusiness,
+    inspectPersistedUsageHold,
     recoverOrphanUsageHolds,
     finishUsageProviderAttempt,
     loadUsageBilling,
@@ -260,10 +262,14 @@ describe("usage billing runtime", () => {
             settled = true;
             return result;
         });
-        // The persisted public snapshot proves the runtime consumed this stream before checking completion.
-        await vi.waitFor(async () => expect((await getTextTask(task.id))?.visibleTextSnapshot?.content).toBe("完成"));
-        await vi.waitFor(() => expect(settled).toBe(true)).catch(() => sourceController.close());
-        await execution;
+        try {
+            // The persisted public snapshot proves the runtime consumed this stream before checking completion.
+            await vi.waitFor(async () => expect((await getTextTask(task.id))?.visibleTextSnapshot?.content).toBe("完成"));
+            await vi.waitFor(() => expect(settled).toBe(true));
+        } finally {
+            if (!settled) sourceController.close();
+            await execution;
+        }
         const db = await readAuthDb();
         expect(db.walletHolds[0].status).toBe("settled");
         expect(db.usageCharges).toHaveLength(1);
@@ -748,6 +754,106 @@ describe("usage billing runtime", () => {
 });
 
 describe("orphan usage recovery", () => {
+    it("retains the current text cycle hold between failover attempts and settles only its successful usage", async () => {
+        const config = { baseUrl: "https://fixture.example", apiFormat: "openai" as const, apiKey: "fixture", model: "text-model" };
+        const task = await createTextTask({ userId: "user-one", config, messages: [], billingCycleId: "current-retry" });
+        const businessId = `text-task:${task.id}:cycle:current-retry`;
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId,
+            requestFingerprint: createHash("sha256").update(businessId).digest("hex"),
+            logicalModelId: "text-model",
+            saleRateSnapshot: { version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "0.01" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", inputTokens: "10", maxOutputTokens: "20" }),
+            description: "文本预留",
+            expiresAt: new Date("2026-08-23T00:00:00.000Z"),
+            recovery: usageRecoveryIdentity(businessId),
+        });
+        const running = (await transitionTextTask(task, ["pending"], { status: "running" }))!;
+        const first = (await openTextTaskAttempt(running, config, "chat", [config]))!;
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "failed",
+            provider: "fixture",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            normalizedUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "2" }),
+        });
+        const switching = (await closeTextTaskAttempt(task.id, first.activeAttemptId!, "failed", { error: "switch candidate" }))!;
+        expect(await recoverOrphanUsageHolds({ limit: 5, now: new Date(), inspect: inspectPersistedUsageHold })).toEqual({ inspected: 1, retained: 1, settled: 0, released: 0 });
+        expect((await readAuthDb()).walletHolds[0].status).toBe("active");
+        const second = (await openTextTaskAttempt(switching, config, "chat", []))!;
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 2,
+            status: "succeeded",
+            provider: "fixture",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            normalizedUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "7" }),
+        });
+        await transitionTextTask(second, ["running"], { status: "success", result: { content: "完成" } });
+        await closeTextTaskAttempt(task.id, second.activeAttemptId!, "succeeded");
+        expect(await recoverOrphanUsageHolds({ limit: 5, now: new Date(), inspect: inspectPersistedUsageHold })).toEqual({ inspected: 1, retained: 0, settled: 1, released: 0 });
+        const recovered = await readAuthDb();
+        expect(recovered.walletHolds).toHaveLength(1);
+        expect(recovered.usageCharges[0]).toMatchObject({ settledCredits: "0.07", estimated: false });
+    });
+    it.each([undefined, "prior-retry"])("releases a crashed failed cycle %s after the stable text task succeeds on explicit retry", async (billingCycleId) => {
+        const config = { baseUrl: "https://fixture.example", apiFormat: "openai" as const, apiKey: "fixture", model: "text-model" };
+        const messages = [{ role: "user" as const, content: "fixture" }];
+        const task = await createTextTask({ userId: "user-one", config, messages, billingCycleId });
+        const rate = { version: 1 as const, components: [{ id: "request", dimension: "request" as const, unitPrice: "1" }] };
+        const reserve = async (businessId: string) => {
+            const billing = await reserveUsageBilling({
+                userId: "user-one",
+                businessId,
+                requestFingerprint: createHash("sha256").update(businessId).digest("hex"),
+                logicalModelId: "text-model",
+                saleRateSnapshot: rate,
+                requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+                description: "文本预留",
+                expiresAt: new Date("2026-08-23T00:00:00.000Z"),
+                recovery: usageRecoveryIdentity(businessId),
+            });
+            await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+            return billing;
+        };
+        const oldBilling = await reserve(textTaskBillingBusinessId(task));
+        const running = (await transitionTextTask(task, ["pending"], { status: "running" }))!;
+        const opened = (await openTextTaskAttempt(running, config, "chat", []))!;
+        // Crash after persisting the failed task/attempt but before releasing its active hold.
+        const failed = (await transitionTextTask(opened, ["running"], { status: "error", error: "old cycle failed" }))!;
+        await closeTextTaskAttempt(task.id, failed.activeAttemptId!, "failed", { error: "old cycle failed" });
+        const oldAudit = structuredClone((await getTextTask(task.id))!.attempts);
+        const retried = (await retryTextTask((await getTextTask(task.id))!, { config, messages, candidateConfigs: [] }))!;
+        const newBilling = await reserve(textTaskBillingBusinessId(retried));
+        const body = new Response('data: {"choices":[{"delta":{"content":"完成"}}]}\n\ndata: {"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\ndata: [DONE]\n\n').body!;
+        vi.spyOn(outbound, "fetchSafeOutbound").mockResolvedValue(
+            new Response(meteredTextResponseBody(body, newBilling, 1), {
+                headers: { "content-type": "text/event-stream", ...systemAiUsageResponseHeaders({ holdId: newBilling.holdId, attemptNumber: 1, requestFingerprint: newBilling.requestFingerprint }) },
+            }),
+        );
+        expect(await runTextTaskStep(retried, "http://internal", "")).toEqual({ state: "completed" });
+        const beforeRecovery = await readAuthDb();
+        expect(beforeRecovery.walletHolds.find((hold) => hold.id === oldBilling.holdId)?.status).toBe("active");
+        expect(beforeRecovery.walletHolds.find((hold) => hold.id === newBilling.holdId)?.status).toBe("settled");
+        const result = await recoverOrphanUsageHolds({ limit: 5, now: new Date(), inspect: inspectPersistedUsageHold });
+        expect(result).toEqual({ inspected: 1, retained: 0, settled: 0, released: 1 });
+        const recovered = await readAuthDb();
+        expect(recovered.walletHolds.find((hold) => hold.id === oldBilling.holdId)).toMatchObject({ status: "released", releaseReason: "old cycle failed" });
+        expect(recovered.providerUsageAttempts.find((attempt) => attempt.holdId === oldBilling.holdId)?.status).toBe("failed");
+        expect(recovered.usageCharges).toHaveLength(1);
+        expect(recovered.usageCharges[0]).toMatchObject({ holdId: newBilling.holdId, settledCredits: "1", estimated: false });
+        expect(recovered.users[0].settledBalance).toBe("9");
+        expect(recovered.pointRecords.filter((record) => record.type === "consume")).toHaveLength(1);
+        const completed = (await getTextTask(task.id))!;
+        expect(completed).toMatchObject({ id: task.id, status: "success" });
+        expect(completed.attempts?.slice(0, 1)).toEqual(oldAudit);
+    });
     it("releases unknown holds without creating consumption", async () => {
         await reservation("unknown", new Date("2026-08-23T00:00:00.000Z"));
 
