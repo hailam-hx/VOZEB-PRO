@@ -215,6 +215,25 @@ describe("text task runtime recovery", () => {
         expect(state.attempts?.[0]).toMatchObject({ content: "部分", usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 }, milestones: { first_byte: expect.any(Number) } });
     });
 
+    it.each([
+        {
+            protocol: "claude",
+            path: "/messages",
+            frames: 'data: {"type":"message_start","message":{"usage":{"input_tokens":7}}}\n\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"部分"}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":2}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":4}}\n\n',
+        },
+        { protocol: "responses", path: "/responses", frames: 'data: {"type":"response.output_text.delta","delta":"部分"}\n\ndata: {"type":"response.incomplete","response":{"usage":{"input_tokens":7,"output_tokens":4}}}\n\n' },
+    ])("retains $protocol cumulative usage and partial text when native generation fails", async ({ path, frames }) => {
+        state = textTask({ ...openAiConfig("one", "https://one.example"), advancedConfig: { ...emptyAdvancedConfig(), createPath: path }, capabilityProfile: { maxOutputTokens: 128 } as TextTaskConfig["capabilityProfile"] });
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(frames + 'data: {"error":{"message":"private fixture detail"}}\n\n')));
+
+        await runTextTaskStep(state, "http://internal", "");
+
+        expect(state.status).toBe("error");
+        expect(state.visibleTextSnapshot?.content).toBe("部分");
+        expect(state.attempts?.[0]).toMatchObject({ status: "failed", usage: { inputTokens: 7, outputTokens: 4, totalTokens: 11 } });
+        expect(state.error).not.toContain("private fixture detail");
+    });
+
     it("closes and settles a cancellation that wins the terminal persistence race", async () => {
         state = textTask(openAiConfig("one", "https://one.example"));
         vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(chatFrame("部分") + "data: [DONE]\n\n")));

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { normalizeBillableUsage } from "@/lib/billing/pricing";
+import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { emptyDb } from "@/lib/auth/store-normalizers";
 import { readAuthDb, writeAuthDb } from "@/lib/auth/store-repository";
 import { meteredTextResponseBody } from "./system-ai-metered-text-stream";
@@ -75,8 +76,28 @@ afterAll(() => {
 });
 
 describe("usage billing runtime", () => {
-    it("retains native streaming failure usage and nonzero supplier cost before EOF", async () => {
-        const task = await createTextTask({ userId: "user-one", messages: [{ role: "user", content: "fixture" }], config: { baseUrl: "https://fixture.example", apiFormat: "openai", apiKey: "fixture", model: "text-model" } });
+    it.each([
+        {
+            protocol: "chat",
+            path: "/chat/completions",
+            frames: 'data: {"choices":[{"delta":{"content":"部分"}}]}\n\ndata: {"usage":{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":1}}}\n\ndata: {"error":{"message":"fixture"}}\n\n',
+        },
+        {
+            protocol: "claude",
+            path: "/messages",
+            frames: 'data: {"type":"message_start","message":{"usage":{"input_tokens":4,"cache_read_input_tokens":1,"cache_creation_input_tokens":0}}}\n\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"部分"}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":1}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":2}}\n\ndata: {"type":"error","error":{"message":"fixture"}}\n\n',
+        },
+        {
+            protocol: "responses",
+            path: "/responses",
+            frames: 'data: {"type":"response.output_text.delta","delta":"部分"}\n\ndata: {"type":"response.failed","response":{"usage":{"input_tokens":5,"output_tokens":2,"input_tokens_details":{"cached_tokens":1}},"error":{"message":"fixture"}}}\n\n',
+        },
+    ])("retains $protocol streaming failure usage and nonzero supplier cost before EOF", async ({ path, frames }) => {
+        const task = await createTextTask({
+            userId: "user-one",
+            messages: [{ role: "user", content: "fixture" }],
+            config: { baseUrl: "https://fixture.example", apiFormat: "openai", apiKey: "fixture", model: "text-model", advancedConfig: { ...emptyAdvancedConfig(), createPath: path }, capabilityProfile: { maxOutputTokens: 128 } },
+        });
         const requestUsage = normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", cachedInputTokens: "0", maxOutputTokens: "128" });
         const billing = await reserveUsageBilling({
             userId: "user-one",
@@ -107,9 +128,7 @@ describe("usage billing runtime", () => {
         });
         const source = new ReadableStream<Uint8Array>({
             start(controller) {
-                controller.enqueue(
-                    new TextEncoder().encode('data: {"choices":[{"delta":{"content":"部分"}}]}\n\ndata: {"usage":{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":1}}}\n\ndata: {"error":{"message":"fixture"}}\n\n'),
-                );
+                controller.enqueue(new TextEncoder().encode(frames));
             },
         });
         const response = new Response(meteredTextResponseBody(source, billing, 1), {

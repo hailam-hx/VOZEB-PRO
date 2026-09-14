@@ -81,12 +81,16 @@ export function createStreamingUsageAccumulator(capability: BillableCapability, 
     const decoder = new TextDecoder();
     let tail = "";
     let actual: NormalizedUsage | undefined;
+    let textUsage: Record<string, unknown> = {};
     const consumeLine = (line: string) => {
         const data = line.trim().replace(/^data:\s*/, "");
         if (!data || data === "[DONE]") return;
         try {
-            const payload = JSON.parse(data) as unknown;
-            const parsed = deriveProxyBillableUsage({ capability, requestUsage, payload });
+            const payload = object(JSON.parse(data)) || {};
+            const usage = capability === "text" ? readTextUsage(payload) : undefined;
+            // Native usage events contain cumulative counters, sometimes split across frames.
+            if (usage) textUsage = { ...textUsage, ...usage };
+            const parsed = deriveProxyBillableUsage({ capability, requestUsage, payload: usage ? { usage: textUsage } : payload });
             if (parsed?.source === "actual") actual = parsed;
         } catch {
             // Non-JSON stream events have no billable usage metadata.
@@ -117,13 +121,23 @@ export function calculateProviderUsageCost(rateCard: PricingRateCardV1, usage: N
 }
 
 function actualTextUsage(payload: Record<string, unknown>) {
-    const usage = object(payload.usage) || object(payload.usageMetadata);
+    const usage = readTextUsage(payload);
     const totalInputTokens = nonNegativeIntegerText(usage?.prompt_tokens ?? usage?.input_tokens ?? usage?.promptTokenCount);
     const outputTokens = nonNegativeIntegerText(usage?.completion_tokens ?? usage?.output_tokens ?? usage?.candidatesTokenCount);
+    if (!totalInputTokens || !outputTokens) return undefined;
+    if (usage?.cache_read_input_tokens !== undefined || usage?.cache_creation_input_tokens !== undefined) {
+        // Claude's uncached, cache-write, and cache-read input counters are disjoint.
+        const cacheCreationTokens = nonNegativeIntegerText(usage.cache_creation_input_tokens) || "0";
+        return { inputTokens: decimal(totalInputTokens).plus(decimal(cacheCreationTokens)).toString(), cachedInputTokens: nonNegativeIntegerText(usage.cache_read_input_tokens) || "0", outputTokens };
+    }
     const details = object(usage?.prompt_tokens_details) || object(usage?.input_tokens_details);
     const cachedInputTokens = nonNegativeIntegerText(details?.cached_tokens ?? usage?.cachedContentTokenCount) || "0";
-    if (!totalInputTokens || !outputTokens || decimal(cachedInputTokens).greaterThan(decimal(totalInputTokens))) return undefined;
+    if (decimal(cachedInputTokens).greaterThan(decimal(totalInputTokens))) return undefined;
     return { inputTokens: decimal(totalInputTokens).minus(decimal(cachedInputTokens)).toString(), cachedInputTokens, outputTokens };
+}
+
+function readTextUsage(payload: Record<string, unknown>) {
+    return object(payload.usage) || object(object(payload.message)?.usage) || object(object(payload.response)?.usage) || object(payload.usageMetadata);
 }
 
 function promptText(payload: Record<string, unknown>) {

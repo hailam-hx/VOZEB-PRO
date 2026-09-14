@@ -103,6 +103,38 @@ describe("usage billing protocol adapters", () => {
         expect(accumulator.finish()).toBeUndefined();
     });
 
+    it("merges Claude split usage as cumulative counters without double-counting cache tokens", () => {
+        const requestUsage = normalizeProxyBillableRequest({ capability: "text", payload: { prompt: "fixture", max_tokens: 128 }, rateCard: textRate });
+        const accumulator = createStreamingUsageAccumulator("text", requestUsage);
+        accumulator.push(new TextEncoder().encode('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":7,"cache_read_input_tokens":12,"cache_creation_input_tokens":3}}}\n\n'));
+        expect(accumulator.finish()).toBeUndefined();
+        accumulator.push(new TextEncoder().encode('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":0}}\n\n'));
+        expect(accumulator.finish()).toMatchObject({ source: "actual", inputTokens: "10", cachedInputTokens: "12", outputTokens: "0" });
+        accumulator.push(new TextEncoder().encode('data: {"type":"message_delta","usage":{"output_tokens":2}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":4}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":4}}\n\n'));
+        expect(accumulator.finish()).toMatchObject({ source: "actual", inputTokens: "10", cachedInputTokens: "12", outputTokens: "4" });
+        expect(accumulator.bufferedBytes()).toBe(0);
+    });
+
+    it("normalizes nested Responses usage and replaces cumulative totals across chunk boundaries", () => {
+        const requestUsage = normalizeProxyBillableRequest({ capability: "text", payload: { prompt: "fixture", max_tokens: 128 }, rateCard: textRate });
+        const accumulator = createStreamingUsageAccumulator("text", requestUsage);
+        accumulator.push(
+            new TextEncoder().encode('data: {"type":"response.in_progress","response":{"usage":{"input_tokens":5,"output_tokens":1,"input_tokens_details":{"cached_tokens":1}}}}\n\ndata: {"type":"response.failed","response":{"usage":{"input_'),
+        );
+        accumulator.push(new TextEncoder().encode('tokens":5,"output_tokens":2,"input_tokens_details":{"cached_tokens":1}},"error":{"message":"fixture"}}}\n\n'));
+        expect(accumulator.finish()).toMatchObject({ source: "actual", inputTokens: "4", cachedInputTokens: "1", outputTokens: "2" });
+        expect(accumulator.finish()).toMatchObject({ inputTokens: "4", outputTokens: "2" });
+        expect(accumulator.bufferedBytes()).toBe(0);
+    });
+
+    it.each([{ message: { usage: { input_tokens: 4, output_tokens: 2, cache_read_input_tokens: 1 } } }, { response: { usage: { input_tokens: 5, output_tokens: 2, input_tokens_details: { cached_tokens: 1 } } } }])(
+        "uses the same native usage normalization for buffered payload %#",
+        (payload) => {
+            const requestUsage = normalizeProxyBillableRequest({ capability: "text", payload: { prompt: "fixture", max_tokens: 128 }, rateCard: textRate });
+            expect(deriveProxyBillableUsage({ capability: "text", requestUsage, payload })).toMatchObject({ source: "actual", inputTokens: "4", cachedInputTokens: "1", outputTokens: "2" });
+        },
+    );
+
     it("prices provider usage from the frozen cost rate without credit rounding", () => {
         expect(calculateProviderUsageCost(textRate, { capability: "text", source: "actual", inputTokens: "2", outputTokens: "2" })).toBe("0.000006");
     });
