@@ -247,13 +247,15 @@ async function readRoutedResponse(input: RoutedTextRequest, request: ProtocolReq
     let visible = "";
     let firstByteMs: number | undefined;
     let firstContentMs: number | undefined;
-    for await (const event of normalizeTextStream(response, request.protocol)) {
-        if (event.type === "error") throw new TextPlanningRequestError(event.message, event.status || 502, !event.contract && retryableStatus(event.status || 502));
-        if (event.type === "completed" || event.type === "usage") continue;
-        if (firstByteMs === undefined) {
+    for await (const event of normalizeTextStream(response, request.protocol, {
+        onFirstByte: async () => {
+            if (firstByteMs !== undefined) return;
             firstByteMs = Date.now() - startedAt;
             await input.onFirstByte?.(firstByteMs);
-        }
+        },
+    })) {
+        if (event.type === "error") throw new TextPlanningRequestError(event.message, event.status || 502, !event.contract && retryableStatus(event.status || 502));
+        if (event.type === "completed" || event.type === "usage") continue;
         output += event.text;
         const routed = routeOutput(output);
         if (routed.kind !== "conversation" || routed.content === visible) continue;

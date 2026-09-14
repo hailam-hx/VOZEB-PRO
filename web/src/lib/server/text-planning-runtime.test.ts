@@ -349,7 +349,7 @@ describe("text planning runtime protocol matrix", () => {
                 visible.push(content);
             },
         });
-        const rejected = expect(pending).rejects.toThrow("stream failed");
+        const rejected = expect(pending).rejects.toThrow("读取文本流失败");
 
         await vi.waitFor(() => expect(visible).toEqual(["Xin chào"]));
         failStream();
@@ -665,7 +665,19 @@ function chatJsonResponse() {
 }
 
 function sseResponse(start: (controller: ReadableStreamDefaultController<string>) => void) {
-    const source = new ReadableStream<string>({ start });
+    const source = new ReadableStream<string>({
+        start(controller) {
+            start({
+                enqueue: controller.enqueue.bind(controller),
+                close: () => {
+                    controller.enqueue("data: [DONE]\n\n");
+                    controller.close();
+                },
+                error: controller.error.bind(controller),
+                desiredSize: controller.desiredSize,
+            } as ReadableStreamDefaultController<string>);
+        },
+    });
     return new Response(source.pipeThrough(new TextEncoderStream()), { headers: { "content-type": "text/event-stream" } });
 }
 

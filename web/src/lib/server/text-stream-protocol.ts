@@ -6,9 +6,13 @@ export type NormalizedTextStreamEvent =
     | { type: "completed" }
     | { type: "error"; message: string; status?: number; contract?: true };
 
-export async function* normalizeTextStream(response: Response, protocol: TextStreamProtocol): AsyncGenerator<NormalizedTextStreamEvent> {
+type TextStreamOptions = { onFirstByte?: () => void | Promise<void> };
+type UsageState = { inputTokens?: number; outputTokens?: number };
+
+export async function* normalizeTextStream(response: Response, protocol: TextStreamProtocol, options: TextStreamOptions = {}): AsyncGenerator<NormalizedTextStreamEvent> {
     if (!response.ok) {
-        yield { type: "error", message: providerErrorMessage(await response.text(), response.status), status: response.status };
+        reportDiagnostic(protocol, "http_error", await response.text(), response.status);
+        yield { type: "error", message: `文本流请求失败（HTTP ${response.status}）`, status: response.status };
         return;
     }
     const contentType = response.headers.get("content-type")?.toLowerCase() || "";
@@ -25,16 +29,25 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
     const decoder = new TextDecoder();
     let buffer = "";
     let failed = false;
-    const consume = (frame: string) => streamEvents(frame, protocol);
+    let completed = false;
+    let firstByte = false;
+    const usageState: UsageState = {};
+    const consume = (frame: string) => streamEvents(frame, protocol, usageState);
     try {
         for (;;) {
             const next = await reader.read();
             if (next.done) break;
+            if (!firstByte && next.value.byteLength) {
+                firstByte = true;
+                await options.onFirstByte?.();
+            }
             buffer += decoder.decode(next.value, { stream: true });
             const frames = takeSseFrames(buffer);
             buffer = frames.rest;
             for (const frame of frames.values) {
-                for (const event of consume(frame)) {
+                const parsed = consume(frame);
+                completed ||= parsed.completed;
+                for (const event of parsed.events) {
                     yield event;
                     if (event.type === "error") failed = true;
                 }
@@ -42,33 +55,40 @@ export async function* normalizeTextStream(response: Response, protocol: TextStr
         }
         buffer += decoder.decode();
         if (buffer.trim()) {
-            for (const event of consume(buffer)) {
+            const parsed = consume(buffer);
+            completed ||= parsed.completed;
+            for (const event of parsed.events) {
                 yield event;
                 if (event.type === "error") failed = true;
             }
         }
     } catch (error) {
         if (error instanceof Error && error.name === "AbortError") throw error;
-        yield { type: "error", message: error instanceof Error ? error.message : "读取文本流失败" };
+        reportDiagnostic(protocol, "read_error", error instanceof Error ? error.message : String(error));
+        yield { type: "error", message: "读取文本流失败" };
         return;
     } finally {
         reader.releaseLock();
     }
-    if (!failed) yield { type: "completed" };
+    if (failed) return;
+    if (completed) yield { type: "completed" };
+    else yield { type: "error", message: "文本流在完成前意外结束", contract: true };
 }
 
-function streamEvents(frame: string, protocol: TextStreamProtocol): NormalizedTextStreamEvent[] {
-    if (frame.trim() === "[DONE]") return [];
+function streamEvents(frame: string, protocol: TextStreamProtocol, usageState: UsageState): { events: NormalizedTextStreamEvent[]; completed: boolean } {
+    if (frame.trim() === "[DONE]") return { events: [], completed: true };
     const payload = parseRecord(frame);
-    if (!payload) return [];
-    const error = streamError(payload);
-    if (error) return [{ type: "error", message: error }];
+    if (!payload) return { events: [], completed: false };
+    if (hasStreamError(payload)) {
+        reportDiagnostic(protocol, "stream_error", JSON.stringify(payload));
+        return { events: [{ type: "error", message: "文本流上游返回错误" }], completed: false };
+    }
     const events: NormalizedTextStreamEvent[] = [];
     const text = streamedText(payload, protocol);
     if (text) events.push({ type: "text_delta", text });
-    const usage = normalizedUsage(payload);
+    const usage = normalizedUsage(payload, usageState);
     if (usage) events.push({ type: "usage", ...usage });
-    return events;
+    return { events, completed: nativeCompleted(payload, protocol) };
 }
 
 function takeSseFrames(value: string) {
@@ -107,29 +127,34 @@ function streamedText(payload: Record<string, unknown>, protocol: TextStreamProt
         .join("");
 }
 
-function normalizedUsage(payload: Record<string, unknown>) {
-    const usage = record(payload.usage) || record(record(payload.response)?.usage) || record(payload.usageMetadata);
+function normalizedUsage(payload: Record<string, unknown>, state: UsageState) {
+    const usage = record(payload.usage) || record(record(payload.message)?.usage) || record(record(payload.response)?.usage) || record(payload.usageMetadata);
     if (!usage) return undefined;
-    const inputTokens = numberValue(usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokenCount);
-    const outputTokens = numberValue(usage.output_tokens ?? usage.completion_tokens ?? usage.candidatesTokenCount);
+    const inputTokens = numberValue(usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokenCount) ?? state.inputTokens;
+    const outputTokens = numberValue(usage.output_tokens ?? usage.completion_tokens ?? usage.candidatesTokenCount) ?? state.outputTokens;
     const totalTokens = numberValue(usage.total_tokens ?? usage.totalTokenCount) ?? (inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined);
+    state.inputTokens = inputTokens;
+    state.outputTokens = outputTokens;
     return inputTokens === undefined && outputTokens === undefined && totalTokens === undefined ? undefined : { inputTokens, outputTokens, totalTokens };
 }
 
-function streamError(payload: Record<string, unknown>) {
-    const root = record(payload.error);
-    const nested = record(record(payload.response)?.error);
-    const message = firstText(root?.message, nested?.message, payload.type === "error" || payload.type === "response.failed" ? payload.message : undefined);
-    return message || undefined;
+function hasStreamError(payload: Record<string, unknown>) {
+    return Boolean(record(payload.error) || record(record(payload.response)?.error) || payload.type === "error" || payload.type === "response.failed");
 }
 
-function providerErrorMessage(raw: string, status: number) {
-    try {
-        const payload = record(JSON.parse(raw));
-        return streamError(payload || {}) || firstText(payload?.message, payload?.msg) || `文本流请求失败（HTTP ${status}）`;
-    } catch {
-        return raw.trim() || `文本流请求失败（HTTP ${status}）`;
-    }
+function nativeCompleted(payload: Record<string, unknown>, protocol: TextStreamProtocol) {
+    if (protocol === "responses") return payload.type === "response.completed";
+    if (protocol === "claude") return payload.type === "message_stop";
+    if (protocol === "gemini")
+        return records(payload.candidates).some((candidate) => {
+            const finishReason = record(candidate)?.finishReason;
+            return typeof finishReason === "string" && Boolean(finishReason.trim());
+        });
+    return records(payload.choices).some((choice) => record(choice)?.finish_reason !== undefined && record(choice)?.finish_reason !== null);
+}
+
+function reportDiagnostic(protocol: TextStreamProtocol, kind: string, diagnostic: string, status?: number) {
+    console.warn("Text stream protocol diagnostic", { protocol, kind, status, diagnostic });
 }
 
 function parseRecord(value: string) {
@@ -154,8 +179,4 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function numberValue(value: unknown) {
     return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-}
-
-function firstText(...values: unknown[]) {
-    return values.find((value): value is string => typeof value === "string" && Boolean(value.trim()))?.trim() || "";
 }
