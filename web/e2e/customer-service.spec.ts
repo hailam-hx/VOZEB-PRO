@@ -127,7 +127,8 @@ async function expectCustomerServiceFooter(page: Page, title: string, labels: st
     await phone.scrollIntoViewIfNeeded();
     const layout = await section.evaluate((element) => {
         const fields = Array.from(element.querySelectorAll<HTMLElement>("dl > div"));
-        const address = fields.at(-1)?.querySelector<HTMLElement>("dd")!;
+        const address = fields.at(-1)?.querySelector<HTMLElement>("dd");
+        if (!address) throw new Error("Customer-service address field is missing.");
         const lineHeight = Number.parseFloat(getComputedStyle(address).lineHeight);
         const links = Array.from(element.querySelectorAll<HTMLAnchorElement>("a")).map((link) => {
             const bounds = link.getBoundingClientRect();
