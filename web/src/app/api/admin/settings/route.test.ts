@@ -24,13 +24,18 @@ const savedSettings = {
     defaultModels: { textModel: "writer", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" },
     generationDefaults: { canvasImageCount: "auto", imageCount: "auto", imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto" },
 };
+let persistedSettings = { ...savedSettings, site: DEFAULT_SITE_SETTINGS };
 
 describe("admin settings model routing", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["system.manage", "billing.manage", "upstream.manage"] });
-        mocks.getFreshAuthSettings.mockResolvedValue(savedSettings);
-        mocks.setAuthSettings.mockImplementation(async (patch) => ({ ...savedSettings, ...patch }));
+        persistedSettings = { ...savedSettings, site: DEFAULT_SITE_SETTINGS };
+        mocks.getFreshAuthSettings.mockImplementation(async () => persistedSettings);
+        mocks.setAuthSettings.mockImplementation(async (patch) => {
+            persistedSettings = { ...persistedSettings, ...patch, ...(patch.site ? { site: normalizeSiteSettings(patch.site) } : {}) };
+            return persistedSettings;
+        });
     });
 
     it("saves a consistent channel, logical model, and default snapshot", async () => {
@@ -302,13 +307,15 @@ describe("admin settings model routing", () => {
             ...DEFAULT_SITE_SETTINGS,
             customerService: { businessName: "  HOTX AI  ", address: "  河内市  ", phone: "  +84 123  ", email: "  SUPPORT@HOTX.AI  " },
         };
-        mocks.setAuthSettings.mockImplementation(async (patch) => ({ ...savedSettings, ...patch, site: normalizeSiteSettings(patch.site) }));
-
         const response = await PATCH(request({ site }));
         const payload = (await response.json()) as { settings: { site: { customerService: unknown } } };
+        const readback = await GET();
+        const readbackPayload = (await readback.json()) as { settings: { site: { customerService: unknown } } };
 
         expect(response.status).toBe(200);
         expect(payload.settings.site.customerService).toEqual({ businessName: "HOTX AI", address: "河内市", phone: "+84 123", email: "support@hotx.ai" });
+        expect(readback.status).toBe(200);
+        expect(readbackPayload.settings.site.customerService).toEqual({ businessName: "HOTX AI", address: "河内市", phone: "+84 123", email: "support@hotx.ai" });
     });
 
     it("rejects an invalid non-empty social address instead of reporting a destructive save as successful", async () => {
