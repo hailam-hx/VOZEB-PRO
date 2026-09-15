@@ -45,7 +45,12 @@ export function GenerationTaskRuntimeSummary({ task, compact = false }: { task: 
                 {task.queryPath ? <RuntimeFact label="查询路径" value={task.queryPath} /> : null}
             </div>
             {task.failureStage ? <div className="mt-1 text-[11px] text-red-600 dark:text-red-300">失败阶段：{agentFailureStageLabel(task.failureStage)}</div> : null}
-            {task.planningFinalization ? <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">规划结算：{plannerFinalizationLabel(task.planningFinalization)}</div> : null}
+            {task.planningFinalization ? (
+                <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    <div>规划结算：{plannerFinalizationLabel(task.planningFinalization)}</div>
+                    {task.planningFinalization.error ? <div className="mt-1 break-words text-red-600 dark:text-red-300">{task.planningFinalization.error}</div> : null}
+                </div>
+            ) : null}
             {task.agentTiming ? <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">Agent 时序 {agentTimingLabel(task.agentTiming)}</div> : null}
             <TextAttemptTimeline task={task} />
             <AgentPlannerAttemptTimeline task={task} />

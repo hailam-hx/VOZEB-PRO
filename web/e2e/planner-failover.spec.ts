@@ -26,6 +26,8 @@ test("generation operations keeps the request, failure and planner route timelin
         await expect(taskSurface.getByText("gpt-5.6-sol · dflop-openai → gpt-6-astra", { exact: true })).toBeVisible();
         await expect(taskSurface.getByText("第 1 轮 · 尝试 2 · 备用", { exact: true })).toBeVisible();
         await expect(taskSurface.getByText("已收到响应", { exact: false }).first()).toBeVisible();
+        await expect(taskSurface.getByText("规划结算：失败 · 尝试 2 · finish_attempt:wallet_conflict · 不可重试", { exact: true })).toBeVisible();
+        await expect(taskSurface.getByText("供应商尝试已结束，不能改写终态", { exact: true })).toBeVisible();
         await expectNoHorizontalOverflow(page, `${testInfo.project.name} ${theme} generation operations planner diagnostics`);
         await expectVisibleControlsWithinViewport(page, `${testInfo.project.name} ${theme} generation operations planner diagnostics`);
     }
@@ -210,6 +212,15 @@ function generationOperationsFixture() {
                     },
                 ],
                 plannerFailure: { message: "文本模型返回了无效 JSON", failedAt: now },
+                failureStage: "planner_settlement",
+                planningFinalization: {
+                    status: "failed",
+                    attemptNumber: 2,
+                    error: "供应商尝试已结束，不能改写终态",
+                    errorCode: "finish_attempt:wallet_conflict",
+                    retryable: false,
+                    completedAt: now,
+                },
                 createdAt: now - 1_820,
                 updatedAt: now,
                 canCancel: false,

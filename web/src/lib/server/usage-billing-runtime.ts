@@ -218,13 +218,16 @@ export async function finishSystemAiTextAttempt(headers: Headers, input: { statu
     const attempt = attempts.find((item) => item.attemptNumber === identity.attemptNumber);
     if (!attempt) throw billingIntegrityError("load_attempt", "usage_attempt_missing", "供应商尝试不存在");
     const usage = input.normalizedUsage || attempt?.observedUsage || (input.payload ? deriveProxyBillableUsage({ capability: "text", requestUsage: billing.snapshot.requestUsage, payload: input.payload }) : undefined);
-    try {
-        await finishUsageProviderAttempt({ billing, attemptNumber: identity.attemptNumber, status: input.status, normalizedUsage: usage });
-    } catch (error) {
-        throw billingFinalizationStepError("finish_attempt", error);
+    const validatedCanceledReplay = input.status === "succeeded" && hold.status === "settled" && attempt.status === "canceled";
+    if (!validatedCanceledReplay) {
+        try {
+            await finishUsageProviderAttempt({ billing, attemptNumber: identity.attemptNumber, status: input.status, normalizedUsage: usage });
+        } catch (error) {
+            throw billingFinalizationStepError("finish_attempt", error);
+        }
     }
     try {
-        if (input.status === "succeeded") await settleUsageBilling({ billing, description: "文本生成用量结算", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
+        if (input.status === "succeeded" && hold.status !== "settled") await settleUsageBilling({ billing, description: "文本生成用量结算", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
         else if (input.status === "canceled") await settleCancelledUsageBilling({ billing, description: "用户取消已由上游接受的文本生成", ...(usage?.source === "actual" ? { actualUsage: usage } : usage ? { derivedUsage: usage } : {}) });
     } catch (error) {
         throw billingFinalizationStepError("settle_hold", error);

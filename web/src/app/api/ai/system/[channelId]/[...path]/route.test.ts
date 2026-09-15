@@ -484,17 +484,29 @@ describe("system media proxy", () => {
         expect(mocks.settleUsageBilling).not.toHaveBeenCalled();
     });
 
-    it("settles accepted user cancellation even when the upstream cancel hook throws", async () => {
+    it("keeps an unclassified downstream stream cancellation pending for the caller to finalize", async () => {
+        const upstream = new ReadableStream<Uint8Array>();
+        const stream = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1);
+
+        await stream.cancel();
+
+        expect(mocks.finishUsageProviderAttempt).not.toHaveBeenCalled();
+        expect(mocks.settleCancelledUsageBilling).not.toHaveBeenCalled();
+    });
+
+    it("leaves an aborted HTTP stream pending for the business caller even when upstream cancellation throws", async () => {
+        const controller = new AbortController();
         const upstream = new ReadableStream<Uint8Array>({
             cancel() {
                 throw new Error("cancel failed");
             },
         });
-        const stream = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1);
+        const stream = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1, { signal: controller.signal });
+        controller.abort();
 
         await expect(stream.cancel()).rejects.toThrow("cancel failed");
-        expect(mocks.finishUsageProviderAttempt).toHaveBeenCalledWith(expect.objectContaining({ status: "canceled" }));
-        expect(mocks.settleCancelledUsageBilling).toHaveBeenCalledOnce();
+        expect(mocks.finishUsageProviderAttempt).not.toHaveBeenCalled();
+        expect(mocks.settleCancelledUsageBilling).not.toHaveBeenCalled();
     });
 
     it("classifies a provider stream read failure as failed and leaves the hold available for downstream failover", async () => {

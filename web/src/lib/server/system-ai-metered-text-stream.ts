@@ -13,12 +13,12 @@ export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billin
     const diagnosticDecoder = diagnostics ? createTextSseDecoder((frame) => diagnostics.frame(frame)) : undefined;
     let finalized = false;
     let cancelled = false;
-    const finalize = async (status: "succeeded" | "failed" | "canceled") => {
+    const finalize = async (status: "pending" | "succeeded" | "failed" | "canceled") => {
         if (finalized) return;
         finalized = true;
         const usage = accumulator.finish();
         try {
-            if (status === "succeeded") {
+            if (status === "pending" || status === "succeeded") {
                 if (usage) await attachUsageProviderEvidence({ billing, attemptNumber, usage });
             } else {
                 await finishUsageProviderAttempt({ billing, attemptNumber, status, normalizedUsage: usage });
@@ -57,8 +57,10 @@ export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billin
             try {
                 await reader.cancel(reason);
             } finally {
-                // HTTP disconnects cannot carry our local cleanup Symbol across processes.
-                await finalize(accumulator.terminalStatus() || (reason === TEXT_STREAM_COMPLETED ? "succeeded" : reason === TEXT_STREAM_FAILED ? "failed" : "canceled"));
+                // HTTP disconnects cannot carry our local cleanup Symbol across processes, and
+                // canceling a response body also aborts the proxy Request signal. The business
+                // caller therefore owns every unclassified cancellation and its final settlement.
+                await finalize(accumulator.terminalStatus() || (reason === TEXT_STREAM_COMPLETED ? "succeeded" : reason === TEXT_STREAM_FAILED ? "failed" : "pending"));
                 reader.releaseLock();
             }
         },

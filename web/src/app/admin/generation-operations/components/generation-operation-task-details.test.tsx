@@ -51,6 +51,7 @@ describe("generation operation task details", () => {
         expect(host.textContent).toContain("TTFB 100 毫秒 · TTFT 180 毫秒 · 结果 生成计划");
         expect(host.textContent).toContain("失败阶段：规划结算");
         expect(host.textContent).toContain("规划结算：失败 · 尝试 1 · ledger_unavailable · 可重试");
+        expect(host.textContent).toContain("结算账本暂时不可用");
         expect(host.textContent).toContain("Agent 时序 请求→上游 120 毫秒 · Planner TTFB 100 毫秒 · Planner 320 毫秒");
     });
 

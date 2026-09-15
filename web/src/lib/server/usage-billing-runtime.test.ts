@@ -144,6 +144,49 @@ describe("usage billing runtime", () => {
         });
     });
 
+    it("reconciles a validated planner response after its proxy transport was already canceled", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "agent-plan:transport-cancel-recovery",
+            requestFingerprint: "6".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "planner transport cancellation fixture",
+        });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "canceled" });
+        await settleCancelledUsageBilling({ billing, description: "proxy transport cancellation" });
+        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }));
+
+        await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).resolves.toBeUndefined();
+
+        const db = await readAuthDb();
+        expect(db.walletHolds).toEqual([expect.objectContaining({ id: billing.holdId, status: "settled" })]);
+        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "canceled" })]);
+        expect(db.usageCharges).toHaveLength(1);
+    });
+
+    it("does not reinterpret an unsettled canceled attempt as a successful planner response", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "agent-plan:active-cancel-conflict",
+            requestFingerprint: "5".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "planner active cancellation fixture",
+        });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "canceled" });
+        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }));
+
+        await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).rejects.toMatchObject({
+            code: "finish_attempt:wallet_conflict",
+            status: 409,
+        });
+    });
+
     it("preserves protocol completion billing when HTTP transport cancellation loses the local cleanup reason", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",
