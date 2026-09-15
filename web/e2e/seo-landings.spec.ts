@@ -105,9 +105,11 @@ test("six SEO landing pages expose complete SSR metadata and responsive content"
     expect(unknown?.status()).toBe(404);
 });
 
-test("customer-service footer is localized, responsive, and limited to marketing pages", async ({ page, request }, testInfo) => {
+test("customer-service footer is localized, responsive, and limited to marketing pages", async ({ browser, request }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "One Chromium owner writes global site settings and opens all required anonymous viewports sequentially.");
     test.setTimeout(240_000);
     const original = ((await (await request.get("/api/admin/settings")).json()) as { settings: { site: Record<string, unknown> } }).settings.site;
+    const publicContexts: Array<Awaited<ReturnType<typeof browser.newContext>>> = [];
     const customerService = {
         businessName: "E2E <客服> & Co.",
         phone: "+84 28 1234 5678",
@@ -123,24 +125,42 @@ test("customer-service footer is localized, responsive, and limited to marketing
         const saved = await request.patch("/api/admin/settings", { data: { site: { ...original, customerService } } });
         expect(saved.ok(), await saved.text()).toBe(true);
 
-        for (const locale of locales) {
-            await page.goto(locale.path, { waitUntil: "domcontentloaded" });
-            await expectCustomerServiceFooter(page, locale.title, locale.labels, customerService, testInfo.project.name);
-        }
+        for (const viewport of [
+            { name: "desktop", width: 1280, height: 720 },
+            { name: "mobile-390", width: 390, height: 844 },
+            { name: "mobile-430", width: 430, height: 932 },
+        ]) {
+            const publicContext = await browser.newContext({ baseURL: String(testInfo.project.use.baseURL), locale: "vi-VN", storageState: { cookies: [], origins: [] }, viewport });
+            publicContexts.push(publicContext);
+            const publicPage = await publicContext.newPage();
+            const publicSession = await publicContext.request.get("/api/auth/session");
+            expect(publicSession.ok(), await publicSession.text()).toBe(true);
+            expect(((await publicSession.json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
 
-        await page.context().addCookies([{ name: "vozeb-pro-locale", value: "vi", url: String(testInfo.project.use.baseURL) }]);
-        for (const landing of landings) {
-            await page.goto(`/${landing.slug}`, { waitUntil: "domcontentloaded" });
-            await expectCustomerServiceFooter(page, "Dịch vụ khách hàng", locales[0].labels, customerService, testInfo.project.name);
-        }
+            for (const locale of locales) {
+                await publicPage.goto(locale.path, { waitUntil: "domcontentloaded" });
+                await expectCustomerServiceFooter(publicPage, locale.title, locale.labels, customerService, viewport.name);
+            }
 
-        for (const path of ["/terms", "/privacy", "/login", "/create", "/admin"]) {
-            await page.goto(path, { waitUntil: "domcontentloaded" });
-            await expect(page.locator('[aria-labelledby="home-footer-customer-service-title"]')).toHaveCount(0);
+            await publicContext.addCookies([{ name: "vozeb-pro-locale", value: "vi", url: String(testInfo.project.use.baseURL) }]);
+            for (const landing of landings) {
+                await publicPage.goto(`/${landing.slug}`, { waitUntil: "domcontentloaded" });
+                await expectCustomerServiceFooter(publicPage, "Dịch vụ khách hàng", locales[0].labels, customerService, viewport.name);
+            }
+
+            for (const path of ["/terms", "/privacy", "/login", "/create", "/admin"]) {
+                await publicPage.goto(path, { waitUntil: "domcontentloaded" });
+                await expect(publicPage.locator('[aria-labelledby="home-footer-customer-service-title"]')).toHaveCount(0);
+            }
         }
     } finally {
-        const restored = await request.patch("/api/admin/settings", { data: { site: original } });
-        expect(restored.ok(), await restored.text()).toBe(true);
+        try {
+            await Promise.all(publicContexts.map((context) => context.close()));
+        } finally {
+            const restored = await request.patch("/api/admin/settings", { data: { site: original } });
+            expect(restored.ok(), await restored.text()).toBe(true);
+            expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: unknown } }).settings.site).toEqual(original);
+        }
     }
 });
 

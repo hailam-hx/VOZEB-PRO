@@ -121,10 +121,12 @@ test("admin site form persists social addresses, publishes them to the home foot
     }
 });
 
-test("admin customer-service settings persist, remove individual fields, and remove the footer when cleared", async ({ page, request }) => {
+test("admin customer-service settings persist, remove individual fields, and remove the footer when cleared", async ({ browser, page, request }, testInfo) => {
     const beforeResponse = await request.get("/api/admin/settings");
     expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
     const before = ((await beforeResponse.json()) as { settings: { site: Record<string, unknown> } }).settings.site;
+    const publicContext = await browser.newContext({ baseURL: String(testInfo.project.use.baseURL), storageState: { cookies: [], origins: [] } });
+    const publicPage = await publicContext.newPage();
     const customerService = {
         businessName: "E2E <客服> & Co.",
         phone: "+84 28 1234 5678",
@@ -155,7 +157,9 @@ test("admin customer-service settings persist, remove individual fields, and rem
         await expect(email).toHaveValue(customerService.email);
         await expect(address).toHaveValue(customerService.address);
         expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
-        expect(((await (await request.get("/api/auth/session")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
+        const publicSession = await publicContext.request.get("/api/auth/session");
+        expect(publicSession.ok(), await publicSession.text()).toBe(true);
+        expect(((await publicSession.json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
 
         await email.fill("");
         const removedOne = save();
@@ -163,8 +167,8 @@ test("admin customer-service settings persist, remove individual fields, and rem
         expect((await removedOne).ok()).toBe(true);
         await page.reload({ waitUntil: "domcontentloaded" });
         await expect(email).toHaveValue("");
-        await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
-        const footer = page.getByRole("region", { name: "客户服务" });
+        await publicPage.goto("/zh-cn", { waitUntil: "domcontentloaded" });
+        const footer = publicPage.getByRole("region", { name: "客户服务" });
         await expect(footer).toBeVisible();
         await expect(footer.getByText("E2E <客服> & Co.", { exact: true })).toBeVisible();
         await expect(footer.getByRole("link", { name: customerService.phone })).toHaveAttribute("href", `tel:${customerService.phone}`);
@@ -180,14 +184,19 @@ test("admin customer-service settings persist, remove individual fields, and rem
         const removedAll = save();
         await page.getByRole("button", { name: "保存网站设置" }).click();
         expect((await removedAll).ok()).toBe(true);
-        await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
-        await expect(page.getByRole("region", { name: "客户服务" })).toHaveCount(0);
-        await page.reload({ waitUntil: "domcontentloaded" });
-        await expect(page.getByRole("region", { name: "客户服务" })).toHaveCount(0);
+        await publicPage.goto("/zh-cn", { waitUntil: "domcontentloaded" });
+        await expect(publicPage.getByRole("region", { name: "客户服务" })).toHaveCount(0);
+        await publicPage.reload({ waitUntil: "domcontentloaded" });
+        await expect(publicPage.getByRole("region", { name: "客户服务" })).toHaveCount(0);
         expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual({ businessName: "", phone: "", email: "", address: "" });
     } finally {
-        const restored = await request.patch("/api/admin/settings", { data: { site: before } });
-        expect(restored.ok(), await restored.text()).toBe(true);
+        try {
+            await publicContext.close();
+        } finally {
+            const restored = await request.patch("/api/admin/settings", { data: { site: before } });
+            expect(restored.ok(), await restored.text()).toBe(true);
+            expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: unknown } }).settings.site).toEqual(before);
+        }
     }
 });
 
