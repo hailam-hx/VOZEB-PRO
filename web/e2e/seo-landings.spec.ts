@@ -105,11 +105,12 @@ test("six SEO landing pages expose complete SSR metadata and responsive content"
     expect(unknown?.status()).toBe(404);
 });
 
-test("customer-service footer is localized, responsive, and limited to marketing pages", async ({ browser, request }, testInfo) => {
+test("admin customer-service settings persist and only anonymous marketing pages render the footer", async ({ browser, page, request }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "One Chromium owner writes global site settings and opens all required anonymous viewports sequentially.");
     test.setTimeout(240_000);
     const original = ((await (await request.get("/api/admin/settings")).json()) as { settings: { site: Record<string, unknown> } }).settings.site;
     const publicContexts: Array<Awaited<ReturnType<typeof browser.newContext>>> = [];
+    const publicPages: Page[] = [];
     const customerService = {
         businessName: "E2E <客服> & Co.",
         phone: "+84 28 1234 5678",
@@ -121,9 +122,30 @@ test("customer-service footer is localized, responsive, and limited to marketing
         { path: "/en", title: "Customer service", labels: ["Business name", "Phone", "Email", "Address"] },
         { path: "/zh-cn", title: "客户服务", labels: ["企业名称", "电话", "邮箱", "地址"] },
     ];
+    const save = () => page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === "/api/admin/settings");
     try {
-        const saved = await request.patch("/api/admin/settings", { data: { site: { ...original, customerService } } });
-        expect(saved.ok(), await saved.text()).toBe(true);
+        await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        const businessName = page.getByLabel("企业名称");
+        const phone = page.getByLabel("客服电话");
+        const email = page.getByLabel("客服邮箱");
+        const address = page.getByLabel("联系地址");
+        await businessName.fill(customerService.businessName);
+        await phone.fill(customerService.phone);
+        await email.fill(customerService.email);
+        await address.fill(customerService.address);
+        const saved = save();
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        expect((await saved).ok()).toBe(true);
+        await expect(page.getByText("网站信息已保存", { exact: true })).toBeVisible();
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await expect(businessName).toHaveValue(customerService.businessName);
+        await expect(phone).toHaveValue(customerService.phone);
+        await expect(email).toHaveValue(customerService.email);
+        await expect(address).toHaveValue(customerService.address);
+        expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
 
         for (const viewport of [
             { name: "desktop", width: 1280, height: 720 },
@@ -133,6 +155,7 @@ test("customer-service footer is localized, responsive, and limited to marketing
             const publicContext = await browser.newContext({ baseURL: String(testInfo.project.use.baseURL), locale: "vi-VN", storageState: { cookies: [], origins: [] }, viewport });
             publicContexts.push(publicContext);
             const publicPage = await publicContext.newPage();
+            publicPages.push(publicPage);
             const publicSession = await publicContext.request.get("/api/auth/session");
             expect(publicSession.ok(), await publicSession.text()).toBe(true);
             expect(((await publicSession.json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
@@ -153,6 +176,34 @@ test("customer-service footer is localized, responsive, and limited to marketing
                 await expect(publicPage.locator('[aria-labelledby="home-footer-customer-service-title"]')).toHaveCount(0);
             }
         }
+
+        await email.fill("");
+        const removedOne = save();
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        expect((await removedOne).ok()).toBe(true);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(email).toHaveValue("");
+        const footerPage = publicPages[0];
+        await footerPage.goto("/zh-cn", { waitUntil: "domcontentloaded" });
+        const footer = footerPage.getByRole("region", { name: "客户服务" });
+        await expect(footer).toBeVisible();
+        await expect(footer.getByText(customerService.businessName, { exact: true })).toBeVisible();
+        await expect(footer.getByRole("link", { name: customerService.phone, exact: true })).toHaveAttribute("href", `tel:${customerService.phone}`);
+        await expect(footer.getByText(customerService.address, { exact: true })).toBeVisible();
+        await expect(footer.getByText("邮箱", { exact: true })).toHaveCount(0);
+        await expect(footer.locator("script, img")).toHaveCount(0);
+
+        await businessName.fill("");
+        await phone.fill("");
+        await address.fill("");
+        const removedAll = save();
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        expect((await removedAll).ok()).toBe(true);
+        await footerPage.goto("/zh-cn", { waitUntil: "domcontentloaded" });
+        await expect(footerPage.getByRole("region", { name: "客户服务" })).toHaveCount(0);
+        await footerPage.reload({ waitUntil: "domcontentloaded" });
+        await expect(footerPage.getByRole("region", { name: "客户服务" })).toHaveCount(0);
+        expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual({ businessName: "", phone: "", email: "", address: "" });
     } finally {
         try {
             await Promise.all(publicContexts.map((context) => context.close()));

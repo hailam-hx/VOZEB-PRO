@@ -18,8 +18,7 @@ export default defineConfig({
     timeout: 120_000,
     forbidOnly: Boolean(process.env.CI),
     retries: process.env.CI ? 1 : 0,
-    // E2E cases deliberately update process-wide site settings; keep their snapshots and finally restores ordered across files and projects.
-    workers: 1,
+    workers: process.env.CI || !databaseUrl ? 1 : undefined,
     reporter: process.env.CI ? [["github"], ["html", { open: "never", outputFolder: "playwright-report" }]] : "list",
     use: {
         baseURL,
