@@ -124,6 +124,26 @@ describe("usage billing runtime", () => {
         await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).rejects.toMatchObject({ code: "load_attempt:usage_attempt_missing" });
     });
 
+    it("preserves the provider-attempt conflict type and status during planner finalization", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "agent-plan:terminal-conflict",
+            requestFingerprint: "7".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "planner conflict fixture",
+        });
+        await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" } });
+        await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed" });
+        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }));
+
+        await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).rejects.toMatchObject({
+            code: "finish_attempt:wallet_conflict",
+            status: 409,
+        });
+    });
+
     it("preserves protocol completion billing when HTTP transport cancellation loses the local cleanup reason", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",

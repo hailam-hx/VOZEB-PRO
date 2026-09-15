@@ -240,9 +240,16 @@ function billingIntegrityError(step: BillingFinalizationStep, code: string, mess
 function billingFinalizationStepError(step: BillingFinalizationStep, error: unknown) {
     if (error && typeof error === "object" && "billingStage" in error) return error;
     const source = error instanceof Error ? error : new Error(String(error));
-    const record = source as Error & { code?: unknown };
-    const code = typeof record.code === "string" && record.code.trim() ? record.code.trim() : source.name || "error";
-    return Object.assign(new Error(source.message, { cause: source }), { name: "UsageBillingFinalizationError", code: `${step}:${code}`, billingStage: step });
+    const record = source as Error & { code?: unknown; status?: unknown };
+    const constructorName = source.constructor?.name;
+    const code = typeof record.code === "string" && record.code.trim() ? record.code.trim() : source.name !== "Error" ? source.name : constructorName && constructorName !== "Error" ? constructorName : "Error";
+    const status = Number(record.status);
+    return Object.assign(new Error(source.message, { cause: source }), {
+        name: "UsageBillingFinalizationError",
+        code: `${step}:${code}`,
+        billingStage: step,
+        ...(Number.isInteger(status) && status >= 400 && status <= 599 ? { status } : {}),
+    });
 }
 
 export async function releaseUsageBillingForBusiness(userId: string, businessId: string, reason: string) {

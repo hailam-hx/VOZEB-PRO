@@ -240,4 +240,51 @@ describe("PostgreSQL prepaid wallet persistence", () => {
             await repositories.users.delete(userId);
         }
     });
+
+    postgresIt("accepts a terminal replay captured before PostgreSQL usage evidence enrichment", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const userId = `wallet-terminal-replay-${suffix}`;
+        const now = new Date();
+        try {
+            await repositories.users.createWithNextAccountId({
+                id: userId,
+                username: `replay_${suffix.replaceAll("-", "").slice(0, 12)}`,
+                displayName: "终态重放测试用户",
+                bio: "",
+                role: "user",
+                adminPermissions: [],
+                status: "active",
+                settledBalance: "0",
+                passwordHash: "integration-test-only",
+                createdAt: now.toISOString(),
+                updatedAt: now.toISOString(),
+            });
+            await creditWalletBalance({ userId, amount: "2", businessId: `topup:${suffix}`, description: "终态重放测试充值", now });
+            const reservation = await reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "7".repeat(64), amount: "1", description: "终态重放预留", now });
+            const pending = {
+                id: `attempt:${suffix}`,
+                holdId: reservation.hold.id,
+                attemptNumber: 1,
+                status: "pending" as const,
+                provider: "vendor",
+                bindingId: "binding",
+                requestFingerprint: "8".repeat(64),
+                nativeCostAmount: "0",
+                nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                now,
+            };
+            const usage = { capability: "text" as const, source: "actual" as const, inputTokens: "5", outputTokens: "2" };
+            await recordProviderUsageAttempt(pending);
+            await recordProviderUsageAttempt({ ...pending, status: "succeeded", nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage });
+
+            await expect(recordProviderUsageAttempt({ ...pending, status: "succeeded" })).resolves.toMatchObject({
+                applied: false,
+                attempt: { status: "succeeded", nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage },
+            });
+        } finally {
+            await repositories.users.delete(userId);
+        }
+    });
 });

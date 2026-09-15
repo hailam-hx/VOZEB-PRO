@@ -115,6 +115,7 @@ export type WalletReconciliationReport = {
 };
 
 export class WalletConflictError extends AuthInputError {
+    code = "wallet_conflict";
     status = 409;
 }
 
@@ -729,18 +730,19 @@ function sameProviderAttemptSnapshot(
     usdConversionRate: string,
     costUsd: string,
 ) {
+    const replayPredatesUsageEvidence = input.normalizedUsage === undefined && input.observedUsage === undefined && (existing.normalizedUsage !== undefined || existing.observedUsage !== undefined);
     return (
         existing.status === input.status &&
         existing.providerIdempotencySupported === (input.providerIdempotencySupported === true) &&
         existing.providerIdempotencyKey === normalizedOptionalText(input.providerIdempotencyKey) &&
-        existing.upstreamTaskId === normalizedOptionalText(input.upstreamTaskId) &&
+        (!input.upstreamTaskId || existing.upstreamTaskId === normalizedOptionalText(input.upstreamTaskId)) &&
         sameJsonValue(existing.costRateSnapshot, input.costRateSnapshot) &&
-        sameJsonValue(existing.normalizedUsage, input.normalizedUsage) &&
-        sameJsonValue(existing.observedUsage, input.observedUsage) &&
-        sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) &&
+        (input.normalizedUsage === undefined || sameJsonValue(existing.normalizedUsage, input.normalizedUsage)) &&
+        (input.observedUsage === undefined || sameJsonValue(existing.observedUsage, input.observedUsage)) &&
+        (replayPredatesUsageEvidence || sameDecimalValue(existing.nativeCostAmount, nativeCostAmount)) &&
         sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) &&
         sameDecimalValue(existing.usdConversionRate, usdConversionRate) &&
-        sameDecimalValue(existing.costUsd, costUsd)
+        (replayPredatesUsageEvidence || sameDecimalValue(existing.costUsd, costUsd))
     );
 }
 

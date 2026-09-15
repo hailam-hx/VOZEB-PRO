@@ -178,6 +178,29 @@ describe("prepaid wallet holds", () => {
         await expect(recordProviderUsageAttempt({ ...pending, id: "attempt:late", attemptNumber: 2, status: "failed" })).rejects.toBeInstanceOf(WalletConflictError);
     });
 
+    it("accepts a terminal replay captured before usage evidence enrichment", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:stale-terminal-replay", requestFingerprint: "1".repeat(64), amount: "2", description: "终态重放预留" });
+        const pending = {
+            id: "attempt:stale-terminal-replay",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "2".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+        };
+        const usage = { capability: "text" as const, source: "actual" as const, inputTokens: "5", outputTokens: "2" };
+        await recordProviderUsageAttempt(pending);
+        await recordProviderUsageAttempt({ ...pending, status: "succeeded", nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage });
+
+        await expect(recordProviderUsageAttempt({ ...pending, status: "succeeded" })).resolves.toMatchObject({
+            applied: false,
+            attempt: { status: "succeeded", nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage },
+        });
+    });
+
     it("treats PostgreSQL fixed-scale provider cost strings as the same replay values", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:padded-attempt", requestFingerprint: "b".repeat(64), amount: "2", description: "定标小数预留" });
         const input = {
