@@ -330,6 +330,12 @@ describe("agentPlannerInput", () => {
         expect(filterAgentPlannerModels(models, { surface: "chat", prompt: "做一个作品", generationPreferences: { mode: "audio" } }).map((item) => item.capability)).toEqual(["text", "audio"]);
     });
 
+    it("keeps every creative model available when a chat request language is not recognized locally", () => {
+        const models = ["text", "image", "video", "audio"].map((capability) => ({ id: capability, capability }));
+
+        expect(filterAgentPlannerModels(models, { surface: "chat", prompt: "Tạo ảnh mèo, chuột và ảnh môi trường" }).map((item) => item.capability)).toEqual(["text", "image", "video", "audio"]);
+    });
+
     it("only exposes explicitly selected Skills to the planner", () => {
         expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: [] })).toEqual([]);
         expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: ["image-motion"] }).map((skill) => skill.id)).toEqual(["image-motion"]);

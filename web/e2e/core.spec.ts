@@ -313,13 +313,7 @@ test("unified creative page reaches the local planning and image protocols", asy
     await page.goto("/create", { waitUntil: "domcontentloaded" });
     await expect(page.locator(".creative-composer")).toHaveAttribute("data-ready", "true", { timeout: 45_000 });
 
-    await page.getByRole("button", { name: "当前创作类型：Agent 模式" }).click();
-    const modePicker = page.locator(".ant-popover").filter({ hasText: "创作类型" }).last();
-    await expect(modePicker).toBeVisible();
-    await modePicker.getByRole("button", { name: /图片生成/ }).click();
-    await expect(page.getByRole("button", { name: "当前创作类型：图片生成" })).toBeVisible();
-
-    const prompt = `统一入口协议图片 ${randomUUID().slice(0, 8)}`;
+    const prompt = "Tạo ảnh mèo, chuột và ảnh môi trường";
     await page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" }).fill(prompt);
     const runCreated = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/agent/runs");
     await page.getByRole("button", { name: "发送" }).click();

@@ -26,6 +26,7 @@ const AUDIO_RE = /音频|配音|旁白|语音|声音|音效|音乐|朗读/u;
 const TEXT_RE = /文本|文案|脚本|剧本|台词|提示词|标题|描述|文章|口播稿|改写|润色/u;
 const MULTI_RE = /多张|多个|多条|多份|批量|系列|一套|一组|[2-9二三四五六七八九十]\s*(?:张|个|条|份|款|版)/u;
 const COMPLEX_RE = /短剧|分镜|故事板|多物料|完整方案|全套|角色.+场景|场景.+角色|品牌系列|项目规划/u;
+const NON_HAN_LETTER_RE = /(?!\p{Script=Han})\p{Letter}/u;
 
 export function resolveAgentPlanningProfile(run: PlanningRun): AgentPlanningProfile {
     const prompt = run.prompt.trim();
@@ -61,6 +62,7 @@ function inferCapabilities(surface: CreativeSurface, prompt: string, selectedTyp
         for (const type of selectedTypes) if (["text", "image", "video", "audio"].includes(type)) capabilities.add(type);
         if (capabilities.size === 1) for (const type of ["image", "video", "audio"]) capabilities.add(type);
     }
+    if (surface === "chat" && capabilities.size === 1 && NON_HAN_LETTER_RE.test(prompt)) for (const type of ["image", "video", "audio"]) capabilities.add(type);
     return capabilities;
 }
 
