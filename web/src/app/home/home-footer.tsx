@@ -149,14 +149,16 @@ function CustomerServiceSection({ items, title, t }: { items: Array<{ key: "busi
     return (
         <section className={styles.footerCustomerService} aria-labelledby="home-footer-customer-service-title">
             <h2 id="home-footer-customer-service-title">{title}</h2>
-            <dl>
-                {items.map(({ key, value }) => (
-                    <div key={key}>
-                        <dt>{labels[key]}</dt>
-                        <dd>{key === "phone" ? <a href={`tel:${value}`}>{value}</a> : key === "email" ? <a href={`mailto:${value}`}>{value}</a> : value}</dd>
-                    </div>
-                ))}
-            </dl>
+            <address>
+                <dl>
+                    {items.map(({ key, value }) => (
+                        <div key={key}>
+                            <dt>{labels[key]}</dt>
+                            <dd>{key === "phone" ? <a href={`tel:${value}`}>{value}</a> : key === "email" ? <a href={`mailto:${value}`}>{value}</a> : value}</dd>
+                        </div>
+                    ))}
+                </dl>
+            </address>
         </section>
     );
 }

@@ -1055,6 +1055,9 @@
     font-weight: 720;
     margin: 0 0 15px;
 }
+.footerCustomerService address {
+    font-style: normal;
+}
 .footerCustomerService dl {
     display: grid;
     gap: 12px;

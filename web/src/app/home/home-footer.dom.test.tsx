@@ -70,6 +70,7 @@ describe("HomeFooter customer service", () => {
         renderFooter("en", { businessName: "<strong>HOTX</strong>", phone: "+84 123 456", email: "support@example.com", address: "" });
 
         const section = screen.getByRole("region", { name: "Customer service" });
+        expect(section.querySelector("address")?.tagName).toBe("ADDRESS");
         expect(section.textContent).toContain("<strong>HOTX</strong>");
         expect(section.querySelector("strong")).toBeNull();
         expect(screen.getByRole("link", { name: "+84 123 456" }).getAttribute("href")).toBe("tel:+84 123 456");

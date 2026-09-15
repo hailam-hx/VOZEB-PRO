@@ -101,6 +101,23 @@ it("keeps every customer-service field in the full site save payload, including 
     expect(saved.at(-1)).toMatchObject({ site: { customerService: { businessName: "", phone: "", email: "", address: "" } } });
 });
 
+it("keeps business name and address full-width around a desktop phone-and-email row", () => {
+    function Harness() {
+        const [settings, setSettings] = useState(() => structuredClone(DEFAULT_SETTINGS));
+        const saveSettings = () => {};
+        const actions = useAdminDashboardSettingsActions({ state: { settings, setSettings } as AdminDashboardState, data: { saveSettings } as unknown as AdminDashboardDataActions });
+        const ref = useRef<HTMLInputElement>(null);
+        return <AdminSiteSection controller={{ ...actions, settings, activeSection: "site", saveSettings, logoInputRef: ref, iconInputRef: ref } as unknown as AdminDashboardController} />;
+    }
+
+    render(<Harness />);
+    const fields = screen.getByLabelText("企业名称").closest("label")?.parentElement?.parentElement;
+    expect(fields?.className).toContain("md:grid-cols-2");
+    expect(Array.from(fields?.children || []).map((field) => field.textContent?.trim())).toEqual(["企业名称", "客服电话", "客服邮箱", "联系地址"]);
+    expect(screen.getByLabelText("企业名称").closest("label")?.parentElement?.className).toContain("md:col-span-2");
+    expect(screen.getByLabelText("联系地址").closest("label")?.parentElement?.className).toContain("md:col-span-2");
+});
+
 it("uses neutral examples when an administrator adds a friend link", () => {
     function Harness() {
         const [settings, setSettings] = useState(() => structuredClone(DEFAULT_SETTINGS));
