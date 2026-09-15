@@ -56,6 +56,14 @@ describe("Agent Function Call parsing refunds", () => {
         expect(refund).not.toHaveBeenCalled();
     });
 
+    it("allows a conversation response while a text-only deliverable guard is active", async () => {
+        const refund = vi.fn().mockResolvedValue(undefined);
+        const conversation = { intent: "conversation", objective: "澄清脚本需求", reply: "Bạn muốn phong cách nào?", deliverables: [] };
+
+        await expect(parseAgentPlanCall({ arguments: JSON.stringify(conversation) }, refund, undefined, { allowedDeliverableTypes: ["text"] })).resolves.toMatchObject(conversation);
+        expect(refund).not.toHaveBeenCalled();
+    });
+
     it("cleans generation fields from a known conversation plan", async () => {
         const refund = vi.fn().mockResolvedValue(undefined);
         const raw = { intent: "generation", objective: "错误目标", reply: "在的。", deliverables: [{ title: "误带任务", type: "image", prompt: "忽略" }], projectHandoff: { surface: "canvas", title: "忽略" } };

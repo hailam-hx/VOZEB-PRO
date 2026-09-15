@@ -20,7 +20,7 @@ export async function parseAgentPlanCall(
     call: AgentFunctionCallResult,
     onInvalid: () => Promise<unknown>,
     conversationFallback?: { objective: string; reply?: string },
-    options?: { allowProjectHandoff?: boolean; requiredGenerationMode?: CreativeGenerationMode },
+    options?: { allowProjectHandoff?: boolean; requiredGenerationMode?: CreativeGenerationMode; allowedDeliverableTypes?: AgentPlan["deliverables"][number]["type"][] },
 ): Promise<AgentPlan> {
     try {
         const raw = parsePlanArguments(call.arguments, conversationFallback);
@@ -43,6 +43,8 @@ export async function parseAgentPlanCall(
         };
         validateAgentPlan(plan);
         validateAgentPlanGenerationMode(plan, options?.requiredGenerationMode);
+        const allowedDeliverableTypes = options?.allowedDeliverableTypes;
+        if (allowedDeliverableTypes && plan.intent !== "conversation" && plan.deliverables.some((item) => !allowedDeliverableTypes.includes(item.type))) throw new Error("模型返回的创作类型与用户意图不一致");
         return plan;
     } catch (error) {
         await onInvalid();

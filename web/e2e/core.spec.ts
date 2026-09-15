@@ -339,6 +339,38 @@ test("unified creative page reaches the local planning and image protocols", asy
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
 });
 
+test("unified creative page keeps Vietnamese video-script requests on the text path", async ({ page, request }) => {
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await expect(page.locator(".creative-composer")).toHaveAttribute("data-ready", "true", { timeout: 45_000 });
+
+    const prompt = "Tạo kịch bản video con mèo bắt chuột 4 giây";
+    await page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" }).fill(prompt);
+    const runCreated = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/agent/runs");
+    await page.getByRole("button", { name: "发送" }).click();
+    const runResponse = await runCreated;
+    expect(runResponse.ok(), await runResponse.text()).toBe(true);
+    const runId = ((await runResponse.json()) as { data: { run: { id: string } } }).data.run.id;
+    let terminalRun: { status: string; tasks: Array<{ type: string }> } | undefined;
+
+    await expect
+        .poll(
+            async () => {
+                const response = await request.get(`/api/agent/runs/${runId}`);
+                if (!response.ok()) return `http-${response.status()}`;
+                terminalRun = ((await response.json()) as { data: { run: typeof terminalRun } }).data.run;
+                return terminalRun?.status;
+            },
+            { timeout: 60_000 },
+        )
+        .toMatch(/completed|failed/);
+    expect(terminalRun).toMatchObject({ status: "completed", tasks: [expect.objectContaining({ type: "text" })] });
+    await expect(page.getByRole("region", { name: "文本产物：视频脚本" })).toContainText("协议测试文本返回成功");
+
+    const state = await protocolFixtureState(request);
+    expect(state.requests.some((item) => item.method === "POST" && item.path.endsWith("/chat/completions"))).toBe(true);
+    expect(state.requests.some((item) => item.method === "POST" && (item.path.endsWith("/images/generations") || item.path.endsWith("/videos") || item.path.endsWith("/audio/speech")))).toBe(false);
+});
+
 test("video request replay and cancellation keep one upstream task", async ({ request }) => {
     const clientRequestId = `e2e-video:${randomUUID()}`;
     const body = { config: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 }, prompt: "slow video", source: "video-workbench", context: { clientRequestId } };

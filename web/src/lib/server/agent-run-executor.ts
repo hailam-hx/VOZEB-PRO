@@ -282,6 +282,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     plan = await parseAgentPlanCall(planCall, () => voidFunctionCall(planCall), undefined, {
                         allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),
                         requiredGenerationMode: claimed.generationPreferences?.mode,
+                        allowedDeliverableTypes: planningProfile.requiredDeliverableType ? [planningProfile.requiredDeliverableType] : undefined,
                     });
                     if (plan) {
                         const firstContentMs = "firstContentMs" in planCall ? planCall.firstContentMs : undefined;

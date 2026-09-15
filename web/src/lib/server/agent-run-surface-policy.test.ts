@@ -336,6 +336,31 @@ describe("agentPlannerInput", () => {
         expect(filterAgentPlannerModels(models, { surface: "chat", prompt: "Tạo ảnh mèo, chuột và ảnh môi trường" }).map((item) => item.capability)).toEqual(["text", "image", "video", "audio"]);
     });
 
+    it("keeps Vietnamese video-script writing requests text-only", () => {
+        const models = ["text", "image", "video", "audio"].map((capability) => ({ id: capability, capability }));
+        const textOnlyPrompts = [
+            "Tạo kịch bản video con mèo bắt chuột 4 giây",
+            "Viết giúp tôi kịch bản video con mèo bắt chuột",
+            "Hãy chỉnh sửa lại kịch bản video này",
+            "Tạo cho tôi một kịch bản video ngắn",
+            "Viết kịch bản video, không tạo video",
+            "Viết kịch bản và đừng tạo video",
+            "Viết kịch bản về đào tạo video cho nhân viên",
+        ];
+        const mediaPrompts = [
+            "Tạo video từ kịch bản con mèo bắt chuột trong 4 giây",
+            "Viết kịch bản và tạo video con mèo bắt chuột",
+            "Viết kịch bản rồi chuyển thành video",
+            "Viết kịch bản và sản xuất video",
+            "Viết kịch bản và tạo ra video",
+            "Viết kịch bản rồi dựng thành video",
+            "Viết kịch bản kèm sản xuất video",
+        ];
+
+        for (const prompt of textOnlyPrompts) expect(filterAgentPlannerModels(models, { surface: "chat", prompt }).map((item) => item.capability)).toEqual(["text"]);
+        for (const prompt of mediaPrompts) expect(filterAgentPlannerModels(models, { surface: "chat", prompt }).map((item) => item.capability)).toEqual(["text", "image", "video", "audio"]);
+    });
+
     it("only exposes explicitly selected Skills to the planner", () => {
         expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: [] })).toEqual([]);
         expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: ["image-motion"] }).map((skill) => skill.id)).toEqual(["image-motion"]);

@@ -1384,6 +1384,24 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run).toMatchObject({ status: "completed", tasks: [expect.objectContaining({ type: "text", status: "completed" })] });
     });
 
+    it("rejects media output from the planner for a Vietnamese script-writing request", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "Tạo kịch bản video con mèo bắt chuột 4 giây", responseLocale: "vi" });
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = canvasPlan("image-default");
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.endsWith("/chat/completions")) {
+                const frame = JSON.stringify({ choices: [{ delta: { content: `<generation>\n${JSON.stringify(plan)}` } }] });
+                return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+            }
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({ status: "failed", failureStage: "planning", tasks: [] });
+        expect(mocks.fetchInternalApi.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toBe(false);
+    });
+
     it("keeps explicitly selected creation types on the existing structured planner path", async () => {
         mocks.run = runFixture({
             surface: "chat",

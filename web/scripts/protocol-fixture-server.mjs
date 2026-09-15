@@ -295,6 +295,14 @@ function selectedToolName(payload) {
 
 function toolArguments(name, payload) {
     if (name === "create_agent_plan") {
+        if (agentPlanRequiresText(payload)) {
+            return {
+                intent: "generation",
+                objective: "生成协议测试视频脚本",
+                reply: "已收到，我会撰写视频脚本。",
+                deliverables: [{ id: "fixture-text", title: "视频脚本", type: "text", model: "e2e-text", prompt: "撰写一份四秒视频脚本", dependencies: [] }],
+            };
+        }
         return {
             intent: "generation",
             objective: "验证 Canvas Agent 稳定生成链路",
@@ -371,6 +379,14 @@ function toolArguments(name, payload) {
         };
     }
     return {};
+}
+
+function agentPlanRequiresText(payload) {
+    if (typeof payload === "string") return payload.includes('"enum":["text"]');
+    if (Array.isArray(payload)) return payload.some(agentPlanRequiresText);
+    if (!payload || typeof payload !== "object") return false;
+    if (Array.isArray(payload.enum) && payload.enum.length === 1 && payload.enum[0] === "text") return true;
+    return Object.values(payload).some(agentPlanRequiresText);
 }
 
 function firstShotId(payload) {
