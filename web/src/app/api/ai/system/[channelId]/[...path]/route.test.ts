@@ -509,6 +509,23 @@ describe("system media proxy", () => {
         expect(mocks.settleCancelledUsageBilling).not.toHaveBeenCalled();
     });
 
+    it("leaves an in-flight upstream read pending when HTTP abort wins the race with downstream cancellation", async () => {
+        const controller = new AbortController();
+        const upstream = new ReadableStream<Uint8Array>({
+            pull() {
+                return new Promise<void>((_, reject) => controller.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }));
+            },
+        });
+        const reader = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1, { signal: controller.signal }).getReader();
+        const read = reader.read();
+
+        controller.abort();
+
+        await expect(read).rejects.toMatchObject({ name: "AbortError" });
+        expect(mocks.finishUsageProviderAttempt).not.toHaveBeenCalled();
+        expect(mocks.settleCancelledUsageBilling).not.toHaveBeenCalled();
+    });
+
     it("classifies a provider stream read failure as failed and leaves the hold available for downstream failover", async () => {
         const upstream = new ReadableStream<Uint8Array>({
             pull() {

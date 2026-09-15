@@ -46,8 +46,9 @@ export function meteredTextResponseBody(body: ReadableStream<Uint8Array>, billin
                 controller.enqueue(next.value);
             } catch (error) {
                 if (cancelled) return;
-                diagnostics?.finish(classifyTextStreamTermination(error, options.signal), error, options.signal);
-                await finalize("failed");
+                const termination = classifyTextStreamTermination(error, options.signal);
+                diagnostics?.finish(termination, error, options.signal);
+                await finalize(accumulator.terminalStatus() || (termination === "application_abort" ? "pending" : "failed"));
                 controller.error(error);
             }
         },
