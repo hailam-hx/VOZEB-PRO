@@ -37,6 +37,7 @@ import {
     type SiteSocialSettings,
     DEFAULT_SITE_SOCIALS,
     DEFAULT_SITE_FRIEND_LINKS,
+    DEFAULT_SITE_CUSTOMER_SERVICE,
     type MailSettings,
     type PublicUser,
     type StoredUser,
@@ -92,6 +93,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
     privacyVersion: "",
     friendLinks: DEFAULT_SITE_FRIEND_LINKS,
     socials: DEFAULT_SITE_SOCIALS,
+    customerService: DEFAULT_SITE_CUSTOMER_SERVICE,
 };
 export const DEFAULT_MAIL_SETTINGS: MailSettings = {
     provider: "QQ 邮箱",

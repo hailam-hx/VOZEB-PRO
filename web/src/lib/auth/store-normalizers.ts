@@ -35,11 +35,13 @@ import {
     type StoredCdkCode,
     type PublicAnnouncement,
     type SiteSettings,
+    type SiteCustomerServiceSettings,
     type SiteFriendLink,
     type SiteSocialKey,
     type SiteSocialSettings,
     DEFAULT_SITE_SOCIALS,
     DEFAULT_SITE_FRIEND_LINKS,
+    DEFAULT_SITE_CUSTOMER_SERVICE,
     type MailSettings,
     type PublicUser,
     type StoredUser,
@@ -380,6 +382,16 @@ export function normalizeSiteSettings(settings: Partial<SiteSettings> | undefine
         privacyVersion: normalizeText(settings?.privacyVersion, DEFAULT_SITE_SETTINGS.privacyVersion, 80),
         friendLinks: normalizeSiteFriendLinks(settings?.friendLinks),
         socials: normalizeSiteSocials(settings?.socials),
+        customerService: normalizeSiteCustomerService(settings?.customerService),
+    };
+}
+
+export function normalizeSiteCustomerService(settings: Partial<SiteCustomerServiceSettings> | undefined): SiteCustomerServiceSettings {
+    return {
+        businessName: normalizeText(settings?.businessName, DEFAULT_SITE_CUSTOMER_SERVICE.businessName, 120),
+        address: normalizeText(settings?.address, DEFAULT_SITE_CUSTOMER_SERVICE.address, 240),
+        phone: normalizeText(settings?.phone, DEFAULT_SITE_CUSTOMER_SERVICE.phone, 40),
+        email: normalizeEmail(settings?.email).slice(0, 160),
     };
 }
 

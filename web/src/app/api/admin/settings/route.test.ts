@@ -16,6 +16,7 @@ vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(()
 
 import { GET, PATCH } from "./route";
 import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
+import { normalizeSiteSettings } from "@/lib/auth/store-normalizers";
 
 const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
@@ -279,6 +280,35 @@ describe("admin settings model routing", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.setAuthSettings).toHaveBeenCalledWith({ site });
+    });
+
+    it("rejects an invalid customer-service email before writing settings", async () => {
+        const response = await PATCH(
+            request({
+                site: {
+                    ...DEFAULT_SITE_SETTINGS,
+                    customerService: { businessName: "HOTX AI", address: "河内", phone: "123", email: " invalid-email " },
+                },
+            }),
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "客服邮箱格式不正确" });
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
+    it("persists and returns normalized customer-service details", async () => {
+        const site = {
+            ...DEFAULT_SITE_SETTINGS,
+            customerService: { businessName: "  HOTX AI  ", address: "  河内市  ", phone: "  +84 123  ", email: "  SUPPORT@HOTX.AI  " },
+        };
+        mocks.setAuthSettings.mockImplementation(async (patch) => ({ ...savedSettings, ...patch, site: normalizeSiteSettings(patch.site) }));
+
+        const response = await PATCH(request({ site }));
+        const payload = (await response.json()) as { settings: { site: { customerService: unknown } } };
+
+        expect(response.status).toBe(200);
+        expect(payload.settings.site.customerService).toEqual({ businessName: "HOTX AI", address: "河内市", phone: "+84 123", email: "support@hotx.ai" });
     });
 
     it("rejects an invalid non-empty social address instead of reporting a destructive save as successful", async () => {

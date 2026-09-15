@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { AuthInputError, getFreshAuthSettings, isAuthInputError, setAuthSettings, type AuthSettings, type SiteSocialKey, type SiteSocialSettings } from "@/lib/auth/store";
-import { normalizeSiteSocial } from "@/lib/auth/store-normalizers";
+import { AuthInputError, getFreshAuthSettings, isAuthInputError, setAuthSettings, type AuthSettings, type SiteCustomerServiceSettings, type SiteSocialKey, type SiteSocialSettings } from "@/lib/auth/store";
+import { normalizeEmail, normalizeSiteSocial, validateEmail } from "@/lib/auth/store-normalizers";
 import { modelBindingAssignmentValidationErrors, modelRoutingValidationErrors, normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -32,6 +32,8 @@ export async function PATCH(request: Request) {
         const body = await readJsonBody<Partial<AuthSettings>>(request);
         const requiredPermissions = settingsPermissionsForPatch(body);
         if (!hasAllAdminPermissions(currentUser, requiredPermissions)) return NextResponse.json({ error: "当前管理员没有修改这些设置的职责权限" }, { status: 403 });
+        const customerServiceEmailError = customerServiceEmailValidationError(body.site?.customerService);
+        if (customerServiceEmailError) throw new AuthInputError(customerServiceEmailError);
         const socialValidationError = siteSocialValidationError(body.site?.socials);
         if (socialValidationError) throw new AuthInputError(socialValidationError);
         const currentSettings = await getFreshAuthSettings();
@@ -144,4 +146,15 @@ function siteSocialValidationError(socials: Partial<SiteSocialSettings> | undefi
         if (!normalizeSiteSocial(key, social).url) return `${labels[key]} 地址无效，请填写完整链接或 @用户名`;
     }
     return "";
+}
+
+function customerServiceEmailValidationError(customerService: Partial<SiteCustomerServiceSettings> | undefined) {
+    const email = normalizeEmail(customerService?.email);
+    if (!email) return "";
+    try {
+        validateEmail(email);
+        return "";
+    } catch {
+        return "客服邮箱格式不正确";
+    }
 }

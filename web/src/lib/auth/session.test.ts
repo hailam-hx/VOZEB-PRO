@@ -101,6 +101,10 @@ describe("serializePublicSettings", () => {
             x: { enabled: true, label: "X", url: "https://x.com/hotx_ai" },
             instagram: { enabled: true, label: "Instagram", url: "https://instagram.com/hotx.ai" },
         };
+        settings.site = {
+            ...settings.site,
+            customerService: { businessName: "HOTX AI", address: "河内市", phone: "+84 123", email: "support@hotx.ai" },
+        };
         (settings.generationDefaults as typeof settings.generationDefaults & { createPromptMaxLength: number }).createPromptMaxLength = 9876;
 
         const result = serializePublicSettings(settings);
@@ -165,6 +169,7 @@ describe("serializePublicSettings", () => {
         expect(result.site).not.toHaveProperty("homeShowcaseMode");
         expect(result.site).not.toHaveProperty("homeShowcaseItems");
         expect(result.site.socials).toEqual(settings.site.socials);
+        expect(result.site.customerService).toEqual({ businessName: "HOTX AI", address: "河内市", phone: "+84 123", email: "support@hotx.ai" });
     });
 });
 

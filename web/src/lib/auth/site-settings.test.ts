@@ -4,6 +4,31 @@ import { DEFAULT_SITE_SETTINGS } from "./store-foundation";
 import { normalizeSiteSettings, normalizeSiteSocial } from "./store-normalizers";
 
 describe("site settings", () => {
+    it("defaults missing legacy customer-service settings to empty public values", () => {
+        const settings = normalizeSiteSettings({});
+
+        expect(DEFAULT_SITE_SETTINGS.customerService).toEqual({ businessName: "", address: "", phone: "", email: "" });
+        expect(settings.customerService).toEqual({ businessName: "", address: "", phone: "", email: "" });
+    });
+
+    it("trims, limits, and lowercases customer-service values before persistence", () => {
+        const settings = normalizeSiteSettings({
+            customerService: {
+                businessName: `  ${"商".repeat(121)}  `,
+                address: `  ${"址".repeat(241)}  `,
+                phone: `  ${"1".repeat(41)}  `,
+                email: `  ${"A".repeat(149)}@EXAMPLE.COM  `,
+            },
+        });
+
+        expect(settings.customerService).toEqual({
+            businessName: "商".repeat(120),
+            address: "址".repeat(240),
+            phone: "1".repeat(40),
+            email: `${"a".repeat(149)}@example.com`.slice(0, 160),
+        });
+    });
+
     it("uses the bundled browser icon when older settings have no icon URL", () => {
         expect(normalizeSiteSettings({ logoUrl: "/custom-logo.svg" }).iconUrl).toBe(DEFAULT_SITE_SETTINGS.iconUrl);
     });

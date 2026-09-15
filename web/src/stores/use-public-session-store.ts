@@ -1,6 +1,6 @@
 "use client";
 
-import type { LocalizedSeoSettings } from "@/lib/auth/store-types";
+import type { LocalizedSeoSettings, SiteCustomerServiceSettings } from "@/lib/auth/store-types";
 import { create } from "zustand";
 
 import { DEFAULT_SITE_LOGO_URL, resolveSiteTitle } from "@/lib/site-brand";
@@ -19,6 +19,7 @@ export type PublicSiteSettings = {
     privacyVersion?: string;
     friendLinks?: Array<{ id: string; label: string; url: string; enabled: boolean }>;
     socials?: Record<string, { enabled: boolean; label: string; url: string }>;
+    customerService?: SiteCustomerServiceSettings;
 };
 
 type PublicSessionPayload = {

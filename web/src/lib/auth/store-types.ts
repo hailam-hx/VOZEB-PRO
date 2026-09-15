@@ -298,6 +298,13 @@ export type AnnouncementPage = {
 
 export type LocalizedSeoSettings = Record<AppLocale, { title: string; description: string; keywords: string }>;
 
+export type SiteCustomerServiceSettings = {
+    businessName: string;
+    address: string;
+    phone: string;
+    email: string;
+};
+
 export type SiteSettings = {
     title: string;
     logoUrl: string;
@@ -310,6 +317,7 @@ export type SiteSettings = {
     privacyVersion: string;
     friendLinks: SiteFriendLink[];
     socials: SiteSocialSettings;
+    customerService: SiteCustomerServiceSettings;
 };
 
 export type SiteFriendLink = {
@@ -338,6 +346,13 @@ export const DEFAULT_SITE_SOCIALS: SiteSocialSettings = {
 };
 
 export const DEFAULT_SITE_FRIEND_LINKS: SiteFriendLink[] = [];
+
+export const DEFAULT_SITE_CUSTOMER_SERVICE: SiteCustomerServiceSettings = {
+    businessName: "",
+    address: "",
+    phone: "",
+    email: "",
+};
 
 export type MailSettings = {
     provider: string;
