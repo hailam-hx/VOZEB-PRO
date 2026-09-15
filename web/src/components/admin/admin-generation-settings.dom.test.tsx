@@ -253,6 +253,81 @@ describe("admin generation controls", () => {
         });
     });
 
+    it("removes a fallback binding into its own logical model without losing its binding settings", async () => {
+        const channels = [{ ...textChannels[0], apiKey: "test-key", models: ["gpt-5.6-sol", "gpt-6-astra"] }];
+        const models = [
+            {
+                ...textModels()[0],
+                bindings: [
+                    ...textModels()[0].bindings,
+                    {
+                        id: "gpt-6-astra:one",
+                        channelId: "one",
+                        upstreamModel: "gpt-6-astra",
+                        enabled: true,
+                        priority: 2,
+                        weight: 80,
+                        capabilityProfile: { supportsIdempotency: true },
+                    },
+                ],
+            },
+        ];
+        const applied = vi.fn();
+        const host = await render(<LogicalModelHarness channels={channels} logicalModels={models} defaultModels={textDefaults} onApplied={applied} />);
+        const user = userEvent.setup();
+
+        await openVideoEditor(host);
+        const removeButton = document.querySelector('button[aria-label="移除绑定 渠道 / gpt-6-astra"]');
+        expect(removeButton).toBeInstanceOf(HTMLButtonElement);
+        await user.click(removeButton as HTMLButtonElement);
+        await user.click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "确认移除") as HTMLButtonElement);
+        await user.click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "应用修改") as HTMLButtonElement);
+
+        const next = applied.mock.lastCall?.[0];
+        expect(next.defaultModels.textModel).toBe("gpt-5.6-sol");
+        expect(next.logicalModels).toHaveLength(2);
+        expect(next.logicalModels.find((model: (typeof models)[number]) => model.id === "gpt-5.6-sol")?.bindings).toEqual([expect.objectContaining({ upstreamModel: "gpt-5.6-sol" })]);
+        const restored = next.logicalModels.find((model: (typeof models)[number]) => model.bindings.some((binding) => binding.upstreamModel === "gpt-6-astra"));
+        expect(restored).toMatchObject({ id: "gpt-6-astra", name: "gpt-6-astra" });
+        expect(restored?.bindings[0]).toMatchObject({ upstreamModel: "gpt-6-astra", weight: 80 });
+        expect(restored?.bindings[0].capabilityProfile?.supportsIdempotency).toBe(true);
+    });
+
+    it("returns a removed binding to an existing logical model for the same upstream model", async () => {
+        const channels = [
+            { ...textChannels[0], apiKey: "test-key", models: ["gpt-5.6-sol", "gpt-6-astra"] },
+            { ...textChannels[0], id: "two", name: "备用渠道", apiKey: "backup-key", models: ["models/gpt-6-astra"] },
+        ];
+        const models = [
+            {
+                ...textModels()[0],
+                bindings: [...textModels()[0].bindings, { id: "gpt-6-astra:one", channelId: "one", upstreamModel: "gpt-6-astra", enabled: true, priority: 2, weight: 80 }],
+            },
+            {
+                id: "gpt-6-astra",
+                name: "GPT-6 Astra",
+                capability: "text" as const,
+                enabled: true,
+                bindings: [{ id: "gpt-6-astra:two", channelId: "two", upstreamModel: "models/gpt-6-astra", enabled: true, priority: 1 }],
+            },
+        ];
+        const applied = vi.fn();
+        const host = await render(<LogicalModelHarness channels={channels} logicalModels={models} defaultModels={textDefaults} onApplied={applied} />);
+        const user = userEvent.setup();
+
+        await openVideoEditor(host);
+        await user.click(document.querySelector('button[aria-label="移除绑定 渠道 / gpt-6-astra"]') as HTMLButtonElement);
+        await user.click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "确认移除") as HTMLButtonElement);
+        await user.click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "应用修改") as HTMLButtonElement);
+
+        const next = applied.mock.lastCall?.[0];
+        expect(next.logicalModels).toHaveLength(2);
+        expect(next.logicalModels.find((model: (typeof models)[number]) => model.id === "gpt-6-astra")).toMatchObject({
+            name: "GPT-6 Astra",
+            bindings: [expect.objectContaining({ channelId: "two", upstreamModel: "models/gpt-6-astra" }), expect.objectContaining({ channelId: "one", upstreamModel: "gpt-6-astra", weight: 80 })],
+        });
+    });
+
     it("configures upstream idempotency while preserving the operational profile", async () => {
         const applied = vi.fn();
         const host = await render(

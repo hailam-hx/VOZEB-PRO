@@ -1,7 +1,7 @@
 "use client";
 
 import { App, Button, Checkbox, Drawer, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Tag } from "antd";
-import { AlertTriangle, GitBranch, Pencil, Plus, RefreshCw, Route, Search } from "lucide-react";
+import { AlertTriangle, GitBranch, Pencil, Plus, RefreshCw, Route, Search, Trash2 } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 
 import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
@@ -9,6 +9,7 @@ import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, Logical
 import { fullGenerationParametersPreset, normalizeGenerationParameters } from "@/lib/generation-parameters";
 import { generationParametersStatus } from "@/lib/generation-defaults-validation";
 import { validateGenerationParametersInput } from "@/lib/generation-parameters-admin-validation";
+import { normalizeModelId } from "@/lib/model-capability";
 import { capabilityLabel, channelModelCapability, isLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
@@ -66,7 +67,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                 if (
                     !channel ||
                     currentKeys.has(physicalBindingKey(binding)) ||
-                    !channel.models.some((item) => normalizeUpstreamModel(item) === normalizeUpstreamModel(binding.upstreamModel)) ||
+                    !channel.models.some((item) => normalizeModelId(item) === normalizeModelId(binding.upstreamModel)) ||
                     channelModelCapability(channel, binding.upstreamModel) !== draft.capability
                 )
                     return [];
@@ -109,11 +110,19 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
         }
         const nextDraft = { ...draft, bindings: committedBindings.map((result) => result.binding!) };
         const movedBindings = new Set(nextDraft.bindings.map(physicalBindingKey));
-        const nextModels = logicalModels.flatMap((model) => {
+        const editingModel = logicalModels.find((model) => model.id === editingId);
+        const removedBindings = editingModel?.bindings.filter((binding) => !movedBindings.has(physicalBindingKey(binding))) || [];
+        const reassignedModels = logicalModels.flatMap((model) => {
             if (model.id === editingId) return [cloneLogicalModel({ ...nextDraft, name })];
             const bindings = model.bindings.filter((binding) => !movedBindings.has(physicalBindingKey(binding)));
             return bindings.length ? [{ ...model, bindings }] : [];
         });
+        const restoredModels = removedBindings.reduce<LogicalModel[]>((models, binding) => {
+            const ownerIndex = models.findIndex((model) => model.id !== editingId && model.capability === editingModel?.capability && model.bindings.some((item) => normalizeModelId(item.upstreamModel) === normalizeModelId(binding.upstreamModel)));
+            if (ownerIndex < 0) return [...models, { id: binding.upstreamModel, name: binding.upstreamModel, capability: editingModel?.capability || nextDraft.capability, enabled: true, bindings: [cloneLogicalBinding(binding)] }];
+            return models.map((model, index) => (index === ownerIndex ? { ...model, bindings: [...model.bindings, cloneLogicalBinding(binding)] } : model));
+        }, reassignedModels);
+        const nextModels = removedBindings.length ? synchronizeLogicalModelsWithChannels(restoredModels, channels) : reassignedModels;
         onChange({ logicalModels: nextModels, defaultModels: normalizeDefaultModelsConfig(defaultModels, nextModels, channels) });
         setDrawerOpen(false);
         message.success("模型路由设置已更新，请保存渠道配置");
@@ -300,6 +309,8 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                                         streamingTimeoutDrafts={streamingTimeoutDrafts[binding.id] || {}}
                                         onStreamingTimeoutDraftsChange={(next) => setStreamingTimeoutDrafts((current) => ({ ...current, [binding.id]: next }))}
                                         onChange={(patch) => setDraft((current) => (current ? { ...current, bindings: current.bindings.map((item) => (item.id === binding.id ? { ...item, ...patch } : item)) } : current))}
+                                        canRemove={draft.bindings.length > 1}
+                                        onRemove={() => setDraft((current) => (current && current.bindings.length > 1 ? { ...current, bindings: current.bindings.filter((item) => item.id !== binding.id) } : current))}
                                     />
                                 ))}
                             </div>
@@ -318,6 +329,8 @@ function BindingEditor({
     streamingTimeoutDrafts,
     onStreamingTimeoutDraftsChange,
     onChange,
+    canRemove,
+    onRemove,
 }: {
     binding: LogicalModelBinding;
     capability: LogicalModelCapability;
@@ -325,6 +338,8 @@ function BindingEditor({
     streamingTimeoutDrafts: StreamingTimeoutDrafts;
     onStreamingTimeoutDraftsChange: (next: StreamingTimeoutDrafts) => void;
     onChange: (patch: Partial<LogicalModelBinding>) => void;
+    canRemove: boolean;
+    onRemove: () => void;
 }) {
     const { message } = App.useApp();
     const channel = channels.find((item) => item.id === binding.channelId);
@@ -400,8 +415,21 @@ function BindingEditor({
                 <LabeledControl label="权重">
                     <InputNumber className="w-full" min={1} max={10000} precision={0} value={binding.weight || 100} onChange={(weight) => onChange({ weight: Number(weight) || 100 })} />
                 </LabeledControl>
-                <div className="flex h-8 items-center">
+                <div className="flex h-8 items-center gap-1">
                     <Switch size="small" checked={binding.enabled} aria-label={`${channel?.name || "渠道"}绑定启用状态`} onChange={(enabled) => onChange({ enabled })} />
+                    {canRemove ? (
+                        <Popconfirm title="移除备用绑定？" description="将恢复到同名逻辑模型；不存在时创建独立逻辑模型，不会从渠道目录删除。" okText="确认移除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={onRemove}>
+                            <Button
+                                className="!text-stone-500 hover:!bg-red-50 hover:!text-red-600 dark:!text-stone-400 dark:hover:!bg-red-950/40 dark:hover:!text-red-300"
+                                type="text"
+                                danger
+                                size="small"
+                                icon={<Trash2 className="size-3.5" />}
+                                aria-label={`移除绑定 ${channel?.name || "渠道已移除"} / ${binding.upstreamModel}`}
+                                title="移除绑定"
+                            />
+                        </Popconfirm>
+                    ) : null}
                 </div>
             </div>
             {capability !== "text" ? (
@@ -805,11 +833,7 @@ function cloneLogicalBinding(binding: LogicalModelBinding): LogicalModelBinding 
 }
 
 function physicalBindingKey(binding: Pick<LogicalModelBinding, "channelId" | "upstreamModel">) {
-    return JSON.stringify([binding.channelId, normalizeUpstreamModel(binding.upstreamModel)]);
-}
-
-function normalizeUpstreamModel(value: string) {
-    return value.trim().toLowerCase();
+    return JSON.stringify([binding.channelId, normalizeModelId(binding.upstreamModel)]);
 }
 
 function logicalModelCapabilityStatus(model: LogicalModel) {

@@ -31,13 +31,23 @@ test("generation operations keeps the request, failure and planner route timelin
     }
 });
 
-test("logical model routing can move a synchronized cross-name fallback binding", async ({ page, request }, testInfo) => {
+test("logical model routing can move and remove a synchronized cross-name fallback binding", async ({ page, request }, testInfo) => {
     type SettingsSnapshot = {
         logicalModels: Array<{
             id: string;
             name: string;
             capability: string;
-            bindings: Array<{ id: string; channelId: string; upstreamModel: string; priority: number }>;
+            bindings: Array<{
+                id: string;
+                channelId: string;
+                upstreamModel: string;
+                enabled: boolean;
+                priority: number;
+                weight?: number;
+                capabilityProfile?: unknown;
+                costRateCard?: unknown;
+                providerCostUnit?: unknown;
+            }>;
         }>;
         defaultModels: Record<string, string>;
     };
@@ -47,6 +57,8 @@ test("logical model routing can move a synchronized cross-name fallback binding"
     const before = ((await beforeResponse.json()) as { settings: SettingsSnapshot }).settings;
     const movedBinding = before.logicalModels.find((model) => model.id === "e2e-text-fallback")?.bindings.find((binding) => binding.channelId === "e2e-primary");
     expect(movedBinding).toBeTruthy();
+    expect(movedBinding?.costRateCard).toBeTruthy();
+    expect(movedBinding?.providerCostUnit).toBeTruthy();
 
     try {
         await setTheme(page, testInfo.project.name === "mobile-430" ? "dark" : "light");
@@ -88,6 +100,48 @@ test("logical model routing can move a synchronized cross-name fallback binding"
         await expectDialogWithinViewport(reloadedDrawer);
         await expectNoHorizontalOverflow(page, `${testInfo.project.name} logical model fallback routing`);
         await expectVisibleControlsWithinViewport(page, `${testInfo.project.name} logical model fallback routing`);
+
+        await reloadedDrawer.getByRole("button", { name: "移除绑定 E2E 主渠道 / e2e-text-fallback" }).click();
+        await page.getByRole("button", { name: "确认移除" }).click();
+        await expect(reloadedDrawer.getByRole("button", { name: "移除绑定 E2E 主渠道 / e2e-text-fallback" })).toHaveCount(0);
+        await reloadedDrawer.getByRole("button", { name: "应用修改" }).click();
+        await expect(page.getByText("模型路由设置已更新，请保存渠道配置").last()).toBeVisible();
+
+        const removedSave = page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === "/api/admin/settings");
+        await page.getByRole("button", { name: "保存模型渠道配置" }).click();
+        expect((await removedSave).ok()).toBe(true);
+        await expect(page.getByText("模型渠道配置已保存", { exact: true }).last()).toBeVisible();
+
+        const removedResponse = await request.get("/api/admin/settings");
+        expect(removedResponse.ok(), await removedResponse.text()).toBe(true);
+        const removed = ((await removedResponse.json()) as { settings: SettingsSnapshot }).settings;
+        expect(removed.logicalModels.find((model) => model.id === "e2e-text")?.bindings).not.toEqual(expect.arrayContaining([expect.objectContaining({ channelId: "e2e-primary", upstreamModel: "e2e-text-fallback" })]));
+        expect(removed.logicalModels.find((model) => model.id === "e2e-text-fallback")?.bindings).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: movedBinding!.id,
+                    channelId: movedBinding!.channelId,
+                    upstreamModel: movedBinding!.upstreamModel,
+                    enabled: movedBinding!.enabled,
+                    capabilityProfile: movedBinding!.capabilityProfile,
+                    costRateCard: movedBinding!.costRateCard,
+                    providerCostUnit: movedBinding!.providerCostUnit,
+                }),
+            ]),
+        );
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await page.getByRole("tab", { name: "逻辑模型" }).click();
+        await page.getByPlaceholder("搜索模型昵称、ID 或上游模型").fill("e2e-text");
+        await expect(logicalModelCard(page, "e2e-text").getByText("2 个渠道绑定", { exact: true })).toBeVisible();
+        await expect(logicalModelCard(page, "e2e-text-fallback").getByText("2 个渠道绑定", { exact: true })).toBeVisible();
+        await logicalModelCard(page, "e2e-text").getByRole("button", { name: "路由设置" }).click();
+        const removedDrawer = page.getByRole("dialog", { name: "模型路由设置" });
+        await expect(removedDrawer.getByRole("button", { name: "移除绑定 E2E 主渠道 / e2e-text-fallback" })).toHaveCount(0);
+        await expectDialogWithinViewport(removedDrawer);
+        await expectNoHorizontalOverflow(page, `${testInfo.project.name} removed logical model fallback routing`);
+        await expectVisibleControlsWithinViewport(page, `${testInfo.project.name} removed logical model fallback routing`);
     } finally {
         const restored = await request.patch("/api/admin/settings", { data: { logicalModels: before.logicalModels, defaultModels: before.defaultModels } });
         expect(restored.ok(), await restored.text()).toBe(true);

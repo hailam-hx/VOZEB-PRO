@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const originalDataDir = process.env.VOZEB_PRO_DATA_DIR;
 const originalDatabaseProvider = process.env.VOZEB_PRO_DATABASE_PROVIDER;
 
-import { getFreshAuthSettings, setAuthSettings } from "./store-settings-actions";
+import { getFreshAuthSettings, mutateAuthLogicalModels, setAuthSettings } from "./store-settings-actions";
 import { normalizeGenerationParameters } from "@/lib/generation-parameters";
 
 describe("file settings capability persistence", () => {
@@ -84,5 +84,40 @@ describe("file settings capability persistence", () => {
         await setAuthSettings({ generationDefaults: { ...structuredClone((await getFreshAuthSettings()).generationDefaults), imageQuality: "ultra", videoQuality: "2K", videoSeconds: 1.5, audioVoice: "narrator", audioFormat: "m4a" } });
 
         await expect(getFreshAuthSettings()).resolves.toMatchObject({ generationDefaults: { imageQuality: "ultra", videoQuality: "2K", videoSeconds: 1.5, audioVoice: "narrator", audioFormat: "m4a" } });
+    });
+
+    it("preserves protected binding pricing when a settings save moves the binding to another logical model", async () => {
+        const systemChannels = [{ id: "one", name: "渠道", baseUrl: "https://api.example.com/v1", apiKey: "", apiFormat: "openai" as const, models: ["gpt-5.6-sol", "gpt-6-astra"], enabled: true }];
+        const primaryBinding = { id: "primary:one", channelId: "one", upstreamModel: "gpt-5.6-sol", enabled: true, priority: 1 };
+        const fallbackBinding = { id: "fallback:one", channelId: "one", upstreamModel: "gpt-6-astra", enabled: true, priority: 2 };
+        const logicalModels = [{ id: "primary", name: "Primary", capability: "text" as const, enabled: true, bindings: [primaryBinding, fallbackBinding] }];
+
+        await setAuthSettings({ systemChannels, logicalModels });
+        await mutateAuthLogicalModels((models) =>
+            models.map((model) => ({
+                ...model,
+                bindings: model.bindings.map((binding) =>
+                    binding.id === fallbackBinding.id
+                        ? {
+                              ...binding,
+                              costRateCard: { version: 1, revision: "provider-v1", components: [{ id: "output", dimension: "outputTokens", unitPrice: "0.5" }] },
+                              providerCostUnit: { kind: "provider-native", provider: "dflop", unit: "token", usdConversion: { version: "dflop-v1", usdPerUnit: "0.00001" } },
+                          }
+                        : binding,
+                ),
+            })),
+        );
+        const pricedBinding = (await getFreshAuthSettings()).logicalModels[0].bindings.find((binding) => binding.id === fallbackBinding.id)!;
+
+        await setAuthSettings({
+            logicalModels: [
+                { ...logicalModels[0], bindings: [primaryBinding] },
+                { id: "gpt-6-astra", name: "GPT-6 Astra", capability: "text", enabled: true, bindings: [fallbackBinding] },
+            ],
+        });
+
+        const restoredBinding = (await getFreshAuthSettings()).logicalModels.find((model) => model.id === "gpt-6-astra")?.bindings[0];
+        expect(restoredBinding?.costRateCard).toEqual(pricedBinding.costRateCard);
+        expect(restoredBinding?.providerCostUnit).toEqual(pricedBinding.providerCostUnit);
     });
 });
