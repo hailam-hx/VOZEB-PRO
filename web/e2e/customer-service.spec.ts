@@ -10,7 +10,7 @@ test("admin customer-service settings persist and only anonymous marketing pages
     const publicContexts: Array<Awaited<ReturnType<typeof browser.newContext>>> = [];
     const publicPages: Page[] = [];
     const customerService = {
-        businessName: "E2E <客服> & Co.",
+        businessName: "Công ty TNHH Hotx Holding Group",
         phone: "+84 28 1234 5678",
         email: "support.e2e@example.test",
         address: "Địa chỉ E2E <phòng hỗ trợ>, 123 Đường Nguyễn Huệ, Phường Bến Nghé, Quận 1, Thành phố Hồ Chí Minh, Việt Nam",
@@ -44,9 +44,17 @@ test("admin customer-service settings persist and only anonymous marketing pages
         await expect(email).toHaveValue(customerService.email);
         await expect(address).toHaveValue(customerService.address);
         expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
+        const currentSite = ((await (await request.get("/api/admin/settings")).json()) as { settings: { site: Record<string, unknown> & { friendLinks?: unknown[] } } }).settings.site;
+        const friendLink = { id: "e2e-footer-layout", label: "E2E support partner", url: "https://example.test/support", enabled: true };
+        const withFriendLink = await request.patch("/api/admin/settings", {
+            data: { site: { ...currentSite, friendLinks: [...(currentSite.friendLinks || []).filter((item) => (item as { id?: unknown }).id !== friendLink.id), friendLink] } },
+        });
+        expect(withFriendLink.ok(), await withFriendLink.text()).toBe(true);
 
         for (const viewport of [
-            { name: "desktop", width: 1280, height: 720 },
+            { name: "desktop-1024", width: 1024, height: 768 },
+            { name: "desktop-1440", width: 1440, height: 900 },
+            { name: "desktop-1920", width: 1920, height: 1080 },
             { name: "mobile-390", width: 390, height: 844 },
             { name: "mobile-430", width: 430, height: 932 },
         ]) {
@@ -61,6 +69,7 @@ test("admin customer-service settings persist and only anonymous marketing pages
             for (const locale of locales) {
                 await publicPage.goto(locale.path, { waitUntil: "domcontentloaded" });
                 await expectCustomerServiceFooter(publicPage, locale.title, locale.labels, customerService, viewport.name);
+                if (locale.path === "/") await expectMarketingFooterLayout(publicPage, locale.title, viewport);
             }
 
             await publicContext.addCookies([{ name: "vozeb-pro-locale", value: "vi", url: String(testInfo.project.use.baseURL) }]);
@@ -97,8 +106,11 @@ test("admin customer-service settings persist and only anonymous marketing pages
         const removedAll = save();
         await page.getByRole("button", { name: "保存网站设置" }).click();
         expect((await removedAll).ok()).toBe(true);
-        await footerPage.goto("/zh-cn", { waitUntil: "domcontentloaded" });
-        await expect(footerPage.getByRole("region", { name: "客户服务" })).toHaveCount(0);
+        for (const publicPage of publicPages) {
+            await publicPage.goto("/zh-cn", { waitUntil: "domcontentloaded" });
+            await expect(publicPage.getByRole("region", { name: "客户服务" })).toHaveCount(0);
+            await expectNoHorizontalOverflow(publicPage, "footer without customer-service settings");
+        }
         await footerPage.reload({ waitUntil: "domcontentloaded" });
         await expect(footerPage.getByRole("region", { name: "客户服务" })).toHaveCount(0);
         expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual({ businessName: "", phone: "", email: "", address: "" });
@@ -112,6 +124,67 @@ test("admin customer-service settings persist and only anonymous marketing pages
         }
     }
 });
+
+async function expectMarketingFooterLayout(page: Page, customerServiceTitle: string, viewport: { name: string; width: number; height: number }) {
+    const section = page.getByRole("region", { name: customerServiceTitle });
+    await section.scrollIntoViewIfNeeded();
+    await expect(page.getByRole("link", { name: "E2E support partner", exact: true })).toBeVisible();
+    await page.evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    const layout = await section.evaluate((element) => {
+        const navigation = element.parentElement;
+        const grid = navigation?.parentElement;
+        const brand = grid?.firstElementChild;
+        const menus = navigation ? Array.from(navigation.querySelectorAll<HTMLElement>(":scope > nav")) : [];
+        const businessName = element.querySelector<HTMLElement>("dl > div:first-child dd");
+        const address = element.querySelector<HTMLElement>("dl > div:last-child dd");
+        if (!(navigation instanceof HTMLElement) || !(grid instanceof HTMLElement) || !(brand instanceof HTMLElement) || menus.length < 3 || !businessName || !address) throw new Error("Marketing footer columns are incomplete.");
+        const bounds = (node: Element) => {
+            const rect = node.getBoundingClientRect();
+            return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width };
+        };
+        const lineCount = (node: HTMLElement) => Math.round(node.scrollHeight / Number.parseFloat(getComputedStyle(node).lineHeight));
+        return {
+            grid: bounds(grid),
+            navigation: bounds(navigation),
+            columns: [bounds(brand), bounds(menus[0]), bounds(menus[1]), bounds(element)],
+            friendLinks: bounds(menus[2]),
+            businessNameLines: lineCount(businessName),
+            addressLines: lineCount(address),
+        };
+    });
+    const [brand, product, platform, customerService] = layout.columns;
+    if (viewport.width >= 1024) {
+        const footerTrackWidth = brand.width + layout.navigation.width;
+        const navigationTrackWidth = product.width + platform.width + customerService.width;
+        expect(product.left, `${viewport.name}: product column should start in the left half of the footer`).toBeLessThanOrEqual(layout.grid.left + layout.grid.width / 2);
+        expect(platform.left).toBeGreaterThan(product.left);
+        expect(customerService.left).toBeGreaterThan(platform.left);
+        expect(Math.max(...layout.columns.map((column) => column.top)) - Math.min(...layout.columns.map((column) => column.top))).toBeLessThanOrEqual(2);
+        expect(brand.width / footerTrackWidth).toBeGreaterThanOrEqual(0.42);
+        expect(brand.width / footerTrackWidth).toBeLessThanOrEqual(0.46);
+        expect(product.width / navigationTrackWidth).toBeGreaterThanOrEqual(0.22);
+        expect(product.width / navigationTrackWidth).toBeLessThanOrEqual(0.27);
+        expect(platform.width / navigationTrackWidth).toBeGreaterThanOrEqual(0.22);
+        expect(platform.width / navigationTrackWidth).toBeLessThanOrEqual(0.27);
+        expect(customerService.width / navigationTrackWidth).toBeGreaterThanOrEqual(0.48);
+        expect(customerService.width / navigationTrackWidth).toBeLessThanOrEqual(0.56);
+        expect(brand.width).toBeGreaterThanOrEqual(360);
+        expect(customerService.width).toBeGreaterThanOrEqual(product.width * 1.75);
+        expect(customerService.width).toBeGreaterThanOrEqual(platform.width * 1.75);
+        expect(layout.businessNameLines).toBeLessThanOrEqual(2);
+        expect(layout.addressLines).toBeLessThanOrEqual(4);
+        expect(layout.friendLinks.top).toBeGreaterThanOrEqual(product.bottom - 1);
+    } else {
+        expect(product.top).toBeGreaterThanOrEqual(brand.bottom - 1);
+        expect(platform.top).toBeGreaterThanOrEqual(product.bottom - 1);
+        expect(layout.friendLinks.top).toBeGreaterThanOrEqual(platform.bottom - 1);
+        expect(customerService.top).toBeGreaterThanOrEqual(layout.friendLinks.bottom - 1);
+        expect(layout.columns.every((column) => column.left >= layout.grid.left - 1 && column.right <= layout.grid.right + 1)).toBe(true);
+    }
+}
 
 async function expectCustomerServiceFooter(page: Page, title: string, labels: string[], customerService: { businessName: string; phone: string; email: string; address: string }, projectName: string) {
     const section = page.getByRole("region", { name: title });

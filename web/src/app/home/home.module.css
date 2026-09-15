@@ -967,8 +967,8 @@
 
 .footerGrid {
     display: grid;
-    gap: clamp(52px, 7vw, 112px);
-    grid-template-columns: minmax(260px, 1.15fr) minmax(480px, 1fr);
+    gap: clamp(28px, 3vw, 48px);
+    grid-template-columns: minmax(360px, 44fr) minmax(0, 56fr);
     margin: 0 auto;
     max-width: 1316px;
 }
@@ -1012,8 +1012,8 @@
 }
 .footerNavigation {
     display: grid;
-    gap: 36px;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: clamp(20px, 2vw, 36px);
+    grid-template-columns: minmax(110px, 1fr) minmax(110px, 1fr) minmax(260px, 2fr);
     min-width: 0;
 }
 
@@ -1047,6 +1047,8 @@
 }
 
 .footerCustomerService {
+    grid-column: 3;
+    grid-row: 1;
     min-width: 0;
 }
 .footerCustomerService h2 {
@@ -1156,6 +1158,21 @@
     }
     .footerGrid {
         gap: 28px;
+    }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+    .footerGrid {
+        gap: 34px;
+        grid-template-columns: 1fr;
+    }
+    .footerNavigation {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        max-width: 680px;
+    }
+    .footerCustomerService {
+        grid-column: 1 / -1;
+        grid-row: auto;
     }
 }
 
@@ -1437,6 +1454,10 @@
     }
     .footerCustomerService h2 {
         margin-bottom: 9px;
+    }
+    .footerCustomerService {
+        grid-column: 1;
+        grid-row: auto;
     }
     .footerCustomerService dl {
         gap: 8px;
