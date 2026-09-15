@@ -1,6 +1,6 @@
 import { defineRouting } from "next-intl/routing";
 
-import { appLocales, defaultLocale, isAppLocale, localeCookieName, resolveLocale, type AppLocale } from "@/i18n/config";
+import { appLocales, defaultLocale, isAppLocale, localeCookieConfig, resolveLocale, type AppLocale } from "@/i18n/config";
 
 export const seoPageIds = ["home", "ai-image-generator", "ai-video-generator", "ai-voice-generator", "voice-cloning", "ai-short-drama", "ai-agent", "terms", "privacy"] as const;
 
@@ -46,8 +46,8 @@ export const routing = defineRouting({
     locales: appLocales,
     defaultLocale,
     localePrefix: { mode: "as-needed", prefixes: { "zh-CN": localePathPrefixes["zh-CN"] } },
-    localeCookie: { name: localeCookieName },
-    localeDetection: false,
+    localeCookie: localeCookieConfig,
+    localeDetection: true,
     alternateLinks: false,
     pathnames: routingPathnames,
 });

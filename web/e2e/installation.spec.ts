@@ -16,6 +16,7 @@ test("fresh deployments enter the installation flow", async ({ page }) => {
     await expect(installationBrand).toBeVisible();
     await expect(page.getByText("三步完成服务器初始化", { exact: true })).toBeVisible();
     await expect(installationBrand.locator('img[src="/hx-favicon.png"]')).toBeVisible();
+    await expect.poll(async () => (await page.context().cookies()).find((cookie) => cookie.name === "vozeb-pro-locale")?.value).toBe("en");
 });
 
 test("public session omits internal configuration fields", async ({ request }) => {
@@ -64,7 +65,8 @@ test("initialization rejects a wrong token and creates the first administrator o
     }
 
     await page.goto("/install");
-    await expect(page).toHaveURL(/\/(?:$|\?)/);
+    await expect(page).toHaveURL(/\/zh-cn(?:$|\?)/);
+    await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
 
     const statePath = path.join(process.cwd(), ".e2e-data", "admin-state.json");
     await mkdir(path.dirname(statePath), { recursive: true });

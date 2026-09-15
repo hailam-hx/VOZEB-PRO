@@ -35,27 +35,70 @@ test("registration opens legal documents in the selected language without prefix
     }
 });
 
-test("keeps the unprefixed homepage Vietnamese regardless of browser language", async ({ browser }, testInfo) => {
+test("detects a fresh browser language on public and nonlocalized routes", async ({ browser }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Browser language detection only needs one desktop browser project");
     const baseURL = String(testInfo.project.use.baseURL);
     const cases = [
-        { browserLocale: "en-US", htmlLang: "en", heading: "HOTX AI – A platform for AI content creation" },
-        { browserLocale: "vi-VN", htmlLang: "vi", heading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" },
-        { browserLocale: "zh-TW", htmlLang: "zh-CN", heading: "HOTX AI – 一站式 AI 内容创作平台" },
-        { browserLocale: "fr-FR", htmlLang: "vi", heading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" },
+        {
+            browserLocale: "en-US",
+            htmlLang: "en",
+            homePath: "/en",
+            homeHeading: "HOTX AI – A platform for AI content creation",
+            termsPath: "/en/terms",
+            termsHeading: "Terms of Service",
+        },
+        {
+            browserLocale: "vi-VN",
+            htmlLang: "vi",
+            homePath: "/",
+            homeHeading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI",
+            termsPath: "/terms",
+            termsHeading: "Điều khoản dịch vụ",
+        },
+        {
+            browserLocale: "zh-TW",
+            htmlLang: "zh-CN",
+            homePath: "/zh-cn",
+            homeHeading: "HOTX AI – 一站式 AI 内容创作平台",
+            termsPath: "/zh-cn/terms",
+            termsHeading: "服务条款",
+        },
+        {
+            browserLocale: "fr-FR",
+            htmlLang: "vi",
+            homePath: "/",
+            homeHeading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI",
+            termsPath: "/terms",
+            termsHeading: "Điều khoản dịch vụ",
+        },
     ] as const;
 
     for (const item of cases) {
-        const context = await browser.newContext({ baseURL, locale: item.browserLocale });
+        const context = await browser.newContext({ baseURL, locale: item.browserLocale, storageState: testInfo.project.use.storageState });
+        await context.clearCookies({ name: localeCookie });
         const page = await context.newPage();
-        await page.goto("/");
-        await expect(page.locator("html")).toHaveAttribute("lang", "vi");
-        await expect(page.getByRole("heading", { level: 1, name: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" })).toBeVisible();
-        await context.close();
+        try {
+            await page.goto("/");
+            await expect(page).toHaveURL(new URL(item.homePath, baseURL).toString());
+            await expect(page.locator("html")).toHaveAttribute("lang", item.htmlLang);
+            await expect(page.getByRole("heading", { level: 1, name: item.homeHeading })).toBeVisible();
+
+            await page.goto("/terms");
+            await expect(page).toHaveURL(new URL(item.termsPath, baseURL).toString());
+            await expect(page.locator("html")).toHaveAttribute("lang", item.htmlLang);
+            await expect(page.getByRole("heading", { level: 1, name: item.termsHeading })).toBeVisible();
+
+            await page.goto("/create");
+            await expect(page).toHaveURL(new URL("/create", baseURL).toString());
+            await expect(page.locator("html")).toHaveAttribute("lang", item.htmlLang);
+            expect((await context.cookies()).find((cookie) => cookie.name === localeCookie)).toBeUndefined();
+        } finally {
+            await context.close();
+        }
     }
 });
 
-test("switching language preserves the current URL and in-memory draft", async ({ page }, testInfo) => {
+test("switching language preserves the current URL and draft while persisting the choice", async ({ page }, testInfo) => {
     await page.context().addCookies([{ name: localeCookie, value: "zh-CN", url: String(testInfo.project.use.baseURL) }]);
     await page.goto("/create");
     const draft = "Giữ nguyên bản nháp khi đổi ngôn ngữ";
@@ -70,11 +113,14 @@ test("switching language preserves the current URL and in-memory draft", async (
     await expect(page).toHaveURL(url);
     await expect(page.getByPlaceholder("Enter an idea, script, or visual requirements")).toHaveValue(draft);
     await expect.poll(async () => (await page.context().cookies()).find((cookie) => cookie.name === localeCookie)?.value).toBe("en");
+    const languageCookie = (await page.context().cookies()).find((cookie) => cookie.name === localeCookie)!;
+    expect(languageCookie.expires).toBeGreaterThan(Date.now() / 1000 + 300 * 24 * 60 * 60);
 
     await page.goto("/");
-    await expect(page.locator("html")).toHaveAttribute("lang", "vi");
+    await expect(page).toHaveURL(new URL("/en", String(testInfo.project.use.baseURL)).toString());
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
     await page.reload();
-    await expect(page.locator("html")).toHaveAttribute("lang", "vi");
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
 });
 
 test("admin remains Chinese without changing the user language cookie", async ({ page }, testInfo) => {
@@ -111,6 +157,7 @@ test("prepaid points summary resolves its wallet messages", async ({ page }, tes
 test("language menu remains inside a 390px viewport", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Dedicated mobile projects cover both target widths");
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.context().addCookies([{ name: localeCookie, value: "vi", url: String(testInfo.project.use.baseURL) }]);
     await page.goto("/");
     await page.getByRole("button", { name: "Đổi ngôn ngữ" }).click();
     const menu = page.getByRole("menu");

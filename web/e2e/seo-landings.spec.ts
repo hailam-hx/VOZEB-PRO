@@ -388,7 +388,7 @@ async function expectHomeSeo(page: Page, seo: LocaleSeo) {
     await expect(page.locator('meta[name="keywords"]')).toHaveAttribute("content", seo.keywords);
 }
 
-test("all 27 published URLs have localized SSR SEO independent of cookie and browser language", async ({ page, context, request }) => {
+test("all 27 published URLs keep localized SSR SEO under locale negotiation", async ({ page, context, request }) => {
     test.setTimeout(240_000);
     const original = (await (await request.get("/api/admin/settings")).json()).settings.site;
     try {
@@ -403,7 +403,7 @@ test("all 27 published URLs have localized SSR SEO independent of cookie and bro
             const prefix = locale === "en" ? "/en" : locale === "zh-CN" ? "/zh-cn" : "";
             const pages = [{ slug: "", h1: publicCopy[locale].home }, ...translatedLandings[locale], { slug: "terms", h1: publicCopy[locale].terms }, { slug: "privacy", h1: publicCopy[locale].privacy }];
             for (const item of pages) {
-                await context.addCookies([{ name: "vozeb-pro-locale", value: locale === "en" ? "zh-CN" : "en", url: String(test.info().project.use.baseURL) }]);
+                await context.addCookies([{ name: "vozeb-pro-locale", value: locale === "vi" ? "vi" : locale === "en" ? "zh-CN" : "en", url: String(test.info().project.use.baseURL) }]);
                 const suffix = item.slug ? "/" + item.slug : "";
                 const path = prefix + suffix || "/";
                 const response = await page.goto(path, { waitUntil: "domcontentloaded" });
@@ -466,6 +466,8 @@ test("VI aliases redirect and localized workspace or invalid locale routes stay 
     for (const suffix of ["", "/ai-image-generator", "/ai-video-generator", "/ai-voice-generator", "/voice-cloning", "/ai-short-drama", "/ai-agent", "/terms", "/privacy"]) {
         const response = await request.get("/vi" + suffix + "?source=locale", { maxRedirects: 0 });
         expect(response.status()).toBe(308);
+        expect(response.headers()["set-cookie"]).toContain("vozeb-pro-locale=vi");
+        expect(response.headers()["set-cookie"]).toContain("Max-Age=31536000");
         const location = new URL(response.headers().location, String(test.info().project.use.baseURL));
         expect(location.pathname).toBe(suffix || "/");
         expect(location.search).toBe("?source=locale");

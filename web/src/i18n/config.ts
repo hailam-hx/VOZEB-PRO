@@ -7,6 +7,14 @@ export type AppLocale = (typeof appLocales)[number];
 
 export const defaultLocale: AppLocale = "vi";
 export const localeCookieName = "vozeb-pro-locale";
+export const localeCookieMaxAge = 365 * 24 * 60 * 60;
+export const localeCookieConfig = {
+    name: localeCookieName,
+    path: "/",
+    sameSite: "lax" as const,
+    maxAge: localeCookieMaxAge,
+    secure: process.env.NODE_ENV === "production",
+};
 
 export const localeMetadata = {
     vi: { htmlLang: "vi", openGraphLocale: "vi_VN", antLocale: "vi_VN", dayjsLocale: "vi", label: "Tiếng Việt" },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import createMiddleware from "next-intl/middleware";
 
+import { localeCookieConfig } from "@/i18n/config";
 import { getSeoPagePath, matchSeoRoute, routing } from "@/i18n/routing";
 import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
 
@@ -37,7 +38,10 @@ export function proxy(request: NextRequest) {
         if (seoRoute.locale === "vi" && seoRoute.explicitPrefix) {
             const redirectUrl = request.nextUrl.clone();
             redirectUrl.pathname = getSeoPagePath(seoRoute.pageId, "vi") || "/";
-            return securedResponse(NextResponse.redirect(redirectUrl, 308), contentSecurityPolicy);
+            const response = NextResponse.redirect(redirectUrl, 308);
+            const { name, ...options } = localeCookieConfig;
+            response.cookies.set(name, "vi", options);
+            return securedResponse(response, contentSecurityPolicy);
         }
         return securedResponse(intlMiddleware(new NextRequest(request, { headers: requestHeaders })), contentSecurityPolicy);
     }

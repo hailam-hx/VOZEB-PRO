@@ -14,12 +14,15 @@ describe("application locale resolution", () => {
     it.each([
         ["vi-VN,vi;q=0.9", "vi"],
         ["en-GB,en;q=0.9", "en"],
+        ["zh-CN,zh;q=0.9", "zh-CN"],
         ["zh-TW,zh;q=0.9", "zh-CN"],
+        ["zh-HK,zh;q=0.9", "zh-CN"],
     ] as const)("maps %s to %s", (acceptLanguage, expected) => {
         expect(resolveLocale({ acceptLanguage })).toBe(expected);
     });
 
     it("ignores an invalid cookie and falls back to Vietnamese for unsupported languages", () => {
+        expect(resolveLocale({ cookieLocale: "fr", acceptLanguage: "en-US,en;q=0.9" })).toBe("en");
         expect(resolveLocale({ cookieLocale: "fr", acceptLanguage: "fr-FR,fr;q=0.9" })).toBe("vi");
     });
 

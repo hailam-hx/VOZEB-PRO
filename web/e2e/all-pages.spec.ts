@@ -10,6 +10,7 @@ import { observeRouteApi, type ApiFailure } from "./route-api-observer";
 const PROFILE_SECTIONS = ["overview", "profile", "billing", "orders", "points", "consume", "referrals", "security"] as const;
 const BASE_URL = `http://127.0.0.1:${Number(process.env.VOZEB_PRO_E2E_PORT || 3100)}`;
 const DOCS_URL = `http://127.0.0.1:${Number(process.env.VOZEB_PRO_DOCS_E2E_PORT || 3001)}`;
+const LOCALE_COOKIE = "vozeb-pro-locale";
 const USES_POSTGRES = Boolean(process.env.VOZEB_PRO_E2E_DATABASE_URL?.trim());
 const FILE_PROVIDER_LIMITATIONS = new Map([
     ["/api/public/gallery", 409],
@@ -25,7 +26,7 @@ type RouteCase = { path: string; expectedPath?: RegExp; expectedStatus?: number;
 test("all authenticated pages reach their real routes and stay usable", async ({ page, request }, testInfo) => {
     test.setTimeout(360_000);
     const fixtures = await createPageFixtures(request, testInfo.project.use.viewport?.width || 1280);
-    // The first document visit to unprefixed Home selects VI for subsequent nonlocalized routes.
+    await page.context().addCookies([{ name: LOCALE_COOKIE, value: "vi", url: BASE_URL }]);
     const routes: RouteCase[] = [
         { path: "/", readyHeading: "HOTX AI – Nền tảng sáng tạo nội dung bằng AI" },
         { path: "/gallery", readyHeading: "Khám phá cảm hứng" },
@@ -66,6 +67,7 @@ test("all authenticated pages reach their real routes and stay usable", async ({
 test("every administrator section renders its server-backed surface", async ({ page }, testInfo) => {
     test.setTimeout(360_000);
     const theme = testInfo.project.name === "mobile-430" ? "dark" : "light";
+    await page.context().addCookies([{ name: LOCALE_COOKIE, value: "vi", url: BASE_URL }]);
     await setTheme(page, theme);
     for (const section of ADMIN_SECTION_KEYS) {
         await verifyRoute(
@@ -86,6 +88,7 @@ test("every administrator section renders its server-backed surface", async ({ p
 test("signed-out, legal, installation and invalid public detail routes fail safely", async ({ browser }, testInfo) => {
     test.setTimeout(180_000);
     const context = await browser.newContext({ baseURL: BASE_URL, locale: "zh-CN", viewport: testInfo.project.use.viewport || undefined, storageState: { cookies: [], origins: [] } });
+    await context.addCookies([{ name: LOCALE_COOKIE, value: "vi", url: BASE_URL }]);
     const page = await context.newPage();
     try {
         const theme = testInfo.project.name === "mobile-430" ? "dark" : "light";
@@ -229,8 +232,8 @@ async function createPageFixtures(request: APIRequestContext, viewportWidth: num
 }
 
 async function setTheme(page: Page, theme: "light" | "dark") {
-    if (page.url() === "about:blank") await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.evaluate((nextTheme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: nextTheme }, version: 0 })), theme);
+    await page.addInitScript((nextTheme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: nextTheme }, version: 0 })), theme);
+    if (page.url() !== "about:blank") await page.evaluate((nextTheme) => localStorage.setItem("vozeb-pro:theme_store", JSON.stringify({ state: { theme: nextTheme }, version: 0 })), theme);
 }
 
 async function verifyRoute(contextPage: Page, route: RouteCase, label: string) {

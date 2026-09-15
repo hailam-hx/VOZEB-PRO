@@ -29,13 +29,19 @@ const expectedSeoPaths = {
 } as const satisfies Record<SeoPageId, Record<AppLocale, string>>;
 
 describe("localized SEO routing", () => {
-    it("defines the typed next-intl routing contract without automatic detection or Link headers", () => {
+    it("enables server-side locale detection with a persistent language cookie", () => {
         expect(routing).toMatchObject({
             locales: ["vi", "en", "zh-CN"],
             defaultLocale: "vi",
             localePrefix: { mode: "as-needed", prefixes: { "zh-CN": "/zh-cn" } },
-            localeCookie: { name: "vozeb-pro-locale" },
-            localeDetection: false,
+            localeCookie: {
+                name: "vozeb-pro-locale",
+                path: "/",
+                sameSite: "lax",
+                maxAge: 31_536_000,
+                secure: false,
+            },
+            localeDetection: true,
             alternateLinks: false,
         });
         expect(Object.keys(routing.pathnames)).toEqual(["/", "/ai-image-generator", "/ai-video-generator", "/ai-voice-generator", "/voice-cloning", "/ai-short-drama", "/ai-agent", "/terms", "/privacy"]);
