@@ -44,6 +44,12 @@ export function HomeFooter() {
     );
     const friendLinks = site.friendLinks.filter((item) => item.enabled && item.label.trim() && item.url.trim());
     const socials = Object.entries(site.socials).filter(([, item]) => item.enabled && item.label.trim() && item.url.trim());
+    const customerService = [
+        { key: "businessName" as const, value: site.customerService.businessName.trim() },
+        { key: "phone" as const, value: site.customerService.phone.trim() },
+        { key: "email" as const, value: site.customerService.email.trim() },
+        { key: "address" as const, value: site.customerService.address.trim() },
+    ].filter((item) => Boolean(item.value));
     const copyright = site.footerCopyright?.trim();
     const description = site.seo[locale as AppLocale].description;
     const policies = [site.privacyUrl?.trim() ? { label: publicT("privacyLabel"), href: site.privacyUrl.trim() } : null, site.termsUrl?.trim() ? { label: publicT("termsLabel"), href: site.termsUrl.trim() } : null].filter(
@@ -110,6 +116,7 @@ export function HomeFooter() {
                             ))}
                         </FooterColumn>
                     ) : null}
+                    {customerService.length ? <CustomerServiceSection items={customerService} title={t("footerCustomerService")} t={t} /> : null}
                 </div>
             </div>
             {copyright || policies.length ? (
@@ -129,6 +136,28 @@ export function HomeFooter() {
                 </div>
             ) : null}
         </footer>
+    );
+}
+
+function CustomerServiceSection({ items, title, t }: { items: Array<{ key: "businessName" | "address" | "phone" | "email"; value: string }>; title: string; t: ReturnType<typeof useTranslations> }) {
+    const labels = {
+        businessName: t("customerServiceBusinessName"),
+        phone: t("customerServicePhone"),
+        email: t("customerServiceEmail"),
+        address: t("customerServiceAddress"),
+    };
+    return (
+        <section className={styles.footerCustomerService} aria-labelledby="home-footer-customer-service-title">
+            <h2 id="home-footer-customer-service-title">{title}</h2>
+            <dl>
+                {items.map(({ key, value }) => (
+                    <div key={key}>
+                        <dt>{labels[key]}</dt>
+                        <dd>{key === "phone" ? <a href={`tel:${value}`}>{value}</a> : key === "email" ? <a href={`mailto:${value}`}>{value}</a> : value}</dd>
+                    </div>
+                ))}
+            </dl>
+        </section>
     );
 }
 

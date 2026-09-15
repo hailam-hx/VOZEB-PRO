@@ -1014,6 +1014,7 @@
     display: grid;
     gap: 36px;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    min-width: 0;
 }
 
 .footerColumn {
@@ -1042,6 +1043,45 @@
 }
 .footerColumn a:hover,
 .footerColumn button:hover {
+    color: var(--home-text);
+}
+
+.footerCustomerService {
+    min-width: 0;
+}
+.footerCustomerService h2 {
+    color: var(--home-text);
+    font-size: 14px;
+    font-weight: 720;
+    margin: 0 0 15px;
+}
+.footerCustomerService dl {
+    display: grid;
+    gap: 12px;
+    margin: 0;
+}
+.footerCustomerService dl > div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+.footerCustomerService dt {
+    color: var(--home-muted);
+    font-size: 12px;
+    font-weight: 650;
+}
+.footerCustomerService dd {
+    color: var(--home-muted);
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+.footerCustomerService dd a {
+    color: inherit;
+}
+.footerCustomerService dd a:hover {
     color: var(--home-text);
 }
 
@@ -1391,6 +1431,16 @@
         display: flex;
         line-height: 1.55;
         min-height: 34px;
+    }
+    .footerCustomerService h2 {
+        margin-bottom: 9px;
+    }
+    .footerCustomerService dl {
+        gap: 8px;
+    }
+    .footerCustomerService dl > div {
+        grid-template-columns: minmax(80px, auto) minmax(0, 1fr);
+        gap: 8px;
     }
     .footerBottom {
         align-items: flex-start;

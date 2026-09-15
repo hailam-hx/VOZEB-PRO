@@ -67,6 +67,40 @@ it("edits and previews the selected locale without replacing other drafts and sa
     });
 });
 
+it("keeps every customer-service field in the full site save payload, including deliberate clears", () => {
+    const saved: unknown[] = [];
+    function Harness() {
+        const [settings, setSettings] = useState(() => structuredClone(DEFAULT_SETTINGS));
+        const saveSettings = (patch: unknown) => {
+            saved.push(patch);
+        };
+        const actions = useAdminDashboardSettingsActions({ state: { settings, setSettings } as AdminDashboardState, data: { saveSettings } as unknown as AdminDashboardDataActions });
+        const ref = useRef<HTMLInputElement>(null);
+        return <AdminSiteSection controller={{ ...actions, settings, activeSection: "site", saveSettings, logoInputRef: ref, iconInputRef: ref } as unknown as AdminDashboardController} />;
+    }
+
+    render(<Harness />);
+    for (const [label, value, limit] of [
+        ["企业名称", "HOTX AI Vietnam", 120],
+        ["客服电话", "+84 123 456 789", 40],
+        ["客服邮箱", "support@example.com", 160],
+        ["联系地址", "胡志明市第一区", 240],
+    ] as const) {
+        const input = screen.getByLabelText(label) as HTMLInputElement;
+        expect(input.maxLength).toBe(limit);
+        fireEvent.change(input, { target: { value } });
+        expect(input.value).toBe(value);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "保存网站设置" }));
+    expect(saved.at(-1)).toMatchObject({
+        site: { customerService: { businessName: "HOTX AI Vietnam", phone: "+84 123 456 789", email: "support@example.com", address: "胡志明市第一区" } },
+    });
+
+    for (const label of ["企业名称", "客服电话", "客服邮箱", "联系地址"]) fireEvent.change(screen.getByLabelText(label), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存网站设置" }));
+    expect(saved.at(-1)).toMatchObject({ site: { customerService: { businessName: "", phone: "", email: "", address: "" } } });
+});
+
 it("uses neutral examples when an administrator adds a friend link", () => {
     function Harness() {
         const [settings, setSettings] = useState(() => structuredClone(DEFAULT_SETTINGS));

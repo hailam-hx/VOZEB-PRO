@@ -1,4 +1,4 @@
-import type { LocalizedSeoSettings, SiteFriendLink, SiteSocialSettings } from "@/lib/auth/store-types";
+import type { LocalizedSeoSettings, SiteCustomerServiceSettings, SiteFriendLink, SiteSocialSettings } from "@/lib/auth/store-types";
 import type { CreateAgentMode } from "@/lib/create-agent-prompt";
 import { WORK_CATEGORIES } from "@/lib/work-publication-options";
 import { workCategoryMessageKeys } from "@/i18n/display-keys";
@@ -13,6 +13,7 @@ export type HomeSiteSettings = {
     privacyUrl: string;
     friendLinks: SiteFriendLink[];
     socials: SiteSocialSettings;
+    customerService: SiteCustomerServiceSettings;
 };
 
 export type HomeNavigationItem = {

@@ -22,6 +22,9 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
         const current = getLatestSiteSettings().seo;
         updateSiteSetting("seo", { ...current, [seoLocale]: { ...current[seoLocale], [key]: value } });
     };
+    const updateCustomerService = (key: keyof typeof settings.site.customerService, value: string) => {
+        updateSiteSetting("customerService", { ...getLatestSiteSettings().customerService, [key]: value });
+    };
     if (activeSection !== "site") return null;
     return (
         <Panel>
@@ -170,6 +173,25 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                     {!settings.site.friendLinks?.length ? <div className="rounded-md border border-dashed border-stone-200 px-3 py-6 text-center text-sm text-stone-500 dark:border-stone-800">暂无友情链接。</div> : null}
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
+                        <SectionTitle icon={<Mail className="size-4" />} title="客户服务信息" />
+                        <p className="mt-2 text-xs leading-5 text-stone-500 dark:text-stone-400">填写后会公开显示在营销页面底部；留空的项目不会显示。</p>
+                        <div className="mt-4 grid gap-4 md:grid-cols-2">
+                            <LabeledControl label="企业名称">
+                                <Input value={settings.site.customerService.businessName} maxLength={120} onChange={(event) => updateCustomerService("businessName", event.target.value)} />
+                            </LabeledControl>
+                            <LabeledControl label="客服电话">
+                                <Input value={settings.site.customerService.phone} maxLength={40} inputMode="tel" onChange={(event) => updateCustomerService("phone", event.target.value)} />
+                            </LabeledControl>
+                            <LabeledControl label="客服邮箱">
+                                <Input value={settings.site.customerService.email} maxLength={160} type="email" onChange={(event) => updateCustomerService("email", event.target.value)} />
+                            </LabeledControl>
+                            <LabeledControl label="联系地址">
+                                <Input value={settings.site.customerService.address} maxLength={240} onChange={(event) => updateCustomerService("address", event.target.value)} />
+                            </LabeledControl>
                         </div>
                     </div>
                 </div>
