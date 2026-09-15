@@ -121,6 +121,76 @@ test("admin site form persists social addresses, publishes them to the home foot
     }
 });
 
+test("admin customer-service settings persist, remove individual fields, and remove the footer when cleared", async ({ page, request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { site: Record<string, unknown> } }).settings.site;
+    const customerService = {
+        businessName: "E2E <客服> & Co.",
+        phone: "+84 28 1234 5678",
+        email: "support.e2e@example.test",
+        address: "Địa chỉ E2E <phòng hỗ trợ>, 123 Đường Nguyễn Huệ, Phường Bến Nghé, Quận 1, Thành phố Hồ Chí Minh, Việt Nam",
+    };
+    const save = () => page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname === "/api/admin/settings");
+    try {
+        await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        const businessName = page.getByLabel("企业名称");
+        const phone = page.getByLabel("客服电话");
+        const email = page.getByLabel("客服邮箱");
+        const address = page.getByLabel("联系地址");
+        await businessName.fill(customerService.businessName);
+        await phone.fill(customerService.phone);
+        await email.fill(customerService.email);
+        await address.fill(customerService.address);
+        const saved = save();
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        expect((await saved).ok()).toBe(true);
+        await expect(page.getByText("网站信息已保存", { exact: true })).toBeVisible();
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await expect(businessName).toHaveValue(customerService.businessName);
+        await expect(phone).toHaveValue(customerService.phone);
+        await expect(email).toHaveValue(customerService.email);
+        await expect(address).toHaveValue(customerService.address);
+        expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
+        expect(((await (await request.get("/api/auth/session")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual(customerService);
+
+        await email.fill("");
+        const removedOne = save();
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        expect((await removedOne).ok()).toBe(true);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(email).toHaveValue("");
+        await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
+        const footer = page.getByRole("region", { name: "客户服务" });
+        await expect(footer).toBeVisible();
+        await expect(footer.getByText("E2E <客服> & Co.", { exact: true })).toBeVisible();
+        await expect(footer.getByRole("link", { name: customerService.phone })).toHaveAttribute("href", `tel:${customerService.phone}`);
+        await expect(footer.getByText(customerService.address, { exact: true })).toBeVisible();
+        await expect(footer.getByText("邮箱", { exact: true })).toHaveCount(0);
+        await expect(footer.locator("script, img")).toHaveCount(0);
+
+        await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await businessName.fill("");
+        await phone.fill("");
+        await address.fill("");
+        const removedAll = save();
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        expect((await removedAll).ok()).toBe(true);
+        await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
+        await expect(page.getByRole("region", { name: "客户服务" })).toHaveCount(0);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.getByRole("region", { name: "客户服务" })).toHaveCount(0);
+        expect(((await (await request.get("/api/admin/settings")).json()) as { settings: { site: { customerService: unknown } } }).settings.site.customerService).toEqual({ businessName: "", phone: "", email: "", address: "" });
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { site: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
 test("admin data lifecycle settings persist without password re-verification", async ({ page, request }) => {
     const beforeResponse = await request.get("/api/admin/settings");
     expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);

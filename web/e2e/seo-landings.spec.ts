@@ -105,6 +105,45 @@ test("six SEO landing pages expose complete SSR metadata and responsive content"
     expect(unknown?.status()).toBe(404);
 });
 
+test("customer-service footer is localized, responsive, and limited to marketing pages", async ({ page, request }, testInfo) => {
+    test.setTimeout(240_000);
+    const original = ((await (await request.get("/api/admin/settings")).json()) as { settings: { site: Record<string, unknown> } }).settings.site;
+    const customerService = {
+        businessName: "E2E <客服> & Co.",
+        phone: "+84 28 1234 5678",
+        email: "support.e2e@example.test",
+        address: "Địa chỉ E2E <phòng hỗ trợ>, 123 Đường Nguyễn Huệ, Phường Bến Nghé, Quận 1, Thành phố Hồ Chí Minh, Việt Nam",
+    };
+    const locales = [
+        { path: "/", title: "Dịch vụ khách hàng", labels: ["Tên doanh nghiệp", "Điện thoại", "Email", "Địa chỉ"] },
+        { path: "/en", title: "Customer service", labels: ["Business name", "Phone", "Email", "Address"] },
+        { path: "/zh-cn", title: "客户服务", labels: ["企业名称", "电话", "邮箱", "地址"] },
+    ];
+    try {
+        const saved = await request.patch("/api/admin/settings", { data: { site: { ...original, customerService } } });
+        expect(saved.ok(), await saved.text()).toBe(true);
+
+        for (const locale of locales) {
+            await page.goto(locale.path, { waitUntil: "domcontentloaded" });
+            await expectCustomerServiceFooter(page, locale.title, locale.labels, customerService, testInfo.project.name);
+        }
+
+        await page.context().addCookies([{ name: "vozeb-pro-locale", value: "vi", url: String(testInfo.project.use.baseURL) }]);
+        for (const landing of landings) {
+            await page.goto(`/${landing.slug}`, { waitUntil: "domcontentloaded" });
+            await expectCustomerServiceFooter(page, "Dịch vụ khách hàng", locales[0].labels, customerService, testInfo.project.name);
+        }
+
+        for (const path of ["/terms", "/privacy", "/login", "/create", "/admin"]) {
+            await page.goto(path, { waitUntil: "domcontentloaded" });
+            await expect(page.locator('[aria-labelledby="home-footer-customer-service-title"]')).toHaveCount(0);
+        }
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { site: original } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
 test("signed-in CTA entries open the real create mode or workspace", async ({ page }) => {
     test.setTimeout(180_000);
     for (const landing of landings) {
@@ -234,6 +273,45 @@ function collectBrowserErrors(page: Page) {
         if (message.type() === "error") errors.push(message.text());
     });
     return errors;
+}
+
+async function expectCustomerServiceFooter(page: Page, title: string, labels: string[], customerService: { businessName: string; phone: string; email: string; address: string }, projectName: string) {
+    const section = page.getByRole("region", { name: title });
+    await expect(section).toBeVisible();
+    await expect(section.locator("dl > div")).toHaveCount(4);
+    await expect(section.getByText(customerService.businessName, { exact: true })).toBeVisible();
+    await expect(section.getByText(customerService.address, { exact: true })).toBeVisible();
+    const phone = section.getByRole("link", { name: customerService.phone, exact: true });
+    const email = section.getByRole("link", { name: customerService.email, exact: true });
+    await expect(phone).toHaveAttribute("href", `tel:${customerService.phone}`);
+    await expect(email).toHaveAttribute("href", `mailto:${customerService.email}`);
+    await expect(section.locator("script, img")).toHaveCount(0);
+    await phone.scrollIntoViewIfNeeded();
+    const layout = await section.evaluate((element) => {
+        const fields = Array.from(element.querySelectorAll<HTMLElement>("dl > div"));
+        const address = fields.at(-1)?.querySelector<HTMLElement>("dd")!;
+        const lineHeight = Number.parseFloat(getComputedStyle(address).lineHeight);
+        const links = Array.from(element.querySelectorAll<HTMLAnchorElement>("a")).map((link) => {
+            const bounds = link.getBoundingClientRect();
+            return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, width: bounds.width, height: bounds.height };
+        });
+        return {
+            labels: fields.map((field) => field.querySelector("dt")?.textContent?.trim()),
+            ordered: fields.every((field, index) => index === 0 || field.getBoundingClientRect().top >= fields[index - 1].getBoundingClientRect().top - 1),
+            addressFits: address.scrollWidth <= address.clientWidth + 1,
+            addressWraps: address.scrollHeight > lineHeight + 1,
+            links,
+            viewportWidth: document.documentElement.clientWidth,
+        };
+    });
+    expect(layout.labels).toEqual(labels);
+    expect(layout.ordered).toBe(true);
+    expect(layout.addressFits).toBe(true);
+    expect(layout.links).toHaveLength(2);
+    expect(layout.links.every((link) => link.width > 0 && link.height > 0 && link.left >= -1 && link.right <= layout.viewportWidth + 1)).toBe(true);
+    if (projectName.startsWith("mobile-")) expect(layout.addressWraps).toBe(true);
+    await expectNoHorizontalOverflow(page, `${projectName} customer-service footer ${title}`);
+    await expectVisibleControlsWithinViewport(page, `${projectName} customer-service footer ${title}`);
 }
 
 const translatedLandings = {
