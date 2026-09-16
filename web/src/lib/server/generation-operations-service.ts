@@ -12,6 +12,8 @@ import {
 import { getTextPlanningRuntime } from "@/lib/server/text-planning-runtime";
 import { getDatabaseProvider } from "@/lib/server/database";
 import { listAgentRuntimeTraces } from "@/lib/server/agent-runtime-repository";
+import { createProviderHealthService } from "@/lib/server/provider-health-store";
+import { resolvedProviderRouteIdentity } from "@/lib/server/provider-health-runtime";
 
 export async function listAdminGenerationOperations(options: GenerationTaskRecordListOptions): Promise<AdminGenerationOperationsPayload> {
     const settingsPromise = getAuthSettings();
@@ -26,14 +28,14 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
         if (!child.runId) continue;
         childrenByRunId.set(child.runId, [...(childrenByRunId.get(child.runId) || []), child]);
     }
-    const items = result.items.map((record) => taskSummary(record, usersById.get(record.userId), childrenByRunId.get(record.id) || [], agentTraces.get(record.id)));
+    const [items, channels] = await Promise.all([Promise.resolve(result.items.map((record) => taskSummary(record, usersById.get(record.userId), childrenByRunId.get(record.id) || [], agentTraces.get(record.id)))), channelSummaries(settings)]);
     return {
         items,
         total: result.total,
         page: result.page,
         pageSize: result.pageSize,
         summary: result.summary,
-        channels: channelSummaries(settings),
+        channels,
         agentPerformance,
     };
 }
@@ -126,41 +128,59 @@ export function isGenerationLeaseExpired(record: Pick<StoredGenerationTaskRecord
     return (record.status === "pending" || record.status === "running") && typeof record.leaseUntil === "number" && Number.isFinite(record.leaseUntil) && record.leaseUntil <= now;
 }
 
-function channelSummaries(settings: Awaited<ReturnType<typeof getAuthSettings>>): AdminGenerationChannel[] {
+async function channelSummaries(settings: Awaited<ReturnType<typeof getAuthSettings>>): Promise<AdminGenerationChannel[]> {
     const channels = new Map(settings.systemChannels.map((channel) => [channel.id, channel]));
-    return settings.logicalModels.flatMap((model) =>
-        model.bindings.map((binding) => {
-            const channel = channels.get(binding.channelId);
-            const planning = model.capability === "text" && channel ? getTextPlanningRuntime({ channelId: channel.id, upstreamModel: binding.upstreamModel, channel }) : undefined;
-            return {
-                id: channel?.id || binding.channelId,
-                name: channel?.name || binding.channelId,
-                capability: model.capability,
-                logicalModelId: model.id,
-                logicalModelName: model.name,
-                upstreamModel: binding.upstreamModel,
-                enabled: Boolean(model.enabled && binding.enabled && channel?.enabled),
-                runtimeHealth: (() => {
-                    const health = getChannelRuntimeHealth(channel?.id || binding.channelId, model.capability);
-                    return {
-                        status: isChannelRuntimeCooling(channel?.id || binding.channelId, model.capability) ? ("cooling" as const) : ("healthy" as const),
-                        consecutiveFailures: health.consecutiveFailures,
-                        cooldownUntil: health.cooldownUntil,
-                        lastError: health.lastError,
-                    };
-                })(),
-                ...(planning
-                    ? {
-                          planningRuntime: {
-                              protocol: planning.preferred,
-                              successCount: planning.successCount,
-                              failureCount: planning.failureCount,
-                              averageLatencyMs: planning.averageLatencyMs,
-                          },
-                      }
-                    : {}),
-            };
-        }),
+    return Promise.all(
+        settings.logicalModels.flatMap((model) =>
+            model.bindings.map(async (binding) => {
+                const channel = channels.get(binding.channelId);
+                const planning = model.capability === "text" && channel ? getTextPlanningRuntime({ channelId: channel.id, upstreamModel: binding.upstreamModel, channel }) : undefined;
+                const providerHealth =
+                    model.capability === "text" && channel
+                        ? await createProviderHealthService()
+                              .get(resolvedProviderRouteIdentity({ channelId: channel.id, upstreamModel: binding.upstreamModel, channel }))
+                              .catch(() => undefined)
+                        : undefined;
+                return {
+                    id: channel?.id || binding.channelId,
+                    name: channel?.name || binding.channelId,
+                    capability: model.capability,
+                    logicalModelId: model.id,
+                    logicalModelName: model.name,
+                    upstreamModel: binding.upstreamModel,
+                    enabled: Boolean(model.enabled && binding.enabled && channel?.enabled),
+                    runtimeHealth: providerHealth
+                        ? {
+                              status: providerHealth.state,
+                              consecutiveFailures: providerHealth.consecutiveFailures,
+                              cooldownUntil: providerHealth.cooldownUntil,
+                              lastFailureClass: providerHealth.lastFailureClass,
+                              lastProviderErrorType: providerHealth.lastProviderErrorType,
+                              lastProviderErrorCode: providerHealth.lastProviderErrorCode,
+                              lastProviderStatus: providerHealth.lastProviderStatus,
+                          }
+                        : (() => {
+                              const health = getChannelRuntimeHealth(channel?.id || binding.channelId, model.capability);
+                              return {
+                                  status: isChannelRuntimeCooling(channel?.id || binding.channelId, model.capability) ? ("cooling" as const) : ("healthy" as const),
+                                  consecutiveFailures: health.consecutiveFailures,
+                                  cooldownUntil: health.cooldownUntil,
+                                  lastError: health.lastError,
+                              };
+                          })(),
+                    ...(planning
+                        ? {
+                              planningRuntime: {
+                                  protocol: planning.preferred,
+                                  successCount: planning.successCount,
+                                  failureCount: planning.failureCount,
+                                  averageLatencyMs: planning.averageLatencyMs,
+                              },
+                          }
+                        : {}),
+                };
+            }),
+        ),
     );
 }
 
@@ -201,6 +221,7 @@ function attemptTransportDiagnostic(value: unknown): AdminGenerationAttempt["tra
     const termination = source.connectionTermination;
     if (!["normal_eof", "protocol_terminal", "application_abort", "socket_reset", "body_timeout", "read_error", "provider_error"].includes(String(termination))) return undefined;
     const rootError = diagnosticError(source.rootError);
+    const providerError = diagnosticProviderError(source.providerError);
     return {
         connectionTermination: termination as NonNullable<AdminGenerationAttempt["transportDiagnostic"]>["connectionTermination"],
         framesReceived: nonNegativeNumber(source.framesReceived) || 0,
@@ -212,7 +233,21 @@ function attemptTransportDiagnostic(value: unknown): AdminGenerationAttempt["tra
         doneMarkerSeen: source.doneMarkerSeen === true,
         usageSeen: source.usageSeen === true,
         ...(nonNegativeNumber(source.elapsedMs) !== undefined ? { elapsedMs: nonNegativeNumber(source.elapsedMs) } : {}),
+        ...(providerError ? { providerError } : {}),
         ...(rootError ? { rootError } : {}),
+    };
+}
+
+function diagnosticProviderError(value: unknown): NonNullable<NonNullable<AdminGenerationAttempt["transportDiagnostic"]>["providerError"]> | undefined {
+    const source = object(value);
+    if (source.kind !== "provider_error") return undefined;
+    const status = nonNegativeNumber(source.status);
+    return {
+        kind: "provider_error",
+        ...(text(source.type) ? { type: text(source.type).slice(0, 160) } : {}),
+        ...(text(source.code) ? { code: text(source.code).slice(0, 160) } : {}),
+        ...(text(source.message) ? { message: text(source.message).slice(0, 500) } : {}),
+        ...(status !== undefined && status >= 100 && status <= 599 ? { status } : {}),
     };
 }
 

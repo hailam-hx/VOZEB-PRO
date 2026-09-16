@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
     mutateTask: vi.fn(),
     getSchedule: vi.fn(),
     currentUser: vi.fn(),
+    acquireProviderRoute: vi.fn(),
+    reportProviderFailure: vi.fn(),
+    reportProviderSuccess: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
@@ -35,6 +38,11 @@ vi.mock("@/lib/server/usage-billing-runtime", () => ({
     attachSystemAiUsageUpstreamTask: mocks.attachUpstream,
     finishSystemAiTextAttempt: mocks.finishUsage,
     releaseUsageBillingForBusiness: mocks.releaseUsage,
+}));
+vi.mock("@/lib/server/provider-health-runtime", () => ({
+    acquireTextProviderRoute: mocks.acquireProviderRoute,
+    reportTextProviderFailure: mocks.reportProviderFailure,
+    reportTextProviderSuccess: mocks.reportProviderSuccess,
 }));
 
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
@@ -68,6 +76,40 @@ describe("text task runtime recovery", () => {
             state = { ...state, ...patch };
             return state;
         });
+        mocks.acquireProviderRoute.mockResolvedValue({ eligible: true, probe: false, state: "closed" });
+        mocks.reportProviderFailure.mockResolvedValue(undefined);
+        mocks.reportProviderSuccess.mockResolvedValue(undefined);
+    });
+
+    it("skips open bindings before creating an attempt or billing and calls the healthy fallback directly", async () => {
+        state = textTask(openAiConfig("channel-one", "https://one.example"), [openAiConfig("channel-two", "https://two.example"), openAiConfig("channel-three", "https://three.example")]);
+        mocks.acquireProviderRoute.mockImplementation(async (config: TextTaskConfig) =>
+            config.channelId === "channel-three" ? { eligible: true, probe: false, state: "closed" } : { eligible: false, probe: false, state: "open", reason: "circuit_open", cooldownUntil: Date.now() + 60_000 },
+        );
+        const fetchMock = vi.fn().mockResolvedValue(sse(chatFrame("直接成功") + "data: [DONE]\n\n"));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
+
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://three.example/v1/chat/completions");
+        expect(state.attempts).toHaveLength(1);
+        expect(state.attempts?.[0]).toMatchObject({ channelId: "channel-three", status: "succeeded" });
+        expect(mocks.finishUsage).toHaveBeenCalledOnce();
+    });
+
+    it("reports a provider failure after public text without failing over", async () => {
+        state = textTask(openAiConfig("channel-one", "https://one.example"), [openAiConfig("channel-two", "https://two.example")]);
+        const fetchMock = vi.fn().mockResolvedValue(sse(chatFrame("partial") + 'data: {"error":{"type":"server_error","code":"overloaded","message":"Service overloaded","status":503}}\n\n'));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toMatchObject({ state: "failed" });
+
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(mocks.reportProviderFailure).toHaveBeenCalledWith(
+            expect.objectContaining({ channelId: "channel-one" }),
+            expect.objectContaining({ transportDiagnostic: expect.objectContaining({ providerError: expect.objectContaining({ code: "overloaded", status: 503 }) }) }),
+        );
     });
 
     it.each(["attempt", "revision"])("leaves a newer %s untouched when a delayed failure loses ownership", async (conflict) => {
@@ -211,18 +253,22 @@ describe("text task runtime recovery", () => {
         state = textTask(openAiConfig("one", "https://one.example"), [openAiConfig("two", "https://two.example")]);
         const fetchMock = vi
             .fn()
-            .mockResolvedValueOnce(sse('data: {"error":{"message":"private detail"}}\n\n'))
+            .mockResolvedValueOnce(sse('data: {"error":{"type":"server_error","code":"overloaded","message":"Service overloaded","status":503}}\n\n'))
             .mockResolvedValueOnce(sse(chatFrame("备用成功") + "data: [DONE]\n\n"));
         vi.stubGlobal("fetch", fetchMock);
         await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
         expect(state.attempts?.map((attempt) => attempt.status)).toEqual(["failed", "succeeded"]);
         expect(new Set(state.attempts?.map((attempt) => attempt.id)).size).toBe(2);
+        expect(state.attempts?.[0]).toMatchObject({
+            error: "文本流上游返回错误：type=server_error；code=overloaded；status=503；message=Service overloaded",
+            transportDiagnostic: { connectionTermination: "provider_error", providerError: { kind: "provider_error", type: "server_error", code: "overloaded", message: "Service overloaded", status: 503 } },
+        });
         state = textTask(openAiConfig("one", "https://one.example"), [openAiConfig("two", "https://two.example")]);
-        fetchMock.mockClear().mockResolvedValue(sse(chatFrame("保留部分") + 'data: {"error":{"message":"private detail"}}\n\n'));
+        fetchMock.mockClear().mockResolvedValue(sse(chatFrame("保留部分") + 'data: {"error":{"type":"server_error","code":"overloaded","message":"Service overloaded","status":503}}\n\n'));
         await expect(runTextTaskStep(state, "http://internal", "")).resolves.toMatchObject({ state: "failed" });
         expect(fetchMock).toHaveBeenCalledOnce();
         expect(state.visibleTextSnapshot?.content).toBe("保留部分");
-        expect(state.error).not.toContain("private detail");
+        expect(state.error).toContain("code=overloaded");
     });
 
     it("keeps read-error failure semantics and logs the adapter-to-attempt failed transition", async () => {
@@ -337,7 +383,7 @@ describe("text task runtime recovery", () => {
         expect(state.status).toBe("error");
         expect(state.visibleTextSnapshot?.content).toBe("部分");
         expect(state.attempts?.[0]).toMatchObject({ status: "failed", usage: { inputTokens: 7, outputTokens: 4, totalTokens: 11 } });
-        expect(state.error).not.toContain("private fixture detail");
+        expect(state.error).toContain("message=private fixture detail");
     });
 
     it("closes and settles a cancellation that wins the terminal persistence race", async () => {
@@ -694,6 +740,10 @@ describe("text task runtime recovery", () => {
 
         expect(mocks.finishUsage).toHaveBeenNthCalledWith(1, expect.any(Headers), expect.objectContaining({ status: "failed" }));
         expect(mocks.finishUsage).toHaveBeenLastCalledWith(expect.any(Headers), expect.objectContaining({ status: "succeeded" }));
+        expect(mocks.finishUsage).toHaveBeenCalledTimes(2);
+        expect(state.attempts?.[0]).toMatchObject({ status: "failed" });
+        expect(state.attempts?.[0].usage).toBeUndefined();
+        expect(state.attempts?.[0].pointsCost).toBeUndefined();
         expect(mocks.releaseUsage).not.toHaveBeenCalled();
     });
 

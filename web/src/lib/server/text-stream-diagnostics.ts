@@ -14,6 +14,14 @@ export type TextStreamDiagnosticContext = {
 
 export type TextStreamConnectionTermination = "normal_eof" | "protocol_terminal" | "application_abort" | "socket_reset" | "body_timeout" | "read_error" | "provider_error";
 
+export type SafeProviderStreamError = {
+    kind: "provider_error";
+    type?: string;
+    code?: string;
+    message?: string;
+    status?: number;
+};
+
 export type TextStreamTransportDiagnostic = TextStreamDiagnosticContext & {
     protocol: TextStreamProtocol;
     startedAt: number;
@@ -28,6 +36,7 @@ export type TextStreamTransportDiagnostic = TextStreamDiagnosticContext & {
     event: "text_stream_transport";
     connectionTermination: TextStreamConnectionTermination;
     elapsedMs: number;
+    providerError?: SafeProviderStreamError;
     rootError?: ReturnType<typeof structuredRootError>;
     abort?: { aborted: true; reason: ReturnType<typeof structuredRootError>; stage?: string | number };
 };
@@ -44,6 +53,7 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
     let terminalSeen = false;
     let doneMarkerSeen = false;
     let usageSeen = false;
+    let providerError: SafeProviderStreamError | undefined;
     let protocolCompleted = false;
     let finished = false;
 
@@ -59,6 +69,7 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
         terminalSeen,
         doneMarkerSeen,
         usageSeen,
+        ...(providerError ? { providerError } : {}),
     });
 
     return {
@@ -75,6 +86,7 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
             terminalSeen ||= metadata.terminalSeen;
             doneMarkerSeen ||= metadata.doneMarkerSeen;
             usageSeen ||= metadata.usageSeen;
+            providerError = metadata.providerError || providerError;
             protocolCompleted ||= metadata.protocolCompleted;
             if (loggingEnabled)
                 console.info("Text stream frame diagnostic", {
@@ -154,6 +166,7 @@ function inspectFrame(frame: string, protocol: TextStreamProtocol) {
     const payload = parseRecord(frame);
     if (!payload) return { eventType: "unparseable", textDelta: false, terminalSeen: false, doneMarkerSeen: false, usageSeen: false, protocolCompleted: false };
     const finishReason = providerFinishReason(payload, protocol);
+    const providerError = extractSafeProviderStreamError(payload);
     const eventType = typeof payload.type === "string" ? payload.type : protocol === "chat" ? "chat.chunk" : `${protocol}.chunk`;
     const providerTerminal = ["response.completed", "response.incomplete", "response.failed", "message_stop", "error"].includes(eventType);
     const protocolCompleted = eventType === "response.completed" || eventType === "message_stop" || (protocol === "gemini" && Boolean(finishReason));
@@ -161,10 +174,32 @@ function inspectFrame(frame: string, protocol: TextStreamProtocol) {
         eventType,
         textDelta: hasTextDelta(payload, protocol),
         finishReason,
-        terminalSeen: providerTerminal || Boolean(finishReason) || Boolean(errorRecord(payload.error)),
+        terminalSeen: providerTerminal || Boolean(finishReason) || Boolean(providerError),
         doneMarkerSeen: false,
         usageSeen: Boolean(errorRecord(payload.usage) || errorRecord(errorRecord(payload.message)?.usage) || errorRecord(errorRecord(payload.response)?.usage) || errorRecord(payload.usageMetadata)),
         protocolCompleted,
+        providerError,
+    };
+}
+
+export function extractSafeProviderStreamError(payload: Record<string, unknown>): SafeProviderStreamError | undefined {
+    const response = errorRecord(payload.response);
+    const nested = errorRecord(payload.error) || errorRecord(response?.error);
+    const eventType = errorString(payload, "type");
+    const explicitErrorEvent = eventType === "error" || eventType === "response.error" || eventType === "response.failed";
+    const topLevelError = Boolean(errorString(payload, "message") && (errorScalar(payload, "code") !== undefined || providerStatus(payload.status) !== undefined));
+    if (!nested && !explicitErrorEvent && !topLevelError) return undefined;
+
+    const type = sanitizeProviderErrorField(errorString(nested, "type") || (explicitErrorEvent ? eventType : undefined));
+    const code = sanitizeProviderErrorField(stringScalar(nested?.code) || stringScalar(payload.code) || stringScalar(response?.code));
+    const message = sanitizeProviderErrorMessage(errorString(nested, "message") || errorString(payload, "message") || errorString(response, "message"));
+    const status = providerStatus(nested?.status) ?? providerStatus(payload.status) ?? providerStatus(response?.status);
+    return {
+        kind: "provider_error",
+        ...(type ? { type } : {}),
+        ...(code ? { code } : {}),
+        ...(message ? { message } : {}),
+        ...(status !== undefined ? { status } : {}),
     };
 }
 
@@ -190,6 +225,33 @@ function redactDiagnosticMessage(value: string) {
         .replace(/(\b(?:authorization|api[_-]?key|token|secret)\b\s*[=:]\s*)([^,\s]+)/gi, "$1[redacted]")
         .replace(/(bearer\s+)[^\s,]+/gi, "$1[redacted]")
         .replace(/\bsk-[A-Za-z0-9_-]+\b/g, "[redacted]");
+}
+
+function sanitizeProviderErrorMessage(value: string | undefined) {
+    if (!value) return undefined;
+    const sanitized = redactDiagnosticMessage(value)
+        .replace(/\b(prompt|input|messages|request[\s_-]?body|body)\b\s*[=:].*$/gis, "$1=[redacted]")
+        .trim();
+    return truncate(sanitized, 500);
+}
+
+function sanitizeProviderErrorField(value: string | undefined) {
+    if (!value) return undefined;
+    const sanitized = redactDiagnosticMessage(value).trim();
+    return /^[A-Za-z0-9._:-]+$/.test(sanitized) ? truncate(sanitized, 160) : undefined;
+}
+
+function providerStatus(value: unknown) {
+    const status = typeof value === "number" ? value : typeof value === "string" && /^\d{3}$/.test(value.trim()) ? Number(value) : undefined;
+    return status !== undefined && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
+}
+
+function stringScalar(value: unknown) {
+    return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
+}
+
+function truncate(value: string, limit: number) {
+    return value.length <= limit ? value : `${value.slice(0, limit - 3)}...`;
 }
 
 function parseRecord(value: string) {

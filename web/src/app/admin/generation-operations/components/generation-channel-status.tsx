@@ -56,11 +56,17 @@ export function GenerationChannelStatus({ channels, loading }: { channels: Admin
                                                             </div>
                                                         </Tooltip>
                                                         {!binding.enabled ? <Tag className={generationOperationThemeClasses.neutralTag}>绑定停用</Tag> : null}
+                                                        {["healthy", "closed"].includes(binding.runtimeHealth.status) ? <Tag className={generationOperationThemeClasses.neutralTag}>Healthy</Tag> : null}
+                                                        {binding.runtimeHealth.status === "open" ? <Tag className={generationOperationThemeClasses.reviewTag}>Circuit Open</Tag> : null}
+                                                        {binding.runtimeHealth.status === "half_open" ? <Tag className={generationOperationThemeClasses.reviewTag}>Half-open</Tag> : null}
+                                                        {binding.runtimeHealth.status === "degraded" ? <Tag className={generationOperationThemeClasses.reviewTag}>Degraded</Tag> : null}
                                                     </div>
                                                     <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                                                        {binding.planningRuntime
-                                                            ? `规划 ${planningProtocolLabel(binding.planningRuntime.protocol)} · 平均 ${formatDuration(binding.planningRuntime.averageLatencyMs || 0)} · ${binding.planningRuntime.successCount} 成功 / ${binding.planningRuntime.failureCount} 失败`
-                                                            : "暂无规划调用样本"}
+                                                        {binding.runtimeHealth.lastProviderErrorType || binding.runtimeHealth.lastProviderErrorCode
+                                                            ? `最近错误${binding.runtimeHealth.lastProviderErrorType ? ` · type ${binding.runtimeHealth.lastProviderErrorType}` : ""}${binding.runtimeHealth.lastProviderErrorCode ? ` · code ${binding.runtimeHealth.lastProviderErrorCode}` : ""}${binding.runtimeHealth.lastProviderStatus ? ` · HTTP ${binding.runtimeHealth.lastProviderStatus}` : ""}${binding.runtimeHealth.cooldownUntil ? ` · 冷却至 ${new Date(binding.runtimeHealth.cooldownUntil).toLocaleTimeString("zh-CN", { hour12: false })}` : ""}`
+                                                            : binding.planningRuntime
+                                                              ? `规划 ${planningProtocolLabel(binding.planningRuntime.protocol)} · 平均 ${formatDuration(binding.planningRuntime.averageLatencyMs || 0)} · ${binding.planningRuntime.successCount} 成功 / ${binding.planningRuntime.failureCount} 失败`
+                                                              : "暂无规划调用样本"}
                                                     </div>
                                                 </div>
                                             ))}

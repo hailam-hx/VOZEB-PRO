@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- [上游路由] 文本逻辑模型绑定新增共享 Provider Health / Circuit Breaker：按渠道、Provider 与上游模型隔离 CLOSED/DEGRADED/OPEN/HALF_OPEN 状态，连续暂时性错误会在后续请求中跳过故障 binding，冷却后由单个原子 probe 自动恢复；跳过不会创建 Provider attempt、计费或钱包变更，公开文本后禁止切换模型的规则保持不变。
+- [Agent/可观测] TextTask 不再把上游 SSE error frame 统一压成无细节错误；常见 OpenAI-compatible error、`response.failed`、`response.error` 和顶层错误事件会保留脱敏后的 type、code、message 与 HTTP status，并写入持久 attempt diagnostic 和生成运维数据，既有公开文本边界、fallback 与计费语义保持不变。
 - [Agent/架构] 完成 Agent 稳定性重构：PostgreSQL 新增不可变计划、一等任务、DAG 依赖、租约领取、持久重试和稳定 ToolCall，Agent 通过共享生成应用层直接复用图片、视频、音频与文本运行时，不再站内 HTTP 调用自身 Route；未知上游结果不盲重提，并在现有生成运维中串联任务、Generation、资产与结算。普通复盘改为异步，严格复盘模式仍阻塞；部署以 Git SHA、Schema 和运行协议拒绝不兼容 Worker。
 - [Agent/稳定性] 图片 Responses 回退不再移除生图工具；Planner 暂时性结算失败和 child 派发失败保留原 Run 供 Worker 恢复，已完成兄弟任务与资产不会被批次失败覆盖；text child 使用服务端稳定请求身份防止重复创建。App 与 generation-worker 同时校验 build、Git SHA、Schema 和 runtime protocol，不兼容 Worker 无法领取生成或计费恢复批次。
 - [Agent/计费] 修复 Planner 已成功返回计划后，HTTP 流清理被误判为用户取消/供应商失败或较早终态重放因并发补充 Token 用量证据而触发结算冲突的问题；`cancel()` 及在途 `reader.read()` 先收到同一 Request abort 的竞态都交回业务调用方统一收尾，已结算的同身份取消记录可由有效计划安全恢复且不重复扣费，真实供应商读取失败与身份冲突仍保留原始类型和 HTTP 状态。生成运维同时展示规划结算的完整错误文本。

@@ -4,6 +4,7 @@ import { channelSupportsModel, rawModelName } from "./generation-channel";
 import { filterHealthyRuntimeCandidates } from "./channel-runtime-health";
 import { channelConnectionReady } from "@/lib/channel-protocol-registry";
 import { normalizeGenerationParameters } from "@/lib/generation-parameters";
+import { rankResolvedProviderCandidates } from "./provider-health-runtime";
 
 export type ResolvedLogicalModel = {
     logicalModelId: string;
@@ -62,6 +63,11 @@ export function resolveLogicalModelCandidates(settings: Pick<AuthSettings, "logi
             generationParameters: undefined,
         }));
     return capability === "text" ? resolved : filterHealthyRuntimeCandidates(resolved, capability);
+}
+
+export async function resolveRuntimeLogicalModelCandidates(settings: Pick<AuthSettings, "logicalModels" | "systemChannels">, capability: LogicalModelCapability, requestedModelId: string, preferredChannelId = "") {
+    const candidates = resolveLogicalModelCandidates(settings, capability, requestedModelId, preferredChannelId);
+    return rankResolvedProviderCandidates(candidates);
 }
 
 export function resolveLogicalBillingModel(logicalModels: AuthSettings["logicalModels"], capability: LogicalModelCapability, channelId: string, upstreamModel: string, preferredLogicalModelId = "") {

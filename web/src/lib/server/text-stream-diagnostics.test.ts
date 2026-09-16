@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyTextStreamTermination, createTextStreamDiagnostics, structuredRootError, type TextStreamTransportDiagnostic } from "./text-stream-diagnostics";
+import { classifyTextStreamTermination, createTextStreamDiagnostics, extractSafeProviderStreamError, structuredRootError, type TextStreamTransportDiagnostic } from "./text-stream-diagnostics";
 
 describe("text stream transport diagnostics", () => {
     it.each([
@@ -32,6 +32,38 @@ describe("text stream transport diagnostics", () => {
             syscall: "read",
             cause: { name: "SocketError", message: "api_key=[redacted]", code: "UND_ERR_SOCKET", errno: -104, syscall: "read" },
         });
+    });
+
+    it("extracts and records only safe provider error metadata", () => {
+        const payload = {
+            type: "response.failed",
+            response: {
+                error: {
+                    type: "upstream_error",
+                    code: "model_unavailable",
+                    status: "503",
+                    message: 'Model unavailable authorization=secret prompt="private content"',
+                    param: "private request field",
+                },
+            },
+        };
+        expect(extractSafeProviderStreamError(payload)).toEqual({
+            kind: "provider_error",
+            type: "upstream_error",
+            code: "model_unavailable",
+            status: 503,
+            message: "Model unavailable authorization=[redacted] prompt=[redacted]",
+        });
+
+        let result: TextStreamTransportDiagnostic | undefined;
+        const diagnostics = createTextStreamDiagnostics("responses", { source: "text_task_adapter", attemptId: "fixture" }, (diagnostic) => {
+            result = diagnostic;
+        });
+        diagnostics?.frame(JSON.stringify(payload));
+        diagnostics?.finish("provider_error");
+        expect(result?.providerError).toEqual(extractSafeProviderStreamError(payload));
+        expect(JSON.stringify(result)).not.toContain("private content");
+        expect(JSON.stringify(result)).not.toContain("private request field");
     });
 
     it.each([

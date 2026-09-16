@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     getDatabaseProvider: vi.fn(),
     listAgentRuntimeTraces: vi.fn(),
+    providerHealthGet: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-store", () => ({
@@ -25,6 +26,7 @@ vi.mock("@/lib/server/channel-runtime-health", () => ({
     getChannelRuntimeHealth: vi.fn(() => ({ channelId: "channel-one", capability: "image", consecutiveFailures: 0 })),
     isChannelRuntimeCooling: vi.fn(() => false),
 }));
+vi.mock("@/lib/server/provider-health-store", () => ({ createProviderHealthService: () => ({ get: mocks.providerHealthGet }) }));
 
 import { listAdminGenerationOperations } from "./generation-operations-service";
 
@@ -37,6 +39,7 @@ describe("generation operations aggregation", () => {
         mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", accountId: "0001", username: "creator", displayName: "创作者" }]);
         mocks.listStoredGenerationTaskRecordsByRunIds.mockResolvedValue([]);
         mocks.listAgentRuntimeTraces.mockResolvedValue(new Map());
+        mocks.providerHealthGet.mockResolvedValue({ state: "closed", consecutiveFailures: 0 });
         mocks.summarizeStoredAgentPerformance.mockResolvedValue({ sampleSize: 0, planningP50Ms: 0, planningP95Ms: 0, firstResultP50Ms: 0, firstResultP95Ms: 0, queueAverageMs: 0, upstreamAverageMs: 0, reviewAverageMs: 0 });
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
             items: [task()],
@@ -85,6 +88,34 @@ describe("generation operations aggregation", () => {
         expect(mocks.findPublicUserIdsByKeyword).not.toHaveBeenCalled();
         expect(mocks.listStoredGenerationTaskRecords).toHaveBeenCalledWith({ page: 1, search: "创作者", searchUserIds: [], includeAll: false });
         expect(mocks.summarizeStoredAgentPerformance).toHaveBeenCalledWith({ page: 1, search: "创作者", searchUserIds: [] });
+    });
+
+    it("exposes binding-level provider circuit metadata for text operations", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            systemChannels: [{ id: "channel-one", name: "主渠道", enabled: true, apiFormat: "openai", advancedConfig: {}, models: ["text-upstream"] }],
+            logicalModels: [{ id: "writer", name: "文本模型", capability: "text", enabled: true, bindings: [{ channelId: "channel-one", upstreamModel: "text-upstream", enabled: true }] }],
+        });
+        mocks.providerHealthGet.mockResolvedValue({
+            state: "open",
+            consecutiveFailures: 3,
+            cooldownUntil: 60_000,
+            lastFailureClass: "provider_transient",
+            lastProviderErrorType: "upstream_error",
+            lastProviderErrorCode: "overloaded",
+            lastProviderStatus: 503,
+        });
+
+        const result = await listAdminGenerationOperations({ page: 1 });
+
+        expect(result.channels[0].runtimeHealth).toEqual({
+            status: "open",
+            consecutiveFailures: 3,
+            cooldownUntil: 60_000,
+            lastFailureClass: "provider_transient",
+            lastProviderErrorType: "upstream_error",
+            lastProviderErrorCode: "overloaded",
+            lastProviderStatus: 503,
+        });
     });
 
     it("shows planner audit, child-task points and only marks an actually expired lease", async () => {
@@ -313,6 +344,7 @@ describe("generation operations aggregation", () => {
                                     event: "text_stream_transport",
                                     connectionTermination: "socket_reset",
                                     elapsedMs: 3600,
+                                    providerError: { kind: "provider_error", type: "upstream_error", code: "overloaded", message: "Service overloaded", status: 503 },
                                     rootError: { name: "TypeError", message: "terminated", cause: { name: "SocketError", message: "other side closed", code: "UND_ERR_SOCKET" } },
                                 },
                             },
@@ -337,7 +369,16 @@ describe("generation operations aggregation", () => {
                 usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 },
                 milestones: { upstream_started: 1000, first_byte: 1120, first_text: 1240, stream_completed: 4600 },
                 latency: { firstByteMs: 120, firstTextMs: 240, streamMs: 3600, finalizationMs: 400, totalMs: 4000 },
-                transportDiagnostic: expect.objectContaining({ connectionTermination: "socket_reset", framesReceived: 42, bytesReceived: 8192, finishReason: "stop", terminalSeen: true, doneMarkerSeen: false, usageSeen: true }),
+                transportDiagnostic: expect.objectContaining({
+                    connectionTermination: "socket_reset",
+                    framesReceived: 42,
+                    bytesReceived: 8192,
+                    finishReason: "stop",
+                    terminalSeen: true,
+                    doneMarkerSeen: false,
+                    usageSeen: true,
+                    providerError: { kind: "provider_error", type: "upstream_error", code: "overloaded", message: "Service overloaded", status: 503 },
+                }),
             }),
         ]);
     });

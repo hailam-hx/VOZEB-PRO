@@ -288,6 +288,23 @@ ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS runtime_protoc
 
 CREATE INDEX IF NOT EXISTS generation_worker_heartbeats_seen_idx ON generation_worker_heartbeats (last_seen_at DESC);
 
+CREATE TABLE IF NOT EXISTS provider_health (
+    binding_key text PRIMARY KEY,
+    scope text NOT NULL,
+    provider text NOT NULL,
+    channel_id text NOT NULL,
+    model text NOT NULL,
+    state text NOT NULL,
+    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+    updated_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    CONSTRAINT provider_health_scope CHECK (scope IN ('binding', 'channel')),
+    CONSTRAINT provider_health_state CHECK (state IN ('closed', 'degraded', 'open', 'half_open'))
+);
+
+CREATE INDEX IF NOT EXISTS provider_health_expires_idx ON provider_health (expires_at);
+CREATE INDEX IF NOT EXISTS provider_health_channel_idx ON provider_health (provider, channel_id, state);
+
 CREATE TABLE IF NOT EXISTS generation_webhook_events (
     channel_id text NOT NULL,
     event_id text NOT NULL,

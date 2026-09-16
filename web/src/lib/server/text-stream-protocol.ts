@@ -1,10 +1,13 @@
 import { createTextSseDecoder, TEXT_STREAM_COMPLETED, TEXT_STREAM_FAILED } from "./text-sse-decoder";
-import { classifyTextStreamTermination, createTextStreamDiagnostics, type TextStreamDiagnosticContext, type TextStreamTransportDiagnostic } from "./text-stream-diagnostics";
+import { classifyTextStreamTermination, createTextStreamDiagnostics, extractSafeProviderStreamError, type SafeProviderStreamError, type TextStreamDiagnosticContext, type TextStreamTransportDiagnostic } from "./text-stream-diagnostics";
 
 export type TextStreamProtocol = "chat" | "responses" | "gemini" | "claude";
 
 export type NormalizedTextStreamEvent =
-    { type: "text_delta"; text: string } | { type: "usage"; inputTokens?: number; outputTokens?: number; totalTokens?: number } | { type: "completed" } | { type: "error"; message: string; status?: number; contract?: true };
+    | { type: "text_delta"; text: string }
+    | { type: "usage"; inputTokens?: number; outputTokens?: number; totalTokens?: number }
+    | { type: "completed" }
+    | { type: "error"; message: string; status?: number; contract?: true; providerError?: SafeProviderStreamError };
 
 type TextStreamOptions = { onFirstByte?: () => void | Promise<void>; signal?: AbortSignal; diagnosticContext?: TextStreamDiagnosticContext; onDiagnostic?: (diagnostic: TextStreamTransportDiagnostic) => void };
 type UsageState = { inputTokens?: number; outputTokens?: number };
@@ -93,10 +96,16 @@ function streamEvents(frame: string, protocol: TextStreamProtocol, usageState: U
     if (!payload) return { events: [], completed: false };
     const events: NormalizedTextStreamEvent[] = [];
     const usage = normalizedUsage(payload, usageState);
-    if (hasStreamError(payload)) {
+    const providerError = extractSafeProviderStreamError(payload);
+    if (providerError) {
         reportDiagnostic(protocol, "stream_error");
         if (usage) events.push({ type: "usage", ...usage });
-        events.push({ type: "error", message: "文本流上游返回错误" });
+        events.push({
+            type: "error",
+            message: providerStreamErrorMessage(providerError),
+            ...(providerError.status === undefined ? {} : { status: providerError.status }),
+            providerError,
+        });
         return { events, completed: false };
     }
     const text = streamedText(payload, protocol);
@@ -135,7 +144,12 @@ function normalizedUsage(payload: Record<string, unknown>, state: UsageState) {
 }
 
 function hasStreamError(payload: Record<string, unknown>) {
-    return Boolean(record(payload.error) || record(record(payload.response)?.error) || payload.type === "error" || payload.type === "response.failed");
+    return Boolean(extractSafeProviderStreamError(payload));
+}
+
+function providerStreamErrorMessage(error: SafeProviderStreamError) {
+    const details = [error.type ? `type=${error.type}` : undefined, error.code ? `code=${error.code}` : undefined, error.status !== undefined ? `status=${error.status}` : undefined, error.message ? `message=${error.message}` : undefined].filter(Boolean);
+    return details.length ? `文本流上游返回错误：${details.join("；")}` : "文本流上游返回错误";
 }
 
 export function textStreamTerminalStatus(payload: Record<string, unknown> | string): "succeeded" | "failed" | undefined {

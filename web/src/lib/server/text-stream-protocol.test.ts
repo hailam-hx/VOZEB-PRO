@@ -40,11 +40,57 @@ describe("normalized text stream protocol", () => {
     });
 
     it("emits response.failed usage before the safe error", async () => {
-        const frames = ['data: {"type":"response.failed","response":{"id":"resp_fixture","status":"failed","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7},"error":{"code":"server_error","message":"private"}}}'];
+        const frames = [
+            'data: {"type":"response.failed","response":{"id":"resp_fixture","status":"failed","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7},"error":{"type":"upstream_error","code":"server_error","message":"Service unavailable","status":503}}}',
+        ];
         expect(await read(normalizeTextStream(sseResponse(frames, [3]), "responses"))).toEqual([
             { type: "usage", inputTokens: 5, outputTokens: 2, totalTokens: 7 },
-            { type: "error", message: "文本流上游返回错误" },
+            {
+                type: "error",
+                message: "文本流上游返回错误：type=upstream_error；code=server_error；status=503；message=Service unavailable",
+                status: 503,
+                providerError: { kind: "provider_error", type: "upstream_error", code: "server_error", message: "Service unavailable", status: 503 },
+            },
         ]);
+    });
+
+    it.each([
+        {
+            name: "OpenAI nested error",
+            frame: 'data: {"error":{"type":"server_error","code":"overloaded","message":"Service overloaded","status":429}}',
+            expected: { kind: "provider_error", type: "server_error", code: "overloaded", message: "Service overloaded", status: 429 },
+        },
+        {
+            name: "response.error",
+            frame: 'data: {"type":"response.error","response":{"error":{"type":"invalid_request_error","code":"model_unavailable","message":"Model unavailable"}},"status":503}',
+            expected: { kind: "provider_error", type: "invalid_request_error", code: "model_unavailable", message: "Model unavailable", status: 503 },
+        },
+        {
+            name: "top-level provider error",
+            frame: 'data: {"type":"error","code":"rate_limit","message":"Too many requests","status":429}',
+            expected: { kind: "provider_error", type: "error", code: "rate_limit", message: "Too many requests", status: 429 },
+        },
+    ])("preserves a safe structured summary for $name", async ({ frame, expected }) => {
+        const [event] = await read(normalizeTextStream(sseResponse([frame], [2]), "responses"));
+
+        expect(event).toMatchObject({ type: "error", status: expected.status, providerError: expected });
+    });
+
+    it("redacts credentials, request echoes and sensitive URLs from provider messages", async () => {
+        const secretMessage = 'Bearer sk-secret api_key=private authorization=private prompt="private user prompt" https://provider.example/path?token=secret';
+        const [event] = await read(normalizeTextStream(sseResponse([`data: ${JSON.stringify({ error: { type: "server_error", code: "unsafe", message: secretMessage } })}`], [7]), "chat"));
+        const serialized = JSON.stringify(event);
+
+        expect(serialized).toContain("[redacted]");
+        expect(serialized).not.toContain("sk-secret");
+        expect(serialized).not.toContain("private user prompt");
+        expect(serialized).not.toContain("provider.example");
+    });
+
+    it("truncates an excessively long provider error message", async () => {
+        const [event] = await read(normalizeTextStream(sseResponse([`data: ${JSON.stringify({ error: { message: "x".repeat(2_000) } })}`], [11]), "chat"));
+
+        expect(event).toMatchObject({ type: "error", providerError: { kind: "provider_error", message: `${"x".repeat(497)}...` } });
     });
     it.each([
         ["chat", ['data: {"choices":[{"delta":{"content":"你","reasoning_content":"hidden","tool_calls":[{}]}}]}', 'data: {"choices":[{"delta":{"content":"好"}}]}', 'data: {"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}']] as const,
@@ -96,8 +142,14 @@ describe("normalized text stream protocol", () => {
         await expect(read(normalizeTextStream(new Response("<html>upstream token=secret</html>", { status: 502 }), "chat"))).resolves.toEqual([{ type: "error", message: "文本流请求失败（HTTP 502）", status: 502 }]);
     });
 
-    it("does not expose a raw provider SSE error", async () => {
-        await expect(read(normalizeTextStream(sseResponse(['event: error\ndata: {"type":"error","error":{"message":"internal upstream details"}}'], [1024]), "claude"))).resolves.toEqual([{ type: "error", message: "文本流上游返回错误" }]);
+    it("keeps only the safe provider SSE error summary", async () => {
+        await expect(read(normalizeTextStream(sseResponse(['event: error\ndata: {"type":"error","error":{"message":"internal upstream details","param":"secret request body"}}'], [1024]), "claude"))).resolves.toEqual([
+            {
+                type: "error",
+                message: "文本流上游返回错误：type=error；message=internal upstream details",
+                providerError: { kind: "provider_error", type: "error", message: "internal upstream details" },
+            },
+        ]);
     });
 
     it("reports EOF before a native terminal event as a contract error", async () => {

@@ -5,7 +5,7 @@ import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { fetchInternalApi, isInternalApiBaseUrl } from "@/lib/server/internal-origin";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationModelId } from "@/lib/server/generation-channel";
-import { recordChannelRuntimeFailure, recordChannelRuntimeSuccess } from "@/lib/server/channel-runtime-health";
+import { acquireTextProviderRoute, reportTextProviderFailure, reportTextProviderSuccess } from "@/lib/server/provider-health-runtime";
 import { acceptTextTaskSnapshot, closeTextTaskAttempt, openTextTaskAttempt, getTextTask, transitionTextTask, type TextTask, type TextTaskConfig, type TextTaskSnapshotUpdate } from "@/lib/server/text-task-store";
 import { updateTextTask } from "@/lib/server/text-task-store";
 import type { AiTextMessage } from "@/types/ai";
@@ -76,6 +76,11 @@ async function executeTextTaskStep(task: TextTask, origin: string, cookie: strin
     let latestError = "没有可用的文本渠道";
     let ownedTask = running;
     for (const [index, config] of candidates.entries()) {
+        const route = await acquireTextProviderRoute(config);
+        if (!route.eligible) {
+            latestError = "文本模型渠道暂时不可用，请稍后重试";
+            continue;
+        }
         const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/"), preserveNativeProtocol: true });
         const candidateTask = await openTextTaskAttempt(ownedTask, config, protocol.kind, candidates.slice(index + 1));
         if (!candidateTask) return { state: "failed", error: "文本任务状态已变化" };
@@ -141,7 +146,11 @@ async function executeTextTaskStep(task: TextTask, origin: string, cookie: strin
             }
             await options.onAttemptState?.(closed);
             ownedTask = closed;
-            if (config.channelId) recordChannelRuntimeFailure(config.channelId, "text", message);
+            await reportTextProviderFailure(config, {
+                error,
+                status: error instanceof GenerationSubmissionSafeFailure ? error.status : undefined,
+                transportDiagnostic: runtime.transportDiagnostic,
+            });
             // Once public text exists, a provider change would overwrite an answer the user has seen.
             if (runtime.snapshot.content || (!protocol.supportsStreaming && !(error instanceof GenerationSubmissionSafeFailure)) || (error instanceof GenerationSubmissionUncertainError && !isTextRequestTimeout(reason)))
                 return failTextTask(closed, message);
@@ -403,7 +412,7 @@ async function completeTextTask(
     if (completed) {
         await closeTextTaskAttempt(task.id, task.activeAttemptId!, "succeeded", { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, transportDiagnostic: billing.transportDiagnostic }, activeRevision(current));
         await updateTextTask(task.id, { config: clearSecret(current.config), candidateConfigs: [] });
-        if (current.config.channelId) recordChannelRuntimeSuccess(current.config.channelId, "text");
+        await reportTextProviderSuccess(current.config);
     }
     if (!completed && hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
     if (completed && billing.usageHeaders) await finishSystemAiTextAttempt(billing.usageHeaders, { status: "succeeded", payload: billing.usagePayload, normalizedUsage: billing.normalizedUsage });
