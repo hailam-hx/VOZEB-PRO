@@ -16,6 +16,8 @@ import { normalizeAgentRunCanvasSnapshot, selectedCanvasNodeIds } from "./agent-
 import type { VoiceSelection } from "@/lib/voice-selection";
 import { applyAgentTextEvent, type AgentTextState, type AgentTextEvent } from "@/lib/agent-text-stream";
 import { getTextTask, type TextTask } from "./text-task-store";
+import { getDatabaseProvider } from "./database";
+import { getPostgresAgentRun } from "./agent-runtime-repository";
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentRunFailureStage = "planning" | "planner_settlement" | "task_dispatch" | "task_execution";
@@ -238,7 +240,7 @@ async function assertVideoFrameAssets(userId: string, input: CreativeRunRequest)
     }
 }
 
-export const getAgentRun = (id: string) => getStoredGenerationTask<AgentRun>("agent", id);
+export const getAgentRun = (id: string) => (getDatabaseProvider() === "postgres" ? getPostgresAgentRun(id) : getStoredGenerationTask<AgentRun>("agent", id));
 export async function resolveAgentTextTaskContext(userId: string, value: unknown): Promise<TextTask["executionContext"] | null> {
     if (!value || typeof value !== "object") return null;
     const { runId, parentTaskId, executionId } = value as Record<string, unknown>;

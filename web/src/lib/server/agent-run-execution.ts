@@ -18,7 +18,10 @@ import { agentRunCompletionReply, agentRunFailureMessage, resultSummary } from "
 import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
+import { generationTaskNextPollAt } from "@/lib/server/generation-task-scheduler";
 import { linkStoredGenerationTask } from "@/lib/server/generation-task-store";
+import { getDatabaseProvider } from "@/lib/server/database";
+import { claimDueAgentTasks, deferAgentTask } from "@/lib/server/agent-runtime-repository";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-reference-contract";
 import type { AgentFunctionCallResult } from "./agent-function-call";
@@ -562,7 +565,14 @@ export async function executeTasks(runId: string, origin: string, cookie: string
         const run = await getAgentRun(runId);
         if (!run) return;
         const completed = new Set(run.tasks.filter((task) => task.status === "completed").map((task) => task.id));
-        const ready = run.tasks.filter((task) => (task.status === "ready" || task.status === "running") && task.dependencies.every((id) => completed.has(id))).slice(0, settings.generationConcurrency.agent);
+        const candidates = run.tasks.filter((task) => (task.status === "ready" || task.status === "running") && task.dependencies.every((id) => completed.has(id)));
+        let ready = candidates.slice(0, settings.generationConcurrency.agent);
+        if (usesPostgresAgentRuntime() && ready.length) {
+            const claimed = await claimDueAgentTasks({ workerId: executionId, runId, limit: settings.generationConcurrency.agent });
+            const claimedKeys = new Set(claimed.map((item) => String((item as { task_key?: unknown }).task_key || "")));
+            ready = ready.filter((task) => claimedKeys.has(task.id));
+            if (!ready.length) return;
+        }
         if (!ready.length) {
             if (run.tasks.every((task) => task.status === "completed")) {
                 if (!run.reviewed && shouldBlockOnReview(run)) {
@@ -862,6 +872,9 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
             const waitingMessage = latestTask?.childSlots?.find((slot) => slot.status === "failed")?.error || error.message;
             if (latestTask && latestTask.error !== waitingMessage && (await canContinue(runId, executionId))) {
                 await patchTask(runId, task.id, { error: waitingMessage }, "task.waiting", executionId);
+            }
+            if (usesPostgresAgentRuntime()) {
+                await deferAgentTask(runId, Math.max(1, latest?.planningCycle || 1), task.id, executionId, generationTaskNextPollAt({ consecutiveErrors: Math.max(1, latestTask?.attempts || 1) }), waitingMessage);
             }
             return "deferred" as const;
         }
@@ -1213,4 +1226,8 @@ function runtimeRequestHeaders(cookie: string, initial?: HeadersInit) {
     if (workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (cookie) headers.set("cookie", cookie);
     return headers;
+}
+
+function usesPostgresAgentRuntime() {
+    return getDatabaseProvider() === "postgres" && Boolean(process.env.DATABASE_URL?.trim() || process.env.POSTGRES_URL?.trim());
 }
