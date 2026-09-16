@@ -124,7 +124,7 @@ describe("usage billing runtime", () => {
         await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).rejects.toMatchObject({ code: "load_attempt:usage_attempt_missing" });
     });
 
-    it("treats a provider price card that requires an unavailable usage dimension as non-retryable integrity failure", async () => {
+    it("rejects a provider price card incompatible with the reserved capability before creating an attempt", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",
             businessId: "agent-plan:invalid-cost-dimension",
@@ -134,6 +134,32 @@ describe("usage billing runtime", () => {
             requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
             description: "planner invalid provider price fixture",
         });
+        expect(() =>
+            recordUsageProviderAttempt({
+                billing,
+                attemptNumber: 1,
+                status: "pending",
+                provider: "fixture",
+                bindingId: "binding",
+                nativeCostAmount: "0",
+                nativeCostUnit: { kind: "fiat", currency: "USD" },
+                costRateSnapshot: { version: 1, components: [{ id: "invalid-text-count", dimension: "count", unitPrice: "1" }] },
+                observedUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "5", outputTokens: "2" }),
+            }),
+        ).toThrow("文本能力价格卡不支持维度：count");
+        expect((await readAuthDb()).providerUsageAttempts).toEqual([]);
+    });
+
+    it("logs actionable context when a legacy attempt snapshot is missing a required pricing dimension", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "agent-plan:legacy-invalid-cost-dimension",
+            requestFingerprint: "4".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "planner legacy provider price fixture",
+        });
         await recordUsageProviderAttempt({
             billing,
             attemptNumber: 1,
@@ -142,16 +168,36 @@ describe("usage billing runtime", () => {
             bindingId: "binding",
             nativeCostAmount: "0",
             nativeCostUnit: { kind: "fiat", currency: "USD" },
-            costRateSnapshot: { version: 1, components: [{ id: "invalid-text-count", dimension: "count", unitPrice: "1" }] },
+            costRateSnapshot: { version: 1, components: [{ id: "output-tokens", dimension: "outputTokens", unitPrice: "1" }] },
+            normalizedUsage: normalizeBillableUsage({ capability: "text", source: "reserve", inputTokens: "5", outputTokens: "10" }),
             observedUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "5", outputTokens: "2" }),
         });
-        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }));
+        const db = await readAuthDb();
+        db.providerUsageAttempts[0].costRateSnapshot = { version: 1, components: [{ id: "output-tokens", dimension: "count", unitPrice: "1" }] };
+        await writeAuthDb(db);
+        const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-        await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).rejects.toMatchObject({
-            name: "UsageBillingIntegrityError",
-            code: "finish_attempt:pricing_usage_dimension_missing",
-            message: "缺少价格维度：count",
-        });
+        await expect(finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed" })).rejects.toMatchObject({ requiredDimension: "count", priceComponentId: "output-tokens" });
+        expect(errorLog).toHaveBeenCalledWith(
+            "Usage provider attempt pricing dimension missing",
+            expect.objectContaining({
+                holdId: billing.holdId,
+                attemptId: expect.stringContaining("provider-attempt:"),
+                taskId: undefined,
+                runId: undefined,
+                provider: "fixture",
+                model: "writer",
+                capability: "text",
+                priceCardId: expect.stringContaining("rate-card-v1:"),
+                priceComponentId: "output-tokens",
+                requiredDimension: "count",
+                usageKeys: expect.arrayContaining(["capability", "inputTokens", "outputTokens", "source"]),
+                requestedUsage: expect.objectContaining({ inputTokens: "5" }),
+                normalizedUsage: expect.objectContaining({ inputTokens: "5", outputTokens: "2" }),
+                attemptStatus: "pending",
+                holdStatus: "active",
+            }),
+        );
     });
 
     it("preserves the provider-attempt conflict type and status during planner finalization", async () => {
@@ -1067,6 +1113,40 @@ describe("orphan usage recovery", () => {
         expect(db.walletHolds[0]).toMatchObject({ status: "released", releaseReason: "供应商状态未知" });
         expect(db.providerUsageAttempts[0]).toMatchObject({ status: "failed", nativeCostAmount: "0.375", normalizedUsage: { count: "1", resolution: "1024x1024" } });
         expect(db.usageCharges).toEqual([]);
+    });
+
+    it("preserves a requested count greater than one when failed recovery has partial provider evidence", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "runtime:unknown-partial-multi-output",
+            requestFingerprint: createHash("sha256").update("unknown-partial-multi-output").digest("hex"),
+            logicalModelId: "image-pro",
+            saleRateSnapshot: imageSale,
+            requestUsage: normalizeBillableUsage({ capability: "image", source: "request", count: 3, resolution: "1024x1024" }),
+            description: "图片生成预留",
+            expiresAt: new Date("2026-08-23T00:00:00.000Z"),
+        });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "vendor",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "0.375" }] },
+            normalizedUsage: normalizeBillableUsage({ capability: "image", source: "reserve", count: 3, resolution: "1024x1024" }),
+            observedUsage: normalizeBillableUsage({ capability: "image", source: "actual", resolution: "1024x1024" }),
+        });
+
+        await recoverOrphanUsageHolds({ limit: 5, now: new Date("2026-08-23T01:00:00.000Z"), inspect: vi.fn(async () => ({ state: "unknown" as const, reason: "供应商状态未知" })) });
+        await recoverOrphanUsageHolds({ limit: 5, now: new Date("2026-08-23T02:00:00.000Z"), inspect: vi.fn(async () => ({ state: "unknown" as const, reason: "供应商状态未知" })) });
+        const db = await readAuthDb();
+
+        expect(db.walletHolds[0]).toMatchObject({ status: "released" });
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "failed", nativeCostAmount: "1.125", normalizedUsage: { count: "3", resolution: "1024x1024" } });
+        expect(db.usageCharges).toEqual([]);
+        expect(db.pointRecords).toEqual([expect.objectContaining({ id: "opening-credit" })]);
     });
 
     it("advances bounded recovery after releasing an unknown hold", async () => {

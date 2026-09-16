@@ -75,16 +75,23 @@ export type FinalSaleCharge = {
 
 export class PricingUsageDimensionError extends Error {
     readonly code = "pricing_usage_dimension_missing";
+    readonly requiredDimension: PricingDimension;
+    readonly priceComponentId: string;
+    readonly priceCardId: string;
 
-    constructor(message: string) {
-        super(message);
+    constructor(input: { message: string; requiredDimension: PricingDimension; priceComponentId: string; priceCardId: string }) {
+        super(input.message);
         this.name = "PricingUsageDimensionError";
+        this.requiredDimension = input.requiredDimension;
+        this.priceComponentId = input.priceComponentId;
+        this.priceCardId = input.priceCardId;
     }
 }
 
 const numericDimensions = new Set<PricingDimension>(["request", "inputTokens", "cachedInputTokens", "outputTokens", "count", "megapixels", "characters", "durationSeconds"]);
 const categoricalDimensions = new Set<PricingDimension>(["quality", "resolution", "format"]);
 const conditionDimensions: PricingConditionDimension[] = ["quality", "resolution", "format"];
+const textPricingDimensions = new Set<PricingDimension>(["request", "inputTokens", "cachedInputTokens", "outputTokens", "characters"]);
 
 export function validatePricingRateCard(input: unknown): ValidatedPricingRateCardV1 {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("价格卡必须是对象");
@@ -93,6 +100,17 @@ export function validatePricingRateCard(input: unknown): ValidatedPricingRateCar
     const ids = new Set<string>();
     const components = value.components.map((component) => normalizeComponent(component, ids));
     return { version: 1, revision: pricingRateCardRevision(components), components };
+}
+
+export function validatePricingRateCardForCapability(input: unknown, capability: BillableCapability): ValidatedPricingRateCardV1 {
+    const rateCard = validatePricingRateCard(input);
+    if (capability !== "text") return rateCard;
+    for (const component of rateCard.components) {
+        if (!textPricingDimensions.has(component.dimension)) throw new Error(`文本能力价格卡不支持维度：${component.dimension}`);
+        const unsupportedCondition = conditionDimensions.find((dimension) => component.when?.[dimension] !== undefined);
+        if (unsupportedCondition) throw new Error(`文本能力价格卡不支持条件维度：${unsupportedCondition}`);
+    }
+    return rateCard;
 }
 
 export function normalizePricingRateCard(input: unknown) {
@@ -174,14 +192,14 @@ function normalizeComponent(input: unknown, ids: Set<string>): PricingComponent 
 }
 
 function priceUsage(rateCard: ValidatedPricingRateCardV1, usage: NormalizedUsage) {
-    return rateCard.components.reduce((total, component) => total.plus(priceComponent(component, usage)), decimal(0));
+    return rateCard.components.reduce((total, component) => total.plus(priceComponent(rateCard, component, usage)), decimal(0));
 }
 
-function priceComponent(component: PricingComponent, usage: NormalizedUsage) {
+function priceComponent(rateCard: ValidatedPricingRateCardV1, component: PricingComponent, usage: NormalizedUsage) {
     for (const dimension of conditionDimensions) {
         const expected = component.when?.[dimension];
         if (expected === undefined) continue;
-        if (usage[dimension] === undefined) throw new PricingUsageDimensionError(`缺少价格条件维度：${dimension}`);
+        if (usage[dimension] === undefined) throw new PricingUsageDimensionError({ message: `缺少价格条件维度：${dimension}`, requiredDimension: dimension, priceComponentId: component.id, priceCardId: rateCard.revision });
     }
     for (const dimension of conditionDimensions) {
         const expected = component.when?.[dimension];
@@ -189,7 +207,7 @@ function priceComponent(component: PricingComponent, usage: NormalizedUsage) {
         if (usage[dimension] !== expected) return decimal(0);
     }
     const value = usage[component.dimension];
-    if (value === undefined) throw new PricingUsageDimensionError(`缺少价格维度：${component.dimension}`);
+    if (value === undefined) throw new PricingUsageDimensionError({ message: `缺少价格维度：${component.dimension}`, requiredDimension: component.dimension, priceComponentId: component.id, priceCardId: rateCard.revision });
     if (categoricalDimensions.has(component.dimension)) {
         if (value !== component.match) return decimal(0);
         const count = usage.count === undefined ? decimal(1) : decimal(usage.count, "生成数量");

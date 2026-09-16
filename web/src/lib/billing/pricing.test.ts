@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { calculateFinalSaleCharge, calculateNormalizedUsagePrice, calculatePricingReserve, normalizeBillableUsage, validatePricingRateCard, type PricingRateCardV1 } from "./pricing";
+import { calculateFinalSaleCharge, calculateNormalizedUsagePrice, calculatePricingReserve, normalizeBillableUsage, validatePricingRateCard, validatePricingRateCardForCapability, type PricingRateCardV1 } from "./pricing";
 import { decimal } from "./decimal";
 
 const textRateCard: PricingRateCardV1 = {
@@ -36,7 +36,24 @@ describe("pricing", () => {
                 rateCard: { version: 1, components: [{ id: "invalid-text-count", dimension: "count", unitPrice: "1" }] },
                 usage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "120", outputTokens: "80" }),
             }),
-        ).toThrow(expect.objectContaining({ name: "PricingUsageDimensionError", code: "pricing_usage_dimension_missing", message: "缺少价格维度：count" }));
+        ).toThrow(expect.objectContaining({ name: "PricingUsageDimensionError", code: "pricing_usage_dimension_missing", message: "缺少价格维度：count", requiredDimension: "count", priceComponentId: "invalid-text-count" }));
+    });
+
+    it("rejects media-only dimensions in a text price card before it can be persisted", () => {
+        expect(() => validatePricingRateCardForCapability({ version: 1, components: [{ id: "invalid-text-count", dimension: "count", unitPrice: "1" }] }, "text")).toThrow("文本能力价格卡不支持维度：count");
+        expect(() =>
+            validatePricingRateCardForCapability(
+                {
+                    version: 1,
+                    components: [
+                        { id: "input", dimension: "inputTokens", unitPrice: "1", per: "1000000" },
+                        { id: "cached", dimension: "cachedInputTokens", unitPrice: "0.1", per: "1000000" },
+                        { id: "output", dimension: "outputTokens", unitPrice: "2", per: "1000000" },
+                    ],
+                },
+                "text",
+            ),
+        ).not.toThrow();
     });
 
     it.each(["image", "video", "audio"] as const)("reserves %s with every configured price-affecting dimension", (capability) => {

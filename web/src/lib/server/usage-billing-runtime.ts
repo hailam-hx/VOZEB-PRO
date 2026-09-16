@@ -6,7 +6,7 @@ import {
     calculatePricingReserve,
     normalizeBillableUsage,
     PricingUsageDimensionError,
-    validatePricingRateCard,
+    validatePricingRateCardForCapability,
     type FinalSaleCharge,
     type NormalizedUsage,
     type PricingRateCardV1,
@@ -65,7 +65,7 @@ export type UsageProviderAttemptInput = {
 };
 
 export async function reserveUsageBilling(input: ReserveUsageBillingInput): Promise<UsageBilling> {
-    const saleRateSnapshot = validatePricingRateCard(input.saleRateSnapshot);
+    const saleRateSnapshot = validatePricingRateCardForCapability(input.saleRateSnapshot, input.requestUsage.capability);
     const reserve = calculatePricingReserve({ rateCard: saleRateSnapshot, usage: input.requestUsage });
     const snapshot: UsageBillingHoldSnapshot = {
         version: 1,
@@ -109,6 +109,8 @@ export async function reuseExistingUsageBilling(input: Pick<ReserveUsageBillingI
 
 export function recordUsageProviderAttempt(input: UsageProviderAttemptInput) {
     const nativeCostUnit = validateProviderCostUnit(input.nativeCostUnit);
+    const costRateSnapshot = input.costRateSnapshot ? validatePricingRateCardForCapability(input.costRateSnapshot, input.billing.snapshot.capability) : undefined;
+    assertUsageCapability(input.billing.snapshot, input.normalizedUsage, input.observedUsage);
     return recordProviderUsageAttempt({
         id: stableId("provider-attempt", input.billing.businessId, String(input.attemptNumber)),
         holdId: input.billing.holdId,
@@ -122,7 +124,7 @@ export function recordUsageProviderAttempt(input: UsageProviderAttemptInput) {
         upstreamTaskId: input.upstreamTaskId,
         nativeCostAmount: input.nativeCostAmount,
         nativeCostUnit,
-        costRateSnapshot: input.costRateSnapshot,
+        costRateSnapshot,
         normalizedUsage: input.normalizedUsage,
         observedUsage: input.observedUsage,
         now: input.now,
@@ -140,9 +142,14 @@ export async function finishUsageProviderAttempt(input: { billing: UsageBilling;
     const attempt = attempts.find((item) => item.attemptNumber === input.attemptNumber);
     if (!attempt) throw new Error("供应商尝试不存在");
     assertUsageCapability(input.billing.snapshot, input.normalizedUsage, attempt.normalizedUsage, attempt.observedUsage);
-    const observedUsage = attempt.observedUsage ? normalizeBillableUsage({ ...(attempt.normalizedUsage || {}), ...attempt.observedUsage }) : undefined;
-    const usage = input.normalizedUsage || observedUsage || (input.status === "failed" ? undefined : attempt.normalizedUsage);
-    const nativeCostAmount = attempt.costRateSnapshot && usage ? calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage }) : attempt.nativeCostAmount;
+    const usage = canonicalProviderAttemptUsage({ snapshot: input.billing.snapshot, attempt, status: input.status, suppliedUsage: input.normalizedUsage });
+    let nativeCostAmount = attempt.nativeCostAmount;
+    try {
+        if (attempt.costRateSnapshot && usage) nativeCostAmount = calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage });
+    } catch (error) {
+        if (error instanceof PricingUsageDimensionError && usage) logMissingPricingDimension({ billing: input.billing, attempt, usage, error });
+        throw error;
+    }
     return recordUsageProviderAttempt({
         billing: input.billing,
         attemptNumber: attempt.attemptNumber,
@@ -248,14 +255,14 @@ export async function finishSystemAiTextAttempt(headers: Headers, input: { statu
 
 type BillingFinalizationStep = "load_hold" | "load_attempt" | "finish_attempt" | "settle_hold";
 
-function billingIntegrityError(step: BillingFinalizationStep, code: string, message: string) {
-    return Object.assign(new Error(message), { name: "UsageBillingIntegrityError", code: `${step}:${code}`, billingStage: step });
+function billingIntegrityError(step: BillingFinalizationStep, code: string, message: string, details?: Record<string, unknown>) {
+    return Object.assign(new Error(message), { name: "UsageBillingIntegrityError", code: `${step}:${code}`, billingStage: step, ...details });
 }
 
 function billingFinalizationStepError(step: BillingFinalizationStep, error: unknown) {
     if (error && typeof error === "object" && "billingStage" in error) return error;
     const source = error instanceof Error ? error : new Error(String(error));
-    if (source instanceof PricingUsageDimensionError) return billingIntegrityError(step, source.code, source.message);
+    if (source instanceof PricingUsageDimensionError) return billingIntegrityError(step, source.code, source.message, { requiredDimension: source.requiredDimension, priceComponentId: source.priceComponentId, priceCardId: source.priceCardId });
     const record = source as Error & { code?: unknown; status?: unknown };
     const constructorName = source.constructor?.name;
     const code = typeof record.code === "string" && record.code.trim() ? record.code.trim() : source.name !== "Error" ? source.name : constructorName && constructorName !== "Error" ? constructorName : "Error";
@@ -460,6 +467,39 @@ async function finishPendingAttempts(billing: UsageBilling, status: "succeeded" 
 
 function assertUsageCapability(snapshot: UsageBillingHoldSnapshot, ...usageValues: Array<NormalizedUsage | undefined>) {
     for (const usage of usageValues) if (usage && usage.capability !== snapshot.capability) throw new Error("结算用量能力与预留不一致");
+}
+
+function canonicalProviderAttemptUsage(input: { snapshot: UsageBillingHoldSnapshot; attempt: ProviderUsageAttempt; status: "succeeded" | "failed" | "canceled"; suppliedUsage?: NormalizedUsage }) {
+    const evidence = input.suppliedUsage || input.attempt.observedUsage;
+    if (input.status === "failed" && !evidence) return undefined;
+    const baseline = input.attempt.normalizedUsage || input.snapshot.requestUsage;
+    return normalizeBillableUsage({
+        ...baseline,
+        ...input.attempt.observedUsage,
+        ...input.suppliedUsage,
+        capability: input.snapshot.capability,
+        source: evidence?.source || baseline.source,
+    });
+}
+
+function logMissingPricingDimension(input: { billing: UsageBilling; attempt: ProviderUsageAttempt; usage: NormalizedUsage; error: PricingUsageDimensionError }) {
+    console.error("Usage provider attempt pricing dimension missing", {
+        holdId: input.billing.holdId,
+        attemptId: input.attempt.id,
+        taskId: input.billing.snapshot.recovery?.taskId,
+        runId: undefined,
+        provider: input.attempt.provider,
+        model: input.billing.snapshot.logicalModelId,
+        capability: input.billing.snapshot.capability,
+        priceCardId: input.error.priceCardId,
+        priceComponentId: input.error.priceComponentId,
+        requiredDimension: input.error.requiredDimension,
+        usageKeys: Object.keys(input.usage).sort(),
+        requestedUsage: input.billing.snapshot.requestUsage,
+        normalizedUsage: input.usage,
+        attemptStatus: input.attempt.status,
+        holdStatus: "active",
+    });
 }
 
 function persistedDerivedUsage(taskType: "text" | "image" | "video" | "audio" | "voice-clone", task: unknown, snapshot: UsageBillingHoldSnapshot) {

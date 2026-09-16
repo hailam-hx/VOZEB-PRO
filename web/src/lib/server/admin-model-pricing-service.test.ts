@@ -27,6 +27,14 @@ const logicalModels = [
     },
 ];
 
+const textModel = {
+    id: "text-pro",
+    name: "Text Pro",
+    capability: "text" as const,
+    enabled: true,
+    bindings: [{ id: "text-binding", channelId: "channel-one", upstreamModel: "text-pro-v1", enabled: true, priority: 1 }],
+};
+
 describe("admin model pricing service", () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -73,5 +81,23 @@ describe("admin model pricing service", () => {
             }),
         ).rejects.toMatchObject({ status: 400, message: "绑定成本价格卡与供应商成本单位必须同时配置" });
         expect(mocks.mutateAuthLogicalModels).toHaveBeenCalledOnce();
+    });
+
+    it("rejects a count-based cost card for a text model", async () => {
+        mocks.getFreshAuthSettings.mockResolvedValue({ logicalModels: [textModel], systemChannels: [] });
+        mocks.mutateAuthLogicalModels.mockImplementation(async (mutator) => ({ logicalModels: mutator([textModel]), systemChannels: [] }));
+
+        await expect(
+            saveAdminModelPricing({
+                modelId: "text-pro",
+                bindings: [
+                    {
+                        bindingId: "text-binding",
+                        costRateCard: { version: 1, components: [{ id: "output-tokens", dimension: "count", unitPrice: "9.099", per: "1000000" }] },
+                        providerCostUnit: { kind: "fiat", currency: "USD" },
+                    },
+                ],
+            }),
+        ).rejects.toMatchObject({ status: 400, message: "文本能力价格卡不支持维度：count" });
     });
 });

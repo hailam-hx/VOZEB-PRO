@@ -1,6 +1,6 @@
 import { getFreshAuthSettings, mutateAuthLogicalModels, type LogicalModel, type LogicalModelBinding } from "@/lib/auth/store";
 import { validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/money";
-import { validatePricingRateCard, type PricingRateCardInputV1 } from "@/lib/billing/pricing";
+import { validatePricingRateCardForCapability, type BillableCapability, type PricingRateCardInputV1 } from "@/lib/billing/pricing";
 import { BillingInputError } from "@/lib/server/billing-errors";
 
 type BindingPricingInput = { bindingId: string; costRateCard?: PricingRateCardInputV1 | null; providerCostUnit?: ProviderCostUnit | null };
@@ -16,11 +16,12 @@ export async function saveAdminModelPricing(input: AdminModelPricingInput) {
         const saved = await mutateAuthLogicalModels((logicalModels) => {
             const model = logicalModels.find((item) => item.id === input.modelId);
             if (!model) throw new BillingInputError("逻辑模型不存在", 404);
-            const saleRateCard = input.saleRateCard === undefined ? model.saleRateCard : input.saleRateCard === null ? undefined : validatePricingRateCard(input.saleRateCard);
+            const saleRateCardInput = input.saleRateCard === undefined ? model.saleRateCard : input.saleRateCard === null ? undefined : input.saleRateCard;
+            const saleRateCard = saleRateCardInput ? validatePricingRateCardForCapability(saleRateCardInput, model.capability) : undefined;
             const updates = new Map((input.bindings || []).map((binding) => [binding.bindingId, binding]));
             if (updates.size !== (input.bindings || []).length) throw new BillingInputError("绑定计价配置重复");
             for (const bindingId of updates.keys()) if (!model.bindings.some((binding) => binding.id === bindingId)) throw new BillingInputError("模型绑定不存在", 404);
-            const bindings = model.bindings.map((binding) => applyBindingPricing(binding, updates.get(binding.id)));
+            const bindings = model.bindings.map((binding) => applyBindingPricing(binding, updates.get(binding.id), model.capability));
             return logicalModels.map((item) => (item.id === model.id ? { ...item, ...(saleRateCard ? { saleRateCard } : { saleRateCard: undefined }), bindings } : item));
         });
         const savedModel = saved.logicalModels.find((item) => item.id === input.modelId);
@@ -32,9 +33,10 @@ export async function saveAdminModelPricing(input: AdminModelPricingInput) {
     }
 }
 
-function applyBindingPricing(binding: LogicalModelBinding, input?: BindingPricingInput): LogicalModelBinding {
+function applyBindingPricing(binding: LogicalModelBinding, input: BindingPricingInput | undefined, capability: BillableCapability): LogicalModelBinding {
     if (!input) return binding;
-    const costRateCard = input.costRateCard === undefined ? binding.costRateCard : input.costRateCard === null ? undefined : validatePricingRateCard(input.costRateCard);
+    const costRateCardInput = input.costRateCard === undefined ? binding.costRateCard : input.costRateCard === null ? undefined : input.costRateCard;
+    const costRateCard = costRateCardInput ? validatePricingRateCardForCapability(costRateCardInput, capability) : undefined;
     const providerCostUnit = input.providerCostUnit === undefined ? binding.providerCostUnit : input.providerCostUnit === null ? undefined : validateProviderCostUnit(input.providerCostUnit);
     if (Boolean(costRateCard) !== Boolean(providerCostUnit)) throw new BillingInputError("绑定成本价格卡与供应商成本单位必须同时配置");
     return { ...binding, ...(costRateCard ? { costRateCard } : { costRateCard: undefined }), ...(providerCostUnit ? { providerCostUnit } : { providerCostUnit: undefined }) };
