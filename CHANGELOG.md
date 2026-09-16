@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- [Agent/架构] 完成 Agent 稳定性重构：PostgreSQL 新增不可变计划、一等任务、DAG 依赖、租约领取、持久重试和稳定 ToolCall，Agent 通过共享生成应用层直接复用图片、视频、音频与文本运行时，不再站内 HTTP 调用自身 Route；未知上游结果不盲重提，并在现有生成运维中串联任务、Generation、资产与结算。普通复盘改为异步，严格复盘模式仍阻塞；部署以 Git SHA、Schema 和运行协议拒绝不兼容 Worker。
 - [Agent/稳定性] 图片 Responses 回退不再移除生图工具；Planner 暂时性结算失败和 child 派发失败保留原 Run 供 Worker 恢复，已完成兄弟任务与资产不会被批次失败覆盖；text child 使用服务端稳定请求身份防止重复创建。App 与 generation-worker 同时校验 build、Git SHA、Schema 和 runtime protocol，不兼容 Worker 无法领取生成或计费恢复批次。
 - [Agent/计费] 修复 Planner 已成功返回计划后，HTTP 流清理被误判为用户取消/供应商失败或较早终态重放因并发补充 Token 用量证据而触发结算冲突的问题；`cancel()` 及在途 `reader.read()` 先收到同一 Request abort 的竞态都交回业务调用方统一收尾，已结算的同身份取消记录可由有效计划安全恢复且不重复扣费，真实供应商读取失败与身份冲突仍保留原始类型和 HTTP 状态。生成运维同时展示规划结算的完整错误文本。
 - [Agent] 修复越南语“创建视频脚本”被误判为直接生成视频：明确的脚本撰写请求只允许文本产物，服务端会在子任务派发前拒绝违反该意图的媒体计划；明确“从脚本创建视频”或同时要求脚本与视频时仍保留媒体生成。

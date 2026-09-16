@@ -92,6 +92,11 @@ HOTX AI 的 PostgreSQL 真实表名继续使用兼容前缀 `vozeb_pro_`。业�
 - `vozeb_pro_creative_messages`：会话消息，按会话内连续 `sequence` 排序，保存角色、运行状态、正文、Run 关联和结构化 metadata。工作台打开历史时默认读取最新 50 条，并以 `beforeSequence` 向前分页，禁止固定读取最早消息导致新消息被截断；Agent 上下文已保存滚动摘要后只读取 `contextSummaryThroughSequence` 之后的消息，避免长会话重复加载已压缩历史。
 - `vozeb_pro_creative_assets`：稳定创作资产，保存 `assetId`、来源 Run/任务/消息、父资产、顺序、文本内容或持久媒体位置及媒体信息；不保存 base64。
 - `vozeb_pro_creative_run_events`：Agent Run 持久事件，使用递增 `bigserial` ID 为 SSE 断线续传提供精确游标；PostgreSQL 事务写入事件后发送 `vozeb_pro_run_events` 通知唤醒其他实例，通知不承载业务数据，丢失时仍从本表恢复。
+- `vozeb_pro_agent_runs`：Agent Run 的一等运行投影，关联原 `generation_tasks` 兼容记录与创作会话，保存当前不可变计划版本和运行状态；Run 执行租约与执行身份继续由已有 `generation_tasks` 运行时维护，生产 DAG 调度读取该表及下列任务表，不再从单个大 JSON 推断任务领取状态。
+- `vozeb_pro_agent_plans`：按 Run 保存不可变、带版本号的规划结果；`(run_id, version)` 唯一，同一版本不能被恢复流程改写。
+- `vozeb_pro_agent_tasks` / `vozeb_pro_agent_task_dependencies`：保存有序 Agent 任务及真实 DAG 边。任务状态覆盖 `pending/ready/claimed/running/waiting_retry/waiting_external/finalizing/completed/failed/cancelled/skipped`，并保存 `next_attempt_at`、租约所有者和到期时间。领取只选择依赖已完成且已到期的任务，并使用 `FOR UPDATE SKIP LOCKED` 防止多 Worker 重复执行。
+- `vozeb_pro_agent_tool_calls`：在生成副作用前保存稳定幂等身份、输入哈希、接受状态和唯一 Generation 任务关联；恢复时复用已绑定的 Generation，`unknown` 结果保持可观察且不得作为安全重提依据。
+- `vozeb_pro_agent_context_snapshots`：按 Run 与计划版本保存需要持久化的执行上下文快照；不复制 Generation、资产、用量、钱包或结算实体。
 - `vozeb_pro_canvas_projects`：Canvas 项目聚合快照，保存用户、标题、创作会话 ID、节点、连线、视口和项目助手会话；列表查询只投影标题、时间和节点/连线计数，进入单项目后才读取完整快照。交互保存按用户、项目、`updatedAt` 和 mutation ID 执行单次条件更新，PostgreSQL 在 JSONB 内按稳定实体 ID 原位合并并保持数组顺序，文件 Provider 在项目锁内应用同一 mutation；幂等标识仅为服务端内部字段，不进入公开项目响应。
 - `vozeb_pro_library_assets`：用户素材库聚合记录，保存文本或服务器媒体引用、标签、来源和备注；不保存媒体 base64，素材页按用户、类型、关键词和页码在服务端裁剪。
 - `vozeb_pro_local_media_assets`：图片、视频和音频的统一媒体登记表，保存稳定站内 `storage_key`、本地/对象存储 Provider、对象存储配置与对象 Key、同步时间、临时/长期分类、用户归属、原文件名、来源、会话/Run/任务/项目关联、MIME、大小和过期时间；媒体读取与删除以该登记和业务引用检查为权限边界。
@@ -112,7 +117,7 @@ HOTX AI 的 PostgreSQL 真实表名继续使用兼容前缀 `vozeb_pro_`。业�
 
 生成恢复通过 `worker_id + lease_until` 原子领取到期任务；页面唤醒和常驻 Worker 复用同一恢复服务。上游创建成功后先保存任务 ID，再进入查询阶段；查询到结果先写 `result_ready`，下一批只完成媒体保存。`submitting` 结果不确定、缺少上游任务 ID 或没有可验证查询契约时直接结束失败，释放积分暂存且不创建消费记录，也不会切换渠道或重建请求。Webhook 事件先按渠道与事件 ID 幂等登记，再匹配已有媒体任务并清除租约；未匹配事件保留为 `unmatched`，不得创建新任务。
 
-Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，每个多副本子任务同时保存子任务 ID、完成状态、尝试次数和结果，恢复时复用已完成结果并继续轮询未完成任务；事件独立写入 `creative_run_events`。状态更新、助手消息终态和事件追加在同一 PostgreSQL 事务内完成；暂停、恢复、取消、完成和失败竞争时，旧 Run 快照不能覆盖更新后的状态。文件 Provider 使用串行 mutation queue 保持相同的进程内语义。短剧成本概览按 `user_id + project_id + task_type + status` 在数据库聚合，并使用 `generation_tasks_user_project_idx`，不读取数千条完整任务 JSON 后再汇总。
+Agent Run 仍在 `generation_tasks.payload` 保存面向现有 API 与文件 Provider 的兼容聚合，但 PostgreSQL 的计划、任务、依赖、领取与 ToolCall 身份以 `agent_*` 一等表为执行事实来源。运行聚合与一等投影在同一事务同步，读取时从一等表恢复任务视图；每个多副本子任务继续保存稳定子任务 ID、完成状态、尝试次数和结果，恢复时复用已完成结果并继续轮询未完成任务。事件独立写入 `creative_run_events`。状态更新、助手消息终态和事件追加在同一 PostgreSQL 事务内完成；暂停、恢复、取消、完成和失败竞争时，旧 Run 快照不能覆盖更新后的状态。文件 Provider 使用串行 mutation queue 保持相同的单进程语义，不提供 PostgreSQL 的跨进程领取保证。短剧成本概览按 `user_id + project_id + task_type + status` 在数据库聚合，并使用 `generation_tasks_user_project_idx`，不读取数千条完整任务 JSON 后再汇总。
 
 - `vozeb_pro_audit_logs`：登录、后台操作、CDK 兑换等安全审计记录。
 
@@ -240,13 +245,15 @@ ZaloPay 回调与 `POST /api/billing/top-ups/orders/{id}/sync` 的 Query Order �
 
 # Agent 任务
 
-创作 Agent Run 复用 `generation_tasks` 持久化，`task_type = agent`，JSON payload 保存会话 ID、Surface、可选项目、用户需求、运行状态和任务计划；事件写入 `creative_run_events`，生成结果登记到 `creative_assets`。图片、视频、音频和文本子任务继续使用现有任务类型，并写入父 Run、会话、项目和尝试次数关联。真实执行状态以后端记录为准，画布节点 metadata 仅承担展示和关联。
+创作 Agent Run 保留 `generation_tasks` 中 `task_type = agent` 的兼容记录，并在 PostgreSQL 同步写入 `agent_runs`、不可变 `agent_plans`、`agent_tasks`、依赖边和 ToolCall；事件写入 `creative_run_events`，生成结果登记到 `creative_assets`。图片、视频、音频和文本子任务继续使用现有 Generation 任务类型，并写入父 Run、会话、项目和尝试次数关联。Agent 只维护 ToolCall 到 Generation 的稳定链接，Provider 执行、资产、用量和结算仍由 Generation Runtime 负责。真实执行状态以后端记录为准，画布节点 metadata 仅承担展示和关联。
 
 规划上下文读取当前会话的持久摘要和最近 12 条已完成消息，更早消息按序写入 `creative_conversations.context_summary`，并用 `context_summary_through_sequence` 防止重复摘要。服务端按 Surface 和实际能力筛选模型、只加入用户显式选择的 Skill，并完整保留这份已验证上下文，不再叠加平台固定字符预算或输出 token 上限。当前 Run 的用户消息和助手占位消息不会重复进入自身规划上下文；真实供应商上下文能力仍需在启用渠道时验收。
 
 任务可保存多份媒体引用。依赖任务完成后，执行器从其稳定 `assetId` 重新读取持久媒体位置并注入下游图片或视频请求；`parent_asset_id` 保存首个父资产，其余父资产 ID 记录在资产 metadata 中。
 
 同一用户的 `client_request_id` 保持唯一。重复提交 Agent Run 时返回原运行，不重复创建用户消息、助手占位消息、子任务或计费。每份并发结果以独立子任务身份合并写回父任务，并追加 `task.child.completed/failed`；已经成功的子任务与资产不会因兄弟失败而丢失。SSE 使用 `creative_run_events.id` 作为 `Last-Event-ID`，只重放游标之后的事件。
+
+Agent 在调用图片、视频、音频或文本生成前先持久化稳定 ToolCall，然后直接调用与 REST Route 共用的服务端应用层；Route 只保留 HTTP 控制器职责，Agent 不再通过站内 HTTP 调用自身 `/api/*-tasks`。普通请求的核心任务完成后即可完成 Run，复盘异步继续；只有用户明确要求严格检查、高质量模式或完整复盘时，复盘继续阻塞完成。
 
 Chat 规划可以返回 Canvas 或短剧 `projectHandoff`。服务端使用 `handoff-{runId}` 作为稳定交接 ID，在所有生成任务完成后合并规划引用资产与本轮新资产，写入一次 `project.handoff` 持久事件，并将完整交接信息保存到助手消息 metadata 和 `run.completed`。Canvas 与短剧均通过服务端项目 API 按稳定交接 ID 幂等创建，不把媒体 base64 写入项目或交接记录。
 
