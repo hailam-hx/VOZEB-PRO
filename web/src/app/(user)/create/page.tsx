@@ -25,7 +25,7 @@ import { resolveSiteTitle } from "@/lib/site-brand";
 
 import { CreativeComposer } from "./components/creative-composer";
 import { CreativeAssetsPanel } from "./components/creative-assets-panel";
-import { applyAgentGenerationCapability, shouldShowVideoFrameControls } from "./components/creative-composer-video-mode";
+import { applyAgentGenerationCapability, resolveEnabledCreationMode, shouldShowVideoFrameControls } from "./components/creative-composer-video-mode";
 import { CreativeConversationList } from "./components/creative-conversation-list";
 import { CreateInspirationGallery } from "./components/create-inspiration-gallery";
 import { CreativeMessages } from "./components/creative-messages";
@@ -74,6 +74,8 @@ export default function CreatePage() {
     const [awayFromLatest, setAwayFromLatest] = useState(false);
     const [composerExpanded, setComposerExpanded] = useState(true);
     const publicSettings = usePublicSessionStore((state) => state.payload?.settings);
+    const agentModeEnabled = publicSettings?.generationDefaults?.agentModeEnabled === true;
+    const effectiveCreationMode = resolveEnabledCreationMode(agentModeEnabled, creationMode);
     const promptMaxLength = publicSettings?.generationDefaults?.createPromptMaxLength || CREATE_AGENT_PROMPT_MAX_LENGTH;
     const siteTitle = resolveSiteTitle(publicSettings?.site?.title);
     const agent = useCreateAgent();
@@ -86,7 +88,7 @@ export default function CreatePage() {
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
     const modelOptions = useCreativeAgentModels();
     const selectedModels = modelOptions.filter((model) => selectedModelIds.includes(model.id));
-    const activeGenerationCapability = creationMode === "agent" ? generationPreferences.mode || selectedModels.at(-1)?.capability : creationMode;
+    const activeGenerationCapability = effectiveCreationMode === "agent" ? generationPreferences.mode || selectedModels.at(-1)?.capability : effectiveCreationMode;
     const referenceCapabilityState = resolveCreativeGenerationCapability({ models: modelOptions, selectedModels, capability: activeGenerationCapability, smartPlanning });
     const referenceUploadAccept = CREATIVE_UPLOAD_MIME_TYPES.filter((mimeType) => {
         const type = creativeReferenceInputFromMimeType(mimeType);
@@ -214,7 +216,7 @@ export default function CreatePage() {
             return;
         }
         const videoPreference = generationPreferences.video;
-        const videoFrameModeActive = shouldShowVideoFrameControls(creationMode, generationPreferences);
+        const videoFrameModeActive = shouldShowVideoFrameControls(effectiveCreationMode, generationPreferences);
         if (videoFrameModeActive && videoPreference?.referenceMode === "first_frame" && !videoPreference.firstFrameAssetId) {
             message.warning(t("selectFirstFrame"));
             return;
@@ -225,7 +227,7 @@ export default function CreatePage() {
         }
         promptRevisionRef.current += 1;
         try {
-            const preferences = { ...generationPreferences, ...(creationMode !== "agent" ? { mode: creationMode } : {}) };
+            const preferences = { ...generationPreferences, ...(effectiveCreationMode !== "agent" ? { mode: effectiveCreationMode } : {}) };
             if (
                 await agent.submit(prompt, {
                     publicPrompt: publicCreativeAssetPrompt(prompt),
@@ -307,7 +309,7 @@ export default function CreatePage() {
         optimizingRef.current = true;
         setOptimizingPrompt(true);
         try {
-            const optimized = await optimizePrompt({ requestId: `prompt-${crypto.randomUUID()}`, prompt: source, mode: creationMode });
+            const optimized = await optimizePrompt({ requestId: `prompt-${crypto.randomUUID()}`, prompt: source, mode: effectiveCreationMode });
             if (promptRevisionRef.current !== revision) {
                 message.info(t("inputChanged"));
                 return;
@@ -362,7 +364,8 @@ export default function CreatePage() {
         window.requestAnimationFrame(() => inputRef.current?.focus());
     };
 
-    const changeCreationMode = (mode: "agent" | CreativeGenerationMode) => {
+    const changeCreationMode = (requestedMode: "agent" | CreativeGenerationMode) => {
+        const mode = resolveEnabledCreationMode(agentModeEnabled, requestedMode);
         setCreationMode(mode);
         setGenerationPreferences((current) => {
             const automaticPreferences = { ...current };
@@ -391,7 +394,7 @@ export default function CreatePage() {
 
     const changeGenerationPreference = (capability: "image" | "video" | "audio", patch: CreativeGenerationPreferencePatch) => {
         setGenerationPreferences((current) => {
-            const activePreferences = applyAgentGenerationCapability(creationMode, capability, current);
+            const activePreferences = applyAgentGenerationCapability(effectiveCreationMode, capability, current);
             const nextCapability = { ...activePreferences[capability], ...patch } as Record<string, unknown>;
             for (const [key, value] of Object.entries(patch)) if (value === undefined || value === "auto") delete nextCapability[key];
             if (capability !== "video") {
@@ -560,7 +563,8 @@ export default function CreatePage() {
             models={modelOptions}
             selectedModels={selectedModels}
             smartPlanning={smartPlanning}
-            creationMode={creationMode}
+            agentModeEnabled={agentModeEnabled}
+            creationMode={effectiveCreationMode}
             generationPreferences={generationPreferences}
             referenceCapabilityState={referenceCapabilityState}
             uploading={agent.uploading}

@@ -81,9 +81,11 @@ describe("file settings capability persistence", () => {
     });
 
     it("preserves arbitrary concrete defaults through a file write and fresh read", async () => {
-        await setAuthSettings({ generationDefaults: { ...structuredClone((await getFreshAuthSettings()).generationDefaults), imageQuality: "ultra", videoQuality: "2K", videoSeconds: 1.5, audioVoice: "narrator", audioFormat: "m4a" } });
+        await setAuthSettings({
+            generationDefaults: { ...structuredClone((await getFreshAuthSettings()).generationDefaults), agentModeEnabled: false, imageQuality: "ultra", videoQuality: "2K", videoSeconds: 1.5, audioVoice: "narrator", audioFormat: "m4a" },
+        });
 
-        await expect(getFreshAuthSettings()).resolves.toMatchObject({ generationDefaults: { imageQuality: "ultra", videoQuality: "2K", videoSeconds: 1.5, audioVoice: "narrator", audioFormat: "m4a" } });
+        await expect(getFreshAuthSettings()).resolves.toMatchObject({ generationDefaults: { agentModeEnabled: false, imageQuality: "ultra", videoQuality: "2K", videoSeconds: 1.5, audioVoice: "narrator", audioFormat: "m4a" } });
     });
 
     it("preserves protected binding pricing when a settings save moves the binding to another logical model", async () => {

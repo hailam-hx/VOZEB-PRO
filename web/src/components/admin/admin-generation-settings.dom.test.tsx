@@ -43,6 +43,20 @@ async function render(node: ReactNode) {
 }
 
 describe("GenerationDefaultsPanel creative prompt limit", () => {
+    it("lets an administrator hide Agent mode from the create page", async () => {
+        const settings = structuredClone(DEFAULT_SETTINGS);
+        (settings.generationDefaults as typeof settings.generationDefaults & { agentModeEnabled: boolean }).agentModeEnabled = true;
+        const onChange = vi.fn();
+        const host = await render(<GenerationDefaultsPanel settings={settings} onChange={onChange} />);
+
+        expect(host.textContent).toContain("显示 Agent 模式");
+        const toggle = host.querySelector('button[role="switch"]') as HTMLButtonElement;
+        expect(toggle).toBeInstanceOf(HTMLButtonElement);
+        await userEvent.setup().click(toggle);
+
+        expect(onChange).toHaveBeenCalledWith("agentModeEnabled", false);
+    });
+
     it("lets an administrator update the creative prompt character limit", async () => {
         const settings = structuredClone(DEFAULT_SETTINGS);
         (settings.generationDefaults as typeof settings.generationDefaults & { createPromptMaxLength: number }).createPromptMaxLength = 2500;

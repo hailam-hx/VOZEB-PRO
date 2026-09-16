@@ -85,7 +85,18 @@ describe("directAgentPlan", () => {
         const task = { id: "image", title: "Image", type: "image" as const, model: "manual", prompt: "test", count: 0, ratio: "auto", quality: undefined, dependencies: [], status: "ready" as const, attempts: 0 };
 
         expect(
-            resolveAgentTaskBinding(models, task, "manual", { createPromptMaxLength: 4000, imageSize: "1:1", imageQuality: "high", imageCount: 3, canvasImageCount: 1, videoQuality: "720", videoSeconds: 5, audioVoice: "alloy", audioFormat: "mp3" }),
+            resolveAgentTaskBinding(models, task, "manual", {
+                agentModeEnabled: true,
+                createPromptMaxLength: 4000,
+                imageSize: "1:1",
+                imageQuality: "high",
+                imageCount: 3,
+                canvasImageCount: 1,
+                videoQuality: "720",
+                videoSeconds: 5,
+                audioVoice: "alloy",
+                audioFormat: "mp3",
+            }),
         ).toMatchObject({
             model: "manual",
             ratio: "1:1",
@@ -103,6 +114,7 @@ describe("directAgentPlan", () => {
 
         expect(
             resolveAgentTaskWithFallback(models, task, "default-high", {
+                agentModeEnabled: true,
                 createPromptMaxLength: 4000,
                 imageSize: "16:9",
                 imageQuality: "high",

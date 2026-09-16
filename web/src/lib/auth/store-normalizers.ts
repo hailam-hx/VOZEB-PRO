@@ -282,6 +282,7 @@ export function normalizeAgentSkills(skills: AgentSkill[] | undefined) {
 
 export function normalizeGenerationDefaults(settings: Partial<GenerationDefaultSettings> | undefined): GenerationDefaultSettings {
     return {
+        agentModeEnabled: settings?.agentModeEnabled !== false,
         createPromptMaxLength: normalizePositiveSafeInteger(settings?.createPromptMaxLength, DEFAULT_SETTINGS.generationDefaults.createPromptMaxLength),
         canvasImageCount: normalizeGenerationDefaultCount(settings?.canvasImageCount),
         imageSize: normalizeGenerationDefaultImageSize(settings?.imageSize),

@@ -57,6 +57,7 @@ export function CreativeComposer({
     models,
     selectedModels,
     smartPlanning,
+    agentModeEnabled = true,
     creationMode,
     generationPreferences,
     referenceCapabilityState,
@@ -99,6 +100,7 @@ export function CreativeComposer({
     models: CreativeModelOption[];
     selectedModels: CreativeModelOption[];
     smartPlanning: boolean;
+    agentModeEnabled?: boolean;
     creationMode: "agent" | CreativeGenerationMode;
     generationPreferences: CreativeGenerationPreferences;
     referenceCapabilityState: CreativeGenerationCapabilityState;
@@ -142,11 +144,13 @@ export function CreativeComposer({
         edit: t("skillCategoryEdit"),
     });
     const visibleSkills = skills.filter((skill) => matchesSkillCategory(skill, skillCategory));
-    const localizedModeOptions = creativeModeOptions.map((option) => ({
-        ...option,
-        label: t(creativeModeMessageKeys[option.value].label),
-        description: t(creativeModeMessageKeys[option.value].description),
-    }));
+    const localizedModeOptions = creativeModeOptions
+        .filter((option) => agentModeEnabled || option.value !== "agent")
+        .map((option) => ({
+            ...option,
+            label: t(creativeModeMessageKeys[option.value].label),
+            description: t(creativeModeMessageKeys[option.value].description),
+        }));
     const currentMode = localizedModeOptions.find((option) => option.value === creationMode) || localizedModeOptions[0];
     const videoPreference = generationPreferences.video;
     const frameMode = videoPreference?.referenceMode || "reference";

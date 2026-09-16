@@ -1,5 +1,9 @@
 import type { CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 
+export function resolveEnabledCreationMode(agentModeEnabled: boolean, creationMode: "agent" | CreativeGenerationMode) {
+    return !agentModeEnabled && creationMode === "agent" ? "image" : creationMode;
+}
+
 export function shouldShowVideoFrameControls(creationMode: "agent" | CreativeGenerationMode, preferences: CreativeGenerationPreferences) {
     const effectiveMode = creationMode === "agent" ? preferences.mode : creationMode;
     return effectiveMode === "video" && preferences.video?.referenceMode !== undefined && preferences.video.referenceMode !== "reference";

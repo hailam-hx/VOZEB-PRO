@@ -134,6 +134,7 @@ export const DEFAULT_SETTINGS: AuthSettings = {
     dataLifecycle: DEFAULT_DATA_LIFECYCLE,
     generationConcurrency: { agent: 2, image: 4, video: 1, audio: 2, text: 4, render: 1 },
     generationDefaults: {
+        agentModeEnabled: true,
         createPromptMaxLength: CREATE_AGENT_PROMPT_MAX_LENGTH,
         canvasImageCount: "auto",
         imageSize: "1:1",

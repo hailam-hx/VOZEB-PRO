@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { applyAgentGenerationCapability, shouldShowVideoFrameControls } from "./creative-composer-video-mode";
+import { applyAgentGenerationCapability, resolveEnabledCreationMode, shouldShowVideoFrameControls } from "./creative-composer-video-mode";
+
+describe("resolveEnabledCreationMode", () => {
+    it("fails closed while Agent mode is unavailable", () => {
+        expect(resolveEnabledCreationMode(false, "agent")).toBe("image");
+        expect(resolveEnabledCreationMode(false, "video")).toBe("video");
+        expect(resolveEnabledCreationMode(true, "agent")).toBe("agent");
+    });
+});
 
 describe("shouldShowVideoFrameControls", () => {
     it("shows first and last frame slots for explicit video mode", () => {

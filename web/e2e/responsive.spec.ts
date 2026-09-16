@@ -603,6 +603,48 @@ test("creative composer controls return to a neutral palette after selection", a
     await verifyNeutralControls("creative composer neutral controls dark");
 });
 
+test("creative composer hides Agent mode responsively when administrators disable it", async ({ page }, testInfo) => {
+    let releaseSession = () => undefined;
+    const sessionRelease = new Promise<void>((resolve) => {
+        releaseSession = resolve;
+    });
+    let optimizedMode = "";
+    await page.route("**/api/auth/session", async (route) => {
+        const response = await route.fetch();
+        const payload = (await response.json()) as { settings: { generationDefaults: { agentModeEnabled?: boolean } } };
+        payload.settings.generationDefaults.agentModeEnabled = false;
+        await sessionRelease;
+        await route.fulfill({ response, json: payload });
+    });
+    await page.route(/\/api\/agent\/prompt-optimization$/, async (route) => {
+        optimizedMode = ((await route.request().postDataJSON()) as { mode: string }).mode;
+        await route.fulfill({ json: { code: 0, data: { prompt: "优化后的图片提示词" }, msg: "OK" } });
+    });
+
+    try {
+        await page.goto("/create", { waitUntil: "domcontentloaded" });
+        await waitForCreativeComposerReady(page);
+        const modeTrigger = page.getByRole("button", { name: "当前创作类型：图片生成" });
+        await modeTrigger.click();
+        const modePopover = page.locator(".ant-popover").filter({ hasText: "创作类型" }).last();
+        await expect(modePopover).toBeVisible();
+        await expect(modePopover.getByRole("button", { name: /^Agent 模式/ })).toHaveCount(0);
+        await page.keyboard.press("Escape");
+
+        const input = page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" });
+        await input.fill("优化图片提示词");
+        await page.getByRole("button", { name: "优化提示词" }).click();
+        await expect(input).toHaveValue("优化后的图片提示词");
+        expect(optimizedMode).toBe("image");
+
+        releaseSession();
+        await expect(modeTrigger).toBeVisible();
+        await expectNoHorizontalOverflow(page, `${testInfo.project.name} hidden Agent mode`);
+    } finally {
+        releaseSession();
+    }
+});
+
 test("creative composer displays the shared PAYG estimate before submission", async ({ page }) => {
     await page.route(/\/api\/auth\/session$/, async (route) => {
         const response = await route.fetch();

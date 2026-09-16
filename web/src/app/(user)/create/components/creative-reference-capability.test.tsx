@@ -37,6 +37,15 @@ beforeAll(() => {
 afterEach(() => cleanup());
 
 describe("/create reference capability controls", () => {
+    it("hides Agent mode when the administrator disables it", async () => {
+        const user = userEvent.setup();
+        const props = { ...composerProps(), creationMode: "image" as const, agentModeEnabled: false, referenceCapabilityState: { reason: "unconfigured" as const } };
+        renderInteractive(<CreativeComposer {...(props as Parameters<typeof CreativeComposer>[0])} />);
+
+        await user.click(screen.getByRole("button", { name: "当前创作类型：图片生成" }));
+        expect(Array.from(document.querySelectorAll(".ant-popover button")).some((button) => button.textContent?.includes("Agent 模式"))).toBe(false);
+    });
+
     it("shows the configured prompt usage only from ninety percent and marks the limit", () => {
         const { rerender } = renderInteractive(<CreativeComposer {...composerProps()} value="1234567890" maxPromptLength={12} referenceCapabilityState={{ reason: "unconfigured" }} />);
 

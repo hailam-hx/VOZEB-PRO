@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { normalizeGenerationConcurrency, normalizeGenerationDefaults } from "./store-normalizers";
 
 describe("generation default normalization", () => {
+    it("shows Agent mode by default and preserves an administrator disable", () => {
+        expect((normalizeGenerationDefaults({}) as unknown as { agentModeEnabled?: boolean }).agentModeEnabled).toBe(true);
+        expect((normalizeGenerationDefaults({ agentModeEnabled: false } as never) as unknown as { agentModeEnabled?: boolean }).agentModeEnabled).toBe(false);
+    });
+
     it("preserves a positive administrator-defined creative prompt limit and rejects invalid values", () => {
         expect(normalizeGenerationDefaults({ createPromptMaxLength: 9000 } as never)).toMatchObject({ createPromptMaxLength: 9000 });
         expect(normalizeGenerationDefaults({ createPromptMaxLength: 0 } as never)).toMatchObject({ createPromptMaxLength: 4000 });

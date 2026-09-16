@@ -106,6 +106,7 @@ describe("serializePublicSettings", () => {
             customerService: { businessName: "HOTX AI", address: "河内市", phone: "+84 123", email: "support@hotx.ai" },
         };
         (settings.generationDefaults as typeof settings.generationDefaults & { createPromptMaxLength: number }).createPromptMaxLength = 9876;
+        (settings.generationDefaults as typeof settings.generationDefaults & { agentModeEnabled: boolean }).agentModeEnabled = false;
 
         const result = serializePublicSettings(settings);
         const serialized = JSON.stringify(result);
@@ -149,6 +150,7 @@ describe("serializePublicSettings", () => {
             },
         });
         expect(result.generationDefaults.createPromptMaxLength).toBe(9876);
+        expect((result.generationDefaults as typeof result.generationDefaults & { agentModeEnabled?: boolean }).agentModeEnabled).toBe(false);
         expect(result.logicalModels[0]?.saleRateCard).toEqual(settings.logicalModels[0]?.saleRateCard);
         expect(serialized).not.toContain("cost-secret");
         expect(serialized).not.toContain("timeoutMs");

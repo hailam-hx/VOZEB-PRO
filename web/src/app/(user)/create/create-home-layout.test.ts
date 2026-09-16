@@ -57,7 +57,7 @@ describe("create Agent home layout", () => {
         expect(composer).toContain('t("useSkillTool")');
         expect(composer).toContain('aria-label={optimizing ? t("optimizingPrompt") : t("optimizePrompt")}');
         expect(page).toContain("optimizePrompt");
-        expect(page).toContain("mode: creationMode");
+        expect(page).toContain("mode: effectiveCreationMode");
         expect(composer).toContain('aria-label={mediaAttachments.length ? t("continueAddMaterial") : t("addMaterial")}');
         expect(composer).toContain('t("creationType")');
         expect(composer).toContain("transition hover:bg-[#eef3f6] dark:hover:bg-[#29323a]");

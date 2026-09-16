@@ -148,6 +148,45 @@ test("admin data lifecycle settings persist without password re-verification", a
     }
 });
 
+test("admin can hide Agent mode from the create page and the setting survives reload", async ({ page, request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { generationDefaults: Record<string, unknown> } }).settings.generationDefaults;
+
+    try {
+        const seededResponse = await request.patch("/api/admin/settings", { data: { generationDefaults: { ...before, agentModeEnabled: true } } });
+        expect(seededResponse.ok(), await seededResponse.text()).toBe(true);
+        await page.goto("/admin?section=settings", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        const setting = page.getByText("显示 Agent 模式", { exact: true }).locator("..").locator("..");
+        const toggle = setting.getByRole("switch");
+        await expect(toggle).toBeChecked();
+        await toggle.click();
+        await expect(toggle).not.toBeChecked();
+        await page.getByRole("button", { name: "保存系统设置" }).click();
+        await expect(page.getByText("系统设置已保存", { exact: true })).toBeVisible();
+
+        const persistedResponse = await request.get("/api/admin/settings");
+        expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
+        expect(((await persistedResponse.json()) as { settings: { generationDefaults: { agentModeEnabled: boolean } } }).settings.generationDefaults.agentModeEnabled).toBe(false);
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await expect(page.getByText("显示 Agent 模式", { exact: true }).locator("..").locator("..").getByRole("switch")).not.toBeChecked();
+
+        await page.goto("/create", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".creative-composer")).toHaveAttribute("data-ready", "true", { timeout: 45_000 });
+        const modeTrigger = page.getByRole("button", { name: "当前创作类型：图片生成" });
+        await modeTrigger.click();
+        const modePopover = page.locator(".ant-popover").filter({ hasText: "创作类型" }).last();
+        await expect(modePopover).toBeVisible();
+        await expect(modePopover.getByRole("button", { name: /^Agent 模式/ })).toHaveCount(0);
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { generationDefaults: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
 test("admin saves and reloads logical model generation capability", async ({ page, request }) => {
     type SettingsSnapshot = {
         logicalModels: Array<{

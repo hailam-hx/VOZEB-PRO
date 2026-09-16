@@ -34,7 +34,19 @@ const profiles = {
 const settings = (generationDefaults = {}) => ({
     logicalModels: [image(profiles.image), video(profiles.video), audio(profiles.audio)],
     defaultModels: { imageModel: "image", videoModel: "video", textModel: "", audioModel: "audio", voiceCloneModel: "" },
-    generationDefaults: { createPromptMaxLength: 4000, canvasImageCount: 1, imageCount: 1, imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto", ...generationDefaults },
+    generationDefaults: {
+        agentModeEnabled: true,
+        createPromptMaxLength: 4000,
+        canvasImageCount: 1,
+        imageCount: 1,
+        imageSize: "auto",
+        imageQuality: "auto",
+        videoQuality: "auto",
+        videoSeconds: -1,
+        audioVoice: "auto",
+        audioFormat: "auto",
+        ...generationDefaults,
+    },
 });
 
 describe("generation-default capability validation", () => {
