@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { initializePostgresSchema, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
 import type { AgentRun } from "@/lib/server/agent-run-store";
-import { claimDueAgentTasks, prepareDurableAgentToolCall, syncAgentRuntimeProjection } from "./agent-runtime-repository";
+import { bindDurableAgentToolCallGeneration, claimDueAgentTasks, markDurableAgentToolCall, prepareDurableAgentToolCall, syncAgentRuntimeProjection } from "./agent-runtime-repository";
 
 const postgresIt = process.env.VOZEB_PRO_RUN_POSTGRES_INTEGRATION === "1" ? it : it.skip;
 
@@ -62,6 +62,24 @@ describe("Agent runtime PostgreSQL recovery invariants", () => {
             expect(new Set(toolCalls.map((call) => call.id)).size).toBe(1);
             const count = await postgresQuery<{ count: string }>("SELECT count(*)::text AS count FROM agent_tool_calls WHERE idempotency_key = $1", [idempotencyKey]);
             expect(count.rows[0]?.count).toBe("1");
+
+            await bindDurableAgentToolCallGeneration(toolCalls[0]!.id, runId);
+            const failedCall = await prepareDurableAgentToolCall({
+                id: `tool-failed-${suffix}`,
+                runId,
+                taskId: `${runId}:plan:1:${taskKey}`,
+                toolName: "image.generate",
+                idempotencyKey: `${idempotencyKey}:failed`,
+                input: { prompt: "失败分支" },
+            });
+            await markDurableAgentToolCall(failedCall.id, "failed", "provider rejected request");
+            const persisted = await postgresQuery<{ id: string; status: string; generation_task_id?: string | null }>("SELECT id, status, generation_task_id FROM agent_tool_calls WHERE id = ANY($1::text[]) ORDER BY id", [
+                [toolCalls[0]!.id, failedCall.id],
+            ]);
+            expect(persisted.rows).toEqual([
+                { id: toolCalls[0]!.id, status: "accepted", generation_task_id: runId },
+                { id: failedCall.id, status: "failed", generation_task_id: null },
+            ]);
         } finally {
             await postgresQuery("DELETE FROM users WHERE id = $1", [userId]);
         }

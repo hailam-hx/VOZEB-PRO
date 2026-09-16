@@ -1,4 +1,4 @@
-import { ensurePostgresSchema, getDatabaseProvider, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
+import { ensurePostgresSchema, getDatabaseProvider, getPostgresConnectionString, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import type { AgentRun, AgentRunTask } from "@/lib/server/agent-run-store";
 
 type AgentToolCallRow = {
@@ -164,19 +164,19 @@ export async function bindAgentToolCallGeneration(client: QueryExecutor, toolCal
 }
 
 export async function prepareDurableAgentToolCall(input: Parameters<typeof prepareAgentToolCall>[1]) {
-    if (!postgresConfigured()) return { id: input.id, runId: input.runId, taskId: input.taskId, toolName: input.toolName, idempotencyKey: input.idempotencyKey, status: "created", input: input.input } satisfies AgentToolCall;
+    if (!shouldUsePostgresAgentRuntimeRepository()) return { id: input.id, runId: input.runId, taskId: input.taskId, toolName: input.toolName, idempotencyKey: input.idempotencyKey, status: "created", input: input.input } satisfies AgentToolCall;
     await ensurePostgresSchema();
     return withPostgresTransaction((client) => prepareAgentToolCall(client, input));
 }
 
 export async function bindDurableAgentToolCallGeneration(toolCallId: string, generationTaskId: string, now = Date.now()) {
-    if (!postgresConfigured()) return null;
+    if (!shouldUsePostgresAgentRuntimeRepository()) return null;
     await ensurePostgresSchema();
     return withPostgresTransaction((client) => bindAgentToolCallGeneration(client, toolCallId, generationTaskId, now));
 }
 
 export async function markDurableAgentToolCall(toolCallId: string, status: "failed" | "unknown", error: string, now = Date.now()) {
-    if (!postgresConfigured()) return null;
+    if (!shouldUsePostgresAgentRuntimeRepository()) return null;
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {
         const result = await client.query<AgentToolCallRow>(
@@ -255,7 +255,7 @@ export type AgentRuntimeTraceTask = {
 export async function listAgentRuntimeTraces(runIds: string[]) {
     const ids = Array.from(new Set(runIds.filter(Boolean)));
     const traces = new Map<string, AgentRuntimeTraceTask[]>();
-    if (!ids.length || getDatabaseProvider() !== "postgres" || !postgresConfigured()) return traces;
+    if (!ids.length || !shouldUsePostgresAgentRuntimeRepository()) return traces;
     await ensurePostgresSchema();
     const result = await postgresQuery<Record<string, unknown>>(
         `SELECT task.run_id, task.task_key, task.type, task.status, task.attempt_count, task.next_attempt_at,
@@ -342,8 +342,10 @@ function stableJson(value: unknown): string {
         .join(",")}}`;
 }
 
-function postgresConfigured() {
-    return Boolean(process.env.DATABASE_URL?.trim() || process.env.POSTGRES_URL?.trim());
+function shouldUsePostgresAgentRuntimeRepository() {
+    if (getDatabaseProvider() !== "postgres") return false;
+    if (!getPostgresConnectionString()) throw new Error("DATABASE_URL is required when VOZEB_PRO_DATABASE_PROVIDER=postgres");
+    return true;
 }
 
 function optionalText(value: unknown) {
