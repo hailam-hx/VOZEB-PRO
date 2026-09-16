@@ -274,8 +274,17 @@ CREATE INDEX generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at
 
 CREATE TABLE IF NOT EXISTS generation_worker_heartbeats (
     worker_id text PRIMARY KEY,
-    last_seen_at timestamptz NOT NULL
+    last_seen_at timestamptz NOT NULL,
+    build_version text NOT NULL,
+    git_sha text NOT NULL,
+    schema_version text NOT NULL,
+    runtime_protocol_version text NOT NULL
 );
+
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS build_version text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS git_sha text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS schema_version text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS runtime_protocol_version text;
 
 CREATE INDEX IF NOT EXISTS generation_worker_heartbeats_seen_idx ON generation_worker_heartbeats (last_seen_at DESC);
 
@@ -881,6 +890,6 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs (target_type, tar
 ${POSTGRESQL_TRIGGER_SCHEMA_SQL}
 
 INSERT INTO schema_migrations (version)
-VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce'), ('20260903_voice_cloning')
+VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce'), ('20260903_voice_cloning'), ('20260916_generation_worker_compatibility')
 ON CONFLICT (version) DO NOTHING;
 `;

@@ -19,6 +19,8 @@ import { POST } from "./route";
 describe("POST /api/maintenance/generation-tasks/heartbeat", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.stubEnv("NEXT_PUBLIC_APP_VERSION", "v0.0.6");
+        vi.stubEnv("VOZEB_PRO_GIT_SHA", "test-sha");
         mocks.configured.mockReturnValue(true);
         mocks.authorized.mockReturnValue(true);
         mocks.record.mockResolvedValue(true);
@@ -29,8 +31,16 @@ describe("POST /api/maintenance/generation-tasks/heartbeat", () => {
         const response = await POST(request("worker-one"));
 
         expect(response.status).toBe(200);
-        expect(mocks.record).toHaveBeenCalledWith("worker-one");
+        expect(mocks.record).toHaveBeenCalledWith("worker-one", expect.objectContaining({ buildVersion: "v0.0.6", gitSha: "test-sha", runtimeProtocolVersion: "1" }));
         await expect(response.json()).resolves.toMatchObject({ code: 0, data: { accepted: true } });
+    });
+
+    it("records but rejects an incompatible Worker heartbeat", async () => {
+        const response = await POST(request("worker-one", { "x-vozeb-pro-worker-runtime-protocol": "0" }));
+
+        expect(response.status).toBe(409);
+        expect(mocks.record).toHaveBeenCalledWith("worker-one", expect.objectContaining({ runtimeProtocolVersion: "0" }));
+        await expect(response.json()).resolves.toMatchObject({ code: 409, data: { accepted: false } });
     });
 
     it("rejects missing Worker identity", async () => {
@@ -50,12 +60,17 @@ describe("POST /api/maintenance/generation-tasks/heartbeat", () => {
     });
 });
 
-function request(workerId = "") {
+function request(workerId = "", overrides: Record<string, string> = {}) {
     return new Request("http://localhost/api/maintenance/generation-tasks/heartbeat", {
         method: "POST",
         headers: {
             authorization: "Bearer test-token",
             ...(workerId ? { "x-vozeb-pro-worker-id": workerId } : {}),
+            "x-vozeb-pro-worker-build-version": "v0.0.6",
+            "x-vozeb-pro-worker-git-sha": "test-sha",
+            "x-vozeb-pro-worker-schema-version": "20260916_generation_worker_compatibility",
+            "x-vozeb-pro-worker-runtime-protocol": "1",
+            ...overrides,
         },
     });
 }

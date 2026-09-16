@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getAuthSettings } from "@/lib/auth/store";
 import { isAuthorizedWorkerRequest, isWorkerTokenConfigured } from "@/lib/server/maintenance-auth";
 import { inspectPersistedUsageHold, recoverOrphanUsageHolds } from "@/lib/server/usage-billing-runtime";
+import { isGenerationWorkerCompatible, readGenerationWorkerCompatibility } from "@/lib/server/generation-worker-compatibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
     if (!isWorkerTokenConfigured()) return NextResponse.json({ code: 503, data: null, msg: "Worker 令牌未配置或未与维护令牌分离" }, { status: 503 });
     if (!isAuthorizedWorkerRequest(request)) return NextResponse.json({ code: 401, data: null, msg: "Worker 认证失败" }, { status: 401 });
+    if (!isGenerationWorkerCompatible(readGenerationWorkerCompatibility(request))) return NextResponse.json({ code: 409, data: null, msg: "Worker 与当前应用版本不兼容" }, { status: 409 });
     try {
         const settings = await getAuthSettings();
         const result = await recoverOrphanUsageHolds({ limit: settings.dataLifecycle.maintenanceBatchSize, inspect: inspectPersistedUsageHold });

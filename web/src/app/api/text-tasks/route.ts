@@ -6,7 +6,7 @@ import { getAuthSettings, isAuthInputError } from "@/lib/auth/store";
 import { generationModelId, toSystemGenerationChannel } from "@/lib/server/generation-channel";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
-import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
+import { getStoredGenerationTaskByRequest, withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
@@ -44,7 +44,29 @@ export async function POST(request: Request) {
 
         const executionContext = body.context ? await resolveAgentTextTaskContext(currentUser.id, body.context) : undefined;
         if (body.context && !executionContext) return NextResponse.json({ error: "Agent 执行上下文已失效" }, { status: 409 });
-        const task = await createTextTask({ userId: currentUser.id, config: configs[0], candidateConfigs: configs.slice(1), messages, ...(executionContext ? { executionContext } : {}) });
+        if (executionContext?.clientRequestId) {
+            const existing = await getStoredGenerationTaskByRequest<TextTask>("text", currentUser.id, executionContext.clientRequestId, executionContext.attemptNo);
+            if (existing) {
+                if (!sameTextTaskRequest(existing, messages, configs[0])) return NextResponse.json({ error: "文本任务请求身份与内容不一致" }, { status: 409 });
+                return NextResponse.json({ task: publicTask(existing) });
+            }
+        }
+        const task = await createTextTask({
+            userId: currentUser.id,
+            config: configs[0],
+            candidateConfigs: configs.slice(1),
+            messages,
+            ...(executionContext
+                ? {
+                      executionContext,
+                      runId: executionContext.runId,
+                      parentTaskId: executionContext.parentTaskId,
+                      clientRequestId: executionContext.clientRequestId,
+                      attemptNo: executionContext.attemptNo,
+                  }
+                : {}),
+        });
+        if (!sameTextTaskRequest(task, messages, configs[0])) return NextResponse.json({ error: "文本任务请求身份与内容不一致" }, { status: 409 });
         const cookie = request.headers.get("cookie") || "";
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         await scheduleGenerationTask("text", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });
@@ -52,6 +74,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ task: publicTask(task) });
     });
     return response || NextResponse.json({ error: "当前用户文本任务已达到并发上限" }, { status: 429 });
+}
+
+function sameTextTaskRequest(task: TextTask, messages: TextTask["messages"], config: TextTask["config"]) {
+    return JSON.stringify(task.messages) === JSON.stringify(messages) && generationModelId(task.config) === generationModelId(config);
 }
 
 function publicTask(task: TextTask) {

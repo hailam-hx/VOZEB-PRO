@@ -553,6 +553,7 @@ async function settlePlannerFinalization(runId: string, finalization: AgentRunPl
     } catch (error) {
         const failure = plannerFinalizationFailure(error);
         await updateAgentRunById(runId, { planningFinalization: { ...finalization, status: "failed", ...failure, updatedAt: Date.now() }, failureStage: "planner_settlement" }, undefined, ["running"], executionId);
+        if (failure.retryable) return false;
         throw error;
     }
 }
@@ -586,7 +587,8 @@ function plannerFinalizationFailure(error: unknown) {
     const message = toSafeGenerationErrorMessage(error, "Agent 规划用量结算失败");
     const errorCode = typeof record.code === "string" && record.code.trim() ? record.code.trim().slice(0, 120) : error instanceof Error && error.name ? error.name.slice(0, 120) : "planner_settlement_error";
     const status = Number(record.status);
-    return { errorCode, error: message, retryable: ![400, 401, 403, 409, 422].includes(status) };
+    const retryable = record.name !== "UsageBillingIntegrityError" && errorCode !== "billing_identity_missing" && ![400, 401, 403, 409, 422].includes(status);
+    return { errorCode, error: message, retryable };
 }
 
 function normalizedPlanningCycle(value: number | undefined) {

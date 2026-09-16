@@ -73,7 +73,12 @@ describe("durable Agent text snapshots", () => {
         await agent.updateAgentRunById(run.id, { executionId: "private-executor" });
         expect(await agent.resolveAgentTextTaskContext("user", { runId: run.id, parentTaskId: "parent", executionId: "wrong" })).toBeNull();
         expect(await agent.resolveAgentTextTaskContext("other-user", { runId: run.id, parentTaskId: "parent", executionId: "private-executor" })).toBeNull();
-        expect(await agent.resolveAgentTextTaskContext("user", { runId: run.id, parentTaskId: "parent", executionId: "private-executor", taskId: "spoofed", attemptId: "spoofed" })).toEqual({ runId: run.id, parentTaskId: "parent" });
+        expect(await agent.resolveAgentTextTaskContext("user", { runId: run.id, parentTaskId: "parent", executionId: "private-executor", taskId: "spoofed", attemptId: "spoofed" })).toEqual({
+            runId: run.id,
+            parentTaskId: "parent",
+            clientRequestId: `${run.clientRequestId}:parent:1:1`,
+            attemptNo: 1,
+        });
         const first = (await text.openTextTaskAttempt(task, task.config, "chat", []))!;
         await text.acceptTextTaskSnapshot(task.id, first.activeAttemptId!, 0, { content: "部分" });
         const closed = (await text.closeTextTaskAttempt(task.id, first.activeAttemptId!, "failed"))!;

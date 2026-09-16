@@ -11,10 +11,19 @@ import { POST } from "./route";
 describe("POST /api/maintenance/usage-holds/run", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.stubEnv("NEXT_PUBLIC_APP_VERSION", "v0.0.6");
+        vi.stubEnv("VOZEB_PRO_GIT_SHA", "test-sha");
         mocks.configured.mockReturnValue(true);
         mocks.authorized.mockReturnValue(true);
         mocks.settings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 37 } });
         mocks.recover.mockResolvedValue({ inspected: 0, retained: 0, settled: 0, released: 0 });
+    });
+
+    it("rejects an incompatible Worker before touching billing holds", async () => {
+        const response = await POST(request({ "x-vozeb-pro-worker-schema-version": "old-schema" }));
+
+        expect(response.status).toBe(409);
+        expect(mocks.recover).not.toHaveBeenCalled();
     });
 
     it("requires a separately configured worker token", async () => {
@@ -40,6 +49,16 @@ describe("POST /api/maintenance/usage-holds/run", () => {
     });
 });
 
-function request() {
-    return new Request("http://localhost/api/maintenance/usage-holds/run", { method: "POST", headers: { authorization: "Bearer worker-token" } });
+function request(overrides: Record<string, string> = {}) {
+    return new Request("http://localhost/api/maintenance/usage-holds/run", {
+        method: "POST",
+        headers: {
+            authorization: "Bearer worker-token",
+            "x-vozeb-pro-worker-build-version": "v0.0.6",
+            "x-vozeb-pro-worker-git-sha": "test-sha",
+            "x-vozeb-pro-worker-schema-version": "20260916_generation_worker_compatibility",
+            "x-vozeb-pro-worker-runtime-protocol": "1",
+            ...overrides,
+        },
+    });
 }

@@ -872,7 +872,7 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
             if (error instanceof AgentChildTaskDispatchError && latestTask && !agentTaskHasSubmittedChild(latestTask)) {
                 await patchTask(runId, task.id, { status: "ready", attempts: task.attempts, error: message }, "task.dispatch.failed", executionId);
                 await updateAgentRunById(runId, { failureStage: "task_dispatch" }, undefined, ["running"], executionId);
-                throw error;
+                return "deferred" as const;
             }
             await patchTask(runId, task.id, { status: "failed", error: message }, "task.failed", executionId);
         }
