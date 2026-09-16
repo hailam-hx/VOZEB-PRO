@@ -526,6 +526,40 @@ describe("system media proxy", () => {
         expect(mocks.settleCancelledUsageBilling).not.toHaveBeenCalled();
     });
 
+    it("keeps a completed metered stream successful when Next aborts the response after DONE", async () => {
+        vi.stubEnv("VOZEB_PRO_TEXT_STREAM_DIAGNOSTICS_TEST", "1");
+        const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const controller = new AbortController();
+        const responseAborted = Object.assign(new Error("ResponseAborted"), { name: "ResponseAborted" });
+        const bytes = new TextEncoder().encode('data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: {"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\ndata: [DONE]\n\n');
+        let sent = false;
+        const upstream = new ReadableStream<Uint8Array>({
+            pull(streamController) {
+                if (!sent) {
+                    sent = true;
+                    streamController.enqueue(bytes);
+                    return;
+                }
+                return new Promise<void>((_, reject) => controller.signal.addEventListener("abort", () => reject(responseAborted), { once: true }));
+            },
+        });
+        const reader = meteredTextResponseBody(upstream, (await mocks.reserveUsageBilling())!, 1, {
+            protocol: "chat",
+            signal: controller.signal,
+            diagnosticContext: { source: "system_proxy_upstream", taskId: "late-abort" },
+        }).getReader();
+
+        await expect(reader.read()).resolves.toMatchObject({ done: false, value: bytes });
+        controller.abort(responseAborted);
+        await expect(reader.read()).rejects.toMatchObject({ name: "ResponseAborted" });
+
+        expect(mocks.attachUsageProviderEvidence).toHaveBeenCalledWith(expect.objectContaining({ usage: expect.objectContaining({ source: "actual", inputTokens: "5", outputTokens: "2" }) }));
+        expect(mocks.finishUsageProviderAttempt).not.toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
+        expect(info).toHaveBeenCalledWith("Text stream transport diagnostic", expect.objectContaining({ connectionTermination: "protocol_terminal", terminalSeen: true, doneMarkerSeen: true, usageSeen: true }));
+        expect(warn).not.toHaveBeenCalledWith("Text stream transport diagnostic", expect.anything());
+    });
+
     it("classifies a provider stream read failure as failed and leaves the hold available for downstream failover", async () => {
         const upstream = new ReadableStream<Uint8Array>({
             pull() {

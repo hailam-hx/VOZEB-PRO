@@ -44,6 +44,7 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
     let terminalSeen = false;
     let doneMarkerSeen = false;
     let usageSeen = false;
+    let protocolCompleted = false;
     let finished = false;
 
     const snapshot = () => ({
@@ -74,6 +75,7 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
             terminalSeen ||= metadata.terminalSeen;
             doneMarkerSeen ||= metadata.doneMarkerSeen;
             usageSeen ||= metadata.usageSeen;
+            protocolCompleted ||= metadata.protocolCompleted;
             if (loggingEnabled)
                 console.info("Text stream frame diagnostic", {
                     ...snapshot(),
@@ -87,17 +89,18 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
         finish(connectionTermination: TextStreamConnectionTermination, error?: unknown, signal?: AbortSignal) {
             if (finished) return;
             finished = true;
+            const effectiveTermination = connectionTermination === "application_abort" && protocolCompleted ? "protocol_terminal" : connectionTermination;
             const entry: TextStreamTransportDiagnostic = {
                 ...snapshot(),
                 event: "text_stream_transport",
-                connectionTermination,
+                connectionTermination: effectiveTermination,
                 elapsedMs: Date.now() - startedAt,
                 ...(error === undefined ? {} : { rootError: structuredRootError(error) }),
                 ...(signal?.aborted ? { abort: { aborted: true, reason: structuredRootError(signal.reason), stage: errorField(signal.reason, "stage") } } : {}),
             };
             onFinish?.(entry);
             if (loggingEnabled) {
-                if (["socket_reset", "body_timeout", "read_error", "application_abort", "provider_error"].includes(connectionTermination)) console.warn("Text stream transport diagnostic", entry);
+                if (["socket_reset", "body_timeout", "read_error", "application_abort", "provider_error"].includes(effectiveTermination)) console.warn("Text stream transport diagnostic", entry);
                 else console.info("Text stream transport diagnostic", entry);
             }
         },
@@ -118,7 +121,7 @@ export function classifyTextStreamTermination(error: unknown, signal?: AbortSign
     const signalFields = signalRoot ? [signalRoot.name, signalRoot.message, signalRoot.code, signalRoot.cause?.name, signalRoot.cause?.message, signalRoot.cause?.code].filter(Boolean).join(" ").toUpperCase() : "";
     if (errorField(signal?.reason, "stage") !== undefined || fields.includes("UND_ERR_BODY_TIMEOUT") || fields.includes("BODYTIMEOUTERROR") || fields.includes("BODY TIMEOUT") || fields.includes("BODY TIMED OUT") || signalFields.includes("TIMEOUTERROR"))
         return "body_timeout";
-    if (signal?.aborted || root.name === "AbortError" || root.cause?.name === "AbortError" || fields.includes("UND_ERR_ABORTED")) return "application_abort";
+    if (signal?.aborted || [root.name, root.cause?.name].some((name) => name === "AbortError" || name === "ResponseAborted") || fields.includes("UND_ERR_ABORTED")) return "application_abort";
     if (["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"].some((code) => fields.includes(code)) || fields.includes("SOCKETERROR") || fields.includes("SOCKET RESET")) return "socket_reset";
     return "read_error";
 }
@@ -147,12 +150,13 @@ export function structuredRootError(error: unknown) {
 }
 
 function inspectFrame(frame: string, protocol: TextStreamProtocol) {
-    if (frame.trim() === "[DONE]") return { eventType: "done", textDelta: false, terminalSeen: true, doneMarkerSeen: true, usageSeen: false };
+    if (frame.trim() === "[DONE]") return { eventType: "done", textDelta: false, terminalSeen: true, doneMarkerSeen: true, usageSeen: false, protocolCompleted: true };
     const payload = parseRecord(frame);
-    if (!payload) return { eventType: "unparseable", textDelta: false, terminalSeen: false, doneMarkerSeen: false, usageSeen: false };
+    if (!payload) return { eventType: "unparseable", textDelta: false, terminalSeen: false, doneMarkerSeen: false, usageSeen: false, protocolCompleted: false };
     const finishReason = providerFinishReason(payload, protocol);
     const eventType = typeof payload.type === "string" ? payload.type : protocol === "chat" ? "chat.chunk" : `${protocol}.chunk`;
     const providerTerminal = ["response.completed", "response.incomplete", "response.failed", "message_stop", "error"].includes(eventType);
+    const protocolCompleted = eventType === "response.completed" || eventType === "message_stop" || (protocol === "gemini" && Boolean(finishReason));
     return {
         eventType,
         textDelta: hasTextDelta(payload, protocol),
@@ -160,6 +164,7 @@ function inspectFrame(frame: string, protocol: TextStreamProtocol) {
         terminalSeen: providerTerminal || Boolean(finishReason) || Boolean(errorRecord(payload.error)),
         doneMarkerSeen: false,
         usageSeen: Boolean(errorRecord(payload.usage) || errorRecord(errorRecord(payload.message)?.usage) || errorRecord(errorRecord(payload.response)?.usage) || errorRecord(payload.usageMetadata)),
+        protocolCompleted,
     };
 }
 
