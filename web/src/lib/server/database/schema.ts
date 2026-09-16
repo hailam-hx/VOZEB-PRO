@@ -270,7 +270,7 @@ CREATE INDEX IF NOT EXISTS generation_tasks_conversation_idx ON generation_tasks
 CREATE INDEX IF NOT EXISTS generation_tasks_run_idx ON generation_tasks (run_id, updated_at DESC) WHERE run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_user_project_idx ON generation_tasks (user_id, project_id, task_type, status) WHERE project_id IS NOT NULL;
 DROP INDEX IF EXISTS generation_tasks_recovery_due_idx;
-CREATE INDEX generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at, lease_until, id) WHERE (status IN ('pending', 'running') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')) OR (status = 'cancelled' AND execution_phase IN ('cancel_requested', 'cancel_polling')) OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'));
+CREATE INDEX generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at, lease_until, id) WHERE (status IN ('pending', 'running') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')) OR (status = 'cancelled' AND execution_phase IN ('cancel_requested', 'cancel_polling')) OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('persisting', 'review_pending', 'reviewing'));
 
 CREATE TABLE IF NOT EXISTS generation_worker_heartbeats (
     worker_id text PRIMARY KEY,

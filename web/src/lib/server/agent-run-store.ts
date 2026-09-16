@@ -488,7 +488,7 @@ function assistantUpdate(run: AgentRun, event?: { type: string; data?: unknown }
     if (run.status === "completed") {
         return {
             status: "completed" as const,
-            content: typeof data.reply === "string" && data.reply.trim() ? data.reply.trim() : copy.completed,
+            content: run.responseKind === "conversation" && run.conversationReply?.trim() ? run.conversationReply.trim() : typeof data.reply === "string" && data.reply.trim() ? data.reply.trim() : copy.completed,
             metadata: {
                 assetIds: run.assetIds,
                 taskIds: Array.from(new Set(run.tasks.flatMap((task) => task.taskIds || (task.taskId ? [task.taskId] : [])))),

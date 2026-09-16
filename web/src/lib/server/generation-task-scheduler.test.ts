@@ -72,6 +72,12 @@ describe("generation task scheduler", () => {
         await expect(claimDueGenerationTasks({ workerId: "review-worker", now: 1_000 })).resolves.toEqual([expect.objectContaining({ id: "review", status: "success", executionPhase: "review_pending" })]);
     });
 
+    it("claims a completed Agent while planner settlement reconciliation is due", async () => {
+        mocks.records = [{ ...record("settlement", 900), type: "agent", status: "success", executionPhase: "persisting" }];
+
+        await expect(claimDueGenerationTasks({ workerId: "settlement-worker", now: 1_000 })).resolves.toEqual([expect.objectContaining({ id: "settlement", status: "success", executionPhase: "persisting" })]);
+    });
+
     it("recovers a paused Agent only for a persisted cancellation request", async () => {
         mocks.records = [
             { ...record("cancel-agent", 900), type: "agent", status: "paused", executionPhase: "cancel_requested", payload: { cancellation: { pendingChildTaskIds: ["text"] } } },

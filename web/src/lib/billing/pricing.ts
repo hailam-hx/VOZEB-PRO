@@ -73,6 +73,15 @@ export type FinalSaleCharge = {
     platformLossCredits: string;
 };
 
+export class PricingUsageDimensionError extends Error {
+    readonly code = "pricing_usage_dimension_missing";
+
+    constructor(message: string) {
+        super(message);
+        this.name = "PricingUsageDimensionError";
+    }
+}
+
 const numericDimensions = new Set<PricingDimension>(["request", "inputTokens", "cachedInputTokens", "outputTokens", "count", "megapixels", "characters", "durationSeconds"]);
 const categoricalDimensions = new Set<PricingDimension>(["quality", "resolution", "format"]);
 const conditionDimensions: PricingConditionDimension[] = ["quality", "resolution", "format"];
@@ -172,7 +181,7 @@ function priceComponent(component: PricingComponent, usage: NormalizedUsage) {
     for (const dimension of conditionDimensions) {
         const expected = component.when?.[dimension];
         if (expected === undefined) continue;
-        if (usage[dimension] === undefined) throw new Error(`缺少价格条件维度：${dimension}`);
+        if (usage[dimension] === undefined) throw new PricingUsageDimensionError(`缺少价格条件维度：${dimension}`);
     }
     for (const dimension of conditionDimensions) {
         const expected = component.when?.[dimension];
@@ -180,7 +189,7 @@ function priceComponent(component: PricingComponent, usage: NormalizedUsage) {
         if (usage[dimension] !== expected) return decimal(0);
     }
     const value = usage[component.dimension];
-    if (value === undefined) throw new Error(`缺少价格维度：${component.dimension}`);
+    if (value === undefined) throw new PricingUsageDimensionError(`缺少价格维度：${component.dimension}`);
     if (categoricalDimensions.has(component.dimension)) {
         if (value !== component.match) return decimal(0);
         const count = usage.count === undefined ? decimal(1) : decimal(usage.count, "生成数量");

@@ -124,6 +124,36 @@ describe("usage billing runtime", () => {
         await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).rejects.toMatchObject({ code: "load_attempt:usage_attempt_missing" });
     });
 
+    it("treats a provider price card that requires an unavailable usage dimension as non-retryable integrity failure", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "agent-plan:invalid-cost-dimension",
+            requestFingerprint: "5".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "planner invalid provider price fixture",
+        });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "fixture",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: { version: 1, components: [{ id: "invalid-text-count", dimension: "count", unitPrice: "1" }] },
+            observedUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "5", outputTokens: "2" }),
+        });
+        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }));
+
+        await expect(finishSystemAiTextAttempt(headers, { status: "succeeded" })).rejects.toMatchObject({
+            name: "UsageBillingIntegrityError",
+            code: "finish_attempt:pricing_usage_dimension_missing",
+            message: "缺少价格维度：count",
+        });
+    });
+
     it("preserves the provider-attempt conflict type and status during planner finalization", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",

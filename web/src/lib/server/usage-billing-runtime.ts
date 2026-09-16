@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
 
-import { calculateFinalSaleCharge, calculateNormalizedUsagePrice, calculatePricingReserve, normalizeBillableUsage, validatePricingRateCard, type FinalSaleCharge, type NormalizedUsage, type PricingRateCardV1 } from "@/lib/billing/pricing";
+import {
+    calculateFinalSaleCharge,
+    calculateNormalizedUsagePrice,
+    calculatePricingReserve,
+    normalizeBillableUsage,
+    PricingUsageDimensionError,
+    validatePricingRateCard,
+    type FinalSaleCharge,
+    type NormalizedUsage,
+    type PricingRateCardV1,
+} from "@/lib/billing/pricing";
 import { validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/money";
 import type { ProviderUsageAttempt, UsageBillingHoldSnapshot, WalletHold } from "@/lib/auth/store-types";
 import { readSystemAiUsageBilling } from "./system-ai-billing";
@@ -245,6 +255,7 @@ function billingIntegrityError(step: BillingFinalizationStep, code: string, mess
 function billingFinalizationStepError(step: BillingFinalizationStep, error: unknown) {
     if (error && typeof error === "object" && "billingStage" in error) return error;
     const source = error instanceof Error ? error : new Error(String(error));
+    if (source instanceof PricingUsageDimensionError) return billingIntegrityError(step, source.code, source.message);
     const record = source as Error & { code?: unknown; status?: unknown };
     const constructorName = source.constructor?.name;
     const code = typeof record.code === "string" && record.code.trim() ? record.code.trim() : source.name !== "Error" ? source.name : constructorName && constructorName !== "Error" ? constructorName : "Error";

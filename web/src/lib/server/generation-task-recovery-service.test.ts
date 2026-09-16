@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     renew: vi.fn(),
     schedule: vi.fn(),
     executeAgentRun: vi.fn(),
+    reconcileAgentPlannerFinalization: vi.fn(),
     processAgentRunReview: vi.fn(),
     getAgentRun: vi.fn(),
     updateAgentRun: vi.fn(),
@@ -56,7 +57,7 @@ vi.mock("@/lib/server/generation-task-scheduler", () => ({
     scheduleGenerationTask: mocks.schedule,
     generationTaskNextPollAt: vi.fn(() => 20_000),
 }));
-vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.executeAgentRun, abortAgentRun: vi.fn() }));
+vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.executeAgentRun, reconcileAgentPlannerFinalization: mocks.reconcileAgentPlannerFinalization, abortAgentRun: vi.fn() }));
 vi.mock("@/lib/server/agent-run-execution", () => ({ processAgentRunReview: mocks.processAgentRunReview }));
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, mirrorAgentTextTaskSnapshot: mocks.mirrorText, updateAgentRunById: mocks.updateAgentRun, setAgentRunStatus: mocks.setAgentRunStatus }));
 vi.mock("@/lib/server/generation-task-store", () => ({ getStoredGenerationTaskRecord: mocks.getRecord }));
@@ -298,6 +299,7 @@ describe("generation task recovery service", () => {
         mocks.getAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });
         mocks.getFreshAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 20 } });
         mocks.finalizeBilling.mockResolvedValue({ state: "settled" });
+        mocks.reconcileAgentPlannerFinalization.mockResolvedValue(true);
     });
     afterEach(() => vi.unstubAllEnvs());
 
@@ -343,6 +345,53 @@ describe("generation task recovery service", () => {
         expect(mocks.processAgentRunReview).toHaveBeenCalledWith(run, "http://internal", "worker-context:user-one");
         expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "review_completed" });
         expect(result).toMatchObject({ claimed: 1, completed: 1 });
+    });
+
+    it("reconciles a completed conversation settlement without rerunning the planner", async () => {
+        const run = {
+            id: "agent-one",
+            userId: "user-one",
+            status: "completed",
+            responseKind: "conversation",
+            conversationReply: "完整回答",
+            planningFinalization: { status: "failed", retryable: true },
+            reviewed: true,
+            tasks: [],
+            createdAt: 1_000,
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), status: "success", executionPhase: "persisting", lastUpstreamStatus: "planner_settlement_error:1" }]);
+        mocks.getAgentRun.mockResolvedValue(run);
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.reconcileAgentPlannerFinalization).toHaveBeenCalledWith("agent-one");
+        expect(mocks.executeAgentRun).not.toHaveBeenCalled();
+        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "planner_settlement_completed" }));
+        expect(result).toMatchObject({ claimed: 1, completed: 1 });
+    });
+
+    it("closes non-retryable conversation settlement work for manual review without a hot retry", async () => {
+        const run = {
+            id: "agent-one",
+            userId: "user-one",
+            status: "completed",
+            responseKind: "conversation",
+            conversationReply: "完整回答",
+            planningFinalization: { status: "failed", retryable: false },
+            reviewed: true,
+            tasks: [],
+            createdAt: 1_000,
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), status: "success", executionPhase: "persisting", lastUpstreamStatus: "planner_settlement_pending" }]);
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.reconcileAgentPlannerFinalization.mockResolvedValue(false);
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.reconcileAgentPlannerFinalization).toHaveBeenCalledWith("agent-one");
+        expect(mocks.executeAgentRun).not.toHaveBeenCalled();
+        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "planner_settlement_manual_review" }));
+        expect(result).toMatchObject({ claimed: 1, completed: 1, deferred: 0 });
     });
 
     it("advances an existing child task before resuming its parent Agent", async () => {

@@ -27,6 +27,73 @@ afterEach(() => {
 });
 
 describe("useCreateAgent submission retry", () => {
+    it("clears the permanent Stop state when a completed snapshot follows the final conversation text", async () => {
+        class Source extends EventTarget {
+            static current: Source;
+            constructor() {
+                super();
+                Source.current = this;
+            }
+            close() {}
+        }
+        vi.stubGlobal("EventSource", Source);
+        const run = { id: "run", conversationId: "conversation", inputMessageId: "input", assistantMessageId: "assistant", status: "running", assetIds: [], tasks: [] };
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+                const url = String(input);
+                if (url === "/api/agent/runs" && init?.method === "POST") return Response.json({ code: 0, data: { run, created: true } });
+                if (url.includes("/messages?"))
+                    return Response.json({
+                        code: 0,
+                        data: {
+                            messages: [
+                                { id: "input", conversationId: "conversation", runId: "run", sequence: 1, role: "user", status: "completed", content: "你是什么模型？", metadata: {}, createdAt: 1, updatedAt: 1 },
+                                {
+                                    id: "assistant",
+                                    conversationId: "conversation",
+                                    runId: "run",
+                                    sequence: 2,
+                                    role: "assistant",
+                                    status: "completed",
+                                    content: "本次会话使用的是 GPT-5.6 Sol 文本模型。",
+                                    metadata: {},
+                                    createdAt: 2,
+                                    updatedAt: 2,
+                                },
+                            ],
+                        },
+                    });
+                if (url === "/api/agent/runs/run") return Response.json({ code: 0, data: { run: { ...run, status: "completed", responseKind: "conversation", conversationReply: "本次会话使用的是 GPT-5.6 Sol 文本模型。" } } });
+                if (url.endsWith("/assets")) return Response.json({ code: 0, data: { assets: [] } });
+                return Response.json({ code: 0, data: {} });
+            }),
+        );
+        const { result, unmount } = renderHook(() => useCreateAgent());
+        try {
+            await act(async () => {
+                await result.current.submit("你是什么模型？");
+            });
+            act(() => {
+                Source.current.dispatchEvent(new MessageEvent("run.conversation.updated", { data: JSON.stringify({ data: { content: "本次会话使用的是 GPT-5.6 Sol 文本模型。" } }) }));
+            });
+            expect(result.current.sending).toBe(true);
+            expect(result.current.activeRunId).toBe("run");
+
+            await act(async () => {
+                Source.current.dispatchEvent(new MessageEvent("run.snapshot", { data: JSON.stringify({ status: "completed", responseKind: "conversation", conversationReply: "本次会话使用的是 GPT-5.6 Sol 文本模型。", tasks: [] }) }));
+            });
+
+            expect(result.current.sending).toBe(false);
+            expect(result.current.activeRunId).toBeUndefined();
+            expect(result.current.activeRunStatus).toBeUndefined();
+            expect(result.current.messages.find((message) => message.role === "assistant")).toMatchObject({ status: "completed", content: "本次会话使用的是 GPT-5.6 Sol 文本模型。" });
+        } finally {
+            unmount();
+            vi.unstubAllGlobals();
+        }
+    });
+
     it("updates the current Run with live task text without creating visible internal messages", async () => {
         class Source extends EventTarget {
             static current: Source;

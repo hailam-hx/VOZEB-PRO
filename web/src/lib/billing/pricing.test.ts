@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { calculateFinalSaleCharge, calculatePricingReserve, normalizeBillableUsage, validatePricingRateCard, type PricingRateCardV1 } from "./pricing";
+import { calculateFinalSaleCharge, calculateNormalizedUsagePrice, calculatePricingReserve, normalizeBillableUsage, validatePricingRateCard, type PricingRateCardV1 } from "./pricing";
 import { decimal } from "./decimal";
 
 const textRateCard: PricingRateCardV1 = {
@@ -28,6 +28,15 @@ describe("pricing", () => {
                 usage: normalizeBillableUsage({ capability: "text", source: "request", inputTokens: "120" }),
             }),
         ).toThrow("最大输出 token");
+    });
+
+    it("classifies a missing configured usage dimension as a deterministic pricing error", () => {
+        expect(() =>
+            calculateNormalizedUsagePrice({
+                rateCard: { version: 1, components: [{ id: "invalid-text-count", dimension: "count", unitPrice: "1" }] },
+                usage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "120", outputTokens: "80" }),
+            }),
+        ).toThrow(expect.objectContaining({ name: "PricingUsageDimensionError", code: "pricing_usage_dimension_missing", message: "缺少价格维度：count" }));
     });
 
     it.each(["image", "video", "audio"] as const)("reserves %s with every configured price-affecting dimension", (capability) => {

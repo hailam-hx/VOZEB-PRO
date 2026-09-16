@@ -363,6 +363,29 @@ describe("统一创作 Agent 事件流", () => {
         expect(FakeEventSource.instance.closed).toBe(true);
     });
 
+    it("uses a completed backend Run after reconnect when the final SSE event was missed", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    code: 0,
+                    data: {
+                        run: { id: "run-completed", conversationId: "conversation", inputMessageId: "input", assistantMessageId: "assistant", status: "completed", responseKind: "conversation", conversationReply: "完整回答", assetIds: [], tasks: [] },
+                    },
+                    msg: "OK",
+                }),
+            ),
+        );
+        const terminal = vi.fn();
+        watchCreativeAgentRun("run-completed", { onProgress: () => undefined, onTerminal: terminal, onConnectionError: () => undefined });
+
+        FakeEventSource.instance.onerror?.();
+        await vi.waitFor(() => expect(terminal).toHaveBeenCalledWith("completed", "完整回答"));
+
+        expect(FakeEventSource.instance.closed).toBe(true);
+    });
+
     it("does not turn an expired login into a business failure", async () => {
         vi.stubGlobal("EventSource", FakeEventSource);
         mocks.stopIfClientSessionExpired.mockResolvedValue(true);

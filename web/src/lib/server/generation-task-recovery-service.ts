@@ -13,7 +13,7 @@ import { closeTextTaskAttempt, getTextTask, updateTextTask, type TextTask } from
 import { markTextTaskFailed, queryCancelledTextTaskUpstreamStep, runTextTaskStep } from "@/lib/server/text-task-runtime";
 import { mirrorAgentTextTaskSnapshot } from "@/lib/server/agent-run-store";
 import { maintenanceWorkerContext, maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
-import { executeAgentRun } from "@/lib/server/agent-run-executor";
+import { executeAgentRun, reconcileAgentPlannerFinalization } from "@/lib/server/agent-run-executor";
 import { processAgentRunReview } from "@/lib/server/agent-run-execution";
 import { getAgentRun, setAgentRunStatus, updateAgentRunById, type AgentRun } from "@/lib/server/agent-run-store";
 import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
@@ -260,6 +260,25 @@ function cancellationSubmissionPhase(lease: GenerationTaskLease) {
 
 async function processAgentLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
     const run = await getAgentRun(lease.id);
+    if (run?.status === "completed" && lease.executionPhase === "persisting" && run.planningFinalization?.status !== "settled") {
+        const settled = await reconcileAgentPlannerFinalization(run.id).catch((error) => {
+            console.warn("Agent planner settlement reconciliation deferred", { runId: run.id, error: safeError(error) });
+            return false;
+        });
+        const latest = await getAgentRun(run.id);
+        if (settled || latest?.planningFinalization?.retryable === false) {
+            await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: settled ? "planner_settlement_completed" : "planner_settlement_manual_review" });
+            return "completed";
+        }
+        const count = errorCount(lease.lastUpstreamStatus) + 1;
+        await releaseGenerationTaskLease("agent", run.id, workerId, {
+            executionPhase: "persisting",
+            nextPollAt: generationTaskNextPollAt({ consecutiveErrors: count }),
+            lastPollAt: Date.now(),
+            lastUpstreamStatus: `planner_settlement_error:${count}`,
+        });
+        return "deferred";
+    }
     if (run?.status === "paused" && run.cancellation && lease.executionPhase === "cancel_requested") {
         const childIds = run.cancellation.pendingChildTaskIds;
         const cancelledChildIds = await Promise.all(
@@ -329,6 +348,15 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
         if (latest?.status === "paused" && latest.cancellation && (await getStoredGenerationTaskRecord("agent", run.id))?.executionPhase === "cancel_requested") {
             await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "cancel_requested", nextPollAt: Date.now(), lastUpstreamStatus: "cancel_pending" }, { cancellation: true });
             return "pending";
+        }
+        if (latest?.status === "completed" && latest.planningFinalization && latest.planningFinalization.status !== "settled" && latest.planningFinalization.retryable !== false) {
+            await releaseGenerationTaskLease("agent", run.id, workerId, {
+                executionPhase: "persisting",
+                nextPollAt: generationTaskNextPollAt({ consecutiveErrors: 1 }),
+                lastPollAt: Date.now(),
+                lastUpstreamStatus: "planner_settlement_error:1",
+            });
+            return "deferred";
         }
         if (!latest || latest.status === "completed" || latest.status === "failed" || latest.status === "cancelled" || latest.status === "paused") {
             await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: latest?.status || "missing" });

@@ -74,7 +74,7 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
     registerCreativeAssets: mocks.registerCreativeAssets,
 }));
 vi.mock("@/lib/server/generation-task-store", () => ({ linkStoredGenerationTask: mocks.linkStoredGenerationTask }));
-vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
+vi.mock("@/lib/server/generation-task-scheduler", () => ({ generationTaskNextPollAt: vi.fn(({ now }: { now?: number }) => (now || Date.now()) + 5_000), scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/text-task-store", () => ({ getTextTask: mocks.getTextTask, retryTextTask: mocks.retryTextTask }));
 vi.mock("@/lib/server/creative-review-service", () => ({ reviewCreativeOutputs: mocks.reviewCreativeOutputs }));
 vi.mock("@/lib/server/usage-billing-runtime", () => ({ finishSystemAiTextAttempt: mocks.finishSystemAiTextAttempt, resolveSystemAiTextFailure: mocks.resolveSystemAiTextFailure }));
@@ -89,7 +89,7 @@ vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
     };
 });
 
-import { executeAgentRun } from "./agent-run-executor";
+import { executeAgentRun, reconcileAgentPlannerFinalization } from "./agent-run-executor";
 import { processAgentRunReview, taskResultOps } from "./agent-run-execution";
 import { agentPlannerSystemPrompt } from "./agent-run-surface-policy";
 import { resetTextPlanningRuntime } from "./text-planning-runtime";
@@ -1401,6 +1401,62 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.events.filter((event) => event.type === "run.completed")).toHaveLength(1);
     });
 
+    it("completes a persisted conversation while transient planner settlement recovers in the background", async () => {
+        mocks.run = runFixture({
+            surface: "chat",
+            projectId: undefined,
+            status: "running",
+            responseKind: "conversation",
+            conversationReply: "已保存的对话回答",
+            prompt: "你是什么模型？",
+            tasks: [],
+            planningFinalization: { planningCycle: 1, status: "pending", holdId: "planner-hold", attemptNumber: 1, requestFingerprint: "8".repeat(64), updatedAt: 10 },
+        });
+        mocks.finishSystemAiTextAttempt.mockRejectedValueOnce(Object.assign(new Error("database unavailable"), { code: "ECONNRESET" })).mockResolvedValueOnce(undefined);
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({
+            status: "completed",
+            responseKind: "conversation",
+            conversationReply: "已保存的对话回答",
+            planningFinalization: expect.objectContaining({ status: "failed", errorCode: "ECONNRESET", retryable: true }),
+        });
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", mocks.run!.id, expect.objectContaining({ executionPhase: "persisting", nextPollAt: expect.any(Number) }));
+        expect(mocks.events.filter((event) => event.type === "run.completed")).toHaveLength(1);
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+
+        await expect(reconcileAgentPlannerFinalization(mocks.run!.id)).resolves.toBe(true);
+
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledTimes(2);
+        expect(mocks.run).toMatchObject({ status: "completed", planningFinalization: expect.objectContaining({ status: "settled" }) });
+        expect(mocks.events.filter((event) => event.type === "run.completed")).toHaveLength(1);
+    });
+
+    it("completes a conversation and marks an invalid price dimension for manual review without planner rerun", async () => {
+        mocks.run = runFixture({
+            surface: "chat",
+            projectId: undefined,
+            status: "running",
+            responseKind: "conversation",
+            conversationReply: "已保存的对话回答",
+            prompt: "你是什么模型？",
+            tasks: [],
+            planningFinalization: { planningCycle: 1, status: "pending", holdId: "planner-hold", attemptNumber: 1, requestFingerprint: "7".repeat(64), updatedAt: 10 },
+        });
+        mocks.finishSystemAiTextAttempt.mockRejectedValueOnce(Object.assign(new Error("缺少价格维度：count"), { name: "UsageBillingIntegrityError", code: "finish_attempt:pricing_usage_dimension_missing" }));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({
+            status: "completed",
+            planningFinalization: expect.objectContaining({ status: "failed", errorCode: "finish_attempt:pricing_usage_dimension_missing", retryable: false }),
+        });
+        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledOnce();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+        expect(mocks.events.filter((event) => event.type === "run.completed")).toHaveLength(1);
+    });
+
     it("keeps an undispatched child ready so the same persisted plan can resume", async () => {
         mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "写剧本一个女跳舞", responseLocale: "zh-CN" });
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
@@ -2147,7 +2203,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.status).toBe("failed");
     });
 
-    it("does not release a planning hold after the conversation plan and settlement were persisted", async () => {
+    it("does not settle or release a planning hold when conversation completion persistence fails", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockResolvedValue(
@@ -2174,7 +2230,7 @@ describe("executeAgentRun backend settings", () => {
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledWith(expect.any(Headers), { status: "succeeded" });
+        expect(mocks.finishSystemAiTextAttempt).not.toHaveBeenCalledWith(expect.any(Headers), { status: "succeeded" });
         expect(mocks.finishSystemAiTextAttempt).not.toHaveBeenCalledWith(expect.any(Headers), { status: "failed" });
         expect(mocks.resolveSystemAiTextFailure).not.toHaveBeenCalled();
         expect(mocks.run?.status).toBe("failed");

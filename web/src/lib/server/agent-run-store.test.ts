@@ -297,6 +297,19 @@ describe("setAgentRunStatus", () => {
         expect((mutation as { assistant?: { metadata?: Record<string, unknown> } } | null)?.assistant?.metadata).not.toHaveProperty("review");
     });
 
+    it("preserves a completed conversation reply during background settlement updates", async () => {
+        const run = { ...canvasRun(), surface: "chat" as const, status: "completed" as const, responseKind: "conversation" as const, conversationReply: "当前对话由 GPT-5.6 Sol 模型处理。" };
+        let mutation: Record<string, unknown> | null = null;
+        mocks.mutateCreativeRun.mockImplementation(async (_id, _ttl, mutate) => {
+            mutation = mutate(run);
+            return mutation && "run" in mutation ? mutation.run : null;
+        });
+
+        await updateAgentRunById("run", { planningFinalization: { planningCycle: 1, status: "settled", holdId: "hold", attemptNumber: 1, requestFingerprint: "a".repeat(64), updatedAt: 2 } }, undefined, ["completed"]);
+
+        expect(mutation).toMatchObject({ assistant: { status: "completed", content: "当前对话由 GPT-5.6 Sol 模型处理。" } });
+    });
+
     it("persists accumulated conversation content and emits idempotent replacement events", async () => {
         let current = { ...canvasRun(), surface: "chat" as const, conversationReply: undefined };
         const mutations: Array<Record<string, unknown>> = [];

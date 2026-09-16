@@ -37,6 +37,17 @@ describe("Agent Run SSE", () => {
         expect(mocks.listCreativeRunEvents).toHaveBeenCalledWith("run", "1");
     });
 
+    it("closes from a completed snapshot when the final event was missed", async () => {
+        mocks.listCreativeRunEvents.mockResolvedValue([]);
+
+        const response = await GET(new Request("http://localhost/api/agent/runs/run/events", { headers: { "last-event-id": "99" } }), { params: Promise.resolve({ id: "run" }) });
+        const body = await response.text();
+
+        expect(body).not.toContain("event: run.completed");
+        expect(body).toContain("event: run.snapshot");
+        expect(body).toContain('"status":"completed"');
+    });
+
     it("does not emit an older attempt snapshot after newer durable text events", async () => {
         const run = { id: "run", userId: "user", status: "completed", updatedAt: 1, tasks: [{ id: "parent", type: "text", status: "completed", activeAttemptId: "old", textRevision: 1 }] };
         mocks.getAgentRun

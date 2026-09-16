@@ -81,6 +81,7 @@ export async function claimDueGenerationTasks(input: { workerId: string; now?: n
                     WHERE ((status IN ('pending', 'running')
                       AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting'))
                       OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'))
+                      OR (task_type = 'agent' AND status = 'success' AND execution_phase = 'persisting')
                       OR (task_type = 'agent' AND status = 'paused' AND execution_phase = 'cancel_requested' AND payload->'cancellation' IS NOT NULL)
                       OR (task_type = 'text' AND status IN ('success', 'error', 'cancelled') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting'))
                       OR (status = 'cancelled' AND execution_phase IN ('cancel_requested', 'cancel_polling')))
@@ -228,12 +229,13 @@ function applyPatch(task: StoredGenerationTaskRecord, patch: GenerationTaskSched
 function isDue(task: StoredGenerationTaskRecord, now: number, taskIds: string[]) {
     const active = (task.status === "pending" || task.status === "running") && ACTIVE_PHASES.has(task.executionPhase || "created");
     const review = task.type === "agent" && task.status === "success" && REVIEW_PHASES.has(task.executionPhase || "created");
+    const agentFinalization = task.type === "agent" && task.status === "success" && task.executionPhase === "persisting";
     const cancellation = task.status === "cancelled" && CANCELLATION_PHASES.has(task.executionPhase || "created");
     const unpublishedText = task.type === "text" && ["success", "error", "cancelled"].includes(task.status) && ACTIVE_PHASES.has(task.executionPhase || "created");
     const agentCancellation = task.type === "agent" && task.status === "paused" && task.executionPhase === "cancel_requested" && Boolean(task.payload.cancellation);
     return (
         SCHEDULABLE_TYPES.has(task.type) &&
-        (active || review || cancellation || unpublishedText || agentCancellation) &&
+        (active || review || agentFinalization || cancellation || unpublishedText || agentCancellation) &&
         Number(task.nextPollAt || 0) > 0 &&
         Number(task.nextPollAt) <= now &&
         Number(task.leaseUntil || 0) <= now &&

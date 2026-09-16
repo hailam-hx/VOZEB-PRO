@@ -47,6 +47,7 @@ import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/ser
 import { filterAgentPlannerModels, resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
 import { buildAgentRunPlannerAudit } from "@/lib/server/agent-run-audit";
 import { orderCreativeAssetsByIds } from "@/lib/creative-asset-references";
+import { generationTaskNextPollAt, scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 
 const globalAgentExecutors = globalThis as typeof globalThis & { __vozebProAgentRunControllers?: Map<string, AbortController> };
 const controllers = (globalAgentExecutors.__vozebProAgentRunControllers ??= new Map<string, AbortController>());
@@ -78,8 +79,9 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         );
         if (!claimed) return;
         if (claimed.planningFinalization && claimed.responseKind === "conversation" && claimed.conversationReply?.trim()) {
-            if (!(await settlePlannerFinalization(run.id, claimed.planningFinalization, executionId))) return;
+            await scheduleConversationFinalization(run.id, claimed.planningFinalization);
             await completePersistedConversation(run.id, claimed, executionId, executionStartedAt);
+            await reconcileAgentPlannerFinalization(run.id);
             return;
         }
         if (claimed.tasks.length) {
@@ -399,8 +401,9 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 return;
             }
             acceptedPlanPersisted = true;
-            if (finalization && !(await settlePlannerFinalization(run.id, finalization, executionId))) return;
+            await scheduleConversationFinalization(run.id, finalization);
             await completePersistedConversation(run.id, persisted, executionId, executionStartedAt);
+            if (finalization) await reconcileAgentPlannerFinalization(run.id);
             return;
         }
         if (!plan) throw new Error("没有可用的文本模型渠道");
@@ -438,8 +441,9 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 return;
             }
             acceptedPlanPersisted = true;
-            if (finalization && !(await settlePlannerFinalization(run.id, finalization, executionId))) return;
+            await scheduleConversationFinalization(run.id, finalization);
             await completePersistedConversation(run.id, persisted, executionId, executionStartedAt);
+            if (finalization) await reconcileAgentPlannerFinalization(run.id);
             return;
         }
         let tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize, claimed.generationPreferences);
@@ -524,7 +528,7 @@ function plannerFinalization(headers: Headers | undefined, planningCycle: number
     return identity ? { planningCycle, status: "pending", ...identity, updatedAt: Date.now() } : undefined;
 }
 
-async function settlePlannerFinalization(runId: string, finalization: AgentRunPlanningFinalization, executionId: string) {
+async function settlePlannerFinalization(runId: string, finalization: AgentRunPlanningFinalization, executionId?: string, allowedStatuses: AgentRun["status"][] = ["running"]) {
     if (finalization.status === "settled") return true;
     try {
         if (!finalization.requestFingerprint) throw Object.assign(new Error("Agent 规划用量结算标识不完整"), { code: "billing_identity_missing" });
@@ -546,16 +550,30 @@ async function settlePlannerFinalization(runId: string, finalization: AgentRunPl
                     timings: { ...((await getAgentRun(runId))?.timings || { requestAcceptedAt: completedAt }), plannerSettlementCompletedAt: completedAt },
                 },
                 undefined,
-                ["running"],
+                allowedStatuses,
                 executionId,
             ),
         );
     } catch (error) {
         const failure = plannerFinalizationFailure(error);
-        await updateAgentRunById(runId, { planningFinalization: { ...finalization, status: "failed", ...failure, updatedAt: Date.now() }, failureStage: "planner_settlement" }, undefined, ["running"], executionId);
+        await updateAgentRunById(runId, { planningFinalization: { ...finalization, status: "failed", ...failure, updatedAt: Date.now() }, failureStage: "planner_settlement" }, undefined, allowedStatuses, executionId);
         if (failure.retryable) return false;
         throw error;
     }
+}
+
+async function scheduleConversationFinalization(runId: string, finalization?: AgentRunPlanningFinalization) {
+    if (!finalization) return;
+    const now = Date.now();
+    await scheduleGenerationTask("agent", runId, { executionPhase: "persisting", nextPollAt: generationTaskNextPollAt({ consecutiveErrors: 0, now }), lastPollAt: now, lastUpstreamStatus: "planner_settlement_pending" });
+}
+
+export async function reconcileAgentPlannerFinalization(runId: string) {
+    const run = await getAgentRun(runId);
+    const finalization = run?.planningFinalization;
+    if (!run || run.status !== "completed" || !finalization || finalization.status === "settled") return true;
+    if (finalization.status === "failed" && finalization.retryable === false) return false;
+    return settlePlannerFinalization(runId, finalization, undefined, ["completed"]);
 }
 
 async function completePersistedConversation(runId: string, run: AgentRun, executionId: string, executionStartedAt: number) {
