@@ -11,10 +11,10 @@ const mocks = vi.hoisted(() => ({
     mark: vi.fn(),
 }));
 
-vi.mock("@/app/api/image-tasks/route", () => ({ POST: mocks.createImage }));
-vi.mock("@/app/api/video-generation-tasks/video-generation-route", () => ({ POST: mocks.createVideo }));
-vi.mock("@/app/api/audio-tasks/route", () => ({ POST: mocks.createAudio }));
-vi.mock("@/app/api/text-tasks/route", () => ({ POST: mocks.createText }));
+vi.mock("@/lib/server/image-task-application", () => ({ POST: mocks.createImage }));
+vi.mock("@/lib/server/video-generation-application", () => ({ POST: mocks.createVideo }));
+vi.mock("@/lib/server/audio-task-application", () => ({ POST: mocks.createAudio }));
+vi.mock("@/lib/server/text-task-application", () => ({ POST: mocks.createText }));
 vi.mock("@/app/api/image-tasks/[id]/route", () => ({ GET: mocks.read }));
 vi.mock("@/app/api/video-tasks/[id]/route", () => ({ GET: mocks.read }));
 vi.mock("@/app/api/audio-tasks/[id]/route", () => ({ GET: mocks.read }));

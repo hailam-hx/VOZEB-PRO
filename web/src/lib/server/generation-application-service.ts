@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 
-import { POST as createAudioTaskRequest } from "@/app/api/audio-tasks/route";
+import { POST as createAudioTaskRequest } from "@/lib/server/audio-task-application";
 import { GET as readAudioTaskRequest } from "@/app/api/audio-tasks/[id]/route";
-import { POST as createImageTaskRequest } from "@/app/api/image-tasks/route";
+import { POST as createImageTaskRequest } from "@/lib/server/image-task-application";
 import { GET as readImageTaskRequest } from "@/app/api/image-tasks/[id]/route";
-import { POST as createTextTaskRequest } from "@/app/api/text-tasks/route";
+import { POST as createTextTaskRequest } from "@/lib/server/text-task-application";
 import { GET as readTextTaskRequest } from "@/app/api/text-tasks/[id]/route";
-import { POST as createVideoTaskRequest } from "@/app/api/video-generation-tasks/video-generation-route";
+import { POST as createVideoTaskRequest } from "@/lib/server/video-generation-application";
 import { GET as readVideoTaskRequest } from "@/app/api/video-tasks/[id]/route";
 import { agentTaskEntityId, bindDurableAgentToolCallGeneration, markDurableAgentToolCall, prepareDurableAgentToolCall } from "@/lib/server/agent-runtime-repository";
 import type { AgentRunTask } from "@/lib/server/agent-run-store";
