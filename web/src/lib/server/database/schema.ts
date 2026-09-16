@@ -272,6 +272,74 @@ CREATE INDEX IF NOT EXISTS generation_tasks_user_project_idx ON generation_tasks
 DROP INDEX IF EXISTS generation_tasks_recovery_due_idx;
 CREATE INDEX generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at, lease_until, id) WHERE (status IN ('pending', 'running') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')) OR (status = 'cancelled' AND execution_phase IN ('cancel_requested', 'cancel_polling')) OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'));
 
+CREATE TABLE IF NOT EXISTS generation_worker_heartbeats (
+    worker_id text PRIMARY KEY,
+    last_seen_at timestamptz NOT NULL,
+    build_version text NOT NULL,
+    git_sha text NOT NULL,
+    schema_version text NOT NULL,
+    runtime_protocol_version text NOT NULL
+);
+
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS build_version text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS git_sha text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS schema_version text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS runtime_protocol_version text;
+
+CREATE INDEX IF NOT EXISTS generation_worker_heartbeats_seen_idx ON generation_worker_heartbeats (last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS generation_webhook_events (
+    channel_id text NOT NULL,
+    event_id text NOT NULL,
+    upstream_task_id text NOT NULL,
+    task_id text,
+    task_type text,
+    payload_hash text NOT NULL,
+    signature_timestamp timestamptz NOT NULL,
+    status text NOT NULL DEFAULT 'received',
+    conflict_count integer NOT NULL DEFAULT 0,
+    last_conflict_payload_hash text,
+    last_conflict_at timestamptz,
+    received_at timestamptz NOT NULL DEFAULT now(),
+    processed_at timestamptz,
+    PRIMARY KEY (channel_id, event_id)
+);
+
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS signature_timestamp timestamptz;
+UPDATE generation_webhook_events SET signature_timestamp = COALESCE(signature_timestamp, received_at) WHERE signature_timestamp IS NULL;
+ALTER TABLE generation_webhook_events ALTER COLUMN signature_timestamp SET NOT NULL;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS conflict_count integer NOT NULL DEFAULT 0;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS last_conflict_payload_hash text;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS last_conflict_at timestamptz;
+
+CREATE INDEX IF NOT EXISTS generation_webhook_events_received_idx ON generation_webhook_events (received_at DESC);
+
+CREATE TABLE IF NOT EXISTS creative_conversations (
+    id text PRIMARY KEY,
+    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    surface text NOT NULL,
+    source text NOT NULL DEFAULT 'agent',
+    project_id text,
+    title text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'active',
+    context_summary text NOT NULL DEFAULT '',
+    context_summary_through_sequence integer NOT NULL DEFAULT 0,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    last_message_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT creative_conversations_surface CHECK (surface IN ('chat', 'canvas', 'drama')),
+    CONSTRAINT creative_conversations_source CHECK (source IN ('agent', 'image-workbench', 'video-workbench', 'canvas', 'drama')),
+    CONSTRAINT creative_conversations_status CHECK (status IN ('active', 'archived'))
+);
+ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS context_summary text NOT NULL DEFAULT '';
+ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS context_summary_through_sequence integer NOT NULL DEFAULT 0;
+ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'agent';
+UPDATE creative_conversations SET source = surface WHERE surface IN ('canvas', 'drama') AND source = 'agent';
+
+CREATE INDEX IF NOT EXISTS creative_conversations_user_updated_idx ON creative_conversations (user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS creative_conversations_user_source_idx ON creative_conversations (user_id, surface, source, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS creative_conversations_project_idx ON creative_conversations (user_id, surface, project_id, updated_at DESC) WHERE project_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS agent_runs (
     id text PRIMARY KEY REFERENCES generation_tasks(id) ON DELETE CASCADE,
     user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -364,74 +432,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_tool_calls_generation_idx ON agent_tool_
 
 ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS ordinal integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_tasks ALTER COLUMN ordinal DROP DEFAULT;
-
-CREATE TABLE IF NOT EXISTS generation_worker_heartbeats (
-    worker_id text PRIMARY KEY,
-    last_seen_at timestamptz NOT NULL,
-    build_version text NOT NULL,
-    git_sha text NOT NULL,
-    schema_version text NOT NULL,
-    runtime_protocol_version text NOT NULL
-);
-
-ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS build_version text;
-ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS git_sha text;
-ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS schema_version text;
-ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS runtime_protocol_version text;
-
-CREATE INDEX IF NOT EXISTS generation_worker_heartbeats_seen_idx ON generation_worker_heartbeats (last_seen_at DESC);
-
-CREATE TABLE IF NOT EXISTS generation_webhook_events (
-    channel_id text NOT NULL,
-    event_id text NOT NULL,
-    upstream_task_id text NOT NULL,
-    task_id text,
-    task_type text,
-    payload_hash text NOT NULL,
-    signature_timestamp timestamptz NOT NULL,
-    status text NOT NULL DEFAULT 'received',
-    conflict_count integer NOT NULL DEFAULT 0,
-    last_conflict_payload_hash text,
-    last_conflict_at timestamptz,
-    received_at timestamptz NOT NULL DEFAULT now(),
-    processed_at timestamptz,
-    PRIMARY KEY (channel_id, event_id)
-);
-
-ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS signature_timestamp timestamptz;
-UPDATE generation_webhook_events SET signature_timestamp = COALESCE(signature_timestamp, received_at) WHERE signature_timestamp IS NULL;
-ALTER TABLE generation_webhook_events ALTER COLUMN signature_timestamp SET NOT NULL;
-ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS conflict_count integer NOT NULL DEFAULT 0;
-ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS last_conflict_payload_hash text;
-ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS last_conflict_at timestamptz;
-
-CREATE INDEX IF NOT EXISTS generation_webhook_events_received_idx ON generation_webhook_events (received_at DESC);
-
-CREATE TABLE IF NOT EXISTS creative_conversations (
-    id text PRIMARY KEY,
-    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    surface text NOT NULL,
-    source text NOT NULL DEFAULT 'agent',
-    project_id text,
-    title text NOT NULL DEFAULT '',
-    status text NOT NULL DEFAULT 'active',
-    context_summary text NOT NULL DEFAULT '',
-    context_summary_through_sequence integer NOT NULL DEFAULT 0,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    last_message_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT creative_conversations_surface CHECK (surface IN ('chat', 'canvas', 'drama')),
-    CONSTRAINT creative_conversations_source CHECK (source IN ('agent', 'image-workbench', 'video-workbench', 'canvas', 'drama')),
-    CONSTRAINT creative_conversations_status CHECK (status IN ('active', 'archived'))
-);
-ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS context_summary text NOT NULL DEFAULT '';
-ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS context_summary_through_sequence integer NOT NULL DEFAULT 0;
-ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'agent';
-UPDATE creative_conversations SET source = surface WHERE surface IN ('canvas', 'drama') AND source = 'agent';
-
-CREATE INDEX IF NOT EXISTS creative_conversations_user_updated_idx ON creative_conversations (user_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS creative_conversations_user_source_idx ON creative_conversations (user_id, surface, source, status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS creative_conversations_project_idx ON creative_conversations (user_id, surface, project_id, updated_at DESC) WHERE project_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS creative_messages (
     id text PRIMARY KEY,
