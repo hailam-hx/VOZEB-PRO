@@ -129,7 +129,9 @@ export async function finishUsageProviderAttempt(input: { billing: UsageBilling;
     const attempts = await listProviderUsageAttemptsForHold(input.billing.holdId);
     const attempt = attempts.find((item) => item.attemptNumber === input.attemptNumber);
     if (!attempt) throw new Error("供应商尝试不存在");
-    const usage = input.normalizedUsage || attempt.observedUsage || (input.status === "failed" ? undefined : attempt.normalizedUsage);
+    assertUsageCapability(input.billing.snapshot, input.normalizedUsage, attempt.normalizedUsage, attempt.observedUsage);
+    const observedUsage = attempt.observedUsage ? normalizeBillableUsage({ ...(attempt.normalizedUsage || {}), ...attempt.observedUsage }) : undefined;
+    const usage = input.normalizedUsage || observedUsage || (input.status === "failed" ? undefined : attempt.normalizedUsage);
     const nativeCostAmount = attempt.costRateSnapshot && usage ? calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage }) : attempt.nativeCostAmount;
     return recordUsageProviderAttempt({
         billing: input.billing,

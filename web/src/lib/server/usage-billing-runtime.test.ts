@@ -1011,6 +1011,34 @@ describe("orphan usage recovery", () => {
         expect((await readAuthDb()).usageCharges).toEqual([]);
     });
 
+    it("releases an unknown hold when partial provider evidence omits a priced request dimension", async () => {
+        const billing = await reservation("unknown-partial-usage", new Date("2026-08-23T00:00:00.000Z"));
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "vendor",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "0.375" }] },
+            normalizedUsage: imageRequest,
+            observedUsage: normalizeBillableUsage({ capability: "image", source: "actual", resolution: "1024x1024" }),
+        });
+
+        const result = await recoverOrphanUsageHolds({
+            limit: 5,
+            now: new Date("2026-08-23T01:00:00.000Z"),
+            inspect: vi.fn(async () => ({ state: "unknown" as const, reason: "供应商状态未知" })),
+        });
+        const db = await readAuthDb();
+
+        expect(result).toEqual({ inspected: 1, retained: 0, settled: 0, released: 1 });
+        expect(db.walletHolds[0]).toMatchObject({ status: "released", releaseReason: "供应商状态未知" });
+        expect(db.providerUsageAttempts[0]).toMatchObject({ status: "failed", nativeCostAmount: "0.375", normalizedUsage: { count: "1", resolution: "1024x1024" } });
+        expect(db.usageCharges).toEqual([]);
+    });
+
     it("advances bounded recovery after releasing an unknown hold", async () => {
         await reservation("reviewed-first", new Date("2026-08-23T00:00:00.000Z"));
         await reservation("later", new Date("2026-08-23T00:01:00.000Z"));
