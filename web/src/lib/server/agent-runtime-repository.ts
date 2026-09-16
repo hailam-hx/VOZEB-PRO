@@ -163,6 +163,32 @@ export async function bindAgentToolCallGeneration(client: QueryExecutor, toolCal
     return mapToolCall(result.rows[0]);
 }
 
+export async function prepareDurableAgentToolCall(input: Parameters<typeof prepareAgentToolCall>[1]) {
+    if (!postgresConfigured()) return { id: input.id, runId: input.runId, taskId: input.taskId, toolName: input.toolName, idempotencyKey: input.idempotencyKey, status: "created", input: input.input } satisfies AgentToolCall;
+    await ensurePostgresSchema();
+    return withPostgresTransaction((client) => prepareAgentToolCall(client, input));
+}
+
+export async function bindDurableAgentToolCallGeneration(toolCallId: string, generationTaskId: string, now = Date.now()) {
+    if (!postgresConfigured()) return null;
+    await ensurePostgresSchema();
+    return withPostgresTransaction((client) => bindAgentToolCallGeneration(client, toolCallId, generationTaskId, now));
+}
+
+export async function markDurableAgentToolCall(toolCallId: string, status: "failed" | "unknown", error: string, now = Date.now()) {
+    if (!postgresConfigured()) return null;
+    await ensurePostgresSchema();
+    return withPostgresTransaction(async (client) => {
+        const result = await client.query<AgentToolCallRow>(
+            `UPDATE agent_tool_calls SET status = $2, error_json = $3::jsonb, updated_at = $4
+             WHERE id = $1 AND generation_task_id IS NULL AND status IN ('created', 'submitting', 'failed')
+             RETURNING *`,
+            [toolCallId, status, JSON.stringify({ message: error }), new Date(now)],
+        );
+        return result.rows[0] ? mapToolCall(result.rows[0]) : null;
+    });
+}
+
 export async function claimReadyAgentTasks(client: QueryExecutor, input: { workerId: string; now?: number; leaseMs?: number; limit?: number; runId?: string }) {
     const now = input.now || Date.now();
     const leaseMs = Math.max(30_000, Math.min(5 * 60_000, Math.floor(input.leaseMs || 90_000)));
@@ -254,4 +280,8 @@ function stableJson(value: unknown): string {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
         .join(",")}}`;
+}
+
+function postgresConfigured() {
+    return Boolean(process.env.DATABASE_URL?.trim() || process.env.POSTGRES_URL?.trim());
 }

@@ -45,6 +45,28 @@ vi.mock("@/lib/auth/store", () => ({
     refundUserPoints: mocks.refundUserPoints,
 }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi }));
+vi.mock("@/lib/server/generation-application-service", () => ({
+    GenerationApplicationError: class GenerationApplicationError extends Error {
+        constructor(
+            message: string,
+            readonly status = 500,
+            readonly outcome = "unknown",
+        ) {
+            super(message);
+        }
+    },
+    createAgentGenerationTask: vi.fn(async (input: { type: string; origin: string; headers: HeadersInit; body: Record<string, unknown> }) => {
+        const path = input.type === "video" ? "/api/video-generation-tasks" : `/api/${input.type}-tasks`;
+        const response = await mocks.fetchInternalApi(`${input.origin}${path}`, { method: "POST", headers: input.headers, body: JSON.stringify(input.body), cache: "no-store" });
+        if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
+        return response.json();
+    }),
+    readAgentGenerationTask: vi.fn(async (input: { type: string; taskId: string; origin: string; headers: HeadersInit }) => {
+        const response = await mocks.fetchInternalApi(`${input.origin}/api/${input.type}-tasks/${encodeURIComponent(input.taskId)}`, { headers: input.headers, cache: "no-store" });
+        if (!response.ok) throw new Error(response.status >= 500 ? "生成任务查询暂时不可用" : (await response.text()) || "生成任务查询失败");
+        return response.json();
+    }),
+}));
 vi.mock("@/lib/server/creative-runtime-store", () => ({
     getCreativeAssetsByIds: mocks.getCreativeAssetsByIds,
     getCreativeConversationContext: mocks.getCreativeConversationContext,

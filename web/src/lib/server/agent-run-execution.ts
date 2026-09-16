@@ -31,6 +31,7 @@ import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "./usage-b
 import { acceptsMediaReference, mergeTaskReferences, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
 import { getTextTask, retryTextTask } from "./text-task-store";
 import { toSystemGenerationChannel } from "./generation-channel";
+import { createAgentGenerationTask, GenerationApplicationError, readAgentGenerationTask } from "./generation-application-service";
 
 export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
 export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
@@ -1022,17 +1023,24 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                 ...body,
                 context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
             };
-            let response: Response;
             try {
-                response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify(bodyForCopy), cache: "no-store" });
+                const payload = await createAgentGenerationTask({
+                    type: task.type,
+                    origin,
+                    headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }),
+                    body: bodyForCopy,
+                    runId: run.id,
+                    planVersion: Math.max(1, run.planningCycle || 1),
+                    taskKey: task.id,
+                    idempotencyKey: bodyForCopy.context.clientRequestId,
+                });
+                const createdTaskId = payload.task?.id;
+                if (!createdTaskId) throw new AgentChildTaskDispatchError("生成任务未返回任务 ID");
+                taskId = createdTaskId;
             } catch (error) {
+                if (error instanceof GenerationApplicationError && error.outcome === "unknown") throw new AgentChildTaskDeferredError(error.message);
                 throw new AgentChildTaskDispatchError(toSafeGenerationErrorMessage(error, "生成任务创建失败"));
             }
-            if (!response.ok) throw new AgentChildTaskDispatchError((await response.text()) || "生成任务创建失败");
-            const payload = (await response.json()) as { task?: { id?: string } };
-            const createdTaskId = payload.task?.id;
-            if (!createdTaskId) throw new AgentChildTaskDispatchError("生成任务未返回任务 ID");
-            taskId = createdTaskId;
             await linkAgentChildTask(run, task, taskId, attempt);
             child = { ...agentGenerationSelection(childTask), id: taskId, status: "pending", attempt };
             slot = { ...slot, taskId };
@@ -1191,23 +1199,14 @@ export function directCanvasTextContent(task: AgentRunTask) {
 }
 
 export async function pollTask(origin: string, path: string, taskId: string, cookie: string, runId: string, type: AgentRunTask["type"], executionId: string) {
-    void type;
+    void path;
     if (!(await canContinue(runId, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
-    let response: Response;
-    try {
-        response = await fetchInternalApi(`${origin}${path}/${encodeURIComponent(taskId)}`, { headers: runtimeRequestHeaders(cookie), cache: "no-store" });
-    } catch (error) {
-        throw new AgentChildTaskDeferredError(error instanceof Error ? error.message : "生成任务查询暂时不可用");
-    }
-    if (!response.ok) {
-        if ([408, 425, 429].includes(response.status) || response.status >= 500) throw new AgentChildTaskDeferredError("生成任务查询暂时不可用");
-        throw new AgentChildTaskTerminalError((await response.text()) || "生成任务查询失败");
-    }
     let payload: { task?: { status?: string; result?: unknown; error?: string } };
     try {
-        payload = (await response.json()) as typeof payload;
-    } catch {
-        throw new AgentChildTaskDeferredError("生成任务状态暂时无法解析");
+        payload = await readAgentGenerationTask({ type, taskId, origin, headers: runtimeRequestHeaders(cookie) });
+    } catch (error) {
+        if (error instanceof GenerationApplicationError && error.status < 500 && ![408, 425, 429].includes(error.status)) throw new AgentChildTaskTerminalError(error.message);
+        throw new AgentChildTaskDeferredError(error instanceof Error ? error.message : "生成任务查询暂时不可用");
     }
     const terminal = agentChildTaskTerminal(payload.task?.status);
     if (terminal === "success") return payload.task?.result;
