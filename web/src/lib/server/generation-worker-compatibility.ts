@@ -1,4 +1,4 @@
-export const GENERATION_WORKER_SCHEMA_VERSION = "20260916_generation_worker_compatibility";
+export const GENERATION_WORKER_SCHEMA_VERSION = "20260916_agent_runtime_v2";
 export const GENERATION_WORKER_RUNTIME_PROTOCOL_VERSION = "1";
 
 export type GenerationWorkerCompatibility = {

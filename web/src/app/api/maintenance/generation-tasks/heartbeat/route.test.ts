@@ -68,7 +68,7 @@ function request(workerId = "", overrides: Record<string, string> = {}) {
             ...(workerId ? { "x-vozeb-pro-worker-id": workerId } : {}),
             "x-vozeb-pro-worker-build-version": "v0.0.6",
             "x-vozeb-pro-worker-git-sha": "test-sha",
-            "x-vozeb-pro-worker-schema-version": "20260916_generation_worker_compatibility",
+            "x-vozeb-pro-worker-schema-version": "20260916_agent_runtime_v2",
             "x-vozeb-pro-worker-runtime-protocol": "1",
             ...overrides,
         },

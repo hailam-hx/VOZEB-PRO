@@ -9,7 +9,7 @@ const token = process.env.VOZEB_PRO_WORKER_TOKEN?.trim() || "";
 const compatibilityHeaders = {
     "x-vozeb-pro-worker-build-version": readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim(),
     "x-vozeb-pro-worker-git-sha": process.env.VOZEB_PRO_GIT_SHA?.trim() || "unknown",
-    "x-vozeb-pro-worker-schema-version": "20260916_generation_worker_compatibility",
+    "x-vozeb-pro-worker-schema-version": "20260916_agent_runtime_v2",
     "x-vozeb-pro-worker-runtime-protocol": "1",
 };
 const origin = resolveGenerationWorkerOrigin();
