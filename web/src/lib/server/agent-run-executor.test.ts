@@ -45,6 +45,28 @@ vi.mock("@/lib/auth/store", () => ({
     refundUserPoints: mocks.refundUserPoints,
 }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi }));
+vi.mock("@/lib/server/generation-application-service", () => ({
+    GenerationApplicationError: class GenerationApplicationError extends Error {
+        constructor(
+            message: string,
+            readonly status = 500,
+            readonly outcome = "unknown",
+        ) {
+            super(message);
+        }
+    },
+    createAgentGenerationTask: vi.fn(async (input: { type: string; origin: string; headers: HeadersInit; body: Record<string, unknown> }) => {
+        const path = input.type === "video" ? "/api/video-generation-tasks" : `/api/${input.type}-tasks`;
+        const response = await mocks.fetchInternalApi(`${input.origin}${path}`, { method: "POST", headers: input.headers, body: JSON.stringify(input.body), cache: "no-store" });
+        if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
+        return response.json();
+    }),
+    readAgentGenerationTask: vi.fn(async (input: { type: string; taskId: string; origin: string; headers: HeadersInit }) => {
+        const response = await mocks.fetchInternalApi(`${input.origin}/api/${input.type}-tasks/${encodeURIComponent(input.taskId)}`, { headers: input.headers, cache: "no-store" });
+        if (!response.ok) throw new Error(response.status >= 500 ? "生成任务查询暂时不可用" : (await response.text()) || "生成任务查询失败");
+        return response.json();
+    }),
+}));
 vi.mock("@/lib/server/creative-runtime-store", () => ({
     getCreativeAssetsByIds: mocks.getCreativeAssetsByIds,
     getCreativeConversationContext: mocks.getCreativeConversationContext,
@@ -245,29 +267,30 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.events.map((event) => event.type)).toEqual(["run.review.started", "run.review.background"]);
     });
 
-    it("keeps review blocking for multi-task runs", async () => {
+    it("completes multi-task runs before asynchronous review", async () => {
         mocks.run = { ...runWithTasks([imageTask("image-one"), imageTask("image-two")]), reviewed: false };
         mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
-        let finishReview: ((value: { mode: "visual"; status: "passed"; summary: string; issues: never[]; retryTaskIds: never[] }) => void) | undefined;
-        mocks.reviewCreativeOutputs.mockReturnValue(
-            new Promise((resolve) => {
-                finishReview = resolve;
-            }),
-        );
 
-        const execution = executeAgentRun(mocks.run, "http://localhost", "session=test");
-        await vi.waitFor(() => expect(mocks.reviewCreativeOutputs).toHaveBeenCalledOnce());
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.run?.status).toBe("running");
-        expect(mocks.events.some((event) => event.type === "run.completed")).toBe(false);
-
-        finishReview?.({ mode: "visual", status: "passed", summary: "检查通过", issues: [], retryTaskIds: [] });
-        await execution;
         expect(mocks.run?.status).toBe("completed");
+        expect(mocks.run?.reviewStatus).toBe("review_pending");
+        expect(mocks.reviewCreativeOutputs).not.toHaveBeenCalled();
+    });
+
+    it("keeps review blocking when the user explicitly requests strict review", async () => {
+        mocks.run = { ...runWithTasks([imageTask("image-one"), imageTask("image-two")]), prompt: "请严格检查所有结果", reviewed: false };
+        mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run?.status).toBe("completed");
+        expect(mocks.run?.reviewed).toBe(true);
+        expect(mocks.reviewCreativeOutputs).toHaveBeenCalledOnce();
     });
 
     it("keeps completed media identities when review suggests revisions", async () => {
-        mocks.run = { ...runWithTasks([imageTask("image-one"), imageTask("image-two")]), reviewed: false };
+        mocks.run = { ...runWithTasks([imageTask("image-one"), imageTask("image-two")]), prompt: "高质量模式", reviewed: false };
         mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
         mocks.reviewCreativeOutputs.mockResolvedValue({
             mode: "visual",
@@ -385,6 +408,37 @@ describe("executeAgentRun backend settings", () => {
 
         expect(postCountsAtPoll).toEqual([2, 2]);
         expect(mocks.run?.tasks).toEqual([expect.objectContaining({ status: "completed" }), expect.objectContaining({ status: "completed" })]);
+    });
+
+    it("keeps a successful sibling when another task dispatch fails", async () => {
+        mocks.run = runWithTasks([imageTask("image-one"), imageTask("image-two")]);
+        mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
+        let releaseFailure: (() => void) | undefined;
+        const failedDispatch = new Promise<Response>((resolve) => {
+            releaseFailure = () => resolve(new Response("dispatch unavailable", { status: 502 }));
+        });
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST") {
+                const body = JSON.parse(String(init.body)) as { prompt: string };
+                if (body.prompt.includes("image-one")) return failedDispatch;
+                return Response.json({ task: { id: "child-image-two" } });
+            }
+            if (url.endsWith("/api/image-tasks/child-image-two")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/image-two.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        const execution = executeAgentRun(mocks.run, "http://localhost", "session=test");
+        await vi.waitFor(() => expect(mocks.run?.tasks.find((task) => task.id === "image-two")?.status).toBe("completed"));
+        releaseFailure?.();
+        await execution;
+
+        expect(mocks.run).toMatchObject({
+            status: "running",
+            failureStage: "task_dispatch",
+            tasks: [expect.objectContaining({ id: "image-one", status: "ready", attempts: 0 }), expect.objectContaining({ id: "image-two", status: "completed", taskId: "child-image-two" })],
+            assetIds: ["asset-0"],
+        });
+        expect(mocks.events.some((event) => event.type === "run.failed")).toBe(false);
     });
 
     it("does not change channel settings halfway through a run", async () => {
@@ -1226,11 +1280,12 @@ describe("executeAgentRun backend settings", () => {
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
         expect(mocks.run).toMatchObject({
-            status: "failed",
+            status: "running",
             failureStage: "planner_settlement",
             tasks: [expect.objectContaining({ id: "script", status: "ready" })],
-            planningFinalization: expect.objectContaining({ planningCycle: 1, status: "failed", holdId: "planner-hold", attemptNumber: 1, requestFingerprint: "a".repeat(64), errorCode: "Error" }),
+            planningFinalization: expect.objectContaining({ planningCycle: 1, status: "failed", holdId: "planner-hold", attemptNumber: 1, requestFingerprint: "a".repeat(64), errorCode: "Error", retryable: true }),
         });
+        expect(mocks.events.some((event) => event.type === "run.failed")).toBe(false);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).endsWith("/api/text-tasks"))).toBe(false);
     });
 
@@ -1268,11 +1323,12 @@ describe("executeAgentRun backend settings", () => {
 
         expect(mocks.finishSystemAiTextAttempt).toHaveBeenCalledOnce();
         expect(mocks.run).toMatchObject({
-            status: "failed",
+            status: "running",
             failureStage: "planner_settlement",
             planningFinalization: expect.objectContaining({ status: "failed", errorCode: "ECONNRESET", retryable: true }),
             tasks: [expect.objectContaining({ id: "script", status: "ready" })],
         });
+        expect(mocks.events.some((event) => event.type === "run.failed")).toBe(false);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).endsWith("/api/text-tasks"))).toBe(false);
     });
 
@@ -1301,6 +1357,27 @@ describe("executeAgentRun backend settings", () => {
         const settlementHeaders = (mocks.finishSystemAiTextAttempt.mock.calls as unknown as Array<[Headers, { status: string }]>)[0]?.[0];
         expect(settlementHeaders.get("x-vozeb-pro-usage-hold-id")).toBe("planner-hold");
         expect(mocks.run).toMatchObject({ status: "completed", failureStage: undefined, planningFinalization: expect.objectContaining({ status: "settled" }), tasks: [expect.objectContaining({ status: "completed", taskId: "text-script" })] });
+    });
+
+    it("fails permanently when the persisted planner billing identity is incomplete", async () => {
+        mocks.run = runFixture({
+            surface: "chat",
+            projectId: undefined,
+            status: "running",
+            responseKind: "generation",
+            prompt: "写剧本",
+            tasks: [{ id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", count: 1, dependencies: [], status: "ready", attempts: 0 }],
+            planningFinalization: { planningCycle: 1, status: "pending", holdId: "planner-hold", attemptNumber: 1, updatedAt: 10 },
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.finishSystemAiTextAttempt).not.toHaveBeenCalled();
+        expect(mocks.run).toMatchObject({
+            status: "failed",
+            failureStage: "planner_settlement",
+            planningFinalization: expect.objectContaining({ status: "failed", errorCode: "billing_identity_missing", retryable: false }),
+        });
     });
 
     it("settles and completes a persisted conversation reply without requesting the planner again", async () => {
@@ -1340,12 +1417,12 @@ describe("executeAgentRun backend settings", () => {
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
         expect(mocks.run).toMatchObject({
-            status: "failed",
+            status: "running",
             failureStage: "task_dispatch",
             tasks: [expect.objectContaining({ id: "script", status: "ready", attempts: 0, error: "dispatch unavailable" })],
         });
 
-        mocks.run = { ...mocks.run!, status: "running", executionId: undefined };
+        mocks.run = { ...mocks.run!, executionId: undefined };
         mocks.getTextTask.mockResolvedValue({ status: "success", result: { content: "完整剧本" }, executionPhase: "completed" });
         mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
             if (init?.method === "POST" && url.endsWith("/api/text-tasks")) return Response.json({ task: { id: "text-script" } });

@@ -9,8 +9,8 @@ describe("generation worker startup", () => {
     it("starts only maintenance lanes backed by current PAYG routes", () => {
         const preload = `
             const calls = [];
-            globalThis.fetch = (input) => {
-                calls.push(String(input));
+            globalThis.fetch = (input, init) => {
+                calls.push({ url: String(input), headers: init?.headers });
                 if (calls.length === 1) queueMicrotask(() => {
                     process.stdout.write(JSON.stringify(calls));
                     process.exit(0);
@@ -25,15 +25,23 @@ describe("generation worker startup", () => {
                 VOZEB_PRO_GENERATION_WORKER_LANES: "2",
                 VOZEB_PRO_WORKER_API_ORIGIN: "http://worker.test",
                 VOZEB_PRO_WORKER_TOKEN: "w".repeat(32),
+                VOZEB_PRO_GIT_SHA: "test-sha",
             },
         });
         const calls = JSON.parse(output.slice(output.indexOf("[")));
 
-        expect(calls).toEqual([
+        expect(calls.map((call) => call.url)).toEqual([
             "http://worker.test/api/maintenance/generation-tasks/heartbeat",
             "http://worker.test/api/maintenance/usage-holds/run",
             "http://worker.test/api/maintenance/generation-tasks/run",
             "http://worker.test/api/maintenance/generation-tasks/run",
         ]);
+        for (const call of calls)
+            expect(call.headers).toMatchObject({
+                "x-vozeb-pro-worker-build-version": "v0.0.6",
+                "x-vozeb-pro-worker-git-sha": "test-sha",
+                "x-vozeb-pro-worker-schema-version": "20260916_agent_runtime_v2",
+                "x-vozeb-pro-worker-runtime-protocol": "1",
+            });
     });
 });

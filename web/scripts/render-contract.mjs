@@ -37,6 +37,7 @@ export function validateRenderBlueprint({ repoRoot, source, dockerfile: dockerfi
     ensure(dockerfile.includes("COPY web/scripts/generation-worker.mjs /app/web/scripts/generation-worker.mjs"), "生产镜像缺少 generation worker");
     ensure(dockerfile.includes("COPY web/scripts/generation-runtime.mjs /app/web/scripts/generation-runtime.mjs"), "生产镜像缺少 Worker 运行时 helper");
     ensure(dockerfile.includes("COPY web/scripts/generation-worker-policy.mjs /app/web/scripts/generation-worker-policy.mjs"), "生产镜像缺少 Worker 轮询策略 helper");
+    ensure(dockerfile.includes("ENV VOZEB_PRO_GIT_SHA=${VOZEB_PRO_GIT_SHA}"), "生产镜像必须向应用和 Worker 暴露同一构建提交");
     ensure(!dockerfile.includes("/app/sharp-runtime/node_modules/@img"), "生产镜像必须保留 Sharp 的 pnpm 虚拟目录结构");
     ensure(dockerfile.includes("find node_modules/.pnpm -mindepth 1 -maxdepth 1 -type d -name '@img+sharp-*' -exec cp -a {} /app/sharp-runtime/node_modules/.pnpm/"), "生产镜像缺少 Sharp 原生依赖收集步骤");
     ensure(dockerfile.includes("test -n \"$(find /app/sharp-runtime/node_modules/.pnpm -mindepth 1 -maxdepth 1 -type d -name '@img+sharp-linux-*' -print -quit)\""), "生产镜像缺少 Sharp 原生依赖存在性检查");

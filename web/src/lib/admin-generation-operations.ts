@@ -98,6 +98,16 @@ export type AdminGenerationTask = {
     planningFinalization?: { planningCycle: number; status: "pending" | "settled" | "failed"; attemptNumber: number; errorCode?: string; error?: string; retryable?: boolean; updatedAt: number };
     failureStage?: "planning" | "planner_settlement" | "task_dispatch" | "task_execution";
     agentTiming?: { requestToPlannerUpstreamMs?: number; plannerTtfbMs?: number; plannerDurationMs?: number; plannerSettlementMs?: number; childDispatchMs?: number };
+    agentTasks?: Array<{
+        taskKey: string;
+        type: "text" | "image" | "video" | "audio";
+        status: string;
+        attemptCount: number;
+        nextAttemptAt?: number;
+        leaseOwner?: string;
+        leaseUntil?: number;
+        toolCalls: Array<{ id: string; toolName: string; status: string; idempotencyKey: string; generationTaskId?: string }>;
+    }>;
     createdAt: number;
     updatedAt: number;
     canCancel: boolean;

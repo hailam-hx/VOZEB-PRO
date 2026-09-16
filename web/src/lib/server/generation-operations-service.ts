@@ -11,6 +11,7 @@ import {
 } from "@/lib/server/generation-task-store";
 import { getTextPlanningRuntime } from "@/lib/server/text-planning-runtime";
 import { getDatabaseProvider } from "@/lib/server/database";
+import { listAgentRuntimeTraces } from "@/lib/server/agent-runtime-repository";
 
 export async function listAdminGenerationOperations(options: GenerationTaskRecordListOptions): Promise<AdminGenerationOperationsPayload> {
     const settingsPromise = getAuthSettings();
@@ -18,14 +19,14 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
     const [result, agentPerformance] = await Promise.all([listStoredGenerationTaskRecords({ ...options, searchUserIds, includeAll: false }), summarizeStoredAgentPerformance({ ...options, searchUserIds })]);
     const agentRunIds = result.items.filter((record) => record.type === "agent").map((record) => record.id);
     const pageUserIds = Array.from(new Set(result.items.map((record) => record.userId)));
-    const [settings, users, childRecords] = await Promise.all([settingsPromise, getPublicUsersByIds(pageUserIds), listStoredGenerationTaskRecordsByRunIds(agentRunIds, pageUserIds)]);
+    const [settings, users, childRecords, agentTraces] = await Promise.all([settingsPromise, getPublicUsersByIds(pageUserIds), listStoredGenerationTaskRecordsByRunIds(agentRunIds, pageUserIds), listAgentRuntimeTraces(agentRunIds)]);
     const usersById = new Map(users.map((user) => [user.id, user]));
     const childrenByRunId = new Map<string, StoredGenerationTaskRecord[]>();
     for (const child of childRecords) {
         if (!child.runId) continue;
         childrenByRunId.set(child.runId, [...(childrenByRunId.get(child.runId) || []), child]);
     }
-    const items = result.items.map((record) => taskSummary(record, usersById.get(record.userId), childrenByRunId.get(record.id) || []));
+    const items = result.items.map((record) => taskSummary(record, usersById.get(record.userId), childrenByRunId.get(record.id) || [], agentTraces.get(record.id)));
     return {
         items,
         total: result.total,
@@ -37,7 +38,7 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
     };
 }
 
-function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: string; username: string; displayName: string }, childRecords: StoredGenerationTaskRecord[] = []): AdminGenerationTask {
+function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: string; username: string; displayName: string }, childRecords: StoredGenerationTaskRecord[] = [], agentTasks?: AdminGenerationTask["agentTasks"]): AdminGenerationTask {
     const payload = record.payload;
     const config = object(payload.config);
     const upstream = object(payload.upstream);
@@ -113,6 +114,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
         planningFinalization,
         failureStage,
         agentTiming,
+        agentTasks,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         canCancel: record.type !== "voice-clone" && (record.status === "pending" || record.status === "running" || record.status === "paused"),

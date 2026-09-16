@@ -358,16 +358,8 @@ export function buildResponsesImageBodies(task: ImageTask, origin: string) {
         },
         {
             model: task.config.model,
-            input: [{ role: "user", content }],
-        },
-        {
-            model: task.config.model,
             input: prompt,
             tools: [{ type: "image_generation" }],
-        },
-        {
-            model: task.config.model,
-            input: prompt,
         },
     ];
 }

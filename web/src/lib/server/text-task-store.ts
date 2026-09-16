@@ -13,7 +13,7 @@ type TextTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
 
 export type TextTaskMilestones = Partial<Record<"task_created" | "upstream_started" | "first_byte" | "first_text" | "stream_completed" | "task_completed", number>>;
 export type TextTaskUsage = { inputTokens?: number; outputTokens?: number; totalTokens?: number };
-export type TextTaskExecutionContext = { runId?: string; taskId?: string; parentTaskId?: string; attemptId?: string };
+export type TextTaskExecutionContext = { runId?: string; taskId?: string; parentTaskId?: string; attemptId?: string; clientRequestId?: string; attemptNo?: number };
 export type TextTaskSnapshot = { attemptId: string; revision: number; content: string; updatedAt: number };
 export type TextTaskAttempt = Omit<GenerationAttempt, "status"> & {
     id: string;
@@ -62,6 +62,9 @@ export type TextTask = {
     candidateConfigs?: TextTaskConfig[];
     attempts?: TextTaskAttempt[];
     attemptNo?: number;
+    runId?: string;
+    parentTaskId?: string;
+    clientRequestId?: string;
     executionContext?: TextTaskExecutionContext;
     activeAttemptId?: string;
     visibleTextSnapshot?: TextTaskSnapshot;

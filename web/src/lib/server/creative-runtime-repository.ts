@@ -4,6 +4,8 @@ import { creativeConversationSourceForSurface, normalizeCreativeConversationSour
 import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { ensurePostgresSchema, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import type { StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import { hydrateAgentRuntimeProjection, syncAgentRuntimeProjection } from "@/lib/server/agent-runtime-repository";
+import type { AgentRun } from "@/lib/server/agent-run-store";
 
 export type RuntimeFileDatabase = {
     version: 1;
@@ -87,6 +89,7 @@ export async function createPostgresRunBundle<T extends AgentRunBase>(userId: st
              ) VALUES ($1, $2, 'agent', 'pending', $3::jsonb, $4, $4, $5, $6, $1, $7, $8, $9, 'created', $4, 'created')`,
             [input.run.id, userId, JSON.stringify(input.run), new Date(now), new Date(now + input.ttlMs), conversation.id, input.run.surface, input.run.projectId || null, input.run.clientRequestId],
         );
+        await syncAgentRuntimeProjection(client, input.run as unknown as AgentRun);
         const eventResult = await client.query("INSERT INTO creative_run_events (run_id, type, data, created_at) VALUES ($1, 'run.created', NULL, $2) RETURNING *", [input.run.id, new Date(now)]);
         await client.query(`SELECT pg_notify('${CREATIVE_RUN_NOTIFY_CHANNEL}', $1)`, [input.run.id]);
         const nextTitle = conversation.title === "新对话" ? input.title : conversation.title;
@@ -99,13 +102,15 @@ export async function mutatePostgresRun<T extends AgentRunBase>(id: string, ttlM
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {
         const result = await client.query<{ payload: T & { executionId?: string } }>("SELECT payload FROM generation_tasks WHERE id = $1 AND task_type = 'agent' AND expires_at > now() FOR UPDATE", [id]);
-        const current = result.rows[0]?.payload;
+        const stored = result.rows[0]?.payload;
+        const current = stored ? await hydrateAgentRuntimeProjection(client, stored as unknown as AgentRun) : null;
         if (!current || (allowedStatuses && !allowedStatuses.includes(current.status)) || (expectedExecutionId && current.executionId !== expectedExecutionId)) return null;
-        const mutation = mutate(current as T);
+        const mutation = mutate(current as unknown as T);
         if (!mutation) return null;
         const now = Date.now();
         const run = { ...mutation.run, id: current.id, userId: current.userId, createdAt: current.createdAt, updatedAt: now };
         await client.query("UPDATE generation_tasks SET status = $2, payload = $3::jsonb, updated_at = $4, expires_at = $5 WHERE id = $1", [id, normalizeTaskStatus(run.status), JSON.stringify(run), new Date(now), new Date(now + ttlMs)]);
+        await syncAgentRuntimeProjection(client, run as unknown as AgentRun);
         if (mutation.event) {
             await client.query("INSERT INTO creative_run_events (run_id, type, data, created_at) VALUES ($1, $2, $3::jsonb, $4)", [id, mutation.event.type, mutation.event.data === undefined ? null : JSON.stringify(mutation.event.data), new Date(now)]);
             await client.query(`SELECT pg_notify('${CREATIVE_RUN_NOTIFY_CHANNEL}', $1)`, [id]);

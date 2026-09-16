@@ -21,10 +21,19 @@ describe("POST /api/maintenance/generation-tasks/run", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://vozeb.example");
+        vi.stubEnv("NEXT_PUBLIC_APP_VERSION", "v0.0.6");
+        vi.stubEnv("VOZEB_PRO_GIT_SHA", "test-sha");
         mocks.configured.mockReturnValue(true);
         mocks.authorized.mockReturnValue(true);
         mocks.recover.mockResolvedValue({ claimed: 0 });
         mocks.install.mockResolvedValue({ database: { schemaReady: true } });
+    });
+
+    it("rejects an incompatible Worker before claiming a batch", async () => {
+        const response = await POST(request("worker-one", { "x-vozeb-pro-worker-build-version": "v0.0.5" }));
+
+        expect(response.status).toBe(409);
+        expect(mocks.recover).not.toHaveBeenCalled();
     });
 
     it("allows a worker batch to outlive the longest upstream model request", () => {
@@ -65,12 +74,17 @@ describe("POST /api/maintenance/generation-tasks/run", () => {
     });
 });
 
-function request(workerId = "") {
+function request(workerId = "", overrides: Record<string, string> = {}) {
     return new Request("http://localhost/api/maintenance/generation-tasks/run", {
         method: "POST",
         headers: {
             authorization: "Bearer test-token",
             ...(workerId ? { "x-vozeb-pro-worker-id": workerId } : {}),
+            "x-vozeb-pro-worker-build-version": "v0.0.6",
+            "x-vozeb-pro-worker-git-sha": "test-sha",
+            "x-vozeb-pro-worker-schema-version": "20260916_agent_runtime_v2",
+            "x-vozeb-pro-worker-runtime-protocol": "1",
+            ...overrides,
         },
     });
 }

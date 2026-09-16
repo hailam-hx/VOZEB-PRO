@@ -4,7 +4,7 @@ vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher
 
 import { createProtocolFixtureServer } from "../../../../scripts/protocol-fixture-server.mjs";
 import { runGeminiImageTask } from "./image-task-gemini";
-import { runOpenAiImageTask } from "./image-task-openai";
+import { buildResponsesImageBodies, runOpenAiImageTask } from "./image-task-openai";
 import { runCustomImageTask } from "./image-task-custom";
 import type { ImageTask } from "@/lib/server/image-task-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
@@ -23,6 +23,27 @@ beforeEach(() => {
 });
 
 describe("OpenAI image provider over a live compatible fixture", () => {
+    it("keeps image capability on every Responses fallback payload", () => {
+        const task: ImageTask = {
+            id: "responses-image-fallback",
+            userId: "user-live",
+            username: "user",
+            displayName: "User",
+            kind: "generation",
+            source: "image-workbench",
+            status: "running",
+            createdAt: 1,
+            updatedAt: 1,
+            config: { baseUrl: "http://provider.example/v1", apiKey: "fixture-key", apiFormat: "openai", model: "mock-image", channelId: "fixture-image" },
+            candidateConfigs: [],
+            prompt: "create an image",
+            references: [],
+        };
+
+        expect(buildResponsesImageBodies(task, "http://internal")).toHaveLength(2);
+        expect(buildResponsesImageBodies(task, "http://internal")).toEqual([expect.objectContaining({ tools: [{ type: "image_generation" }] }), expect.objectContaining({ tools: [{ type: "image_generation" }] })]);
+    });
+
     it("parses a valid PNG returned over TCP", async () => {
         const fixture = createProtocolFixtureServer();
         await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));

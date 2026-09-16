@@ -1,10 +1,17 @@
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import { resolveGenerationWorkerOrigin } from "./generation-runtime.mjs";
 import { nextGenerationWorkerPollPolicy } from "./generation-worker-policy.mjs";
 
 const token = process.env.VOZEB_PRO_WORKER_TOKEN?.trim() || "";
+const compatibilityHeaders = {
+    "x-vozeb-pro-worker-build-version": readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim(),
+    "x-vozeb-pro-worker-git-sha": process.env.VOZEB_PRO_GIT_SHA?.trim() || "unknown",
+    "x-vozeb-pro-worker-schema-version": "20260916_agent_runtime_v2",
+    "x-vozeb-pro-worker-runtime-protocol": "1",
+};
 const origin = resolveGenerationWorkerOrigin();
 const workerId = (process.env.VOZEB_PRO_GENERATION_WORKER_ID?.trim() || `generation-worker:${hostname()}:${process.pid}:${randomUUID()}`).slice(0, 150);
 const idleDelayMs = boundedNumber(process.env.VOZEB_PRO_GENERATION_WORKER_INTERVAL_MS, 2_000, 500, 30_000);
@@ -40,6 +47,7 @@ async function runLane(index) {
                 headers: {
                     authorization: `Bearer ${token}`,
                     "x-vozeb-pro-worker-id": laneId,
+                    ...compatibilityHeaders,
                 },
                 signal: AbortSignal.timeout(40 * 60_000),
             });
@@ -69,6 +77,7 @@ async function sendHeartbeat() {
             headers: {
                 authorization: `Bearer ${token}`,
                 "x-vozeb-pro-worker-id": workerId,
+                ...compatibilityHeaders,
             },
             signal: AbortSignal.timeout(10_000),
         });
@@ -89,7 +98,7 @@ async function recoverUsageHolds() {
     try {
         const response = await fetch(`${origin}/api/maintenance/usage-holds/run`, {
             method: "POST",
-            headers: { authorization: `Bearer ${token}` },
+            headers: { authorization: `Bearer ${token}`, ...compatibilityHeaders },
             signal: AbortSignal.timeout(heartbeatIntervalMs),
         });
         if (!response.ok) {

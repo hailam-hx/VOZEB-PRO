@@ -274,8 +274,17 @@ CREATE INDEX generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at
 
 CREATE TABLE IF NOT EXISTS generation_worker_heartbeats (
     worker_id text PRIMARY KEY,
-    last_seen_at timestamptz NOT NULL
+    last_seen_at timestamptz NOT NULL,
+    build_version text NOT NULL,
+    git_sha text NOT NULL,
+    schema_version text NOT NULL,
+    runtime_protocol_version text NOT NULL
 );
+
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS build_version text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS git_sha text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS schema_version text;
+ALTER TABLE generation_worker_heartbeats ADD COLUMN IF NOT EXISTS runtime_protocol_version text;
 
 CREATE INDEX IF NOT EXISTS generation_worker_heartbeats_seen_idx ON generation_worker_heartbeats (last_seen_at DESC);
 
@@ -330,6 +339,99 @@ UPDATE creative_conversations SET source = surface WHERE surface IN ('canvas', '
 CREATE INDEX IF NOT EXISTS creative_conversations_user_updated_idx ON creative_conversations (user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS creative_conversations_user_source_idx ON creative_conversations (user_id, surface, source, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS creative_conversations_project_idx ON creative_conversations (user_id, surface, project_id, updated_at DESC) WHERE project_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id text PRIMARY KEY REFERENCES generation_tasks(id) ON DELETE CASCADE,
+    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id text NOT NULL REFERENCES creative_conversations(id) ON DELETE CASCADE,
+    project_id text,
+    surface text NOT NULL,
+    status text NOT NULL,
+    active_plan_version integer NOT NULL DEFAULT 0,
+    failure_code text,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    started_at timestamptz,
+    completed_at timestamptz,
+    CONSTRAINT agent_runs_status CHECK (status IN ('created', 'planning', 'planned', 'executing', 'waiting_user', 'completed', 'failed', 'cancelling', 'cancelled'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_plans (
+    id text PRIMARY KEY,
+    run_id text NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    version integer NOT NULL,
+    goal text NOT NULL,
+    strategy text,
+    plan_json jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    UNIQUE (run_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    id text PRIMARY KEY,
+    run_id text NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    plan_id text NOT NULL REFERENCES agent_plans(id) ON DELETE CASCADE,
+    task_key text NOT NULL,
+    ordinal integer NOT NULL,
+    type text NOT NULL,
+    status text NOT NULL,
+    input_json jsonb NOT NULL,
+    output_json jsonb,
+    error_json jsonb,
+    attempt_count integer NOT NULL DEFAULT 0,
+    lease_owner text,
+    lease_until timestamptz,
+    next_attempt_at timestamptz,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    started_at timestamptz,
+    completed_at timestamptz,
+    UNIQUE (plan_id, task_key),
+    CONSTRAINT agent_tasks_type CHECK (type IN ('text', 'image', 'video', 'audio')),
+    CONSTRAINT agent_tasks_status CHECK (status IN ('pending', 'ready', 'claimed', 'running', 'waiting_retry', 'waiting_external', 'finalizing', 'completed', 'failed', 'cancelled', 'skipped'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_task_dependencies (
+    task_id text NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+    depends_on_task_id text NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+    PRIMARY KEY (task_id, depends_on_task_id),
+    CONSTRAINT agent_task_dependencies_not_self CHECK (task_id <> depends_on_task_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_tool_calls (
+    id text PRIMARY KEY,
+    run_id text NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    task_id text NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+    tool_name text NOT NULL,
+    idempotency_key text NOT NULL UNIQUE,
+    status text NOT NULL,
+    accepted_at timestamptz,
+    generation_task_id text REFERENCES generation_tasks(id) ON DELETE SET NULL,
+    input_json jsonb NOT NULL,
+    output_json jsonb,
+    error_json jsonb,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    CONSTRAINT agent_tool_calls_status CHECK (status IN ('created', 'submitting', 'accepted', 'waiting_external', 'finalizing', 'completed', 'failed', 'cancelled', 'unknown'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_context_snapshots (
+    id text PRIMARY KEY,
+    run_id text NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    version integer NOT NULL,
+    snapshot_json jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    UNIQUE (run_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS agent_runs_user_updated_idx ON agent_runs (user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS agent_tasks_claim_due_idx ON agent_tasks (next_attempt_at, lease_until, id) WHERE status IN ('ready', 'waiting_retry');
+CREATE INDEX IF NOT EXISTS agent_tasks_run_status_idx ON agent_tasks (run_id, status, created_at);
+CREATE INDEX IF NOT EXISTS agent_tool_calls_task_idx ON agent_tool_calls (task_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_tool_calls_generation_idx ON agent_tool_calls (generation_task_id) WHERE generation_task_id IS NOT NULL;
+
+ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS ordinal integer NOT NULL DEFAULT 0;
+ALTER TABLE agent_tasks ALTER COLUMN ordinal DROP DEFAULT;
 
 CREATE TABLE IF NOT EXISTS creative_messages (
     id text PRIMARY KEY,
@@ -881,6 +983,6 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs (target_type, tar
 ${POSTGRESQL_TRIGGER_SCHEMA_SQL}
 
 INSERT INTO schema_migrations (version)
-VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce'), ('20260903_voice_cloning')
+VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce'), ('20260903_voice_cloning'), ('20260916_generation_worker_compatibility'), ('20260916_agent_runtime_v2')
 ON CONFLICT (version) DO NOTHING;
 `;

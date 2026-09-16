@@ -16,6 +16,8 @@ import { normalizeAgentRunCanvasSnapshot, selectedCanvasNodeIds } from "./agent-
 import type { VoiceSelection } from "@/lib/voice-selection";
 import { applyAgentTextEvent, type AgentTextState, type AgentTextEvent } from "@/lib/agent-text-stream";
 import { getTextTask, type TextTask } from "./text-task-store";
+import { getDatabaseProvider } from "./database";
+import { getPostgresAgentRun } from "./agent-runtime-repository";
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentRunFailureStage = "planning" | "planner_settlement" | "task_dispatch" | "task_execution";
@@ -238,14 +240,16 @@ async function assertVideoFrameAssets(userId: string, input: CreativeRunRequest)
     }
 }
 
-export const getAgentRun = (id: string) => getStoredGenerationTask<AgentRun>("agent", id);
+export const getAgentRun = (id: string) => (getDatabaseProvider() === "postgres" ? getPostgresAgentRun(id) : getStoredGenerationTask<AgentRun>("agent", id));
 export async function resolveAgentTextTaskContext(userId: string, value: unknown): Promise<TextTask["executionContext"] | null> {
     if (!value || typeof value !== "object") return null;
     const { runId, parentTaskId, executionId } = value as Record<string, unknown>;
     if (typeof runId !== "string" || typeof parentTaskId !== "string" || typeof executionId !== "string" || !executionId) return null;
     const run = await getAgentRun(runId);
-    if (!run || run.userId !== userId || run.status !== "running" || run.executionId !== executionId || !run.tasks.some((task) => task.id === parentTaskId && task.type === "text" && task.status === "running")) return null;
-    return { runId: run.id, parentTaskId };
+    const task = run?.tasks.find((item) => item.id === parentTaskId && item.type === "text" && item.status === "running");
+    if (!run || run.userId !== userId || run.status !== "running" || run.executionId !== executionId || !task) return null;
+    const attemptNo = Math.max(1, task.attempts || 1);
+    return { runId: run.id, parentTaskId, clientRequestId: `${run.clientRequestId}:${parentTaskId}:${attemptNo}:1`, attemptNo };
 }
 export async function mirrorAgentTextTaskSnapshot(task: TextTask): Promise<AgentRun | null> {
     const { runId, parentTaskId } = task.executionContext || {};

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { recordGenerationWorkerHeartbeat } from "@/lib/server/generation-worker-heartbeat";
 import { getInstallStatus } from "@/lib/server/install-status";
 import { isAuthorizedWorkerRequest, isWorkerTokenConfigured } from "@/lib/server/maintenance-auth";
+import { isGenerationWorkerCompatible, readGenerationWorkerCompatibility } from "@/lib/server/generation-worker-compatibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,8 @@ export async function POST(request: Request) {
     const workerId = request.headers.get("x-vozeb-pro-worker-id")?.trim();
     if (!workerId) return NextResponse.json({ code: 400, data: null, msg: "缺少 Worker ID" }, { status: 400 });
     if (!(await getInstallStatus()).database.schemaReady) return NextResponse.json({ code: 0, data: { accepted: false }, msg: "等待初始化数据库" });
-    await recordGenerationWorkerHeartbeat(workerId);
+    const compatibility = readGenerationWorkerCompatibility(request);
+    await recordGenerationWorkerHeartbeat(workerId, compatibility);
+    if (!isGenerationWorkerCompatible(compatibility)) return NextResponse.json({ code: 409, data: { accepted: false }, msg: "Worker 与当前应用版本不兼容" }, { status: 409 });
     return NextResponse.json({ code: 0, data: { accepted: true }, msg: "OK" }, { headers: { "cache-control": "no-store" } });
 }

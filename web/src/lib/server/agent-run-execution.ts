@@ -18,7 +18,10 @@ import { agentRunCompletionReply, agentRunFailureMessage, resultSummary } from "
 import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
+import { generationTaskNextPollAt } from "@/lib/server/generation-task-scheduler";
 import { linkStoredGenerationTask } from "@/lib/server/generation-task-store";
+import { getDatabaseProvider } from "@/lib/server/database";
+import { claimDueAgentTasks, deferAgentTask } from "@/lib/server/agent-runtime-repository";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-reference-contract";
 import type { AgentFunctionCallResult } from "./agent-function-call";
@@ -28,6 +31,7 @@ import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "./usage-b
 import { acceptsMediaReference, mergeTaskReferences, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
 import { getTextTask, retryTextTask } from "./text-task-store";
 import { toSystemGenerationChannel } from "./generation-channel";
+import { createAgentGenerationTask, GenerationApplicationError, readAgentGenerationTask } from "./generation-application-service";
 
 export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
 export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
@@ -562,7 +566,14 @@ export async function executeTasks(runId: string, origin: string, cookie: string
         const run = await getAgentRun(runId);
         if (!run) return;
         const completed = new Set(run.tasks.filter((task) => task.status === "completed").map((task) => task.id));
-        const ready = run.tasks.filter((task) => (task.status === "ready" || task.status === "running") && task.dependencies.every((id) => completed.has(id))).slice(0, settings.generationConcurrency.agent);
+        const candidates = run.tasks.filter((task) => (task.status === "ready" || task.status === "running") && task.dependencies.every((id) => completed.has(id)));
+        let ready = candidates.slice(0, settings.generationConcurrency.agent);
+        if (usesPostgresAgentRuntime() && ready.length) {
+            const claimed = await claimDueAgentTasks({ workerId: executionId, runId, limit: settings.generationConcurrency.agent });
+            const claimedKeys = new Set(claimed.map((item) => String((item as { task_key?: unknown }).task_key || "")));
+            ready = ready.filter((task) => claimedKeys.has(task.id));
+            if (!ready.length) return;
+        }
         if (!ready.length) {
             if (run.tasks.every((task) => task.status === "completed")) {
                 if (!run.reviewed && shouldBlockOnReview(run)) {
@@ -640,7 +651,7 @@ function projectHandoffCompletion(surface: "canvas" | "drama", title: string, lo
 }
 
 function shouldBlockOnReview(run: AgentRun) {
-    return run.tasks.length > 1 || run.surface === "drama" || /严格检查|高质量模式|完整复盘/u.test(run.prompt);
+    return /严格检查|高质量模式|完整复盘/u.test(run.prompt);
 }
 
 export async function processAgentRunReview(run: AgentRun, origin: string, cookie: string) {
@@ -863,6 +874,9 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
             if (latestTask && latestTask.error !== waitingMessage && (await canContinue(runId, executionId))) {
                 await patchTask(runId, task.id, { error: waitingMessage }, "task.waiting", executionId);
             }
+            if (usesPostgresAgentRuntime()) {
+                await deferAgentTask(runId, Math.max(1, latest?.planningCycle || 1), task.id, executionId, generationTaskNextPollAt({ consecutiveErrors: Math.max(1, latestTask?.attempts || 1) }), waitingMessage);
+            }
             return "deferred" as const;
         }
         const message = toSafeGenerationErrorMessage(error, "生成任务失败");
@@ -872,7 +886,7 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
             if (error instanceof AgentChildTaskDispatchError && latestTask && !agentTaskHasSubmittedChild(latestTask)) {
                 await patchTask(runId, task.id, { status: "ready", attempts: task.attempts, error: message }, "task.dispatch.failed", executionId);
                 await updateAgentRunById(runId, { failureStage: "task_dispatch" }, undefined, ["running"], executionId);
-                throw error;
+                return "deferred" as const;
             }
             await patchTask(runId, task.id, { status: "failed", error: message }, "task.failed", executionId);
         }
@@ -1009,17 +1023,24 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                 ...body,
                 context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
             };
-            let response: Response;
             try {
-                response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }), body: JSON.stringify(bodyForCopy), cache: "no-store" });
+                const payload = await createAgentGenerationTask({
+                    type: task.type,
+                    origin,
+                    headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }),
+                    body: bodyForCopy,
+                    runId: run.id,
+                    planVersion: Math.max(1, run.planningCycle || 1),
+                    taskKey: task.id,
+                    idempotencyKey: bodyForCopy.context.clientRequestId,
+                });
+                const createdTaskId = payload.task?.id;
+                if (!createdTaskId) throw new AgentChildTaskDispatchError("生成任务未返回任务 ID");
+                taskId = createdTaskId;
             } catch (error) {
+                if (error instanceof GenerationApplicationError && error.outcome === "unknown") throw new AgentChildTaskDeferredError(error.message);
                 throw new AgentChildTaskDispatchError(toSafeGenerationErrorMessage(error, "生成任务创建失败"));
             }
-            if (!response.ok) throw new AgentChildTaskDispatchError((await response.text()) || "生成任务创建失败");
-            const payload = (await response.json()) as { task?: { id?: string } };
-            const createdTaskId = payload.task?.id;
-            if (!createdTaskId) throw new AgentChildTaskDispatchError("生成任务未返回任务 ID");
-            taskId = createdTaskId;
             await linkAgentChildTask(run, task, taskId, attempt);
             child = { ...agentGenerationSelection(childTask), id: taskId, status: "pending", attempt };
             slot = { ...slot, taskId };
@@ -1178,23 +1199,14 @@ export function directCanvasTextContent(task: AgentRunTask) {
 }
 
 export async function pollTask(origin: string, path: string, taskId: string, cookie: string, runId: string, type: AgentRunTask["type"], executionId: string) {
-    void type;
+    void path;
     if (!(await canContinue(runId, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
-    let response: Response;
-    try {
-        response = await fetchInternalApi(`${origin}${path}/${encodeURIComponent(taskId)}`, { headers: runtimeRequestHeaders(cookie), cache: "no-store" });
-    } catch (error) {
-        throw new AgentChildTaskDeferredError(error instanceof Error ? error.message : "生成任务查询暂时不可用");
-    }
-    if (!response.ok) {
-        if ([408, 425, 429].includes(response.status) || response.status >= 500) throw new AgentChildTaskDeferredError("生成任务查询暂时不可用");
-        throw new AgentChildTaskTerminalError((await response.text()) || "生成任务查询失败");
-    }
     let payload: { task?: { status?: string; result?: unknown; error?: string } };
     try {
-        payload = (await response.json()) as typeof payload;
-    } catch {
-        throw new AgentChildTaskDeferredError("生成任务状态暂时无法解析");
+        payload = await readAgentGenerationTask({ type, taskId, origin, headers: runtimeRequestHeaders(cookie) });
+    } catch (error) {
+        if (error instanceof GenerationApplicationError && error.status < 500 && ![408, 425, 429].includes(error.status)) throw new AgentChildTaskTerminalError(error.message);
+        throw new AgentChildTaskDeferredError(error instanceof Error ? error.message : "生成任务查询暂时不可用");
     }
     const terminal = agentChildTaskTerminal(payload.task?.status);
     if (terminal === "success") return payload.task?.result;
@@ -1213,4 +1225,8 @@ function runtimeRequestHeaders(cookie: string, initial?: HeadersInit) {
     if (workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (cookie) headers.set("cookie", cookie);
     return headers;
+}
+
+function usesPostgresAgentRuntime() {
+    return getDatabaseProvider() === "postgres" && Boolean(process.env.DATABASE_URL?.trim() || process.env.POSTGRES_URL?.trim());
 }

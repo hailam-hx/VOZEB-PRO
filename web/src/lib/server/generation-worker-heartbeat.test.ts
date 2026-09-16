@@ -25,6 +25,21 @@ describe("generation Worker heartbeat", () => {
         await expect(getGenerationWorkerHealth()).resolves.toMatchObject({ healthy: false, reason: "worker_token_missing" });
     });
 
+    it("does not report an incompatible Worker as ready", async () => {
+        await recordGenerationWorkerHeartbeat(
+            "worker-old",
+            {
+                buildVersion: "v0.0.5",
+                gitSha: "old-sha",
+                schemaVersion: "old-schema",
+                runtimeProtocolVersion: "0",
+            },
+            1_000_000,
+        );
+
+        await expect(getGenerationWorkerHealth(1_030_000)).resolves.toMatchObject({ healthy: false, reason: "worker_incompatible" });
+    });
+
     it("prunes file Provider heartbeats outside the maximum health window", async () => {
         await recordGenerationWorkerHeartbeat("worker-old", 1_000_000);
         await recordGenerationWorkerHeartbeat("worker-current", 1_600_001);

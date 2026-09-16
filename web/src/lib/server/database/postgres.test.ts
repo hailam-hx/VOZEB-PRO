@@ -139,9 +139,22 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')");
 
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();
-        expect(tableNames).toHaveLength(57);
+        expect(tableNames).toHaveLength(63);
         expect(tableNames.every((name) => name.startsWith("vozeb_pro_"))).toBe(true);
-        expect(tableNames).toEqual(expect.arrayContaining(["vozeb_pro_top_up_orders", "vozeb_pro_top_up_reconciliation_runs", "vozeb_pro_top_up_reconciliation_rows", "vozeb_pro_voice_profiles"]));
+        expect(tableNames).toEqual(
+            expect.arrayContaining([
+                "vozeb_pro_agent_context_snapshots",
+                "vozeb_pro_agent_plans",
+                "vozeb_pro_agent_runs",
+                "vozeb_pro_agent_task_dependencies",
+                "vozeb_pro_agent_tasks",
+                "vozeb_pro_agent_tool_calls",
+                "vozeb_pro_top_up_orders",
+                "vozeb_pro_top_up_reconciliation_runs",
+                "vozeb_pro_top_up_reconciliation_rows",
+                "vozeb_pro_voice_profiles",
+            ]),
+        );
         expect(ddl).not.toContain("20260731_generation_task_recovery");
 
         const indexNames = [...ddl.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]);

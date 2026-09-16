@@ -54,6 +54,36 @@ export function GenerationTaskRuntimeSummary({ task, compact = false }: { task: 
             {task.agentTiming ? <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">Agent 时序 {agentTimingLabel(task.agentTiming)}</div> : null}
             <TextAttemptTimeline task={task} />
             <AgentPlannerAttemptTimeline task={task} />
+            <AgentTaskTimeline task={task} />
+        </div>
+    );
+}
+
+function AgentTaskTimeline({ task }: { task: AdminGenerationTask }) {
+    if (!task.agentTasks?.length) return null;
+    return (
+        <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+            <div className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">Agent 任务与工具调用</div>
+            <div className="mt-2 space-y-2">
+                {task.agentTasks.map((agentTask) => (
+                    <div key={agentTask.taskKey} className="rounded-md border border-zinc-200 bg-zinc-50/70 p-2 text-[11px] leading-4 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                            <Tag className={generationOperationThemeClasses.neutralTag}>{agentTask.taskKey}</Tag>
+                            <Tag className={generationOperationThemeClasses.neutralTag}>{agentTask.type}</Tag>
+                            <Tag className={generationOperationThemeClasses.neutralTag}>{agentTask.status}</Tag>
+                            <span>尝试 {agentTask.attemptCount}</span>
+                        </div>
+                        {agentTask.leaseOwner || agentTask.nextAttemptAt ? (
+                            <div className="mt-1">{[agentTask.leaseOwner ? `执行器 ${agentTask.leaseOwner}` : "", agentTask.nextAttemptAt ? `下次尝试 ${operationTimeLabel(agentTask.nextAttemptAt)}` : ""].filter(Boolean).join(" · ")}</div>
+                        ) : null}
+                        {agentTask.toolCalls.map((call) => (
+                            <div key={call.id} className="mt-1 break-all">
+                                {call.toolName} · {call.status} · {call.generationTaskId ? `Generation ${call.generationTaskId}` : `幂等键 ${call.idempotencyKey}`}
+                            </div>
+                        ))}
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }
