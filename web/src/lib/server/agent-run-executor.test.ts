@@ -267,29 +267,30 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.events.map((event) => event.type)).toEqual(["run.review.started", "run.review.background"]);
     });
 
-    it("keeps review blocking for multi-task runs", async () => {
+    it("completes multi-task runs before asynchronous review", async () => {
         mocks.run = { ...runWithTasks([imageTask("image-one"), imageTask("image-two")]), reviewed: false };
         mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
-        let finishReview: ((value: { mode: "visual"; status: "passed"; summary: string; issues: never[]; retryTaskIds: never[] }) => void) | undefined;
-        mocks.reviewCreativeOutputs.mockReturnValue(
-            new Promise((resolve) => {
-                finishReview = resolve;
-            }),
-        );
 
-        const execution = executeAgentRun(mocks.run, "http://localhost", "session=test");
-        await vi.waitFor(() => expect(mocks.reviewCreativeOutputs).toHaveBeenCalledOnce());
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.run?.status).toBe("running");
-        expect(mocks.events.some((event) => event.type === "run.completed")).toBe(false);
-
-        finishReview?.({ mode: "visual", status: "passed", summary: "检查通过", issues: [], retryTaskIds: [] });
-        await execution;
         expect(mocks.run?.status).toBe("completed");
+        expect(mocks.run?.reviewStatus).toBe("review_pending");
+        expect(mocks.reviewCreativeOutputs).not.toHaveBeenCalled();
+    });
+
+    it("keeps review blocking when the user explicitly requests strict review", async () => {
+        mocks.run = { ...runWithTasks([imageTask("image-one"), imageTask("image-two")]), prompt: "请严格检查所有结果", reviewed: false };
+        mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run?.status).toBe("completed");
+        expect(mocks.run?.reviewed).toBe(true);
+        expect(mocks.reviewCreativeOutputs).toHaveBeenCalledOnce();
     });
 
     it("keeps completed media identities when review suggests revisions", async () => {
-        mocks.run = { ...runWithTasks([imageTask("image-one"), imageTask("image-two")]), reviewed: false };
+        mocks.run = { ...runWithTasks([imageTask("image-one"), imageTask("image-two")]), prompt: "高质量模式", reviewed: false };
         mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
         mocks.reviewCreativeOutputs.mockResolvedValue({
             mode: "visual",

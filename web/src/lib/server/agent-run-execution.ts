@@ -651,7 +651,7 @@ function projectHandoffCompletion(surface: "canvas" | "drama", title: string, lo
 }
 
 function shouldBlockOnReview(run: AgentRun) {
-    return run.tasks.length > 1 || run.surface === "drama" || /严格检查|高质量模式|完整复盘/u.test(run.prompt);
+    return /严格检查|高质量模式|完整复盘/u.test(run.prompt);
 }
 
 export async function processAgentRunReview(run: AgentRun, origin: string, cookie: string) {

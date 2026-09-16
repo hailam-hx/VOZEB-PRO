@@ -1,4 +1,4 @@
-import { ensurePostgresSchema, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
+import { ensurePostgresSchema, getDatabaseProvider, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import type { AgentRun, AgentRunTask } from "@/lib/server/agent-run-store";
 
 type AgentToolCallRow = {
@@ -241,6 +241,66 @@ export async function deferAgentTask(runId: string, planVersion: number, taskKey
     });
 }
 
+export type AgentRuntimeTraceTask = {
+    taskKey: string;
+    type: AgentRunTask["type"];
+    status: string;
+    attemptCount: number;
+    nextAttemptAt?: number;
+    leaseOwner?: string;
+    leaseUntil?: number;
+    toolCalls: Array<{ id: string; toolName: string; status: string; idempotencyKey: string; generationTaskId?: string }>;
+};
+
+export async function listAgentRuntimeTraces(runIds: string[]) {
+    const ids = Array.from(new Set(runIds.filter(Boolean)));
+    const traces = new Map<string, AgentRuntimeTraceTask[]>();
+    if (!ids.length || getDatabaseProvider() !== "postgres" || !postgresConfigured()) return traces;
+    await ensurePostgresSchema();
+    const result = await postgresQuery<Record<string, unknown>>(
+        `SELECT task.run_id, task.task_key, task.type, task.status, task.attempt_count, task.next_attempt_at,
+                task.lease_owner, task.lease_until, call.id AS tool_call_id, call.tool_name, call.status AS tool_call_status,
+                call.idempotency_key, call.generation_task_id
+         FROM agent_tasks task
+         JOIN agent_runs run ON run.id = task.run_id
+         JOIN agent_plans plan ON plan.id = task.plan_id AND plan.version = run.active_plan_version
+         LEFT JOIN agent_tool_calls call ON call.task_id = task.id
+         WHERE task.run_id = ANY($1::text[])
+         ORDER BY task.run_id, task.ordinal, call.created_at, call.id`,
+        [ids],
+    );
+    for (const row of result.rows) {
+        const runId = String(row.run_id || "");
+        const tasks = traces.get(runId) || [];
+        const taskKey = String(row.task_key || "");
+        let task = tasks.find((item) => item.taskKey === taskKey);
+        if (!task) {
+            task = {
+                taskKey,
+                type: row.type === "image" || row.type === "video" || row.type === "audio" ? row.type : "text",
+                status: String(row.status || ""),
+                attemptCount: Number(row.attempt_count) || 0,
+                nextAttemptAt: dbOptionalTime(row.next_attempt_at),
+                leaseOwner: optionalText(row.lease_owner),
+                leaseUntil: dbOptionalTime(row.lease_until),
+                toolCalls: [],
+            };
+            tasks.push(task);
+            traces.set(runId, tasks);
+        }
+        if (row.tool_call_id) {
+            task.toolCalls.push({
+                id: String(row.tool_call_id),
+                toolName: String(row.tool_name || ""),
+                status: String(row.tool_call_status || ""),
+                idempotencyKey: String(row.idempotency_key || ""),
+                generationTaskId: optionalText(row.generation_task_id),
+            });
+        }
+    }
+    return traces;
+}
+
 function agentTaskInput(task: AgentRunTask) {
     const { result: _result, error: _error, assetIds: _assetIds, taskId: _taskId, taskIds: _taskIds, childTasks: _childTasks, childSlots: _childSlots, ...input } = task;
     return input;
@@ -284,4 +344,14 @@ function stableJson(value: unknown): string {
 
 function postgresConfigured() {
     return Boolean(process.env.DATABASE_URL?.trim() || process.env.POSTGRES_URL?.trim());
+}
+
+function optionalText(value: unknown) {
+    return typeof value === "string" && value ? value : undefined;
+}
+
+function dbOptionalTime(value: unknown) {
+    if (!value) return undefined;
+    const time = value instanceof Date ? value.getTime() : new Date(String(value)).getTime();
+    return Number.isFinite(time) ? time : undefined;
 }

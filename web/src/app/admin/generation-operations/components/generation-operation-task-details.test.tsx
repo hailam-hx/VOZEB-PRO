@@ -30,6 +30,16 @@ describe("generation operation task details", () => {
         const root = createRoot(host);
         roots.push(root);
         const task = plannerFailureTask();
+        task.agentTasks = [
+            {
+                taskKey: "image-hero",
+                type: "image",
+                status: "waiting_external",
+                attemptCount: 1,
+                leaseOwner: "worker-one",
+                toolCalls: [{ id: "tool-one", toolName: "image.generate", status: "accepted", idempotencyKey: "stable-key", generationTaskId: "generation-one" }],
+            },
+        ];
 
         await act(async () =>
             root.render(
@@ -53,6 +63,9 @@ describe("generation operation task details", () => {
         expect(host.textContent).toContain("规划结算：失败 · 尝试 1 · ledger_unavailable · 可重试");
         expect(host.textContent).toContain("结算账本暂时不可用");
         expect(host.textContent).toContain("Agent 时序 请求→上游 120 毫秒 · Planner TTFB 100 毫秒 · Planner 320 毫秒");
+        expect(host.textContent).toContain("Agent 任务与工具调用");
+        expect(host.textContent).toContain("image-hero");
+        expect(host.textContent).toContain("image.generate · accepted · Generation generation-one");
     });
 
     it.each(["chat", "claude"] as const)("shows persisted %s text attempt timing, usage and error details only in generation operations", async (protocol) => {

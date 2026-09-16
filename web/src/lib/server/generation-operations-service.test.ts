@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     getPublicUsersByIds: vi.fn(),
     getAuthSettings: vi.fn(),
     getDatabaseProvider: vi.fn(),
+    listAgentRuntimeTraces: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-store", () => ({
@@ -19,6 +20,7 @@ vi.mock("@/lib/server/generation-task-store", () => ({
 }));
 vi.mock("@/lib/auth/store", () => ({ findPublicUserIdsByKeyword: mocks.findPublicUserIdsByKeyword, getPublicUsersByIds: mocks.getPublicUsersByIds, getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/database", () => ({ getDatabaseProvider: mocks.getDatabaseProvider }));
+vi.mock("@/lib/server/agent-runtime-repository", () => ({ listAgentRuntimeTraces: mocks.listAgentRuntimeTraces }));
 vi.mock("@/lib/server/channel-runtime-health", () => ({
     getChannelRuntimeHealth: vi.fn(() => ({ channelId: "channel-one", capability: "image", consecutiveFailures: 0 })),
     isChannelRuntimeCooling: vi.fn(() => false),
@@ -34,6 +36,7 @@ describe("generation operations aggregation", () => {
         mocks.findPublicUserIdsByKeyword.mockResolvedValue(["user-one"]);
         mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", accountId: "0001", username: "creator", displayName: "创作者" }]);
         mocks.listStoredGenerationTaskRecordsByRunIds.mockResolvedValue([]);
+        mocks.listAgentRuntimeTraces.mockResolvedValue(new Map());
         mocks.summarizeStoredAgentPerformance.mockResolvedValue({ sampleSize: 0, planningP50Ms: 0, planningP95Ms: 0, firstResultP50Ms: 0, firstResultP95Ms: 0, queueAverageMs: 0, upstreamAverageMs: 0, reviewAverageMs: 0 });
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
             items: [task()],
