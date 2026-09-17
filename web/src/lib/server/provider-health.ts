@@ -261,7 +261,8 @@ export class ProviderHealthService {
                 const samples = windowFailures + base.windowSuccesses;
                 const thresholdReached = consecutiveFailures >= this.policy.consecutiveFailures || (samples >= this.policy.minSamples && windowFailures / samples >= this.policy.failureRatio);
                 const channelStrong = scope === "binding" || independentModels.length >= this.policy.channelMinIndependentModels;
-                const shouldOpen = channelStrong && (classification.openImmediately || base.state === "half_open" || thresholdReached);
+                const failedProbe = base.state === "half_open";
+                const shouldOpen = failedProbe || (channelStrong && (classification.openImmediately || thresholdReached));
                 const openCount = shouldOpen ? base.openCount + 1 : base.openCount;
                 const cooldown = classification.failureClass === "auth_config" ? this.policy.authCooldownMs : Math.min(this.policy.maxCooldownMs, this.policy.initialCooldownMs * 2 ** Math.max(0, openCount - 1));
                 return {

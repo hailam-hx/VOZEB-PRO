@@ -51,6 +51,27 @@ describe("provider health circuit breaker", () => {
         expect(await service.get(routeA, 63_100)).toMatchObject({ state: "open", cooldownUntil: 183_100 });
     });
 
+    it("reopens a channel after a failed half-open probe when the observation window rolled over", async () => {
+        await service.failure(routeA, { status: 503 }, 1_000);
+        await service.failure(routeA, { status: 503 }, 2_000);
+        await service.failure(routeA, { status: 503 }, 3_000);
+        await service.failure(routeB, { status: 503 }, 4_000);
+        expect(await service.getChannel(routeA, 4_000)).toMatchObject({ state: "open", openCount: 1 });
+
+        expect(await service.acquire(routeB, 306_001)).toMatchObject({ eligible: true });
+        expect(await service.getChannel(routeA, 306_001)).toMatchObject({ state: "half_open", halfOpenProbeInFlight: true });
+
+        await service.failure(routeB, { status: 503 }, 306_100);
+
+        expect(await service.getChannel(routeA, 306_100)).toMatchObject({
+            state: "open",
+            openCount: 2,
+            cooldownUntil: 426_100,
+            halfOpenProbeInFlight: false,
+        });
+        expect(await service.acquire(routeB, 306_101)).toMatchObject({ eligible: false, reason: "circuit_open", cooldownUntil: 426_100 });
+    });
+
     it.each([
         ["invalid request", { status: 400 }, "request_invalid"],
         ["user cancellation", { cancelled: true }, "cancellation"],

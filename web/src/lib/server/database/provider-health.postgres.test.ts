@@ -28,4 +28,30 @@ describe("PostgreSQL scoped provider health", () => {
         }
     });
 
+    postgresIt("reopens a channel after a failed half-open probe when its observation window expired", async () => {
+        await ensurePostgresSchema();
+        const channelId = `channel-${randomUUID()}`;
+        const routeA: ProviderRouteIdentity = { workloadScope: "planner", provider: "integration", channelId, model: "model-a" };
+        const routeB: ProviderRouteIdentity = { ...routeA, model: "model-b" };
+        const service = () => new ProviderHealthService(new PostgresProviderHealthStore());
+        try {
+            await service().failure(routeA, { status: 503 }, 1_000);
+            await service().failure(routeA, { status: 503 }, 2_000);
+            await service().failure(routeA, { status: 503 }, 3_000);
+            await service().failure(routeB, { status: 503 }, 4_000);
+            expect(await service().getChannel(routeA, 4_000)).toMatchObject({ state: "open", openCount: 1 });
+
+            const decisions = await Promise.all(Array.from({ length: 8 }, () => service().acquire(routeB, 306_001)));
+            expect(decisions.filter((decision) => decision.eligible)).toHaveLength(1);
+            expect(await service().getChannel(routeA, 306_001)).toMatchObject({ state: "half_open", halfOpenProbeInFlight: true });
+
+            await service().failure(routeB, { status: 503 }, 306_100);
+
+            expect(await service().getChannel(routeA, 306_100)).toMatchObject({ state: "open", openCount: 2, cooldownUntil: 426_100, halfOpenProbeInFlight: false });
+            const rows = await postgresQuery<{ state: string; payload: { state: string; openCount: number; cooldownUntil?: number } }>("SELECT state, payload FROM provider_health WHERE binding_key = $1", [channelKey(routeA)]);
+            expect(rows.rows).toEqual([{ state: "open", payload: expect.objectContaining({ state: "open", openCount: 2, cooldownUntil: 426_100 }) }]);
+        } finally {
+            await postgresQuery("DELETE FROM provider_health WHERE binding_key = ANY($1::text[])", [[bindingKey(routeA), bindingKey(routeB), channelKey(routeA)]]);
+        }
+    });
 });
