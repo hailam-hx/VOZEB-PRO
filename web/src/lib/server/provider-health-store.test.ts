@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderHealthService, type ProviderRouteIdentity } from "./provider-health";
 import { FileProviderHealthStore } from "./provider-health-store";
 
-const route: ProviderRouteIdentity = { provider: "openai-compatible", channelId: "channel-a", model: "model-a" };
+const route: ProviderRouteIdentity = { workloadScope: "text_task", provider: "openai-compatible", channelId: "channel-a", model: "model-a" };
 let directory = "";
 
 describe("provider health shared store", () => {

@@ -6,6 +6,7 @@ import { buildProviderRequest, isProviderBusinessError, readProviderError, readP
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
 import { resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
 import { normalizeTextStream } from "@/lib/server/text-stream-protocol";
+import type { SafeProviderStreamError } from "@/lib/server/text-stream-diagnostics";
 
 export type TextPlanningProtocol = "responses" | "chat" | "gemini" | "custom";
 export type TextPlanningCandidate = {
@@ -68,6 +69,8 @@ export class TextPlanningRequestError extends Error {
         readonly status = 502,
         readonly retryable = status >= 500 || status === 408 || status === 429,
         readonly requestAcceptance: "response" | "unknown" = "response",
+        readonly protocolCompleted = false,
+        readonly providerError?: SafeProviderStreamError,
     ) {
         super(message);
         this.name = "TextPlanningRequestError";
@@ -220,7 +223,7 @@ async function readStructuredResponse(input: StructuredTextRequest, request: Pro
     const argumentsText = readProtocolArguments(payload, input.tool.name, request, input.allowNaturalLanguage);
     if (!argumentsText) {
         await input.onInvalidResponse?.(response.headers);
-        throw new TextPlanningRequestError("模型没有返回所需的结构化结果", 502, false);
+        throw new TextPlanningRequestError("模型没有返回所需的结构化结果", 502, false, "response", true);
     }
     const elapsedMs = Date.now() - startedAt;
     recordTextSuccess(input.candidate, request.protocol, elapsedMs);
@@ -254,7 +257,7 @@ async function readRoutedResponse(input: RoutedTextRequest, request: ProtocolReq
             await input.onFirstByte?.(firstByteMs);
         },
     })) {
-        if (event.type === "error") throw new TextPlanningRequestError(event.message, event.status || 502, !event.contract && retryableStatus(event.status || 502));
+        if (event.type === "error") throw new TextPlanningRequestError(event.message, event.status || 502, !event.contract && retryableStatus(event.status || 502), "response", false, event.providerError);
         if (event.type === "completed" || event.type === "usage") continue;
         output += event.text;
         const routed = routeOutput(output);
@@ -275,13 +278,13 @@ function finishRoutedOutput(input: RoutedTextRequest, request: ProtocolRequest, 
     const resolvedFirstContentMs = firstContentMs ?? (routed.content ? elapsedMs : undefined);
     if (routed.kind === "generation") {
         const argumentsText = strictJsonObjectText(routed.content);
-        if (!argumentsText) throw new TextPlanningRequestError("模型没有返回有效的创作计划", 502, false);
+        if (!argumentsText) throw new TextPlanningRequestError("模型没有返回有效的创作计划", 502, false, "response", true);
         recordTextSuccess(input.candidate, request.protocol, elapsedMs);
         return { kind: "generation", arguments: argumentsText, headers, protocol: request.protocol, elapsedMs, firstByteMs, firstContentMs: resolvedFirstContentMs };
     }
-    if (routed.kind !== "conversation") throw new TextPlanningRequestError("文本模型没有返回有效的结果类型", 502, false);
+    if (routed.kind !== "conversation") throw new TextPlanningRequestError("文本模型没有返回有效的结果类型", 502, false, "response", true);
     const content = routed.content.trim();
-    if (!content) throw new TextPlanningRequestError("文本模型没有返回有效内容", 502, false);
+    if (!content) throw new TextPlanningRequestError("文本模型没有返回有效内容", 502, false, "response", true);
     recordTextSuccess(input.candidate, request.protocol, elapsedMs);
     return { kind: "conversation", content, headers, protocol: request.protocol, elapsedMs, firstByteMs, firstContentMs: resolvedFirstContentMs };
 }

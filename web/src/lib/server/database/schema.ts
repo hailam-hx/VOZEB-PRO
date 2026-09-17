@@ -290,6 +290,7 @@ CREATE INDEX IF NOT EXISTS generation_worker_heartbeats_seen_idx ON generation_w
 
 CREATE TABLE IF NOT EXISTS provider_health (
     binding_key text PRIMARY KEY,
+    workload_scope text NOT NULL DEFAULT 'text_task',
     scope text NOT NULL,
     provider text NOT NULL,
     channel_id text NOT NULL,
@@ -298,12 +299,64 @@ CREATE TABLE IF NOT EXISTS provider_health (
     payload jsonb NOT NULL DEFAULT '{}'::jsonb,
     updated_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
+    CONSTRAINT provider_health_workload_scope CHECK (workload_scope IN ('planner', 'text_task')),
     CONSTRAINT provider_health_scope CHECK (scope IN ('binding', 'channel')),
     CONSTRAINT provider_health_state CHECK (state IN ('closed', 'degraded', 'open', 'half_open'))
 );
 
+ALTER TABLE provider_health ADD COLUMN IF NOT EXISTS workload_scope text;
+
+DO $$
+DECLARE collision_count integer;
+BEGIN
+    WITH target_keys AS (
+        SELECT binding_key AS source_key,
+               CASE
+                   WHEN scope = 'binding' THEN 'binding:text_task:' || lower(provider) || ':' || lower(channel_id) || ':' || lower(model)
+                   ELSE 'channel:text_task:' || lower(provider) || ':' || lower(channel_id)
+               END AS target_key
+        FROM provider_health
+        WHERE workload_scope IS NULL
+    )
+    SELECT count(*) INTO collision_count
+    FROM (
+        SELECT target_key FROM target_keys GROUP BY target_key HAVING count(*) > 1
+        UNION ALL
+        SELECT source.target_key
+        FROM target_keys source
+        JOIN provider_health existing ON existing.binding_key = source.target_key AND existing.binding_key <> source.source_key
+    ) collisions;
+    IF collision_count > 0 THEN
+        RAISE EXCEPTION 'provider_health workload-scope migration key collision';
+    END IF;
+END $$;
+
+UPDATE provider_health
+SET workload_scope = 'text_task',
+    binding_key = CASE
+        WHEN scope = 'binding' THEN 'binding:text_task:' || lower(provider) || ':' || lower(channel_id) || ':' || lower(model)
+        ELSE 'channel:text_task:' || lower(provider) || ':' || lower(channel_id)
+    END,
+    payload = jsonb_set(
+        jsonb_set(payload, '{workloadScope}', '"text_task"'::jsonb, true),
+        '{bindingKey}',
+        to_jsonb(CASE
+            WHEN scope = 'binding' THEN 'binding:text_task:' || lower(provider) || ':' || lower(channel_id) || ':' || lower(model)
+            ELSE 'channel:text_task:' || lower(provider) || ':' || lower(channel_id)
+        END),
+        true
+    )
+WHERE workload_scope IS NULL;
+
+ALTER TABLE provider_health ALTER COLUMN workload_scope SET DEFAULT 'text_task';
+ALTER TABLE provider_health ALTER COLUMN workload_scope SET NOT NULL;
+ALTER TABLE provider_health DROP CONSTRAINT IF EXISTS provider_health_workload_scope;
+ALTER TABLE provider_health ADD CONSTRAINT provider_health_workload_scope CHECK (workload_scope IN ('planner', 'text_task'));
+
 CREATE INDEX IF NOT EXISTS provider_health_expires_idx ON provider_health (expires_at);
-CREATE INDEX IF NOT EXISTS provider_health_channel_idx ON provider_health (provider, channel_id, state);
+DROP INDEX IF EXISTS provider_health_channel_idx;
+CREATE INDEX provider_health_channel_idx ON provider_health (workload_scope, provider, channel_id, state);
+CREATE UNIQUE INDEX IF NOT EXISTS provider_health_route_idx ON provider_health (workload_scope, scope, provider, channel_id, model);
 
 CREATE TABLE IF NOT EXISTS generation_webhook_events (
     channel_id text NOT NULL,
@@ -1000,6 +1053,6 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs (target_type, tar
 ${POSTGRESQL_TRIGGER_SCHEMA_SQL}
 
 INSERT INTO schema_migrations (version)
-VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce'), ('20260903_voice_cloning'), ('20260916_generation_worker_compatibility'), ('20260916_agent_runtime_v2')
+VALUES ('20260709_postgresql_commercial_base'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260725_account_deletion_requests'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260823_top_up_commerce'), ('20260903_voice_cloning'), ('20260916_generation_worker_compatibility'), ('20260916_agent_runtime_v2'), ('20260917_provider_health_workload_scope')
 ON CONFLICT (version) DO NOTHING;
 `;

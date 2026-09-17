@@ -1,13 +1,13 @@
 import type { TextTaskConfig } from "./text-task-store";
 import type { TextStreamTransportDiagnostic } from "./text-stream-diagnostics";
-import { providerRouteIdentity, type ProviderHealthFailureInput, type ProviderRouteDecision } from "./provider-health";
+import { providerRouteIdentity, type ProviderHealthFailureInput, type ProviderHealthWorkloadScope, type ProviderRouteDecision } from "./provider-health";
 import { createProviderHealthService } from "./provider-health-store";
 import { resolveChannelModelAdvancedConfig } from "@/lib/channel-protocol-registry";
 
 type ResolvedProviderCandidate = { channelId: string; upstreamModel: string; channel: { apiFormat: string; advancedConfig?: Parameters<typeof resolveChannelModelAdvancedConfig>[0] } };
 
 const untrackedDecision: ProviderRouteDecision = {
-    identity: { provider: "unknown", channelId: "", model: "" },
+    identity: { workloadScope: "text_task", provider: "unknown", channelId: "", model: "" },
     eligible: true,
     probe: false,
     state: "closed",
@@ -40,12 +40,67 @@ export async function rankResolvedProviderCandidates<T extends ResolvedProviderC
     }
 }
 
-export function resolvedProviderRouteIdentity(candidate: ResolvedProviderCandidate) {
+export function resolvedProviderRouteIdentity(candidate: ResolvedProviderCandidate, workloadScope: ProviderHealthWorkloadScope = "text_task") {
     return {
+        workloadScope,
         provider: resolveChannelModelAdvancedConfig(candidate.channel.advancedConfig, candidate.upstreamModel)?.protocol || candidate.channel.apiFormat,
         channelId: candidate.channelId,
         model: candidate.upstreamModel,
     };
+}
+
+export async function rankPlannerProviderCandidates<T extends ResolvedProviderCandidate>(candidates: T[], now = Date.now()) {
+    const tracked = candidates.map((candidate) => ({ ...resolvedProviderRouteIdentity(candidate, "planner"), candidate }));
+    try {
+        const ranked = await createProviderHealthService().rank(tracked, now);
+        return ranked.candidates.map((item) => item.candidate);
+    } catch (error) {
+        console.warn("Planner provider health ranking unavailable", { error: safeError(error) });
+        return candidates;
+    }
+}
+
+export async function acquirePlannerProviderRoute(candidate: ResolvedProviderCandidate, now = Date.now()) {
+    return acquireResolvedProviderRoute(candidate, "planner", now);
+}
+
+export async function releasePlannerProviderRoute(candidate: ResolvedProviderCandidate, now = Date.now()) {
+    const identity = resolvedProviderRouteIdentity(candidate, "planner");
+    try {
+        await createProviderHealthService().release(identity, now);
+    } catch (error) {
+        console.warn("Planner provider health probe release unavailable", { workloadScope: "planner", provider: identity.provider, channelId: identity.channelId, model: identity.model, error: safeError(error) });
+    }
+}
+
+export async function reportPlannerProviderFailure(candidate: ResolvedProviderCandidate, input: ProviderHealthFailureInput, now = Date.now()) {
+    const identity = resolvedProviderRouteIdentity(candidate, "planner");
+    try {
+        await createProviderHealthService().failure(identity, input, now);
+    } catch (error) {
+        console.warn("Planner provider health failure observation unavailable", { workloadScope: "planner", provider: identity.provider, channelId: identity.channelId, model: identity.model, error: safeError(error) });
+    }
+}
+
+export async function reportPlannerProviderSuccess(candidate: ResolvedProviderCandidate, now = Date.now()) {
+    const identity = resolvedProviderRouteIdentity(candidate, "planner");
+    try {
+        await createProviderHealthService().success(identity, now);
+    } catch (error) {
+        console.warn("Planner provider health success observation unavailable", { workloadScope: "planner", provider: identity.provider, channelId: identity.channelId, model: identity.model, error: safeError(error) });
+    }
+}
+
+async function acquireResolvedProviderRoute(candidate: ResolvedProviderCandidate, workloadScope: ProviderHealthWorkloadScope, now: number) {
+    const identity = resolvedProviderRouteIdentity(candidate, workloadScope);
+    try {
+        const decision = await createProviderHealthService().acquire(identity, now);
+        if (!decision.eligible) console.info("provider_route_skipped", { workloadScope, provider: identity.provider, channelId: identity.channelId, model: identity.model, reason: decision.reason, cooldownUntil: decision.cooldownUntil });
+        return decision;
+    } catch (error) {
+        console.warn("Provider health eligibility unavailable", { workloadScope, provider: identity.provider, channelId: identity.channelId, model: identity.model, error: safeError(error) });
+        return { identity, eligible: true, probe: false, state: "closed" as const };
+    }
 }
 
 export async function acquireTextProviderRoute(config: TextTaskConfig, now = Date.now()): Promise<ProviderRouteDecision> {
@@ -55,6 +110,7 @@ export async function acquireTextProviderRoute(config: TextTaskConfig, now = Dat
         const decision = await createProviderHealthService().acquire(identity, now);
         if (!decision.eligible)
             console.info("provider_route_skipped", {
+                workloadScope: "text_task",
                 provider: identity.provider,
                 channelId: identity.channelId,
                 model: identity.model,
@@ -63,7 +119,7 @@ export async function acquireTextProviderRoute(config: TextTaskConfig, now = Dat
             });
         return decision;
     } catch (error) {
-        console.warn("Provider health eligibility unavailable", { provider: identity.provider, channelId: identity.channelId, model: identity.model, error: safeError(error) });
+        console.warn("Provider health eligibility unavailable", { workloadScope: "text_task", provider: identity.provider, channelId: identity.channelId, model: identity.model, error: safeError(error) });
         return { identity, eligible: true, probe: false, state: "closed" };
     }
 }

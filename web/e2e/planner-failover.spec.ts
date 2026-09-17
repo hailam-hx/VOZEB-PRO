@@ -28,6 +28,10 @@ test("generation operations keeps the request, failure and planner route timelin
         await expect(taskSurface.getByText("已收到响应", { exact: false }).first()).toBeVisible();
         await expect(taskSurface.getByText("规划结算：失败 · 尝试 2 · finish_attempt:wallet_conflict · 不可重试", { exact: true })).toBeVisible();
         await expect(taskSurface.getByText("供应商尝试已结束，不能改写终态", { exact: true })).toBeVisible();
+        await expect(page.getByText("TextTask", { exact: true })).toBeVisible();
+        await expect(page.getByText("Planner", { exact: true })).toBeVisible();
+        await expect(page.getByText("Circuit Open", { exact: true })).toBeVisible();
+        await expect(page.getByText("最近错误 · type upstream_error · code overloaded · HTTP 503", { exact: false })).toBeVisible();
         await expectNoHorizontalOverflow(page, `${testInfo.project.name} ${theme} generation operations planner diagnostics`);
         await expectVisibleControlsWithinViewport(page, `${testInfo.project.name} ${theme} generation operations planner diagnostics`);
     }
@@ -230,7 +234,26 @@ function generationOperationsFixture() {
         page: 1,
         pageSize: 20,
         summary: { total: 1, active: 0, success: 0, failed: 1, averageDurationMs: 1_820, totalPointsCost: 0, byType: { agent: 1 }, byStatus: { error: 1 } },
-        channels: [],
+        channels: [
+            {
+                id: "dflop-openai",
+                name: "E2E 主渠道",
+                capability: "text",
+                logicalModelId: "gpt-5.6-sol",
+                logicalModelName: "GPT 5.6 Sol",
+                upstreamModel: "gpt-5.6-sol",
+                enabled: true,
+                runtimeHealth: { status: "closed", consecutiveFailures: 0 },
+                plannerRuntimeHealth: {
+                    status: "open",
+                    consecutiveFailures: 3,
+                    cooldownUntil: now + 60_000,
+                    lastProviderErrorType: "upstream_error",
+                    lastProviderErrorCode: "overloaded",
+                    lastProviderStatus: 503,
+                },
+            },
+        ],
         agentPerformance: { sampleSize: 0, planningP50Ms: 0, planningP95Ms: 0, firstResultP50Ms: 0, firstResultP95Ms: 0, queueAverageMs: 0, upstreamAverageMs: 0, reviewAverageMs: 0 },
     };
 }

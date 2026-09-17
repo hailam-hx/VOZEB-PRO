@@ -130,17 +130,15 @@ export function isGenerationLeaseExpired(record: Pick<StoredGenerationTaskRecord
 
 async function channelSummaries(settings: Awaited<ReturnType<typeof getAuthSettings>>): Promise<AdminGenerationChannel[]> {
     const channels = new Map(settings.systemChannels.map((channel) => [channel.id, channel]));
+    const providerHealthService = createProviderHealthService();
     return Promise.all(
         settings.logicalModels.flatMap((model) =>
             model.bindings.map(async (binding) => {
                 const channel = channels.get(binding.channelId);
                 const planning = model.capability === "text" && channel ? getTextPlanningRuntime({ channelId: channel.id, upstreamModel: binding.upstreamModel, channel }) : undefined;
-                const providerHealth =
-                    model.capability === "text" && channel
-                        ? await createProviderHealthService()
-                              .get(resolvedProviderRouteIdentity({ channelId: channel.id, upstreamModel: binding.upstreamModel, channel }))
-                              .catch(() => undefined)
-                        : undefined;
+                const providerHealth = model.capability === "text" && channel ? await providerHealthService.get(resolvedProviderRouteIdentity({ channelId: channel.id, upstreamModel: binding.upstreamModel, channel })).catch(() => undefined) : undefined;
+                const plannerProviderHealth =
+                    model.capability === "text" && channel ? await providerHealthService.get(resolvedProviderRouteIdentity({ channelId: channel.id, upstreamModel: binding.upstreamModel, channel }, "planner")).catch(() => undefined) : undefined;
                 return {
                     id: channel?.id || binding.channelId,
                     name: channel?.name || binding.channelId,
@@ -168,6 +166,19 @@ async function channelSummaries(settings: Awaited<ReturnType<typeof getAuthSetti
                                   lastError: health.lastError,
                               };
                           })(),
+                    ...(plannerProviderHealth
+                        ? {
+                              plannerRuntimeHealth: {
+                                  status: plannerProviderHealth.state,
+                                  consecutiveFailures: plannerProviderHealth.consecutiveFailures,
+                                  cooldownUntil: plannerProviderHealth.cooldownUntil,
+                                  lastFailureClass: plannerProviderHealth.lastFailureClass,
+                                  lastProviderErrorType: plannerProviderHealth.lastProviderErrorType,
+                                  lastProviderErrorCode: plannerProviderHealth.lastProviderErrorCode,
+                                  lastProviderStatus: plannerProviderHealth.lastProviderStatus,
+                              },
+                          }
+                        : {}),
                     ...(planning
                         ? {
                               planningRuntime: {

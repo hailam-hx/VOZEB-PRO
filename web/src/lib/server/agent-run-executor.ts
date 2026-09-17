@@ -42,7 +42,9 @@ import {
 } from "./agent-run-execution";
 import { isExplicitProjectHandoffRequest, normalizeAgentProjectHandoff } from "./agent-run-project-handoff";
 import { normalizeCanvasPlanForSelection } from "./agent-run-task-input";
-import { preferredTextPlanningProtocol, rankTextPlanningCandidates, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
+import { preferredTextPlanningProtocol, TextPlanningRequestError } from "@/lib/server/text-planning-runtime";
+import { acquirePlannerProviderRoute, rankPlannerProviderCandidates, releasePlannerProviderRoute, reportPlannerProviderFailure, reportPlannerProviderSuccess } from "@/lib/server/provider-health-runtime";
+import { classifyProviderHealthFailure } from "@/lib/server/provider-health";
 import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "@/lib/server/usage-billing-runtime";
 import { filterAgentPlannerModels, resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
 import { buildAgentRunPlannerAudit } from "@/lib/server/agent-run-audit";
@@ -193,13 +195,15 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         let acceptedFirstByteMs: number | undefined;
         let acceptedFirstContentMs: number | undefined;
         let latestPlanningError: unknown;
-        const rankedCandidates = rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })));
+        const rankedCandidates = await rankPlannerProviderCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })));
         for (const candidate of rankedCandidates) {
             const previousAttempt = plannerAttempts.find((attempt) => attempt.planningCycle === planningCycle && samePlannerRoute(attempt, candidate));
             if (previousAttempt?.status === "failed" && previousAttempt.requestAcceptance === "response") {
                 latestPlanningError = new Error(previousAttempt.error || "Agent 规划失败");
                 continue;
             }
+            const routeDecision = await acquirePlannerProviderRoute(candidate);
+            if (!routeDecision.eligible) continue;
             const attemptNumber = plannerAttempts.filter((attempt) => attempt.planningCycle === planningCycle).length + 1;
             const usageContext = systemAiTextUsageContext({ candidate, userId: run.userId, logicalModelId: model, businessRequestId, requestFingerprint, attemptNumber });
             const auditAttemptNo = nextPlannerAttemptNo(plannerAttempts);
@@ -217,12 +221,17 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     startedAt,
                 },
             ];
-            if (!(await updateAgentRunById(run.id, { plannerAttempts, timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), executionStartedAt, upstreamRequestStartedAt: startedAt } }, undefined, ["running"], executionId))) return;
+            if (!(await updateAgentRunById(run.id, { plannerAttempts, timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), executionStartedAt, upstreamRequestStartedAt: startedAt } }, undefined, ["running"], executionId))) {
+                await releasePlannerProviderRoute(candidate);
+                return;
+            }
             let receivedResponse = false;
             let streamedConversationContent = "";
             let routedResponseHeaders: Headers | undefined;
             let observedFirstByteMs: number | undefined;
             let observedFirstContentMs: number | undefined;
+            let providerOutcomeObserved = false;
+            let plannerValidationInProgress = false;
             try {
                 const planCall = routedChat
                     ? await requestRoutedFunctionCall(
@@ -265,6 +274,8 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                       )
                     : await requestFunctionCall(origin, cookie, candidate, planningInput, planTool, "create_agent_plan", controller.signal, run.userId, model, false, usageContext);
                 receivedResponse = true;
+                await reportPlannerProviderSuccess(candidate);
+                providerOutcomeObserved = true;
                 if ("kind" in planCall && planCall.kind === "conversation") {
                     conversationReply = planCall.content.trim();
                     acceptedPlan = { userId: claimed.userId, model, channelId: candidate.channel.id, upstreamModel: candidate.upstreamModel, call: planCall };
@@ -281,11 +292,13 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                         resultKind: "conversation",
                     });
                 } else {
+                    plannerValidationInProgress = true;
                     plan = await parseAgentPlanCall(planCall, () => voidFunctionCall(planCall), undefined, {
                         allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),
                         requiredGenerationMode: claimed.generationPreferences?.mode,
                         allowedDeliverableTypes: planningProfile.requiredDeliverableType ? [planningProfile.requiredDeliverableType] : undefined,
                     });
+                    plannerValidationInProgress = false;
                     if (plan) {
                         const firstContentMs = "firstContentMs" in planCall ? planCall.firstContentMs : undefined;
                         acceptedPlan = { userId: claimed.userId, model, channelId: candidate.channel.id, upstreamModel: candidate.upstreamModel, call: planCall };
@@ -311,6 +324,23 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 }
                 break;
             } catch (error) {
+                if (!providerOutcomeObserved && error instanceof TextPlanningRequestError && error.protocolCompleted) {
+                    await reportPlannerProviderSuccess(candidate);
+                    providerOutcomeObserved = true;
+                    console.info("planner_invalid_plan", { workloadScope: "planner", channelId: candidate.channel.id, model: candidate.upstreamModel, error: safePlannerError(error) });
+                } else if (providerOutcomeObserved && plannerValidationInProgress) {
+                    console.info("planner_invalid_plan", { workloadScope: "planner", channelId: candidate.channel.id, model: candidate.upstreamModel, error: safePlannerError(error) });
+                } else {
+                    const healthFailure = {
+                        error,
+                        status: error instanceof TextPlanningRequestError ? error.status : undefined,
+                        providerError: error instanceof TextPlanningRequestError ? error.providerError : undefined,
+                        cancelled: controller.signal.aborted,
+                    };
+                    if (classifyProviderHealthFailure(healthFailure).countsTowardCircuit) await reportPlannerProviderFailure(candidate, healthFailure);
+                    else await releasePlannerProviderRoute(candidate);
+                    providerOutcomeObserved = true;
+                }
                 const routedResponseIsSse = routedResponseHeaders?.get("content-type")?.toLowerCase().includes("text/event-stream");
                 if (routedResponseHeaders && (!routedResponseIsSse || error instanceof TextPlanningRequestError)) {
                     await finishSystemAiTextAttempt(routedResponseHeaders, { status: controller.signal.aborted ? "canceled" : "failed" });

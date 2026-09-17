@@ -38,6 +38,11 @@ const mocks = vi.hoisted(() => ({
     scheduleGenerationTask: vi.fn(async () => undefined),
     getTextTask: vi.fn(),
     retryTextTask: vi.fn(),
+    rankPlannerProviderCandidates: vi.fn(async (candidates) => candidates),
+    acquirePlannerProviderRoute: vi.fn(async (candidate) => ({ identity: { workloadScope: "planner", provider: "test", channelId: candidate.channelId, model: candidate.upstreamModel }, eligible: true, probe: false, state: "closed" })),
+    releasePlannerProviderRoute: vi.fn(async () => undefined),
+    reportPlannerProviderFailure: vi.fn(async () => undefined),
+    reportPlannerProviderSuccess: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/auth/store", () => ({
@@ -78,6 +83,13 @@ vi.mock("@/lib/server/generation-task-scheduler", () => ({ generationTaskNextPol
 vi.mock("@/lib/server/text-task-store", () => ({ getTextTask: mocks.getTextTask, retryTextTask: mocks.retryTextTask }));
 vi.mock("@/lib/server/creative-review-service", () => ({ reviewCreativeOutputs: mocks.reviewCreativeOutputs }));
 vi.mock("@/lib/server/usage-billing-runtime", () => ({ finishSystemAiTextAttempt: mocks.finishSystemAiTextAttempt, resolveSystemAiTextFailure: mocks.resolveSystemAiTextFailure }));
+vi.mock("@/lib/server/provider-health-runtime", () => ({
+    rankPlannerProviderCandidates: mocks.rankPlannerProviderCandidates,
+    acquirePlannerProviderRoute: mocks.acquirePlannerProviderRoute,
+    releasePlannerProviderRoute: mocks.releasePlannerProviderRoute,
+    reportPlannerProviderFailure: mocks.reportPlannerProviderFailure,
+    reportPlannerProviderSuccess: mocks.reportPlannerProviderSuccess,
+}));
 vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/server/agent-run-store")>();
     return {
@@ -106,6 +118,16 @@ describe("executeAgentRun backend settings", () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.rankPlannerProviderCandidates.mockImplementation(async (candidates) => candidates);
+        mocks.acquirePlannerProviderRoute.mockImplementation(async (candidate) => ({
+            identity: { workloadScope: "planner", provider: "test", channelId: candidate.channelId, model: candidate.upstreamModel },
+            eligible: true,
+            probe: false,
+            state: "closed",
+        }));
+        mocks.releasePlannerProviderRoute.mockResolvedValue(undefined);
+        mocks.reportPlannerProviderFailure.mockResolvedValue(undefined);
+        mocks.reportPlannerProviderSuccess.mockResolvedValue(undefined);
         resetTextPlanningRuntime();
         mocks.events = [];
         mocks.getCreativeAssetsByIds.mockResolvedValue([]);
@@ -1637,6 +1659,29 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/planner-backup/"))).toBe(true);
         expect(mocks.run?.status).toBe("completed");
         expect(mocks.events.some((event) => event.type === "run.completed")).toBe(true);
+        expect(mocks.reportPlannerProviderFailure).toHaveBeenCalledTimes(1);
+        expect(mocks.reportPlannerProviderSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips an open planner route before creating an attempt or billing request", async () => {
+        mocks.run = planningRun("你在吗？");
+        mocks.getAuthSettings.mockResolvedValue(plannerSameChannelModelFailoverSettings("image-default", "image-default-channel"));
+        mocks.acquirePlannerProviderRoute
+            .mockResolvedValueOnce({ identity: { workloadScope: "planner", provider: "compatible", channelId: "dflop", model: "gpt-5.6-sol" }, eligible: false, probe: false, state: "open" })
+            .mockResolvedValueOnce({ identity: { workloadScope: "planner", provider: "compatible", channelId: "dflop", model: "gpt-6-astra" }, eligible: true, probe: false, state: "closed" });
+        mocks.fetchInternalApi.mockImplementation(async (_url: string, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body)) as { model: string };
+            expect(body.model).toBe("gpt-6-astra");
+            expect(new Headers(init?.headers).get("x-vozeb-pro-billing-attempt-number")).toBe("1");
+            return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "健康路由直接接管。")) }] });
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.acquirePlannerProviderRoute).toHaveBeenCalledTimes(2);
+        expect(mocks.fetchInternalApi).toHaveBeenCalledOnce();
+        expect(mocks.run?.plannerAttempts).toEqual([expect.objectContaining({ attemptNo: 1, upstreamModel: "gpt-6-astra", status: "succeeded" })]);
+        expect(mocks.resolveSystemAiTextFailure).not.toHaveBeenCalledWith(expect.objectContaining({ currentAttempt: expect.objectContaining({ attemptNumber: 2 }) }));
     });
 
     it("fails over between two DFLOP models after an invalid JSON response and persists both attempts", async () => {
@@ -1686,6 +1731,8 @@ describe("executeAgentRun backend settings", () => {
             expect.objectContaining({ attemptNo: 2, upstreamModel: "gpt-6-astra", status: "succeeded", requestAcceptance: "response" }),
         ]);
         expect(mocks.run?.status).toBe("completed");
+        expect(mocks.reportPlannerProviderSuccess).toHaveBeenCalledTimes(2);
+        expect(mocks.reportPlannerProviderFailure).not.toHaveBeenCalled();
     });
 
     it("fails the Run with a complete audit and no child task when both planner bindings reject the request", async () => {

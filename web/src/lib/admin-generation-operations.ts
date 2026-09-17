@@ -130,6 +130,17 @@ export type AdminGenerationChannelGroup = {
     channels: AdminGenerationChannelCluster[];
 };
 
+export type AdminProviderRuntimeHealth = {
+    status: "healthy" | "cooling" | "closed" | "degraded" | "open" | "half_open";
+    consecutiveFailures: number;
+    cooldownUntil?: number;
+    lastError?: string;
+    lastFailureClass?: string;
+    lastProviderErrorType?: string;
+    lastProviderErrorCode?: string;
+    lastProviderStatus?: number;
+};
+
 export type AdminGenerationChannel = {
     id: string;
     name: string;
@@ -138,16 +149,8 @@ export type AdminGenerationChannel = {
     logicalModelName: string;
     upstreamModel: string;
     enabled: boolean;
-    runtimeHealth: {
-        status: "healthy" | "cooling" | "closed" | "degraded" | "open" | "half_open";
-        consecutiveFailures: number;
-        cooldownUntil?: number;
-        lastError?: string;
-        lastFailureClass?: string;
-        lastProviderErrorType?: string;
-        lastProviderErrorCode?: string;
-        lastProviderStatus?: number;
-    };
+    runtimeHealth: AdminProviderRuntimeHealth;
+    plannerRuntimeHealth?: AdminProviderRuntimeHealth;
     planningRuntime?: {
         protocol?: "responses" | "chat" | "gemini" | "custom";
         successCount: number;
@@ -206,9 +209,9 @@ export function groupAdminGenerationChannels(channels: AdminGenerationChannel[],
                 name: bindings[0].name,
                 capability,
                 bindings: bindings.toSorted((left, right) => left.logicalModelName.localeCompare(right.logicalModelName, "zh-CN") || left.upstreamModel.localeCompare(right.upstreamModel)),
-                cooling: bindings.some((binding) => ["cooling", "open", "half_open"].includes(binding.runtimeHealth.status)),
+                cooling: bindings.some((binding) => [binding.runtimeHealth, binding.plannerRuntimeHealth].some((health) => health && ["cooling", "open", "half_open"].includes(health.status))),
                 disabledBindings: bindings.filter((binding) => !binding.enabled).length,
-                consecutiveFailures: Math.max(...bindings.map((binding) => binding.runtimeHealth.consecutiveFailures), 0),
+                consecutiveFailures: Math.max(...bindings.flatMap((binding) => [binding.runtimeHealth.consecutiveFailures, binding.plannerRuntimeHealth?.consecutiveFailures || 0]), 0),
             }))
             .toSorted((left, right) => channelAlertRank(left) - channelAlertRank(right) || left.name.localeCompare(right.name, "zh-CN") || left.id.localeCompare(right.id));
         return [{ capability, channels: grouped }];

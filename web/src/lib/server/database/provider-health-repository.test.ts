@@ -16,9 +16,10 @@ describe("PostgreSQL provider health repository", () => {
         mocks.transaction.mockImplementation((handler) => handler({ query }));
 
         await new PostgresProviderHealthStore().update(
-            "binding:provider:channel:model",
+            "binding:text_task:provider:channel:model",
             () => ({
-                bindingKey: "binding:provider:channel:model",
+                bindingKey: "binding:text_task:provider:channel:model",
+                workloadScope: "text_task",
                 scope: "binding",
                 provider: "provider",
                 channelId: "channel",
@@ -40,6 +41,7 @@ describe("PostgreSQL provider health repository", () => {
 
         expect(query.mock.calls[0][0]).toContain("FOR UPDATE");
         expect(query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO provider_health"))).toBe(true);
+        expect(query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO provider_health"))?.[1]).toContain("text_task");
         expect(query.mock.calls.some(([sql]) => String(sql).includes("ON CONFLICT (binding_key) DO UPDATE"))).toBe(true);
     });
 });

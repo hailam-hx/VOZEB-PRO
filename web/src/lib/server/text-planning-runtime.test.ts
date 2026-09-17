@@ -236,6 +236,18 @@ describe("text planning runtime protocol matrix", () => {
         expect(visible).toEqual([]);
     });
 
+    it("marks an invalid plan after a terminal SSE frame as protocol-completed", async () => {
+        mockedFetch.mockResolvedValue(
+            sseResponse((controller) => {
+                controller.enqueue(chatDelta("<generation>\nnot-json"));
+                controller.enqueue("data: [DONE]\n\n");
+                controller.close();
+            }),
+        );
+
+        await expect(requestRoutedText(requestInput(candidate("newapi")))).rejects.toMatchObject({ message: "模型没有返回有效的创作计划", protocolCompleted: true, retryable: false });
+    });
+
     it.each([
         ['<conversation>\n{"intent":"generation",', '"deliverables":[]}'],
         ["<conversation>\n<gen", 'eration>\n{"result":"ok"}'],

@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { InMemoryProviderHealthStore, ProviderHealthService, classifyProviderHealthFailure, type ProviderRouteIdentity } from "./provider-health";
 
-const routeA: ProviderRouteIdentity = { provider: "openai-compatible", channelId: "channel-a", model: "model-a" };
-const routeB: ProviderRouteIdentity = { provider: "openai-compatible", channelId: "channel-a", model: "model-b" };
-const routeC: ProviderRouteIdentity = { provider: "anthropic", channelId: "channel-b", model: "model-c" };
+const routeA: ProviderRouteIdentity = { workloadScope: "text_task", provider: "openai-compatible", channelId: "channel-a", model: "model-a" };
+const routeB: ProviderRouteIdentity = { workloadScope: "text_task", provider: "openai-compatible", channelId: "channel-a", model: "model-b" };
+const routeC: ProviderRouteIdentity = { workloadScope: "text_task", provider: "anthropic", channelId: "channel-b", model: "model-c" };
 
 describe("provider health circuit breaker", () => {
     let service: ProviderHealthService;
@@ -88,6 +88,22 @@ describe("provider health circuit breaker", () => {
         await open(service, routeA);
         expect(await service.get(routeB, 4_000)).toMatchObject({ state: "closed" });
         expect(await service.acquire(routeB, 4_000)).toMatchObject({ eligible: true, probe: false });
+    });
+
+    it("isolates planner binding and channel state from text tasks", async () => {
+        const plannerRoute = { ...routeA, workloadScope: "planner" as const };
+        await open(service, plannerRoute);
+        expect(await service.get(plannerRoute, 4_000)).toMatchObject({ state: "open", workloadScope: "planner" });
+        expect(await service.get(routeA, 4_000)).toMatchObject({ state: "closed", workloadScope: "text_task" });
+        expect(await service.getChannel(routeA, 4_000)).toMatchObject({ state: "closed", workloadScope: "text_task" });
+    });
+
+    it("releases a half-open lease without extending its cooldown", async () => {
+        await open(service, routeA);
+        await service.acquire(routeA, 63_001);
+        await service.release(routeA, 63_100);
+        expect(await service.get(routeA, 63_100)).toMatchObject({ state: "open", halfOpenProbeInFlight: false });
+        expect(await service.acquire(routeA, 63_101)).toMatchObject({ eligible: true, probe: true });
     });
 
     it("can open channel aggregate only after independent models fail", async () => {

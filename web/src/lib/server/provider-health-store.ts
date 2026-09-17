@@ -44,11 +44,11 @@ export class PostgresProviderHealthStore implements ProviderHealthStore {
                 return undefined;
             }
             await database.query(
-                `INSERT INTO provider_health (binding_key, scope, provider, channel_id, model, state, payload, updated_at, expires_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
-                 ON CONFLICT (binding_key) DO UPDATE SET scope = EXCLUDED.scope, provider = EXCLUDED.provider, channel_id = EXCLUDED.channel_id,
+                `INSERT INTO provider_health (binding_key, workload_scope, scope, provider, channel_id, model, state, payload, updated_at, expires_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                 ON CONFLICT (binding_key) DO UPDATE SET workload_scope = EXCLUDED.workload_scope, scope = EXCLUDED.scope, provider = EXCLUDED.provider, channel_id = EXCLUDED.channel_id,
                  model = EXCLUDED.model, state = EXCLUDED.state, payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at, expires_at = EXCLUDED.expires_at`,
-                [key, next.scope, next.provider, next.channelId, next.model, next.state, JSON.stringify(next), new Date(next.updatedAt), new Date(next.expiresAt)],
+                [key, next.workloadScope, next.scope, next.provider, next.channelId, next.model, next.state, JSON.stringify(next), new Date(next.updatedAt), new Date(next.expiresAt)],
             );
             return structuredClone(next);
         });
@@ -66,5 +66,5 @@ async function readFile(): Promise<ProviderHealthFile> {
 }
 
 function normalizeRecord(value: ProviderHealthRecord) {
-    return { ...value, independentModels: Array.isArray(value.independentModels) ? value.independentModels : [] };
+    return { ...value, workloadScope: value.workloadScope || "text_task", independentModels: Array.isArray(value.independentModels) ? value.independentModels : [] };
 }

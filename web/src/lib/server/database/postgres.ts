@@ -178,6 +178,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "generation_worker_heartbeats_seen_idx",
     "provider_health_expires_idx",
     "provider_health_channel_idx",
+    "provider_health_route_idx",
     "generation_webhook_events_received_idx",
     "creative_conversations_user_updated_idx",
     "creative_conversations_user_source_idx",

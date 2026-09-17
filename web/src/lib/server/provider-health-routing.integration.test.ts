@@ -7,7 +7,7 @@ import { resolveLogicalModelCandidates, resolveRuntimeLogicalModelCandidates } f
 import { ProviderHealthService, type ProviderRouteIdentity } from "./provider-health";
 import { FileProviderHealthStore } from "./provider-health-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
-import { resolvedProviderRouteIdentity } from "./provider-health-runtime";
+import { acquirePlannerProviderRoute, rankPlannerProviderCandidates, resolvedProviderRouteIdentity } from "./provider-health-runtime";
 
 let directory = "";
 const channel = (id: string, models: string[]) => ({
@@ -71,5 +71,32 @@ describe("provider health logical routing integration", () => {
         now.mockReturnValue(243_100);
         const recovered = await resolveRuntimeLogicalModelCandidates(settings, "text", "writer");
         expect(recovered[0]).toMatchObject({ channelId: "channel-a", upstreamModel: "model-a" });
+    });
+
+    it("uses persistent planner scope without changing text-task ordering", async () => {
+        const service = new ProviderHealthService(new FileProviderHealthStore());
+        const candidates = resolveLogicalModelCandidates(settings, "text", "writer");
+        const plannerFirst = resolvedProviderRouteIdentity(candidates[0], "planner");
+        await service.failure(plannerFirst, { status: 503 }, 1_000);
+        await service.failure(plannerFirst, { status: 503 }, 2_000);
+        await service.failure(plannerFirst, { status: 503 }, 3_000);
+
+        const plannerRanked = await rankPlannerProviderCandidates(candidates, 4_000);
+        expect(plannerRanked.map((candidate) => candidate.upstreamModel)).toEqual(["model-c", "model-b", "model-a"]);
+        expect(await service.get(resolvedProviderRouteIdentity(candidates[0]), 4_000)).toMatchObject({ state: "closed", workloadScope: "text_task" });
+    });
+
+    it("emits a scoped skip event before dispatch for an open planner binding", async () => {
+        const service = new ProviderHealthService(new FileProviderHealthStore());
+        const candidate = resolveLogicalModelCandidates(settings, "text", "writer")[0];
+        const route = resolvedProviderRouteIdentity(candidate, "planner");
+        await service.failure(route, { status: 503 }, 1_000);
+        await service.failure(route, { status: 503 }, 2_000);
+        await service.failure(route, { status: 503 }, 3_000);
+        const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+        await expect(acquirePlannerProviderRoute(candidate, 4_000)).resolves.toMatchObject({ eligible: false, state: "open", reason: "circuit_open" });
+        expect(info).toHaveBeenCalledWith("provider_route_skipped", expect.objectContaining({ workloadScope: "planner", channelId: "channel-a", model: "model-a", reason: "circuit_open" }));
+        info.mockRestore();
     });
 });

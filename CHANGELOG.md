@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- [上游路由] 文本逻辑模型绑定新增共享 Provider Health / Circuit Breaker：按渠道、Provider 与上游模型隔离 CLOSED/DEGRADED/OPEN/HALF_OPEN 状态，连续暂时性错误会在后续请求中跳过故障 binding，冷却后由单个原子 probe 自动恢复；跳过不会创建 Provider attempt、计费或钱包变更，公开文本后禁止切换模型的规则保持不变。
+- [上游路由] 文本逻辑模型绑定的 Provider Health / Circuit Breaker 按 `planner` / `text_task`、渠道、Provider 与上游模型隔离 CLOSED/DEGRADED/OPEN/HALF_OPEN 状态；Agent Planner 使用持久化排名、原子 HALF_OPEN probe 和 dispatch 前跳过，不再以进程内冷却决定 eligibility。跳过不会创建 Planner/Provider attempt、用量、计费或钱包变更；合法终止流后的 invalid plan 仅记为 Planner quality failure，不会中毒 provider health。
 - [Agent/架构] 完成 Agent 稳定性重构：PostgreSQL 新增不可变计划、一等任务、DAG 依赖、租约领取、持久重试和稳定 ToolCall，Agent 通过共享生成应用层直接复用图片、视频、音频与文本运行时，不再站内 HTTP 调用自身 Route；未知上游结果不盲重提，并在现有生成运维中串联任务、Generation、资产与结算。普通复盘改为异步，严格复盘模式仍阻塞；部署以 Git SHA、Schema 和运行协议拒绝不兼容 Worker。
 - [Agent/稳定性] 图片 Responses 回退不再移除生图工具；Planner 暂时性结算失败和 child 派发失败保留原 Run 供 Worker 恢复，已完成兄弟任务与资产不会被批次失败覆盖；text child 使用服务端稳定请求身份防止重复创建。App 与 generation-worker 同时校验 build、Git SHA、Schema 和 runtime protocol，不兼容 Worker 无法领取生成或计费恢复批次。
 - [Agent/稳定性] ToolCall 幂等输入在写入和冲突比较前统一采用 JSON/JSONB 语义规范化：对象中的 `undefined` 被移除，数组中的 `undefined` 转为 `null`，避免 Worker 恢复时把同一嵌套输入误判为冲突；真实输入差异仍会拒绝复用。

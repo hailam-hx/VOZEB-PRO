@@ -22,6 +22,7 @@ function channel(status: AdminGenerationChannel["runtimeHealth"]["status"]): Adm
             lastProviderErrorCode: status === "closed" ? undefined : "overloaded",
             lastProviderStatus: status === "closed" ? undefined : 503,
         },
+        plannerRuntimeHealth: { status: "closed", consecutiveFailures: 0 },
     };
 }
 
@@ -29,7 +30,9 @@ describe("GenerationChannelStatus provider health", () => {
     it("labels a closed circuit as Healthy", () => {
         const view = render(<GenerationChannelStatus channels={[channel("closed")]} loading={false} />);
 
-        expect(view.getByText("Healthy")).toBeTruthy();
+        expect(view.getAllByText("Healthy")).toHaveLength(2);
+        expect(view.getByText("TextTask")).toBeTruthy();
+        expect(view.getByText("Planner")).toBeTruthy();
     });
 
     it("shows the safe provider error type, code, and status", () => {

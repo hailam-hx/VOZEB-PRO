@@ -56,18 +56,15 @@ export function GenerationChannelStatus({ channels, loading }: { channels: Admin
                                                             </div>
                                                         </Tooltip>
                                                         {!binding.enabled ? <Tag className={generationOperationThemeClasses.neutralTag}>绑定停用</Tag> : null}
-                                                        {["healthy", "closed"].includes(binding.runtimeHealth.status) ? <Tag className={generationOperationThemeClasses.neutralTag}>Healthy</Tag> : null}
-                                                        {binding.runtimeHealth.status === "open" ? <Tag className={generationOperationThemeClasses.reviewTag}>Circuit Open</Tag> : null}
-                                                        {binding.runtimeHealth.status === "half_open" ? <Tag className={generationOperationThemeClasses.reviewTag}>Half-open</Tag> : null}
-                                                        {binding.runtimeHealth.status === "degraded" ? <Tag className={generationOperationThemeClasses.reviewTag}>Degraded</Tag> : null}
                                                     </div>
-                                                    <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                                                        {binding.runtimeHealth.lastProviderErrorType || binding.runtimeHealth.lastProviderErrorCode
-                                                            ? `最近错误${binding.runtimeHealth.lastProviderErrorType ? ` · type ${binding.runtimeHealth.lastProviderErrorType}` : ""}${binding.runtimeHealth.lastProviderErrorCode ? ` · code ${binding.runtimeHealth.lastProviderErrorCode}` : ""}${binding.runtimeHealth.lastProviderStatus ? ` · HTTP ${binding.runtimeHealth.lastProviderStatus}` : ""}${binding.runtimeHealth.cooldownUntil ? ` · 冷却至 ${new Date(binding.runtimeHealth.cooldownUntil).toLocaleTimeString("zh-CN", { hour12: false })}` : ""}`
-                                                            : binding.planningRuntime
-                                                              ? `规划 ${planningProtocolLabel(binding.planningRuntime.protocol)} · 平均 ${formatDuration(binding.planningRuntime.averageLatencyMs || 0)} · ${binding.planningRuntime.successCount} 成功 / ${binding.planningRuntime.failureCount} 失败`
-                                                              : "暂无规划调用样本"}
-                                                    </div>
+                                                    <HealthRow label={binding.capability === "text" ? "TextTask" : "Runtime"} health={binding.runtimeHealth} />
+                                                    {binding.plannerRuntimeHealth ? <HealthRow label="Planner" health={binding.plannerRuntimeHealth} /> : null}
+                                                    {binding.planningRuntime ? (
+                                                        <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                                            规划 {planningProtocolLabel(binding.planningRuntime.protocol)} · 平均 {formatDuration(binding.planningRuntime.averageLatencyMs || 0)} · {binding.planningRuntime.successCount} 成功 /{" "}
+                                                            {binding.planningRuntime.failureCount} 失败
+                                                        </div>
+                                                    ) : null}
                                                 </div>
                                             ))}
                                         </div>
@@ -81,6 +78,23 @@ export function GenerationChannelStatus({ channels, loading }: { channels: Admin
                 {loading && !channels.length ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">正在加载渠道状态…</div> : null}
             </section>
         </Panel>
+    );
+}
+
+function HealthRow({ label, health }: { label: string; health: AdminGenerationChannel["runtimeHealth"] }) {
+    const detail =
+        health.lastProviderErrorType || health.lastProviderErrorCode
+            ? `最近错误${health.lastProviderErrorType ? ` · type ${health.lastProviderErrorType}` : ""}${health.lastProviderErrorCode ? ` · code ${health.lastProviderErrorCode}` : ""}${health.lastProviderStatus ? ` · HTTP ${health.lastProviderStatus}` : ""}${health.cooldownUntil ? ` · 冷却至 ${new Date(health.cooldownUntil).toLocaleTimeString("zh-CN", { hour12: false })}` : ""}`
+            : "暂无异常";
+    return (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <span>{label}</span>
+            {["healthy", "closed"].includes(health.status) ? <Tag className={generationOperationThemeClasses.neutralTag}>Healthy</Tag> : null}
+            {health.status === "open" ? <Tag className={generationOperationThemeClasses.reviewTag}>Circuit Open</Tag> : null}
+            {health.status === "half_open" ? <Tag className={generationOperationThemeClasses.reviewTag}>Half-open</Tag> : null}
+            {health.status === "degraded" ? <Tag className={generationOperationThemeClasses.reviewTag}>Degraded</Tag> : null}
+            <span>{detail}</span>
+        </div>
     );
 }
 

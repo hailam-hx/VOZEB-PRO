@@ -4,8 +4,10 @@ import { PROVIDER_HEALTH_POLICY, type ProviderHealthPolicy } from "./provider-he
 export type ProviderCircuitState = "closed" | "degraded" | "open" | "half_open";
 export type ProviderHealthFailureClass = "provider_transient" | "model_availability" | "auth_config" | "request_invalid" | "business" | "cancellation" | "unknown";
 export type ProviderHealthScope = "binding" | "channel";
+export type ProviderHealthWorkloadScope = "planner" | "text_task";
 
 export type ProviderRouteIdentity = {
+    workloadScope: ProviderHealthWorkloadScope;
     provider: string;
     channelId: string;
     model: string;
@@ -166,6 +168,11 @@ export class ProviderHealthService {
         return null;
     }
 
+    async release(identity: ProviderRouteIdentity, now = Date.now()) {
+        await this.releaseProbe(identity, "binding", now);
+        await this.releaseProbe({ ...identity, model: "*" }, "channel", now);
+    }
+
     private async acquireRecord(identity: ProviderRouteIdentity, scope: ProviderHealthScope, snapshot: ProviderHealthRecord, now: number): Promise<ProviderRouteDecision> {
         if (snapshot.state === "closed" || snapshot.state === "degraded") return { identity, eligible: true, probe: false, state: snapshot.state };
         const key = scope === "binding" ? bindingKey(identity) : channelKey(identity);
@@ -303,19 +310,19 @@ export function classifyProviderHealthFailure(input: ProviderHealthFailureInput)
     return classification("unknown", false, false, false, input);
 }
 
-export function providerRouteIdentity(input: { channelId?: string; model: string; apiFormat?: string; advancedConfig?: { protocol?: string } }): ProviderRouteIdentity | undefined {
+export function providerRouteIdentity(input: { channelId?: string; model: string; apiFormat?: string; advancedConfig?: { protocol?: string } }, workloadScope: ProviderHealthWorkloadScope = "text_task"): ProviderRouteIdentity | undefined {
     const channelId = input.channelId?.trim();
     const model = input.model.trim();
     if (!channelId || !model) return undefined;
-    return { provider: normalize(input.advancedConfig?.protocol || input.apiFormat || "unknown"), channelId, model };
+    return { workloadScope, provider: normalize(input.advancedConfig?.protocol || input.apiFormat || "unknown"), channelId, model };
 }
 
 export function bindingKey(identity: ProviderRouteIdentity) {
-    return `binding:${normalize(identity.provider)}:${normalize(identity.channelId)}:${normalize(identity.model)}`;
+    return `binding:${identity.workloadScope}:${normalize(identity.provider)}:${normalize(identity.channelId)}:${normalize(identity.model)}`;
 }
 
 export function channelKey(identity: ProviderRouteIdentity) {
-    return `channel:${normalize(identity.provider)}:${normalize(identity.channelId)}`;
+    return `channel:${identity.workloadScope}:${normalize(identity.provider)}:${normalize(identity.channelId)}`;
 }
 
 function classification(failureClass: ProviderHealthFailureClass, countsTowardCircuit: boolean, countsTowardChannel: boolean, openImmediately: boolean, input: ProviderHealthFailureInput): ProviderHealthClassification {
@@ -353,6 +360,7 @@ function blockingRecord(binding: ProviderHealthRecord, channel: ProviderHealthRe
 function safeLog(record: ProviderHealthRecord) {
     return {
         bindingKey: record.bindingKey,
+        workloadScope: record.workloadScope,
         provider: record.provider,
         channelId: record.channelId,
         model: record.model,

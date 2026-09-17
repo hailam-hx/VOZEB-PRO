@@ -116,6 +116,8 @@ describe("generation operations aggregation", () => {
             lastProviderErrorCode: "overloaded",
             lastProviderStatus: 503,
         });
+        expect(result.channels[0].plannerRuntimeHealth).toEqual(result.channels[0].runtimeHealth);
+        expect(mocks.providerHealthGet.mock.calls.map(([identity]) => identity.workloadScope)).toEqual(["text_task", "planner"]);
     });
 
     it("shows planner audit, child-task points and only marks an actually expired lease", async () => {
