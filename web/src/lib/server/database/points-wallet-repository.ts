@@ -265,6 +265,26 @@ export class PointsWalletRepository {
         return result.rows[0] ? mapProviderUsageAttempt(result.rows[0]) : null;
     }
 
+    async updateTerminalProviderAttemptEvidence(id: string, attempt: ProviderUsageAttemptRecord) {
+        const result = await this.db.query(
+            `UPDATE provider_usage_attempts SET native_cost_amount = $2::numeric, native_cost_unit = $3::jsonb,
+                usd_conversion_rate = $4::numeric, cost_usd = $5::numeric, normalized_usage = $6::jsonb,
+                observed_usage = $7::jsonb, updated_at = $8
+             WHERE id = $1 AND status <> 'pending' RETURNING *`,
+            [
+                id,
+                attempt.nativeCostAmount,
+                jsonParam(attempt.nativeCostUnit),
+                attempt.usdConversionRate,
+                attempt.costUsd,
+                attempt.normalizedUsage ? jsonParam(attempt.normalizedUsage) : null,
+                attempt.observedUsage ? jsonParam(attempt.observedUsage) : null,
+                attempt.updatedAt,
+            ],
+        );
+        return result.rows[0] ? mapProviderUsageAttempt(result.rows[0]) : null;
+    }
+
     async hasPendingProviderAttempts(holdId: string) {
         const result = await this.db.query("SELECT EXISTS (SELECT 1 FROM provider_usage_attempts WHERE hold_id = $1 AND status = 'pending') AS exists", [holdId]);
         return result.rows[0]?.exists === true;

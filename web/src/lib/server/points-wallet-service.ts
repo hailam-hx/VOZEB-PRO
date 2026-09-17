@@ -381,11 +381,17 @@ export async function recordProviderUsageAttempt(input: RecordProviderUsageAttem
             if (existing.status === "pending" && input.status !== "pending") {
                 if (hold.status !== "active") throw new WalletConflictError("钱包预留已经关闭");
                 assertProviderAttemptImmutableSnapshot(existing, input, nativeCostUnit);
+                const terminalSnapshot = terminalProviderAttemptSnapshot(existing, input, nativeCostAmount.toString(), nativeCostUnit, usdConversionRate, costUsd);
                 const now = input.now || new Date();
                 const createdAt = existing.createdAt;
-                Object.assign(existing, providerAttemptValues(input, hold.userId, id, requestFingerprint, nativeCostAmount.toString(), nativeCostUnit, usdConversionRate, costUsd, now));
+                Object.assign(existing, providerAttemptValues(terminalSnapshot.input, hold.userId, id, requestFingerprint, terminalSnapshot.nativeCostAmount, nativeCostUnit, usdConversionRate, terminalSnapshot.costUsd, now));
                 existing.createdAt = createdAt;
                 return { attempt: existing, applied: true };
+            }
+            const lateEvidence = mergeLateProviderAttemptEvidence(existing, input, nativeCostAmount.toString(), nativeCostUnit, usdConversionRate, costUsd, input.now || new Date());
+            if (lateEvidence) {
+                if (lateEvidence.applied) Object.assign(existing, lateEvidence.attempt);
+                return { attempt: existing, applied: lateEvidence.applied };
             }
             if (!sameProviderAttemptSnapshot(existing, input, nativeCostAmount.toString(), nativeCostUnit, usdConversionRate, costUsd)) throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
             return { attempt: existing, applied: false };
@@ -580,11 +586,19 @@ async function recordPostgresProviderAttempt(
             if (existing.status === "pending" && input.status !== "pending") {
                 if (hold.status !== "active") throw new WalletConflictError("钱包预留已经关闭");
                 assertProviderAttemptImmutableSnapshot(existing, input, input.nativeCostUnit);
+                const terminalSnapshot = terminalProviderAttemptSnapshot(existing, input, input.nativeCostAmount.toString(), input.nativeCostUnit, input.usdConversionRate, input.costUsd);
                 const now = input.now || new Date();
                 const updated = await repos.pointsWallet.updatePendingProviderAttempt(
                     existing.id,
-                    providerAttemptValues(input, hold.userId, input.id, input.requestFingerprint, input.nativeCostAmount.toString(), input.nativeCostUnit, input.usdConversionRate, input.costUsd, now),
+                    providerAttemptValues(terminalSnapshot.input, hold.userId, input.id, input.requestFingerprint, terminalSnapshot.nativeCostAmount, input.nativeCostUnit, input.usdConversionRate, terminalSnapshot.costUsd, now),
                 );
+                if (!updated) throw new WalletConflictError("供应商尝试状态已经变更");
+                return { attempt: updated, applied: true };
+            }
+            const lateEvidence = mergeLateProviderAttemptEvidence(existing, input, input.nativeCostAmount.toString(), input.nativeCostUnit, input.usdConversionRate, input.costUsd, input.now || new Date());
+            if (lateEvidence) {
+                if (!lateEvidence.applied) return { attempt: existing, applied: false };
+                const updated = await repos.pointsWallet.updateTerminalProviderAttemptEvidence(existing.id, lateEvidence.attempt);
                 if (!updated) throw new WalletConflictError("供应商尝试状态已经变更");
                 return { attempt: updated, applied: true };
             }
@@ -770,18 +784,77 @@ function assertPendingProviderAttemptAttachment(
     usdConversionRate: string,
     costUsd: string,
 ) {
+    const existingEvidence = existing.observedUsage !== undefined;
     if (
         existing.providerIdempotencySupported !== (input.providerIdempotencySupported === true) ||
         existing.providerIdempotencyKey !== normalizedOptionalText(input.providerIdempotencyKey) ||
         !sameJsonValue(existing.costRateSnapshot, input.costRateSnapshot) ||
-        !sameJsonValue(existing.normalizedUsage, input.normalizedUsage) ||
-        (existing.observedUsage && !sameJsonValue(existing.observedUsage, input.observedUsage)) ||
-        !sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) ||
+        (existingEvidence && !sameJsonValue(existing.normalizedUsage, input.normalizedUsage)) ||
+        (existingEvidence && !sameJsonValue(existing.observedUsage, input.observedUsage)) ||
+        (existingEvidence && !sameDecimalValue(existing.nativeCostAmount, nativeCostAmount)) ||
         !sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) ||
         !sameDecimalValue(existing.usdConversionRate, usdConversionRate) ||
-        !sameDecimalValue(existing.costUsd, costUsd)
+        (existingEvidence && !sameDecimalValue(existing.costUsd, costUsd))
     )
         throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
+}
+
+function mergeLateProviderAttemptEvidence(
+    existing: ProviderUsageAttempt,
+    input: Pick<RecordProviderUsageAttemptInput, "status" | "providerIdempotencySupported" | "providerIdempotencyKey" | "upstreamTaskId" | "costRateSnapshot" | "normalizedUsage" | "observedUsage">,
+    nativeCostAmount: string,
+    nativeCostUnit: ProviderCostUnit,
+    usdConversionRate: string,
+    costUsd: string,
+    now: Date,
+) {
+    if (existing.status === "pending" || input.status !== "pending" || !input.observedUsage) return undefined;
+    if (
+        existing.providerIdempotencySupported !== (input.providerIdempotencySupported === true) ||
+        existing.providerIdempotencyKey !== normalizedOptionalText(input.providerIdempotencyKey) ||
+        (input.upstreamTaskId && existing.upstreamTaskId !== normalizedOptionalText(input.upstreamTaskId)) ||
+        !sameJsonValue(existing.costRateSnapshot, input.costRateSnapshot) ||
+        (existing.normalizedUsage && input.normalizedUsage && !sameJsonValue(existing.normalizedUsage, input.normalizedUsage)) ||
+        (existing.observedUsage && !sameJsonValue(existing.observedUsage, input.observedUsage)) ||
+        !sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) ||
+        !sameDecimalValue(existing.usdConversionRate, usdConversionRate) ||
+        (existing.observedUsage && (!sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) || !sameDecimalValue(existing.costUsd, costUsd)))
+    )
+        throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
+    const normalizedUsage = input.normalizedUsage || existing.normalizedUsage;
+    const applied = !existing.observedUsage || (!existing.normalizedUsage && Boolean(normalizedUsage));
+    return {
+        applied,
+        attempt: {
+            ...existing,
+            nativeCostAmount,
+            nativeCostUnit,
+            usdConversionRate,
+            costUsd,
+            normalizedUsage,
+            observedUsage: input.observedUsage,
+            updatedAt: now.toISOString(),
+        },
+    };
+}
+
+function terminalProviderAttemptSnapshot(existing: ProviderUsageAttempt, input: Omit<RecordProviderUsageAttemptInput, "nativeCostAmount">, nativeCostAmount: string, nativeCostUnit: ProviderCostUnit, usdConversionRate: string, costUsd: string) {
+    if (!existing.observedUsage) return { input, nativeCostAmount, costUsd };
+    const incomingHasEvidence = input.normalizedUsage !== undefined || input.observedUsage !== undefined;
+    const sameObservedEvidence = input.observedUsage !== undefined && sameJsonValue(existing.observedUsage, input.observedUsage);
+    if (
+        (input.observedUsage && !sameObservedEvidence) ||
+        (input.normalizedUsage && !sameJsonValue(existing.normalizedUsage, input.normalizedUsage) && !sameObservedEvidence) ||
+        (incomingHasEvidence && !sameObservedEvidence && (!sameDecimalValue(existing.nativeCostAmount, nativeCostAmount) || !sameDecimalValue(existing.costUsd, costUsd))) ||
+        !sameProviderCostUnit(existing.nativeCostUnit, nativeCostUnit) ||
+        !sameDecimalValue(existing.usdConversionRate, usdConversionRate)
+    )
+        throw new WalletConflictError("供应商尝试业务 ID 对应的参数不一致");
+    return {
+        input: { ...input, normalizedUsage: input.normalizedUsage || existing.normalizedUsage, observedUsage: input.observedUsage || existing.observedUsage },
+        nativeCostAmount: incomingHasEvidence ? nativeCostAmount : existing.nativeCostAmount,
+        costUsd: incomingHasEvidence ? costUsd : existing.costUsd,
+    };
 }
 
 function normalizedOptionalText(value: string | undefined) {

@@ -196,7 +196,16 @@ export async function attachUsageProviderUpstreamTaskId(input: { holdId: string;
 export async function attachUsageProviderEvidence(input: { billing: UsageBilling; attemptNumber: number; usage: NormalizedUsage; now?: Date }) {
     const attempts = await listProviderUsageAttemptsForHold(input.billing.holdId);
     const attempt = attempts.find((item) => item.attemptNumber === input.attemptNumber);
-    if (!attempt || attempt.status !== "pending") return;
+    if (!attempt) return;
+    assertUsageCapability(input.billing.snapshot, input.usage, attempt.normalizedUsage, attempt.observedUsage);
+    const usage = canonicalProviderAttemptUsage({ snapshot: input.billing.snapshot, attempt, status: attempt.status === "pending" ? "succeeded" : attempt.status, suppliedUsage: input.usage });
+    let nativeCostAmount = attempt.nativeCostAmount;
+    try {
+        if (attempt.costRateSnapshot && usage) nativeCostAmount = calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage });
+    } catch (error) {
+        if (error instanceof PricingUsageDimensionError && usage) logMissingPricingDimension({ billing: input.billing, attempt, usage, error });
+        throw error;
+    }
     return recordUsageProviderAttempt({
         billing: input.billing,
         attemptNumber: attempt.attemptNumber,
@@ -207,10 +216,10 @@ export async function attachUsageProviderEvidence(input: { billing: UsageBilling
         providerIdempotencySupported: attempt.providerIdempotencySupported,
         providerIdempotencyKey: attempt.providerIdempotencyKey,
         upstreamTaskId: attempt.upstreamTaskId,
-        nativeCostAmount: attempt.nativeCostAmount,
+        nativeCostAmount,
         nativeCostUnit: attempt.nativeCostUnit,
         costRateSnapshot: attempt.costRateSnapshot,
-        normalizedUsage: attempt.normalizedUsage,
+        normalizedUsage: usage,
         observedUsage: input.usage,
         now: input.now,
     });

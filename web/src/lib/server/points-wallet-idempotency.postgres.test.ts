@@ -287,4 +287,63 @@ describe("PostgreSQL prepaid wallet persistence", () => {
             await repositories.users.delete(userId);
         }
     });
+
+    postgresIt("serializes terminalization with compatible late provider evidence", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const suffix = randomUUID();
+        const userId = `wallet-late-evidence-${suffix}`;
+        const now = new Date();
+        try {
+            await repositories.users.createWithNextAccountId({
+                id: userId,
+                username: `evidence_${suffix.replaceAll("-", "").slice(0, 12)}`,
+                displayName: "迟到用量并发测试用户",
+                bio: "",
+                role: "user",
+                adminPermissions: [],
+                status: "active",
+                settledBalance: "0",
+                passwordHash: "integration-test-only",
+                createdAt: now.toISOString(),
+                updatedAt: now.toISOString(),
+            });
+            await creditWalletBalance({ userId, amount: "2", businessId: `topup:${suffix}`, description: "迟到用量测试充值", now });
+            const reservation = await reserveWalletCredits({ userId, businessId: `generation:${suffix}`, requestFingerprint: "9".repeat(64), amount: "1", description: "迟到用量测试预留", now });
+            const rate = { version: 1 as const, components: [{ id: "output", dimension: "outputTokens" as const, unitPrice: "0.1" }] };
+            const pending = {
+                id: `attempt:${suffix}`,
+                holdId: reservation.hold.id,
+                attemptNumber: 1,
+                status: "pending" as const,
+                provider: "vendor",
+                bindingId: "channel:model",
+                requestFingerprint: "a".repeat(64),
+                nativeCostAmount: "0",
+                nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+                costRateSnapshot: rate,
+                now,
+            };
+            const usage = { capability: "text" as const, source: "actual" as const, inputTokens: "5", outputTokens: "7" };
+            await recordProviderUsageAttempt(pending);
+
+            const results = await Promise.allSettled([recordProviderUsageAttempt({ ...pending, status: "failed" }), recordProviderUsageAttempt({ ...pending, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage })]);
+
+            expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+            expect(await repositories.pointsWallet.listProviderAttemptsForHold(reservation.hold.id)).toEqual([expect.objectContaining({ status: "failed", nativeCostAmount: "0.7", costUsd: "0.7", normalizedUsage: usage, observedUsage: usage })]);
+            await expect(recordProviderUsageAttempt({ ...pending, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage })).resolves.toMatchObject({ applied: false });
+            await expect(
+                recordProviderUsageAttempt({
+                    ...pending,
+                    nativeCostAmount: "0.8",
+                    normalizedUsage: { ...usage, outputTokens: "8" },
+                    observedUsage: { ...usage, outputTokens: "8" },
+                }),
+            ).rejects.toThrow("参数不一致");
+            expect(await repositories.pointsWallet.getHoldById(reservation.hold.id)).toMatchObject({ status: "active" });
+            expect(await getWalletSnapshot(userId)).toEqual({ settledBalance: "2", heldBalance: "1", availableBalance: "1" });
+        } finally {
+            await repositories.users.delete(userId);
+        }
+    });
 });

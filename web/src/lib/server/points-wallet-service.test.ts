@@ -201,6 +201,120 @@ describe("prepaid wallet holds", () => {
         });
     });
 
+    it("merges late usage evidence from a stale pending snapshot into a failed attempt", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:late-provider-evidence", requestFingerprint: "3".repeat(64), amount: "2", description: "迟到用量证据预留" });
+        const costRateSnapshot = { version: 1 as const, components: [{ id: "output", dimension: "outputTokens" as const, unitPrice: "0.1" }] };
+        const pending = {
+            id: "attempt:late-provider-evidence",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "4".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+            costRateSnapshot,
+        };
+        const usage = { capability: "text" as const, source: "actual" as const, inputTokens: "5", outputTokens: "7" };
+        await recordProviderUsageAttempt(pending);
+        const terminal = await recordProviderUsageAttempt({ ...pending, status: "failed" });
+
+        const enriched = await recordProviderUsageAttempt({ ...pending, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage });
+
+        expect(enriched).toMatchObject({
+            applied: true,
+            attempt: { status: "failed", nativeCostAmount: "0.7", costUsd: "0.7", normalizedUsage: usage, observedUsage: usage, completedAt: terminal.attempt.completedAt },
+        });
+        await expect(recordProviderUsageAttempt({ ...pending, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage })).resolves.toMatchObject({
+            applied: false,
+            attempt: { status: "failed", nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage, completedAt: terminal.attempt.completedAt },
+        });
+    });
+
+    it("retains pending usage evidence when a stale terminal snapshot completes afterward", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:evidence-before-stale-terminal", requestFingerprint: "a".repeat(64), amount: "2", description: "先写用量证据" });
+        const rate = { version: 1 as const, components: [{ id: "output", dimension: "outputTokens" as const, unitPrice: "0.1" }] };
+        const pending = {
+            id: "attempt:evidence-before-stale-terminal",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "b".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+            costRateSnapshot: rate,
+        };
+        const usage = { capability: "text" as const, source: "actual" as const, inputTokens: "5", outputTokens: "7" };
+        await recordProviderUsageAttempt(pending);
+        await recordProviderUsageAttempt({ ...pending, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage });
+
+        await expect(recordProviderUsageAttempt({ ...pending, status: "failed" })).resolves.toMatchObject({
+            attempt: { status: "failed", nativeCostAmount: "0.7", costUsd: "0.7", normalizedUsage: usage, observedUsage: usage },
+        });
+    });
+
+    it.each(["succeeded", "canceled"] as const)("preserves %s while merging late provider evidence", async (status) => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: `generation:late-${status}`, requestFingerprint: "5".repeat(64), amount: "2", description: "迟到用量证据预留" });
+        const pending = {
+            id: `attempt:late-${status}`,
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "binding",
+            requestFingerprint: "6".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+            costRateSnapshot: { version: 1 as const, components: [{ id: "output", dimension: "outputTokens" as const, unitPrice: "0.1" }] },
+        };
+        const usage = { capability: "text" as const, source: "actual" as const, inputTokens: "5", outputTokens: "7" };
+        await recordProviderUsageAttempt(pending);
+        const terminal = await recordProviderUsageAttempt({ ...pending, status });
+
+        await expect(recordProviderUsageAttempt({ ...pending, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage })).resolves.toMatchObject({
+            applied: true,
+            attempt: { status, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage, completedAt: terminal.attempt.completedAt },
+        });
+    });
+
+    it("rejects late evidence that changes identity, pricing, or existing usage", async () => {
+        const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:late-provider-conflict", requestFingerprint: "7".repeat(64), amount: "2", description: "迟到用量冲突预留" });
+        const rate = { version: 1 as const, components: [{ id: "output", dimension: "outputTokens" as const, unitPrice: "0.1" }] };
+        const pending = {
+            id: "attempt:late-provider-conflict",
+            holdId: reservation.hold.id,
+            attemptNumber: 1,
+            status: "pending" as const,
+            provider: "vendor",
+            bindingId: "channel:model",
+            requestFingerprint: "8".repeat(64),
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat" as const, currency: "USD" as const },
+            costRateSnapshot: rate,
+        };
+        const usage = { capability: "text" as const, source: "actual" as const, inputTokens: "5", outputTokens: "7" };
+        await recordProviderUsageAttempt(pending);
+        await recordProviderUsageAttempt({ ...pending, status: "failed" });
+        await recordProviderUsageAttempt({ ...pending, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage });
+
+        const late = { ...pending, nativeCostAmount: "0.7", normalizedUsage: usage, observedUsage: usage };
+        await expect(recordProviderUsageAttempt({ ...late, provider: "other" })).rejects.toBeInstanceOf(WalletConflictError);
+        await expect(recordProviderUsageAttempt({ ...late, bindingId: "other-channel:model" })).rejects.toBeInstanceOf(WalletConflictError);
+        await expect(recordProviderUsageAttempt({ ...late, requestFingerprint: "9".repeat(64) })).rejects.toBeInstanceOf(WalletConflictError);
+        await expect(recordProviderUsageAttempt({ ...late, costRateSnapshot: { version: 1, components: [{ id: "output", dimension: "outputTokens", unitPrice: "9" }] } })).rejects.toBeInstanceOf(WalletConflictError);
+        await expect(
+            recordProviderUsageAttempt({
+                ...late,
+                nativeCostAmount: "0.8",
+                normalizedUsage: { ...usage, outputTokens: "8" },
+                observedUsage: { ...usage, outputTokens: "8" },
+            }),
+        ).rejects.toBeInstanceOf(WalletConflictError);
+    });
+
     it("treats PostgreSQL fixed-scale provider cost strings as the same replay values", async () => {
         const reservation = await reserveWalletCredits({ userId: "user-one", businessId: "generation:padded-attempt", requestFingerprint: "b".repeat(64), amount: "2", description: "定标小数预留" });
         const input = {

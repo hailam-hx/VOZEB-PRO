@@ -24,6 +24,7 @@ import { scheduleGenerationTask } from "./generation-task-scheduler";
 import { getStoredGenerationTaskRecord } from "./generation-task-store";
 
 import {
+    attachUsageProviderEvidence,
     attachUsageProviderUpstreamTaskId,
     finalizeUsageBillingForBusiness,
     finishSystemAiTextAttempt,
@@ -87,6 +88,80 @@ afterAll(() => {
 });
 
 describe("usage billing runtime", () => {
+    it("enriches a failed provider attempt when usage evidence arrives after terminalization", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "text-task:late-provider-evidence",
+            requestFingerprint: "0".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "迟到用量证据",
+        });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "fixture",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: { version: 1, components: [{ id: "output", dimension: "outputTokens", unitPrice: "0.1" }] },
+        });
+        await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed" });
+
+        await attachUsageProviderEvidence({ billing, attemptNumber: 1, usage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "5", outputTokens: "7" }) });
+
+        expect((await readAuthDb()).providerUsageAttempts[0]).toMatchObject({
+            status: "failed",
+            nativeCostAmount: "0.7",
+            costUsd: "0.7",
+            normalizedUsage: { inputTokens: "5", outputTokens: "7" },
+            observedUsage: { inputTokens: "5", outputTokens: "7" },
+        });
+    });
+
+    it("persists equivalent failed attempt evidence in either write order", async () => {
+        const evidence = normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "5", outputTokens: "7" });
+        const rate = { version: 1 as const, components: [{ id: "output", dimension: "outputTokens" as const, unitPrice: "0.1" }] };
+        const run = async (suffix: string, evidenceFirst: boolean) => {
+            const billing = await reserveUsageBilling({
+                userId: "user-one",
+                businessId: `text-task:provider-evidence-${suffix}`,
+                requestFingerprint: suffix.repeat(64).slice(0, 64),
+                logicalModelId: "writer",
+                saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+                requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+                description: "用量证据写入顺序",
+            });
+            await recordUsageProviderAttempt({ billing, attemptNumber: 1, status: "pending", provider: "fixture", bindingId: "binding", nativeCostAmount: "0", nativeCostUnit: { kind: "fiat", currency: "USD" }, costRateSnapshot: rate });
+            if (evidenceFirst) {
+                await attachUsageProviderEvidence({ billing, attemptNumber: 1, usage: evidence });
+                await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed" });
+            } else {
+                await finishUsageProviderAttempt({ billing, attemptNumber: 1, status: "failed" });
+                await attachUsageProviderEvidence({ billing, attemptNumber: 1, usage: evidence });
+            }
+            return (await readAuthDb()).providerUsageAttempts.find((attempt) => attempt.holdId === billing.holdId)!;
+        };
+
+        const evidenceFirst = await run("a", true);
+        const terminalFirst = await run("b", false);
+        for (const attempt of [evidenceFirst, terminalFirst]) {
+            expect(attempt).toMatchObject({ status: "failed", nativeCostAmount: "0.7", costUsd: "0.7", normalizedUsage: { inputTokens: "5", outputTokens: "7" }, observedUsage: { inputTokens: "5", outputTokens: "7" } });
+        }
+        expect({ ...evidenceFirst, id: undefined, holdId: undefined, requestFingerprint: undefined, createdAt: undefined, updatedAt: undefined, completedAt: undefined }).toEqual({
+            ...terminalFirst,
+            id: undefined,
+            holdId: undefined,
+            requestFingerprint: undefined,
+            createdAt: undefined,
+            updatedAt: undefined,
+            completedAt: undefined,
+        });
+        expect((await readAuthDb()).pointRecords.filter((record) => record.type === "consume")).toHaveLength(0);
+    });
+
     it("reconciles an already settled system AI text attempt without charging twice", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",
