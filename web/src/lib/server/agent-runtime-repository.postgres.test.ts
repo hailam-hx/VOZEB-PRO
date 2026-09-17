@@ -55,11 +55,13 @@ describe("Agent runtime PostgreSQL recovery invariants", () => {
             expect(claims.flat()).toHaveLength(1);
 
             const idempotencyKey = `${run.clientRequestId}:${taskKey}:1:1`;
+            const input = { prompt: "主图", context: { projectId: undefined, values: [1, undefined, 3] } };
             const toolCalls = await Promise.all([
-                prepareDurableAgentToolCall({ id: `tool-a-${suffix}`, runId, taskId: `${runId}:plan:1:${taskKey}`, toolName: "image.generate", idempotencyKey, input: { prompt: "主图" } }),
-                prepareDurableAgentToolCall({ id: `tool-b-${suffix}`, runId, taskId: `${runId}:plan:1:${taskKey}`, toolName: "image.generate", idempotencyKey, input: { prompt: "主图" } }),
+                prepareDurableAgentToolCall({ id: `tool-a-${suffix}`, runId, taskId: `${runId}:plan:1:${taskKey}`, toolName: "image.generate", idempotencyKey, input }),
+                prepareDurableAgentToolCall({ id: `tool-b-${suffix}`, runId, taskId: `${runId}:plan:1:${taskKey}`, toolName: "image.generate", idempotencyKey, input }),
             ]);
             expect(new Set(toolCalls.map((call) => call.id)).size).toBe(1);
+            expect(toolCalls[0]?.input).toEqual({ prompt: "主图", context: { values: [1, null, 3] } });
             const count = await postgresQuery<{ count: string }>("SELECT count(*)::text AS count FROM agent_tool_calls WHERE idempotency_key = $1", [idempotencyKey]);
             expect(count.rows[0]?.count).toBe("1");
 

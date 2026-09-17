@@ -1,4 +1,4 @@
-import { ensurePostgresSchema, getDatabaseProvider, getPostgresConnectionString, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
+import { ensurePostgresSchema, getDatabaseProvider, getPostgresConnectionString, postgresQuery, withPostgresTransaction, type JsonValue, type QueryExecutor } from "@/lib/server/database";
 import type { AgentRun, AgentRunTask } from "@/lib/server/agent-run-store";
 
 type AgentToolCallRow = {
@@ -136,16 +136,17 @@ export async function getPostgresAgentRun(id: string) {
 
 export async function prepareAgentToolCall(client: QueryExecutor, input: { id: string; runId: string; taskId: string; toolName: string; idempotencyKey: string; input: unknown; now?: number }) {
     const now = new Date(input.now || Date.now());
+    const canonicalInput = canonicalizeJsonValue(input.input);
     const inserted = await client.query<AgentToolCallRow>(
         `INSERT INTO agent_tool_calls (id, run_id, task_id, tool_name, idempotency_key, status, input_json, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, 'created', $6::jsonb, $7, $7)
          ON CONFLICT (idempotency_key) DO NOTHING
          RETURNING *`,
-        [input.id, input.runId, input.taskId, input.toolName, input.idempotencyKey, JSON.stringify(input.input), now],
+        [input.id, input.runId, input.taskId, input.toolName, input.idempotencyKey, JSON.stringify(canonicalInput), now],
     );
     const row = inserted.rows[0] || (await client.query<AgentToolCallRow>("SELECT * FROM agent_tool_calls WHERE idempotency_key = $1", [input.idempotencyKey])).rows[0];
     if (!row) throw new Error("Agent tool call could not be prepared");
-    if (row.run_id !== input.runId || row.task_id !== input.taskId || row.tool_name !== input.toolName || stableJson(row.input_json) !== stableJson(input.input)) {
+    if (row.run_id !== input.runId || row.task_id !== input.taskId || row.tool_name !== input.toolName || stableJson(row.input_json) !== stableJson(canonicalInput)) {
         throw new Error("Agent tool call idempotency conflict");
     }
     return mapToolCall(row);
@@ -340,6 +341,12 @@ function stableJson(value: unknown): string {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
         .join(",")}}`;
+}
+
+function canonicalizeJsonValue(value: unknown): JsonValue {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new TypeError("Agent tool call input must be JSON-serializable");
+    return JSON.parse(serialized) as JsonValue;
 }
 
 function shouldUsePostgresAgentRuntimeRepository() {
