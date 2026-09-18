@@ -300,11 +300,20 @@ function routeOutput(value: string, final = false): { kind: "pending" | "invalid
         const protectedAt = protectedConversationSuffixStart(content);
         return { kind: "conversation", content: protectedAt < 0 ? content : content.slice(0, protectedAt).trimEnd() };
     }
-    if (output.startsWith(generation)) return { kind: "generation", content: output.slice(generation.length).replace(/^\s*\r?\n?/, "") };
+    if (output.startsWith(generation)) {
+        const content = output.slice(generation.length).replace(/^\s*\r?\n?/, "");
+        return { kind: "generation", content: final ? normalizeGenerationEnvelopeContent(content) : content };
+    }
     if (output.startsWith("{")) return { kind: "generation", content: output };
     if ("```json".startsWith(output.toLowerCase()) || "```".startsWith(output)) return { kind: "pending", content: "" };
     if (output.startsWith("```")) return output.endsWith("```") ? { kind: "generation", content: output } : { kind: "pending", content: "" };
     return { kind: "invalid", content: "" };
+}
+
+function normalizeGenerationEnvelopeContent(content: string) {
+    const closing = "</generation>";
+    const trimmed = content.trimEnd();
+    return trimmed.endsWith(closing) ? trimmed.slice(0, -closing.length).trimEnd() : content;
 }
 
 function protectedConversationSuffixStart(content: string) {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SystemChannelAdvancedConfig, SystemModelChannel } from "@/lib/auth/store";
+import { parseAgentPlanCall } from "./agent-function-call";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { getTextPlanningRuntime, rankTextPlanningCandidates, requestRoutedText, requestStructuredText, resetTextPlanningRuntime, type TextPlanningCandidate } from "./text-planning-runtime";
 
@@ -191,6 +192,38 @@ describe("text planning runtime protocol matrix", () => {
 
         expect(visible).toEqual([]);
         expect(result).toMatchObject({ kind: "generation", arguments: '{"result":"ok"}', protocol: "chat" });
+    });
+
+    it.each([
+        ["plain JSON", [JSON.stringify(validAgentPlan())]],
+        ["opening discriminator", [`<generation>\n${JSON.stringify(validAgentPlan())}`]],
+        ["matching generation envelope", [`<generation>\n${JSON.stringify(validAgentPlan())}\n</generation>`]],
+        ["matching closing marker split across frames", [`<generation>\n${JSON.stringify(validAgentPlan())}\n</gene`, "ration>"]],
+    ])("accepts %s as one valid Agent plan", async (_label, frames) => {
+        const plan = await parsedRoutedPlan(frames);
+
+        expect(plan).toMatchObject({ intent: "generation", objective: "制作测试文案", deliverables: [{ type: "text", prompt: "写一句测试文案" }] });
+    });
+
+    it.each([
+        ["mismatched closing marker", `<generation>\n${JSON.stringify(validAgentPlan())}\n</conversation>`],
+        ["trailing prose", `<generation>\n${JSON.stringify(validAgentPlan())}\n</generation> blah`],
+        ["leading prose", `blah <generation>\n${JSON.stringify(validAgentPlan())}\n</generation>`],
+        ["truncated JSON", '<generation>\n{"intent":"generation"'],
+        ["empty generation envelope", "<generation>\n</generation>"],
+        ["plain JSON with trailing text", `${JSON.stringify(validAgentPlan())} blah`],
+    ])("rejects %s", async (_label, output) => {
+        await expect(parsedRoutedPlan([output])).rejects.toThrow();
+    });
+
+    it("rejects two JSON objects inside a matching generation envelope", async () => {
+        await expect(parsedRoutedPlan([`<generation>\n${JSON.stringify(validAgentPlan())}\n${JSON.stringify(validAgentPlan())}\n</generation>`])).rejects.toBeInstanceOf(SyntaxError);
+    });
+
+    it("passes a valid inner JSON object to the Agent business validator", async () => {
+        const invalidPlan = { intent: "generation", objective: "制作测试文案", deliverables: [{ title: "无效任务", type: "unsupported", prompt: "test" }] };
+
+        await expect(parsedRoutedPlan([`<generation>\n${JSON.stringify(invalidPlan)}\n</generation>`])).rejects.toThrow("模型返回的任务参数无效");
     });
 
     it("不会把 fenced generation JSON 当作对话内容公开", async () => {
@@ -695,4 +728,20 @@ function sseResponse(start: (controller: ReadableStreamDefaultController<string>
 
 function chatDelta(content: string) {
     return `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+}
+
+function validAgentPlan() {
+    return { intent: "generation", objective: "制作测试文案", deliverables: [{ title: "测试文案", type: "text" as const, model: "model-one", prompt: "写一句测试文案" }] };
+}
+
+async function parsedRoutedPlan(frames: string[]) {
+    mockedFetch.mockResolvedValue(
+        sseResponse((controller) => {
+            for (const frame of frames) controller.enqueue(chatDelta(frame));
+            controller.close();
+        }),
+    );
+    const result = await requestRoutedText(requestInput(candidate("newapi")));
+    if (result.kind !== "generation") throw new Error(`Expected generation result, received ${result.kind}`);
+    return parseAgentPlanCall(result, async () => undefined);
 }

@@ -12,4 +12,8 @@ describe("strictJsonObjectText", () => {
         expect(strictJsonObjectText('Use this plan: {"ok":true}')).toBe("");
         expect(strictJsonObjectText("[]")).toBe("");
     });
+
+    it("does not interpret planner routing envelopes", () => {
+        expect(strictJsonObjectText('<generation>\n{"ok":true}\n</generation>')).toBe("");
+    });
 });
