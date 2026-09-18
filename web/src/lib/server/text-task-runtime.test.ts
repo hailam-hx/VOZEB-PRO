@@ -247,6 +247,8 @@ describe("text task runtime recovery", () => {
             usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 },
             milestones: { task_created: 1, first_text: expect.any(Number), first_byte: expect.any(Number), upstream_started: expect.any(Number), stream_completed: expect.any(Number), task_completed: expect.any(Number) },
         });
+        expect(mocks.reportProviderSuccess).toHaveBeenCalledOnce();
+        expect(mocks.reportProviderFailure).not.toHaveBeenCalled();
     });
 
     it("fails over before public text with a new attempt, but locks the provider after partial text", async () => {
@@ -311,6 +313,7 @@ describe("text task runtime recovery", () => {
             usageSeen: false,
             rootError: { name: "TypeError", message: "terminated", cause: { name: "SocketError", code: "UND_ERR_SOCKET", message: "other side closed" } },
         });
+        expect(mocks.reportProviderFailure).toHaveBeenCalledOnce();
         expect(warn).toHaveBeenCalledWith(
             "Text task failure diagnostic",
             expect.objectContaining({ event: "attempt_failed", runId: "run", taskId: state.id, parentTaskId: "parent", attemptId: state.activeAttemptId, protocol: "chat", hadPublicText: true, signalAborted: false }),
@@ -338,6 +341,7 @@ describe("text task runtime recovery", () => {
                 },
             }),
         ).resolves.toMatchObject({ state: "failed" });
+        expect(mocks.reportProviderFailure).not.toHaveBeenCalled();
         expect(cancelled).toBe(true);
         expect(state.status).toBe("cancelled");
         expect(state.visibleTextSnapshot?.content).toBe("取消前的部分");
@@ -429,6 +433,60 @@ describe("text task runtime recovery", () => {
         vi.useRealTimers();
     });
 
+    it("fails an actively progressing stream at the local overall deadline without recording a provider-health failure", async () => {
+        vi.useFakeTimers();
+        state = textTask({ ...openAiConfig("one", "https://one.example"), capabilityProfile: { timeoutMs: 210_000 } }, [openAiConfig("two", "https://two.example")]);
+        const progress = [10_000, 40_000, 80_000, 120_000, 160_000, 200_000, 209_900];
+        const fetchMock = vi.fn().mockResolvedValue(timedSse(progress.map((at, index) => ({ at, body: chatFrame(String(index + 1)) }))));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const execution = runTextTaskStep(state, "http://internal", "");
+        await vi.advanceTimersByTimeAsync(210_000);
+        await expect(execution).resolves.toEqual({ state: "failed", error: "文本模型响应超时" });
+
+        expect(state.status).toBe("error");
+        expect(state.visibleTextSnapshot?.content).toBe("1234567");
+        expect(state.attempts?.[0]).toMatchObject({ status: "failed", transportDiagnostic: { connectionTermination: "body_timeout", maxInterTextGapMs: 40_000 } });
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(mocks.reportProviderFailure).not.toHaveBeenCalled();
+        expect(mocks.finishUsage).toHaveBeenCalledWith(expect.any(Headers), expect.objectContaining({ status: "failed" }));
+        expect(mocks.releaseUsage).toHaveBeenCalledOnce();
+    });
+
+    it("still records a provider-health failure when public text stalls before the local overall deadline", async () => {
+        vi.useFakeTimers();
+        state = textTask({ ...openAiConfig("one", "https://one.example"), capabilityProfile: { timeoutMs: 210_000 } }, [openAiConfig("two", "https://two.example")]);
+        const fetchMock = vi.fn().mockResolvedValue(
+            timedSse([
+                { at: 10_000, body: chatFrame("一") },
+                { at: 40_000, body: chatFrame("二") },
+            ]),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const execution = runTextTaskStep(state, "http://internal", "");
+        await vi.advanceTimersByTimeAsync(210_000);
+        await expect(execution).resolves.toEqual({ state: "failed", error: "文本模型响应超时" });
+
+        expect(state.visibleTextSnapshot?.content).toBe("一二");
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(mocks.reportProviderFailure).toHaveBeenCalledOnce();
+    });
+
+    it("still records a provider-health failure when the overall deadline follows a first byte without public text", async () => {
+        vi.useFakeTimers();
+        state = textTask({ ...openAiConfig("one", "https://one.example"), capabilityProfile: { timeoutMs: 210_000 } });
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(timedSse([{ at: 10_000, body: ": heartbeat\n\n" }])));
+
+        const execution = runTextTaskStep(state, "http://internal", "");
+        await vi.advanceTimersByTimeAsync(210_000);
+        await expect(execution).resolves.toEqual({ state: "failed", error: "文本模型响应超时" });
+
+        expect(state.visibleTextSnapshot).toBeUndefined();
+        expect(state.attempts?.[0]).toMatchObject({ status: "failed", milestones: { first_byte: expect.any(Number) } });
+        expect(mocks.reportProviderFailure).toHaveBeenCalledOnce();
+    });
+
     it.each([
         { configured: 1, effective: 5_000 },
         { configured: 60 * 60_000, effective: 30 * 60_000 },
@@ -457,6 +515,7 @@ describe("text task runtime recovery", () => {
         expect(wasPremature).toBe(false);
         expect(atDeadline).toBe(true);
         expect(state.status).toBe("error");
+        expect(mocks.reportProviderFailure).toHaveBeenCalledOnce();
     });
 
     it("disables a fractional stage timeout that normalizes below one millisecond", async () => {
@@ -543,7 +602,7 @@ describe("text task runtime recovery", () => {
         const address = fixture.server.address();
         if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
         const origin = `http://127.0.0.1:${address.port}`;
-        state = textTask(openAiConfig("fixture-text", `${origin}/v1`));
+        state = textTask({ ...openAiConfig("fixture-text", `${origin}/v1`), capabilityProfile: { maxOutputTokens: 16_384 } });
 
         try {
             await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
@@ -551,10 +610,36 @@ describe("text task runtime recovery", () => {
             expect(fixture.requests).toHaveLength(1);
             expect(fixture.requests[0]).toMatchObject({ method: "POST", path: "/v1/chat/completions" });
             expect(fixture.requests[0]?.authorization).toBe("Bearer key");
-            expect(JSON.parse(fixture.requests[0].body)).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+            const body = JSON.parse(fixture.requests[0].body);
+            expect(body).toEqual({ model: "text-model", messages: [{ role: "user", content: "test" }], stream: true, stream_options: { include_usage: true }, max_tokens: 16_384 });
+            expect(body).not.toHaveProperty("max_completion_tokens");
+            expect(body).not.toHaveProperty("max_output_tokens");
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
         }
+    });
+
+    it.each([
+        ["a smaller configured limit", 4_096, 4_096],
+        ["an undefined limit", undefined, undefined],
+        ["a null limit", null, undefined],
+        ["a zero limit", 0, undefined],
+        ["a negative limit", -1, undefined],
+    ])("serializes %s according to the Chat output-limit contract", async (_label, configured, expected) => {
+        const config = openAiConfig("fixture-text", "https://fixture.example");
+        config.capabilityProfile = { maxOutputTokens: configured } as TextTaskConfig["capabilityProfile"];
+        state = textTask(config);
+        const fetchMock = vi.fn().mockResolvedValue(sse(chatFrame("完成") + "data: [DONE]\n\n"));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
+
+        const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+        expect(body).toMatchObject({ model: "text-model", messages: [{ role: "user", content: "test" }], stream: true, stream_options: { include_usage: true } });
+        if (expected === undefined) expect(body).not.toHaveProperty("max_tokens");
+        else expect(body.max_tokens).toBe(expected);
+        expect(body).not.toHaveProperty("max_completion_tokens");
+        expect(body).not.toHaveProperty("max_output_tokens");
     });
 
     it.each([
@@ -819,6 +904,18 @@ function chatFrame(text: string) {
 }
 function sse(body: string) {
     return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
+
+function timedSse(chunks: Array<{ at: number; body: string }>) {
+    const encoder = new TextEncoder();
+    return new Response(
+        new ReadableStream<Uint8Array>({
+            start(controller) {
+                for (const chunk of chunks) setTimeout(() => controller.enqueue(encoder.encode(chunk.body)), chunk.at);
+            },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+    );
 }
 
 function textTask(config: TextTaskConfig, candidateConfigs: TextTaskConfig[] = []): TextTask {

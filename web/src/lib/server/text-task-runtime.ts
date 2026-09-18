@@ -146,11 +146,13 @@ async function executeTextTaskStep(task: TextTask, origin: string, cookie: strin
             }
             await options.onAttemptState?.(closed);
             ownedTask = closed;
-            await reportTextProviderFailure(config, {
-                error,
-                status: error instanceof GenerationSubmissionSafeFailure ? error.status : undefined,
-                transportDiagnostic: runtime.transportDiagnostic,
-            });
+            if (!isLocalActiveStreamDeadline(reason, runtime.transportDiagnostic, Boolean(runtime.snapshot.content))) {
+                await reportTextProviderFailure(config, {
+                    error,
+                    status: error instanceof GenerationSubmissionSafeFailure ? error.status : undefined,
+                    transportDiagnostic: runtime.transportDiagnostic,
+                });
+            }
             // Once public text exists, a provider change would overwrite an answer the user has seen.
             if (runtime.snapshot.content || (!protocol.supportsStreaming && !(error instanceof GenerationSubmissionSafeFailure)) || (error instanceof GenerationSubmissionUncertainError && !isTextRequestTimeout(reason)))
                 return failTextTask(closed, message);
@@ -207,7 +209,10 @@ async function runNativeTextTask(task: TextTask, origin: string, cookie: string,
             headers.set("x-api-key", config.apiKey);
             headers.set("anthropic-version", "2023-06-01");
         }
-    } else body = { model: config.model, messages: toChatMessages(messages), stream: true, stream_options: { include_usage: true } };
+    } else {
+        const maxTokens = optionalTextOutputLimit(config);
+        body = { model: config.model, messages: toChatMessages(messages), stream: true, stream_options: { include_usage: true }, ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }) };
+    }
     const url = new URL(taskUrl(config, protocol.path, origin, protocol.kind === "gemini" ? "gemini" : config.apiFormat));
     if (protocol.kind === "gemini") {
         url.pathname = url.pathname.replace(/:generateContent$/i, ":streamGenerateContent");
@@ -574,6 +579,16 @@ function isTextRequestTimeout(error: unknown) {
     return error.name === "TimeoutError" || /timeout|timed out|aborted due to timeout/i.test(error.message);
 }
 
+function isLocalActiveStreamDeadline(reason: unknown, diagnostic: TextStreamTransportDiagnostic | undefined, hadPublicText: boolean) {
+    if (!hadPublicText || !diagnostic || diagnostic.connectionTermination !== "body_timeout" || diagnostic.providerError || diagnostic.terminalSeen) return false;
+    const timeout = reason && typeof reason === "object" && !Array.isArray(reason) ? (reason as Record<string, unknown>) : undefined;
+    if (timeout?.name !== "TimeoutError" || timeout.source !== "text_task_runtime" || timeout.stage !== "overall") return false;
+    const timedOutAt = typeof timeout.timedOutAt === "number" ? timeout.timedOutAt : undefined;
+    const lastTextDeltaAt = diagnostic.lastTextDeltaAt;
+    const maxInterTextGapMs = diagnostic.maxInterTextGapMs;
+    return timedOutAt !== undefined && lastTextDeltaAt !== undefined && maxInterTextGapMs !== undefined && maxInterTextGapMs > 0 && timedOutAt >= lastTextDeltaAt && timedOutAt - lastTextDeltaAt <= maxInterTextGapMs;
+}
+
 async function parseTextSubmissionJson<T>(task: TextTask, response: Response): Promise<T> {
     try {
         return (await response.json()) as T;
@@ -594,9 +609,14 @@ function pointsIdempotencyKey(task: TextTask, protocol: ResolvedTextProtocol) {
 }
 
 function requiredTextOutputLimit(config: TextTaskConfig) {
-    const limit = config.capabilityProfile?.maxOutputTokens;
-    if (!Number.isSafeInteger(limit) || Number(limit) < 1) throw new GenerationSubmissionSafeFailure("文本模型缺少最大输出 token 配置");
+    const limit = optionalTextOutputLimit(config);
+    if (limit === undefined) throw new GenerationSubmissionSafeFailure("文本模型缺少最大输出 token 配置");
     return limit;
+}
+
+function optionalTextOutputLimit(config: TextTaskConfig) {
+    const limit = config.capabilityProfile?.maxOutputTokens;
+    return Number.isSafeInteger(limit) && Number(limit) > 0 ? limit : undefined;
 }
 
 function readPointsRemaining(headers: Headers) {

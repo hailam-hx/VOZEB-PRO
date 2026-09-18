@@ -91,7 +91,7 @@ export function registerTextTaskAttempt(taskId: string, attemptId: string, polic
         clear(stage);
         const ms = policy[`${stage}TimeoutMs`];
         if (!Number.isFinite(ms) || Number(ms) <= 0) return;
-        const timer = setTimeout(() => controller.abort(Object.assign(new Error("文本模型响应超时"), { name: "TimeoutError", stage, timeoutMs: ms })), ms);
+        const timer = setTimeout(() => controller.abort(Object.assign(new Error("文本模型响应超时"), { name: "TimeoutError", source: "text_task_runtime", stage, timeoutMs: ms, timedOutAt: Date.now() })), ms);
         timer.unref?.();
         timers.set(stage, timer);
     };

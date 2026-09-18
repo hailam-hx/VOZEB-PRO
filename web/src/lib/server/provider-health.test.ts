@@ -92,6 +92,11 @@ describe("provider health circuit breaker", () => {
         expect(classifyProviderHealthFailure(failure)).toMatchObject({ failureClass: expectedClass, countsTowardCircuit: true });
     });
 
+    it("keeps generic and planner timeout failures provider-transient", () => {
+        const timeout = Object.assign(new Error("planner provider timed out"), { name: "TimeoutError" });
+        expect(classifyProviderHealthFailure({ error: timeout })).toMatchObject({ failureClass: "provider_transient", countsTowardCircuit: true, countsTowardChannel: true });
+    });
+
     it("opens authentication failures immediately", async () => {
         await service.failure(routeA, { providerError: { kind: "provider_error", code: "invalid_api_key", status: 401 } }, 1_000);
         expect(await service.get(routeA, 1_000)).toMatchObject({ state: "open", lastFailureClass: "auth_config" });

@@ -27,6 +27,7 @@ export type TextStreamTransportDiagnostic = TextStreamDiagnosticContext & {
     startedAt: number;
     lastUpstreamFrameAt?: number;
     lastTextDeltaAt?: number;
+    maxInterTextGapMs?: number;
     framesReceived: number;
     bytesReceived: number;
     finishReason?: string;
@@ -47,6 +48,7 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
     const startedAt = Date.now();
     let lastUpstreamFrameAt: number | undefined;
     let lastTextDeltaAt: number | undefined;
+    let maxInterTextGapMs: number | undefined;
     let framesReceived = 0;
     let bytesReceived = 0;
     let finishReason: string | undefined;
@@ -63,6 +65,7 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
         startedAt,
         lastUpstreamFrameAt,
         lastTextDeltaAt,
+        maxInterTextGapMs,
         framesReceived,
         bytesReceived,
         finishReason,
@@ -81,7 +84,10 @@ export function createTextStreamDiagnostics(protocol: TextStreamProtocol, contex
             const metadata = inspectFrame(frame, protocol);
             framesReceived += 1;
             lastUpstreamFrameAt = observedAt;
-            if (metadata.textDelta) lastTextDeltaAt = observedAt;
+            if (metadata.textDelta) {
+                if (lastTextDeltaAt !== undefined) maxInterTextGapMs = Math.max(maxInterTextGapMs || 0, observedAt - lastTextDeltaAt);
+                lastTextDeltaAt = observedAt;
+            }
             if (metadata.finishReason) finishReason = metadata.finishReason;
             terminalSeen ||= metadata.terminalSeen;
             doneMarkerSeen ||= metadata.doneMarkerSeen;

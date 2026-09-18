@@ -122,7 +122,7 @@ describe("attempt scoped cancellation and configured timeouts", () => {
             "Text task timeout diagnostic",
             expect.objectContaining({ runId: "run", taskId: "task", parentTaskId: "parent", attemptId: "attempt", event: "registered", policy: { overallTimeoutMs: 150_000 }, streaming: true, parentSignalAttached: false }),
         );
-        expect(attempt.signal.reason).toMatchObject({ name: "TimeoutError", stage: "overall" });
+        expect(attempt.signal.reason).toMatchObject({ name: "TimeoutError", source: "text_task_runtime", stage: "overall", timedOutAt: expect.any(Number) });
         expect(warn).toHaveBeenCalledWith("Text task abort diagnostic", expect.objectContaining({ runId: "run", taskId: "task", parentTaskId: "parent", attemptId: "attempt", source: "timeout", stage: "overall", timeoutMs: 150_000 }));
         attempt.dispose();
     });
