@@ -1,6 +1,14 @@
 import { expect, test } from "@playwright/test";
 
 const localeCookie = "vozeb-pro-locale";
+const defaultSkills = [
+    { id: "ecommerce-image", name: "电商生图", description: "原始电商描述", workspaces: ["image", "canvas"] },
+    { id: "yanai-natural-beauty", name: "自然美颜精修", description: "原始美颜描述", workspaces: ["image", "canvas"] },
+    { id: "character-design", name: "角色设定", description: "原始角色描述", workspaces: ["image", "canvas", "drama"] },
+    { id: "image-motion", name: "图片动效", description: "原始动效描述", workspaces: ["video"] },
+    { id: "drama-planning", name: "短剧策划", description: "原始短剧描述", workspaces: ["image", "video", "drama"] },
+    { id: "custom-skill", name: "Skill riêng", description: "Mô tả riêng", workspaces: ["image"] },
+];
 
 test("registration opens legal documents in the selected language without prefixing registration", async ({ browser }, testInfo) => {
     const baseURL = String(testInfo.project.use.baseURL);
@@ -121,6 +129,78 @@ test("switching language preserves the current URL and draft while persisting th
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
+});
+
+test("built-in creative skills follow the active locale while submissions keep stable IDs", async ({ page }, testInfo) => {
+    let submittedSkillIds: string[] | undefined;
+    await page.route("**/api/agent/skills?workspace=all", async (route) => {
+        await route.fulfill({ json: { code: 0, data: { skills: defaultSkills }, msg: "OK" } });
+    });
+    await page.route(/\/api\/agent\/runs$/, async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        submittedSkillIds = ((await route.request().postDataJSON()) as { skillIds: string[] }).skillIds;
+        await route.abort("connectionrefused");
+    });
+
+    const cases = [
+        {
+            locale: "vi",
+            names: ["Ảnh thương mại", "Chỉnh sửa chân dung tự nhiên", "Thiết kế nhân vật", "Ảnh chuyển động", "Lập kế hoạch phim ngắn"],
+            useSkill: "Sử dụng Skill Ảnh thương mại",
+            chooseSkill: "Chọn Skill sáng tạo",
+            description: "Tạo hình ảnh thương mại cho ảnh chính, trang chi tiết, mạng xã hội, UGC, người mẫu, bao bì và chiến dịch tiếp thị.",
+            placeholder: "Nhập ý tưởng, kịch bản hoặc yêu cầu hình ảnh",
+            send: "Gửi",
+        },
+        {
+            locale: "en",
+            names: ["E-commerce Images", "Natural Portrait Retouching", "Character Design", "Image Animation", "Short Drama Planning"],
+            useSkill: "Use E-commerce Images Skill",
+            chooseSkill: "Choose a creation Skill",
+            description: "Create e-commerce visuals for hero images, detail pages, social media, UGC, models, packaging, and marketing campaigns.",
+        },
+        {
+            locale: "zh-CN",
+            names: ["电商生图", "自然美颜精修", "角色设定", "图片动效", "短剧策划"],
+            useSkill: "使用 电商生图 Skill",
+            chooseSkill: "选择创作 Skill",
+            description: "覆盖主图、详情页、社媒、UGC、模特、包装和营销活动的电商视觉生成。",
+        },
+    ] as const;
+
+    for (const item of cases) {
+        await page.context().addCookies([{ name: localeCookie, value: item.locale, url: String(testInfo.project.use.baseURL) }]);
+        await page.goto("/create");
+        await expect(page.locator("html")).toHaveAttribute("lang", item.locale);
+        for (const name of item.names) await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
+        await expect(page.getByText("Skill riêng", { exact: true })).toBeVisible();
+        if (item.locale !== "zh-CN") for (const skill of defaultSkills.slice(0, 5)) await expect(page.getByText(skill.name, { exact: true })).toHaveCount(0);
+        const firstSkill = page.getByRole("button", { name: item.useSkill, exact: true });
+        await expect(firstSkill).toBeVisible();
+        await expect(firstSkill).toHaveAttribute("title", item.description);
+        await page.getByRole("button", { name: item.chooseSkill, exact: true }).click();
+        const skillPicker = page.locator(".ant-popover").filter({ hasText: item.names[0] }).last();
+        await expect(skillPicker).toBeVisible();
+        await expect(skillPicker.getByText(item.description, { exact: true })).toBeVisible();
+        const pickerBounds = await skillPicker.boundingBox();
+        const viewport = page.viewportSize();
+        expect(pickerBounds).not.toBeNull();
+        expect(viewport).not.toBeNull();
+        expect(pickerBounds!.x).toBeGreaterThanOrEqual(0);
+        expect(pickerBounds!.y).toBeGreaterThanOrEqual(0);
+        expect(pickerBounds!.x + pickerBounds!.width).toBeLessThanOrEqual(viewport!.width);
+        expect(pickerBounds!.y + pickerBounds!.height).toBeLessThanOrEqual(viewport!.height);
+        await page.keyboard.press("Escape");
+        await firstSkill.click();
+        await expect(page.getByText(`Skill · ${item.names[0]}`, { exact: true })).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+        if (item.locale === "vi") {
+            await page.getByPlaceholder(item.placeholder).fill("Tạo ảnh sản phẩm tối giản");
+            await page.getByRole("button", { name: item.send, exact: true }).click();
+            await expect.poll(() => submittedSkillIds).toEqual(["ecommerce-image"]);
+        }
+    }
 });
 
 test("admin remains Chinese without changing the user language cookie", async ({ page }, testInfo) => {

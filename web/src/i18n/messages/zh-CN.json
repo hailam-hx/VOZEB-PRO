@@ -795,6 +795,28 @@
         "siteAgentTitle": "{site} 创作 Agent",
         "startFromIdea": "从一个想法开始",
         "loadingSkills": "正在加载创作 Skill...",
+        "builtInSkills": {
+            "ecommerceImage": {
+                "name": "电商生图",
+                "description": "覆盖主图、详情页、社媒、UGC、模特、包装和营销活动的电商视觉生成。"
+            },
+            "naturalBeauty": {
+                "name": "自然美颜精修",
+                "description": "保留本人身份和真实肤质的自然人像精修。"
+            },
+            "characterDesign": {
+                "name": "角色设定",
+                "description": "建立可持续复用的角色外观、服装、表情和多视图设定。"
+            },
+            "imageMotion": {
+                "name": "图片动效",
+                "description": "把静态画面转成主体稳定、动作自然的短视频。"
+            },
+            "dramaPlanning": {
+                "name": "短剧策划",
+                "description": "从主题到角色、场景和分镜，整理可继续生产的短剧方案。"
+            }
+        },
         "useSkill": "使用 {name} Skill",
         "backToBottom": "回到底部",
         "promptFilled": "已填入提示词",

@@ -816,6 +816,28 @@
         "siteAgentTitle": "{site} Creative Agent",
         "startFromIdea": "Start with an idea",
         "loadingSkills": "Loading creation Skills...",
+        "builtInSkills": {
+            "ecommerceImage": {
+                "name": "E-commerce Images",
+                "description": "Create e-commerce visuals for hero images, detail pages, social media, UGC, models, packaging, and marketing campaigns."
+            },
+            "naturalBeauty": {
+                "name": "Natural Portrait Retouching",
+                "description": "Retouch portraits naturally while preserving identity and realistic skin texture."
+            },
+            "characterDesign": {
+                "name": "Character Design",
+                "description": "Build consistent, reusable character appearances, outfits, expressions, and multi-view references."
+            },
+            "imageMotion": {
+                "name": "Image Animation",
+                "description": "Turn a still image into a short video with a stable subject and natural motion."
+            },
+            "dramaPlanning": {
+                "name": "Short Drama Planning",
+                "description": "Develop a production-ready short-drama plan from theme through characters, settings, and storyboards."
+            }
+        },
         "useSkill": "Use {name} Skill",
         "backToBottom": "Back to bottom",
         "promptFilled": "Prompt added",

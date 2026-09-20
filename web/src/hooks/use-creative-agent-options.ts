@@ -7,6 +7,7 @@ import type { AgentSkillWorkspace } from "@/lib/auth/store-types";
 import { unionGenerationParameters } from "@/lib/generation-parameters";
 import { listAgentSkills, type AgentSkillSummary } from "@/services/api/agent-skills";
 import { modelOptionLabel, selectableModelsByCapability, type AiConfig, useConfigStore } from "@/stores/use-config-store";
+import { useLocalizedAgentSkills } from "./use-localized-agent-skills";
 
 export function useCreativeAgentModels(capabilities: CreativeAgentModelOption["capability"][] = ["image", "video", "audio"]) {
     const config = useConfigStore((state) => state.config);
@@ -25,8 +26,9 @@ export function creativeAgentModelsFromConfig(config: AiConfig, capabilities: Cr
 }
 
 export function useCreativeAgentOptions(workspace: AgentSkillWorkspace, capabilities: CreativeAgentModelOption["capability"][] = ["image", "video", "audio"]) {
-    const [skills, setSkills] = useState<AgentSkillSummary[]>([]);
+    const [unlocalizedSkills, setSkills] = useState<AgentSkillSummary[]>([]);
     const [skillsLoading, setSkillsLoading] = useState(true);
+    const skills = useLocalizedAgentSkills(unlocalizedSkills);
     const models = useCreativeAgentModels(capabilities);
 
     useEffect(() => {

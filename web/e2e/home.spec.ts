@@ -16,7 +16,11 @@ const galleryResponse = {
 };
 
 test("public homepage is functional for signed-out visitors", async ({ browser }, testInfo) => {
-    const context = await browser.newContext({ baseURL: String(testInfo.project.use.baseURL || "http://127.0.0.1:3100"), locale: "zh-CN" });
+    const context = await browser.newContext({
+        baseURL: String(testInfo.project.use.baseURL || "http://127.0.0.1:3100"),
+        locale: "zh-CN",
+        viewport: testInfo.project.use.viewport,
+    });
     await context.clearCookies();
     const page = await context.newPage();
     const browserErrors = collectBrowserErrors(page);
@@ -26,6 +30,7 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(galleryResponse) });
     });
     await page.goto("/zh-cn", { waitUntil: "domcontentloaded" });
+    if (testInfo.project.name.startsWith("mobile-")) expect(page.viewportSize()?.width).toBe(Number(testInfo.project.name.replace("mobile-", "")));
     await expect(page.getByRole("heading", { level: 1, name: "HOTX AI – 一站式 AI 内容创作平台" })).toBeVisible();
     await expect(page.locator("h1")).toHaveCount(1);
     await expect(page.getByRole("heading", { level: 2, name: "HOTX AI 创作工具" })).toBeVisible();
@@ -138,7 +143,11 @@ test("public homepage is functional for signed-out visitors", async ({ browser }
         }
         await expect(mobileNavigation.getByRole("link", { name: "作品广场" })).toHaveCount(1);
         await expect(mobileNavigation.getByRole("button", { name: "价格方案" })).toHaveCount(1);
-        await page.getByRole("button", { name: "关闭导航菜单" }).click();
+        await mobileNavigation.getByRole("button", { name: "立即体验" }).click();
+        const loginDialog = page.getByRole("dialog");
+        await expect(loginDialog).toBeVisible();
+        await expect(mobileNavigation).toHaveCount(0);
+        await loginDialog.getByRole("button", { name: "Close" }).click();
         await expect(mobileNavigation).toHaveCount(0);
     }
     expect(new URL(galleryRequest).pathname).toBe("/api/public/gallery");

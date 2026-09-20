@@ -819,6 +819,28 @@
         "siteAgentTitle": "Agent sáng tạo {site}",
         "startFromIdea": "Bắt đầu từ một ý tưởng",
         "loadingSkills": "Đang tải Skill sáng tạo...",
+        "builtInSkills": {
+            "ecommerceImage": {
+                "name": "Ảnh thương mại",
+                "description": "Tạo hình ảnh thương mại cho ảnh chính, trang chi tiết, mạng xã hội, UGC, người mẫu, bao bì và chiến dịch tiếp thị."
+            },
+            "naturalBeauty": {
+                "name": "Chỉnh sửa chân dung tự nhiên",
+                "description": "Tinh chỉnh chân dung tự nhiên, giữ nguyên danh tính và kết cấu da thật."
+            },
+            "characterDesign": {
+                "name": "Thiết kế nhân vật",
+                "description": "Xây dựng ngoại hình, trang phục, biểu cảm và góc nhìn nhân vật có thể tái sử dụng nhất quán."
+            },
+            "imageMotion": {
+                "name": "Ảnh chuyển động",
+                "description": "Chuyển ảnh tĩnh thành video ngắn với chủ thể ổn định và chuyển động tự nhiên."
+            },
+            "dramaPlanning": {
+                "name": "Lập kế hoạch phim ngắn",
+                "description": "Xây dựng kế hoạch phim ngắn từ chủ đề đến nhân vật, bối cảnh và storyboard để tiếp tục sản xuất."
+            }
+        },
         "useSkill": "Sử dụng Skill {name}",
         "backToBottom": "Về cuối",
         "promptFilled": "Đã điền prompt",

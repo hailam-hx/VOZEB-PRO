@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
 
-import { creativeAgentModelsFromConfig } from "@/hooks/use-creative-agent-options";
+import { renderHook, waitFor } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
+import { createElement, type ComponentType, type ReactNode } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { creativeAgentModelsFromConfig, useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
+import viMessages from "@/i18n/messages/vi.json";
 import { applyPublicSystemSettings, defaultConfig, type PublicSystemSettings } from "@/stores/use-config-store";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("creative Agent public model catalog", () => {
     it("uses the same resolved capability lists as image, video, audio and Canvas workbenches", () => {
@@ -55,6 +63,30 @@ describe("creative Agent public model catalog", () => {
                 generationParameters: generationParameters({ aspectRatios: ["1:1", "16:9"], qualities: ["studio", "high"] }),
             },
         ]);
+    });
+
+    it.each(["canvas", "drama"] as const)("returns localized built-in skills to the %s Agent consumer", async (workspace) => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL | Request) => {
+                expect(String(input)).toContain(`workspace=${workspace}`);
+                return new Response(
+                    JSON.stringify({
+                        code: 0,
+                        data: { skills: [{ id: "character-design", name: "角色设定", description: "原始角色描述", workspaces: [workspace] }] },
+                        msg: "OK",
+                    }),
+                    { status: 200, headers: { "Content-Type": "application/json" } },
+                );
+            }),
+        );
+        const TestIntlProvider = NextIntlClientProvider as ComponentType<{ locale: string; messages: typeof viMessages; children?: ReactNode }>;
+        const wrapper = ({ children }: { children: ReactNode }) => createElement(TestIntlProvider, { locale: "vi", messages: viMessages }, children);
+
+        const { result } = renderHook(() => useCreativeAgentOptions(workspace), { wrapper });
+        await waitFor(() => expect(result.current.skillsLoading).toBe(false));
+
+        expect(result.current.skills).toEqual([expect.objectContaining({ id: "character-design", name: "Thiết kế nhân vật", description: "Xây dựng ngoại hình, trang phục, biểu cảm và góc nhìn nhân vật có thể tái sử dụng nhất quán." })]);
     });
 });
 

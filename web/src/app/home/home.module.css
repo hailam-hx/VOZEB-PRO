@@ -1250,6 +1250,16 @@
     .mobileNav > button:hover {
         background: color-mix(in srgb, var(--home-text) 6%, transparent);
     }
+    .mobileNav > .mobilePrimaryButton {
+        background: linear-gradient(135deg, #356fff 0%, #5d4cff 56%, #7934f5 100%);
+        box-shadow: 0 9px 24px color-mix(in srgb, var(--home-glow) 65%, transparent);
+        color: #ffffff;
+        font-weight: 650;
+    }
+    .mobileNav > .mobilePrimaryButton:hover {
+        background: linear-gradient(135deg, #356fff 0%, #5d4cff 56%, #7934f5 100%);
+        opacity: 0.92;
+    }
     .mobileNav svg {
         height: 16px;
         width: 16px;

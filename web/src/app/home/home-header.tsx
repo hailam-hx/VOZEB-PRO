@@ -159,6 +159,17 @@ export function HomeHeader() {
 
             {mobileOpen ? (
                 <nav id="home-mobile-menu" className={styles.mobileNav} aria-label={t("mobileNavigation")}>
+                    <button
+                        type="button"
+                        className={styles.mobilePrimaryButton}
+                        onClick={() => {
+                            setMobileOpen(false);
+                            openProtectedPath("/create");
+                        }}
+                    >
+                        {authenticated ? t("startCreating") : t("tryNow")}
+                        <ArrowRight aria-hidden="true" />
+                    </button>
                     <div className={styles.mobileProductGroup}>
                         <span>{t("products")}</span>
                         {HOME_PRODUCT_NAVIGATION.filter((item) => getLocalizedSeoHref(item.href, locale)).map((item) => (

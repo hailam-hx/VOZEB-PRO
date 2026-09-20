@@ -15,6 +15,7 @@ import type { CreativeGenerationPreferencePatch } from "@/components/creative-ge
 import { cn } from "@/lib/utils";
 import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
+import { useLocalizedAgentSkills } from "@/hooks/use-localized-agent-skills";
 import { listAgentSkills, type AgentSkillSummary } from "@/services/api/agent-skills";
 import type { CreativeAgentRun } from "@/services/api/creative";
 import { optimizePrompt } from "@/services/api/prompt-optimization";
@@ -62,7 +63,7 @@ export default function CreatePage() {
     const optimizingRef = useRef(false);
     const [prompt, setPrompt] = useState("");
     const [optimizingPrompt, setOptimizingPrompt] = useState(false);
-    const [skills, setSkills] = useState<AgentSkillSummary[]>([]);
+    const [unlocalizedSkills, setSkills] = useState<AgentSkillSummary[]>([]);
     const [skillsLoading, setSkillsLoading] = useState(true);
     const [selectedSkillId, setSelectedSkillId] = useState<string>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
@@ -78,6 +79,7 @@ export default function CreatePage() {
     const effectiveCreationMode = resolveEnabledCreationMode(agentModeEnabled, creationMode);
     const promptMaxLength = publicSettings?.generationDefaults?.createPromptMaxLength || CREATE_AGENT_PROMPT_MAX_LENGTH;
     const siteTitle = resolveSiteTitle(publicSettings?.site?.title);
+    const skills = useLocalizedAgentSkills(unlocalizedSkills);
     const agent = useCreateAgent();
     const selectedAssetIdsRef = useRef<string[]>(agent.selectedAssetIds);
     selectedAssetIdsRef.current = agent.selectedAssetIds;
