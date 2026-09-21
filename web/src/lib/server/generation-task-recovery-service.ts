@@ -279,7 +279,8 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
         });
         return "deferred";
     }
-    if (run?.status === "paused" && run.cancellation && lease.executionPhase === "cancel_requested") {
+    if ((run?.status === "paused" || run?.status === "failed") && run.cancellation && lease.executionPhase === "cancel_requested") {
+        const terminalDispatchCleanup = run.status === "failed";
         const childIds = run.cancellation.pendingChildTaskIds;
         const cancelledChildIds = await Promise.all(
             childIds.map(async (id) => {
@@ -288,13 +289,18 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
                 const type = parent.type as "text" | "image" | "video" | "audio";
                 let child = await getStoredGenerationTaskRecord(type, id);
                 if (child && ["pending", "running"].includes(child.status)) {
-                    const credential = cookie || maintenanceWorkerContext(run.userId);
-                    const response = await fetchInternalApi(`${origin}/api/${type}-tasks/${encodeURIComponent(id)}`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json", ...(maintenanceWorkerContextHeaders(credential) || { cookie: credential }) },
-                        body: JSON.stringify({ status: "cancelled", ...(type === "text" && parent.activeAttemptId ? { attemptId: parent.activeAttemptId } : {}) }),
-                    });
-                    await response.body?.cancel().catch(() => undefined);
+                    try {
+                        const credential = cookie || maintenanceWorkerContext(run.userId);
+                        const attemptId = type === "text" ? (await getTextTask(id))?.activeAttemptId || parent.activeAttemptId : undefined;
+                        const response = await fetchInternalApi(`${origin}/api/${type}-tasks/${encodeURIComponent(id)}`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json", ...(maintenanceWorkerContextHeaders(credential) || { cookie: credential }) },
+                            body: JSON.stringify({ status: "cancelled", ...(attemptId ? { attemptId } : {}) }),
+                        });
+                        await response.body?.cancel().catch(() => undefined);
+                    } catch (error) {
+                        console.warn("Agent child cancellation cleanup deferred", { runId: run.id, taskId: id, error: safeError(error) });
+                    }
                     child = await getStoredGenerationTaskRecord(type, id);
                 }
                 return child && ["success", "error", "cancelled"].includes(child.status) ? id : null;
@@ -319,11 +325,18 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
             )
         ).filter((id): id is string => Boolean(id));
         if (!pending.length) {
-            await setAgentRunStatus(run, "cancelled");
-            await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "cancelled" }, { cancellation: true });
-            return "completed";
+            if (terminalDispatchCleanup) {
+                await updateAgentRunById(
+                    run.id,
+                    { cancellation: undefined, tasks: run.tasks.map((task) => (task.status === "running" ? { ...task, status: "failed" as const, error: task.error || "Agent Run 因生成任务创建被拒绝而终止" } : task)) },
+                    { type: "run.cleanup.completed", data: { childTaskIds: childIds } },
+                    ["failed"],
+                );
+            } else await setAgentRunStatus(run, "cancelled");
+            await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: terminalDispatchCleanup ? "terminal_dispatch_cleanup_completed" : "cancelled" }, { cancellation: true });
+            return terminalDispatchCleanup ? "failed" : "completed";
         }
-        if (pending.length !== childIds.length) await updateAgentRunById(run.id, { cancellation: { ...run.cancellation, pendingChildTaskIds: pending } }, { type: "run.cancel.pending", data: { pendingTaskIds: pending } }, ["paused"]);
+        if (pending.length !== childIds.length) await updateAgentRunById(run.id, { cancellation: { ...run.cancellation, pendingChildTaskIds: pending } }, { type: "run.cancel.pending", data: { pendingTaskIds: pending } }, [run.status]);
         await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "cancel_requested", nextPollAt: generationTaskNextPollAt({ submittedAt: run.cancellation.requestedAt }), lastUpstreamStatus: "cancel_pending" }, { cancellation: true });
         return "pending";
     }

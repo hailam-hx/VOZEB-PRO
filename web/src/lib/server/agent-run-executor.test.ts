@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => ({
     releasePlannerProviderRoute: vi.fn(async () => undefined),
     reportPlannerProviderFailure: vi.fn(async () => undefined),
     reportPlannerProviderSuccess: vi.fn(async () => undefined),
+    createAgentGenerationTask: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({
@@ -56,16 +57,12 @@ vi.mock("@/lib/server/generation-application-service", () => ({
             message: string,
             readonly status = 500,
             readonly outcome = "unknown",
+            readonly errorCode?: string,
         ) {
             super(message);
         }
     },
-    createAgentGenerationTask: vi.fn(async (input: { type: string; origin: string; headers: HeadersInit; body: Record<string, unknown> }) => {
-        const path = input.type === "video" ? "/api/video-generation-tasks" : `/api/${input.type}-tasks`;
-        const response = await mocks.fetchInternalApi(`${input.origin}${path}`, { method: "POST", headers: input.headers, body: JSON.stringify(input.body), cache: "no-store" });
-        if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
-        return response.json();
-    }),
+    createAgentGenerationTask: mocks.createAgentGenerationTask,
     readAgentGenerationTask: vi.fn(async (input: { type: string; taskId: string; origin: string; headers: HeadersInit }) => {
         const response = await mocks.fetchInternalApi(`${input.origin}/api/${input.type}-tasks/${encodeURIComponent(input.taskId)}`, { headers: input.headers, cache: "no-store" });
         if (!response.ok) throw new Error(response.status >= 500 ? "生成任务查询暂时不可用" : (await response.text()) || "生成任务查询失败");
@@ -101,6 +98,7 @@ vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
     };
 });
 
+import { GenerationApplicationError } from "./generation-application-service";
 import { executeAgentRun, reconcileAgentPlannerFinalization } from "./agent-run-executor";
 import { processAgentRunReview, taskResultOps } from "./agent-run-execution";
 import { agentPlannerSystemPrompt } from "./agent-run-surface-policy";
@@ -128,6 +126,12 @@ describe("executeAgentRun backend settings", () => {
         mocks.releasePlannerProviderRoute.mockResolvedValue(undefined);
         mocks.reportPlannerProviderFailure.mockResolvedValue(undefined);
         mocks.reportPlannerProviderSuccess.mockResolvedValue(undefined);
+        mocks.createAgentGenerationTask.mockImplementation(async (input: { type: string; origin: string; headers: HeadersInit; body: Record<string, unknown> }) => {
+            const path = input.type === "video" ? "/api/video-generation-tasks" : `/api/${input.type}-tasks`;
+            const response = await mocks.fetchInternalApi(`${input.origin}${path}`, { method: "POST", headers: input.headers, body: JSON.stringify(input.body), cache: "no-store" });
+            if (!response.ok) throw new GenerationApplicationError((await response.text()) || "生成任务创建失败", response.status, response.status >= 500 ? "unknown" : "rejected");
+            return response.json();
+        });
         resetTextPlanningRuntime();
         mocks.events = [];
         mocks.getCreativeAssetsByIds.mockResolvedValue([]);
@@ -220,6 +224,7 @@ describe("executeAgentRun backend settings", () => {
         const createCall = mocks.fetchInternalApi.mock.calls.find((call) => call[1]?.method === "POST");
         const body = JSON.parse(String(createCall?.[1]?.body)) as { config: { model: string; baseUrl: string; apiKey: string } };
         expect(body.config).toMatchObject({ model: "old-image", baseUrl: "/api/ai/system/old-channel", apiKey: "" });
+        expect(mocks.events.map((event) => event.type)).toEqual(expect.arrayContaining(["agent.run.phase.started", "agent.run.phase.completed"]));
         expect(mocks.run?.status).toBe("completed");
     });
 
@@ -432,7 +437,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.tasks).toEqual([expect.objectContaining({ status: "completed" }), expect.objectContaining({ status: "completed" })]);
     });
 
-    it("keeps a successful sibling when another task dispatch fails", async () => {
+    it("keeps a successful sibling when another task dispatch is retryable", async () => {
         mocks.run = runWithTasks([imageTask("image-one"), imageTask("image-two")]);
         mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
         let releaseFailure: (() => void) | undefined;
@@ -457,7 +462,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run).toMatchObject({
             status: "running",
             failureStage: "task_dispatch",
-            tasks: [expect.objectContaining({ id: "image-one", status: "ready", attempts: 0 }), expect.objectContaining({ id: "image-two", status: "completed", taskId: "child-image-two" })],
+            tasks: [expect.objectContaining({ id: "image-one", status: "running", attempts: 1 }), expect.objectContaining({ id: "image-two", status: "completed", taskId: "child-image-two" })],
             assetIds: ["asset-0"],
         });
         expect(mocks.events.some((event) => event.type === "run.failed")).toBe(false);
@@ -1479,7 +1484,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.events.filter((event) => event.type === "run.completed")).toHaveLength(1);
     });
 
-    it("keeps an undispatched child ready so the same persisted plan can resume", async () => {
+    it("keeps an undispatched retryable child resumable without rolling back its attempt", async () => {
         mocks.run = runFixture({ surface: "chat", projectId: undefined, snapshot: undefined, prompt: "写剧本一个女跳舞", responseLocale: "zh-CN" });
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         const plan = { intent: "generation", objective: "写一个独舞短剧本", deliverables: [{ id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", dependencies: [] }] };
@@ -1497,7 +1502,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run).toMatchObject({
             status: "running",
             failureStage: "task_dispatch",
-            tasks: [expect.objectContaining({ id: "script", status: "ready", attempts: 0, error: "dispatch unavailable" })],
+            tasks: [expect.objectContaining({ id: "script", status: "running", attempts: 1, error: "dispatch unavailable" })],
         });
 
         mocks.run = { ...mocks.run!, executionId: undefined };
@@ -1510,7 +1515,178 @@ describe("executeAgentRun backend settings", () => {
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.run).toMatchObject({ status: "completed", failureStage: undefined, tasks: [expect.objectContaining({ id: "script", status: "completed", attempts: 1, taskId: "text-script" })] });
+        expect(mocks.run).toMatchObject({ status: "completed", failureStage: undefined, tasks: [expect.objectContaining({ id: "script", status: "completed", attempts: 2, taskId: "text-script" })] });
+    });
+
+    it("fails a video task and run once when dispatch is rejected before a child task exists", async () => {
+        mocks.run = runWithTasks([videoTask("video-rejected")]);
+        mocks.getAuthSettings.mockResolvedValue(videoSettings());
+        mocks.createAgentGenerationTask.mockRejectedValueOnce(new GenerationApplicationError("reference URL is not public", 400, "rejected", "reference_url_not_public"));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.createAgentGenerationTask).toHaveBeenCalledOnce();
+        expect(mocks.run).toMatchObject({
+            status: "failed",
+            failureStage: "task_dispatch",
+            tasks: [expect.objectContaining({ id: "video-rejected", status: "failed", attempts: 1, error: "reference URL is not public" })],
+        });
+        expect(mocks.linkStoredGenerationTask).not.toHaveBeenCalled();
+        expect(mocks.scheduleGenerationTask).not.toHaveBeenCalled();
+        expect(mocks.events.map((event) => event.type)).toEqual(expect.arrayContaining(["agent.run.phase.started", "agent.run.phase.failed", "task.dispatch.failed", "run.failed"]));
+        expect(mocks.events.find((event) => event.type === "agent.run.phase.failed")?.data).toMatchObject({
+            runId: "agent-run",
+            conversationId: "conversation",
+            phase: "task_dispatch",
+            taskId: "video-rejected",
+            attempt: 1,
+            elapsedMs: expect.any(Number),
+            provider: "openai",
+            model: "vendor/video-model",
+            status: 400,
+            outcome: "rejected",
+            errorCode: "reference_url_not_public",
+        });
+    });
+
+    it("fails the run when a terminal dispatch rejection has a successful sibling", async () => {
+        mocks.run = runWithTasks([videoTask("video-rejected"), videoTask("video-success")]);
+        const currentSettings = videoSettings() as unknown as { generationConcurrency: { video: number } };
+        currentSettings.generationConcurrency.video = 2;
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+        mocks.createAgentGenerationTask.mockImplementation(async (input: { body: { prompt: string } }) => {
+            if (input.body.prompt.includes("video-rejected")) throw new GenerationApplicationError("reference URL is not public", 400, "rejected", "reference_url_not_public");
+            return { task: { id: "child-video-success" } };
+        });
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.endsWith("/api/video-tasks/child-video-success")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/success.mp4" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({ status: "failed", failureStage: "task_dispatch" });
+        expect(mocks.run?.tasks.find((task) => task.id === "video-rejected")).toMatchObject({ status: "failed", attempts: 1 });
+        expect(mocks.run?.tasks.find((task) => task.id === "video-success")).toMatchObject({ status: "completed", attempts: 1, taskId: "child-video-success" });
+        expect(mocks.events.filter((event) => event.type === "run.failed")).toHaveLength(1);
+        expect(mocks.events.some((event) => event.type === "run.completed")).toBe(false);
+    });
+
+    it("fails the run when a terminal dispatch rejection has a deferred sibling", async () => {
+        mocks.run = runWithTasks([videoTask("video-rejected"), videoTask("video-deferred")]);
+        const currentSettings = videoSettings() as unknown as { generationConcurrency: { video: number } };
+        currentSettings.generationConcurrency.video = 2;
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+        mocks.createAgentGenerationTask.mockImplementation(async (input: { body: { prompt: string } }) => {
+            if (input.body.prompt.includes("video-rejected")) throw new GenerationApplicationError("reference URL is not public", 400, "rejected", "reference_url_not_public");
+            return { task: { id: "child-video-deferred" } };
+        });
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.endsWith("/api/video-tasks/child-video-deferred")) return Response.json({ task: { status: "running" } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({ status: "failed", failureStage: "task_dispatch" });
+        expect(mocks.run?.tasks.find((task) => task.id === "video-rejected")).toMatchObject({ status: "failed", attempts: 1 });
+        expect(mocks.run?.tasks.find((task) => task.id === "video-deferred")).toMatchObject({ status: "failed", attempts: 1, taskId: "child-video-deferred" });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledWith("http://localhost/api/video-tasks/child-video-deferred", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "cancelled" }) }));
+        expect(mocks.events.filter((event) => event.type === "run.failed")).toHaveLength(1);
+    });
+
+    it("keeps a submitted sibling running when its cancellation request is rejected", async () => {
+        mocks.run = runWithTasks([videoTask("video-rejected"), videoTask("video-deferred")]);
+        const currentSettings = videoSettings() as unknown as { generationConcurrency: { video: number } };
+        currentSettings.generationConcurrency.video = 2;
+        mocks.getAuthSettings.mockResolvedValue(currentSettings as never);
+        mocks.createAgentGenerationTask.mockImplementation(async (input: { body: { prompt: string } }) => {
+            if (input.body.prompt.includes("video-rejected")) throw new GenerationApplicationError("reference URL is not public", 400, "rejected", "reference_url_not_public");
+            return { task: { id: "child-video-deferred" } };
+        });
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/api/video-tasks/child-video-deferred") && init?.method === "PATCH") return new Response("cancellation unavailable", { status: 503 });
+            if (url.endsWith("/api/video-tasks/child-video-deferred")) return Response.json({ task: { status: "running" } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({ status: "failed", failureStage: "task_dispatch", cancellation: { pendingChildTaskIds: ["child-video-deferred"] } });
+        expect(mocks.run?.tasks.find((task) => task.id === "video-rejected")).toMatchObject({ status: "failed", attempts: 1 });
+        expect(mocks.run?.tasks.find((task) => task.id === "video-deferred")).toMatchObject({ status: "running", attempts: 1, taskId: "child-video-deferred" });
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "agent-run", expect.objectContaining({ executionPhase: "cancel_requested" }), { cancellation: true });
+        expect(mocks.events.filter((event) => event.type === "run.failed")).toHaveLength(1);
+    });
+
+    it("uses the active text child attempt when cancelling a submitted sibling", async () => {
+        const textTask: AgentRunTask = {
+            id: "text-deferred",
+            title: "text-deferred",
+            type: "text",
+            model: "planner",
+            prompt: "write text-deferred",
+            count: 1,
+            dependencies: [],
+            status: "ready",
+            attempts: 0,
+        };
+        mocks.run = runWithTasks([videoTask("video-rejected"), textTask]);
+        mocks.getAuthSettings.mockResolvedValue(videoSettings());
+        mocks.createAgentGenerationTask.mockImplementation(async (input: { type: string }) => {
+            if (input.type === "video") throw new GenerationApplicationError("reference URL is not public", 400, "rejected", "reference_url_not_public");
+            return { task: { id: "child-text-deferred" } };
+        });
+        mocks.getTextTask.mockResolvedValue({ id: "child-text-deferred", status: "running", activeAttemptId: "text-attempt-1" });
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/api/text-tasks/child-text-deferred") && init?.method === "PATCH") return Response.json({ task: { status: "running", executionPhase: "cancel_requested" } });
+            if (url.endsWith("/api/text-tasks/child-text-deferred")) return Response.json({ task: { status: "running" } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi).toHaveBeenCalledWith("http://localhost/api/text-tasks/child-text-deferred", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "cancelled", attemptId: "text-attempt-1" }) }));
+        expect(mocks.run).toMatchObject({ status: "failed", failureStage: "task_dispatch" });
+    });
+
+    it.each([
+        [429, "rejected"],
+        [503, "rejected"],
+        [409, "unknown"],
+    ] as const)("defers retryable dispatch status %s with outcome %s without resetting attempts", async (status, outcome) => {
+        mocks.run = runWithTasks([videoTask("video-retryable")]);
+        mocks.getAuthSettings.mockResolvedValue(videoSettings());
+        mocks.createAgentGenerationTask.mockRejectedValueOnce(new GenerationApplicationError("temporary dispatch failure", status, outcome, "upstream_temporary"));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.createAgentGenerationTask).toHaveBeenCalledOnce();
+        expect(mocks.run).toMatchObject({
+            status: "running",
+            tasks: [expect.objectContaining({ id: "video-retryable", status: "running", attempts: 1, error: "temporary dispatch failure" })],
+        });
+        expect(mocks.events.some((event) => event.type === "run.failed")).toBe(false);
+        expect(mocks.events.find((event) => event.type === "agent.run.phase.failed")?.data).toMatchObject({ status, outcome, errorCode: "upstream_temporary" });
+    });
+
+    it("emits timeout phase diagnostics without replacing the original dispatch metadata", async () => {
+        mocks.run = runWithTasks([videoTask("video-timeout")]);
+        mocks.getAuthSettings.mockResolvedValue(videoSettings());
+        mocks.createAgentGenerationTask.mockRejectedValueOnce(new GenerationApplicationError("provider timed out", 504, "unknown", "provider_timeout"));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.events.find((event) => event.type === "agent.run.phase.timeout")?.data).toMatchObject({
+            runId: "agent-run",
+            conversationId: "conversation",
+            phase: "task_dispatch",
+            taskId: "video-timeout",
+            attempt: 1,
+            status: 504,
+            outcome: "unknown",
+            errorCode: "provider_timeout",
+        });
     });
 
     it("uses the compact planner contract for an ordinary text-only creation", async () => {
@@ -2324,6 +2500,60 @@ function agentCapabilitySettings() {
             maxBatchSize: 4,
         };
     }
+    return value as never;
+}
+
+function videoTask(id: string): AgentRunTask {
+    return {
+        id,
+        title: id,
+        type: "video",
+        model: "video-model",
+        prompt: `生成 ${id}`,
+        count: 1,
+        ratio: "9:16",
+        quality: "480p",
+        seconds: 6,
+        dependencies: [],
+        references: [{ assetId: "reference-image", type: "image", url: "http://localhost/reference.png" }],
+        status: "ready",
+        attempts: 0,
+    };
+}
+
+function videoSettings() {
+    const value = settings("image-model", "image-channel") as unknown as {
+        defaultModels: { videoModel: string };
+        systemChannels: Array<Record<string, unknown>>;
+        logicalModels: Array<Record<string, unknown>>;
+    };
+    value.defaultModels.videoModel = "video-model";
+    value.systemChannels.push({ id: "video-channel", name: "视频", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "video-secret", apiFormat: "openai", models: ["vendor/video-model"] });
+    value.logicalModels.push({
+        id: "video-model",
+        name: "视频",
+        capability: "video",
+        enabled: true,
+        bindings: [
+            {
+                id: "video-binding",
+                channelId: "video-channel",
+                upstreamModel: "vendor/video-model",
+                enabled: true,
+                priority: 1,
+                generationParameters: testGenerationParameters({
+                    referenceInputs: ["image"],
+                    maxReferenceImages: 1,
+                    aspectRatios: ["9:16"],
+                    resolutions: ["480p"],
+                    durationMode: "discrete",
+                    durationSeconds: [6],
+                    videoReferenceModes: ["reference"],
+                    maxBatchSize: 1,
+                }),
+            },
+        ],
+    });
     return value as never;
 }
 

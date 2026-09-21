@@ -11,7 +11,7 @@ import {
     registerCreativeAssets,
     updateCreativeConversation,
 } from "@/lib/server/creative-runtime-store";
-import { writePersistentMediaDataUrl } from "@/lib/server/reference-asset-store";
+import { writePersistentMediaBytes } from "@/lib/server/reference-asset-store";
 import { deleteCreativeConversationAggregates } from "@/lib/server/creative-entity-deletion-store";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 
@@ -96,10 +96,10 @@ export async function uploadAssetForUser(userId: string, conversationId: string,
     if (!type) throw new CreativeRuntimeServiceError("仅支持图片、视频和音频素材", 400);
     if (!file.size) throw new CreativeRuntimeServiceError("上传文件为空", 400);
     if (file.size > CREATIVE_UPLOAD_MAX_BYTES) throw new CreativeRuntimeServiceError("单个素材不能超过 20MB", 413);
-    const dataUrl = `data:${file.type};base64,${Buffer.from(await file.arrayBuffer()).toString("base64")}`;
-    let stored: Awaited<ReturnType<typeof writePersistentMediaDataUrl>>;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let stored: Awaited<ReturnType<typeof writePersistentMediaBytes>>;
     try {
-        stored = await writePersistentMediaDataUrl(dataUrl, type, { ownerUserId: userId, source: "creative-upload", originalName: file.name, conversationId, maxBytes: CREATIVE_UPLOAD_MAX_BYTES });
+        stored = await writePersistentMediaBytes(bytes, file.type, type, { ownerUserId: userId, source: "creative-upload", originalName: file.name, conversationId, maxBytes: CREATIVE_UPLOAD_MAX_BYTES });
     } catch (error) {
         throw new CreativeRuntimeServiceError(error instanceof Error ? error.message : "素材保存失败", 400);
     }

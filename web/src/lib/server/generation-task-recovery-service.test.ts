@@ -322,6 +322,25 @@ describe("generation task recovery service", () => {
         expect(result).toMatchObject({ claimed: 1, completed: 1 });
     });
 
+    it("resumes a retryable Agent task without resetting its persisted attempt", async () => {
+        const run = {
+            id: "agent-one",
+            userId: "user-one",
+            status: "running",
+            failureStage: "task_dispatch",
+            tasks: [{ id: "video-one", type: "video", status: "running", attempts: 1, error: "temporary dispatch failure" }],
+            createdAt: 1_000,
+        };
+        mocks.claim.mockResolvedValue([lease()]);
+        mocks.getAgentRun.mockResolvedValueOnce(run).mockResolvedValueOnce({ ...run, status: "completed", tasks: [{ ...run.tasks[0], status: "completed", attempts: 2 }] });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.executeAgentRun).toHaveBeenCalledWith(run, "http://internal", "worker-context:user-one");
+        expect(run.tasks[0]?.attempts).toBe(1);
+        expect(result).toMatchObject({ claimed: 1, completed: 1 });
+    });
+
     it("does not restart a paused Agent", async () => {
         mocks.claim.mockResolvedValue([lease()]);
         mocks.getAgentRun.mockResolvedValue({ id: "agent-one", userId: "user-one", status: "paused", tasks: [], createdAt: 1_000 });
@@ -330,6 +349,61 @@ describe("generation task recovery service", () => {
 
         expect(mocks.executeAgentRun).not.toHaveBeenCalled();
         expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "paused" }));
+        expect(result).toMatchObject({ claimed: 1, failed: 1 });
+    });
+
+    it("does not resume an Agent whose terminal dispatch failure already failed the run", async () => {
+        mocks.claim.mockResolvedValue([lease()]);
+        mocks.getAgentRun.mockResolvedValue({
+            id: "agent-one",
+            userId: "user-one",
+            status: "failed",
+            failureStage: "task_dispatch",
+            tasks: [{ id: "video-one", type: "video", status: "failed", attempts: 1, error: "reference URL is not public" }],
+            createdAt: 1_000,
+        });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.executeAgentRun).not.toHaveBeenCalled();
+        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "failed" }));
+        expect(result).toMatchObject({ claimed: 1, failed: 1, deferred: 0 });
+    });
+
+    it("retries only sibling cancellation cleanup for a failed Agent without resuming execution", async () => {
+        let childStatus = "running";
+        const run = {
+            id: "agent-one",
+            userId: "user-one",
+            status: "failed",
+            failureStage: "task_dispatch",
+            cancellation: { requestedAt: 1_000, pendingChildTaskIds: ["video-child"] },
+            tasks: [
+                { id: "video-rejected", type: "video", status: "failed", attempts: 1, error: "reference URL is not public" },
+                { id: "video-sibling", type: "video", status: "running", attempts: 1, taskId: "video-child" },
+            ],
+            createdAt: 1_000,
+        };
+        mocks.claim.mockResolvedValueOnce([{ ...lease(), status: "failed", executionPhase: "cancel_requested" }]).mockResolvedValue([]);
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.getRecord.mockImplementation(async () => ({ status: childStatus, executionPhase: childStatus === "cancelled" ? "completed" : "polling" }));
+        mocks.fetchInternal.mockImplementation(async () => {
+            childStatus = "cancelled";
+            return Response.json({ task: { status: "cancelled" } });
+        });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.executeAgentRun).not.toHaveBeenCalled();
+        expect(mocks.fetchInternal).toHaveBeenCalledWith("http://internal/api/video-tasks/video-child", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "cancelled" }) }));
+        expect(mocks.updateAgentRun).toHaveBeenCalledWith(
+            "agent-one",
+            expect.objectContaining({ cancellation: undefined, tasks: [expect.objectContaining({ status: "failed" }), expect.objectContaining({ id: "video-sibling", status: "failed" })] }),
+            expect.anything(),
+            ["failed"],
+        );
+        expect(mocks.setAgentRunStatus).not.toHaveBeenCalled();
+        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined }), { cancellation: true });
         expect(result).toMatchObject({ claimed: 1, failed: 1 });
     });
 

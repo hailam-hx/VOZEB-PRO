@@ -70,4 +70,19 @@ describe("generation application service", () => {
         await expect(promise).rejects.toBeInstanceOf(GenerationApplicationError);
         expect(mocks.mark).toHaveBeenCalledWith("tool-1", "unknown", "connection reset");
     });
+
+    it("preserves upstream status, outcome, and error code for a rejected create request", async () => {
+        mocks.createImage.mockResolvedValue(Response.json({ error: "reference URL is not public", errorCode: "reference_url_not_public" }, { status: 400 }));
+
+        const promise = createAgentGenerationTask(input);
+
+        await expect(promise).rejects.toMatchObject({
+            message: "reference URL is not public",
+            status: 400,
+            outcome: "rejected",
+            errorCode: "reference_url_not_public",
+        });
+        expect(mocks.bind).not.toHaveBeenCalled();
+        expect(mocks.mark).toHaveBeenCalledWith("tool-1", "failed", "reference URL is not public");
+    });
 });

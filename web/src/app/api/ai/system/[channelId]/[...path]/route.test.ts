@@ -56,6 +56,7 @@ vi.mock("@/lib/server/security", () => ({
 }));
 
 import { meteredTextResponseBody } from "@/lib/server/system-ai-metered-text-stream";
+import { sanitizeDiagnosticText } from "@/lib/server/system-ai-diagnostics";
 import { DELETE, GET, maxDuration, POST, PUT } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
 import { readSystemAiUsageBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
@@ -1208,6 +1209,246 @@ describe("configured versioned protocol billing", () => {
         expect(fetchMock.mock.calls[0]?.[0]).toBe("https://provider.example/kyyReactApiServer/v1/seedance-special/videos");
         expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", logicalModelId: "seedance-special-video" }));
         expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("reserves the configured maximum while forwarding Seedance inherited duration unchanged to other providers", async () => {
+        const modelId = "doubao-seedance-2.5";
+        const components = [{ id: "duration-480", dimension: "durationSeconds" as const, unitPrice: "0.1009", when: { quality: "480" } }];
+        const model = logicalModel(modelId, "video", modelId);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    ...model,
+                    saleRateCard: { version: 1 as const, components },
+                    bindings: model.bindings.map((binding) => ({
+                        ...binding,
+                        costRateCard: { version: 1 as const, components },
+                        generationParameters: { durationMode: "discrete", durationSeconds: [4, 30] },
+                    })),
+                },
+            ],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://provider.example",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: [modelId],
+                    advancedConfig: { protocol: "custom", createPath: "/v1/videos/generations" },
+                },
+            ],
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ task_id: "seedance-edit-task", status: "queued" }));
+        const url = "http://localhost/api/ai/system/channel-one/v1/videos/generations";
+        const body = JSON.stringify({
+            model: modelId,
+            content: [
+                { type: "text", text: "Replace the caption" },
+                { type: "video_url", role: "reference_video", video_url: { url: "https://cdn.example.com/reference.mp4" } },
+            ],
+            duration: -1,
+            ratio: "adaptive",
+            resolution: "480p",
+        });
+
+        const response = await POST(new Request(url, { method: "POST", headers: { "content-type": "application/json", ...signedModelHeaders(url, body, modelId, modelId, "video", `${modelId}-binding`) }, body }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations"] }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ requestUsage: expect.objectContaining({ durationSeconds: "30", quality: "480" }) }));
+        expect(JSON.parse(new TextDecoder().decode(fetchMock.mock.calls[0]?.[1]?.body as ArrayBuffer))).toMatchObject({ duration: -1, ratio: "adaptive" });
+    });
+
+    it("omits inherited duration only when serializing a Seedance 2.5 video edit to DFLOP", async () => {
+        const modelId = "doubao-seedance-2.5";
+        const components = [{ id: "duration-480", dimension: "durationSeconds" as const, unitPrice: "0.1009", when: { quality: "480" } }];
+        const model = logicalModel(modelId, "video", modelId);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    ...model,
+                    saleRateCard: { version: 1 as const, components },
+                    bindings: model.bindings.map((binding) => ({
+                        ...binding,
+                        costRateCard: { version: 1 as const, components },
+                        generationParameters: { durationMode: "discrete", durationSeconds: [4, 30] },
+                    })),
+                },
+            ],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://api.dflop.top",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: [modelId],
+                    advancedConfig: { protocol: "custom", createPath: "/v1/videos/generations" },
+                },
+            ],
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ task_id: "seedance-edit-task", status: "queued" }));
+        const url = "http://localhost/api/ai/system/channel-one/v1/videos/generations";
+        const body = JSON.stringify({
+            model: modelId,
+            content: [
+                { type: "text", text: "Replace the caption" },
+                { type: "video_url", role: "reference_video", video_url: { url: "https://cdn.example.com/reference.mp4" } },
+            ],
+            duration: -1,
+            ratio: "adaptive",
+            resolution: "480p",
+        });
+
+        const response = await POST(new Request(url, { method: "POST", headers: { "content-type": "application/json", ...signedModelHeaders(url, body, modelId, modelId, "video", `${modelId}-binding`) }, body }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations"] }),
+        });
+        const outbound = JSON.parse(new TextDecoder().decode(fetchMock.mock.calls[0]?.[1]?.body as ArrayBuffer));
+
+        expect(response.status).toBe(200);
+        expect(mocks.reserveUsageBilling).toHaveBeenCalledWith(expect.objectContaining({ requestUsage: expect.objectContaining({ durationSeconds: "30", quality: "480" }) }));
+        expect(outbound).toMatchObject({ model: modelId, ratio: "adaptive", resolution: "480p", content: expect.arrayContaining([expect.objectContaining({ type: "video_url", role: "reference_video" })]) });
+        expect(outbound).not.toHaveProperty("duration");
+    });
+
+    it("keeps concrete duration for DFLOP Seedance text-to-video and image-to-video requests", async () => {
+        const modelId = "doubao-seedance-2.5";
+        const components = [{ id: "duration-480", dimension: "durationSeconds" as const, unitPrice: "0.1009", when: { quality: "480" } }];
+        const model = logicalModel(modelId, "video", modelId);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    ...model,
+                    saleRateCard: { version: 1 as const, components },
+                    bindings: model.bindings.map((binding) => ({
+                        ...binding,
+                        costRateCard: { version: 1 as const, components },
+                        generationParameters: { durationMode: "discrete", durationSeconds: [4, 30] },
+                    })),
+                },
+            ],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://api.dflop.top",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: [modelId],
+                    advancedConfig: { protocol: "custom", createPath: "/v1/videos/generations" },
+                },
+            ],
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ task_id: "seedance-task", status: "queued" }));
+        const url = "http://localhost/api/ai/system/channel-one/v1/videos/generations";
+        const bodies = [
+            { model: modelId, content: [{ type: "text", text: "Create a sunrise" }], duration: 5, ratio: "16:9", resolution: "480p" },
+            {
+                model: modelId,
+                content: [
+                    { type: "text", text: "Animate this image" },
+                    { type: "image_url", role: "reference_image", image_url: { url: "https://cdn.example.com/reference.jpg" } },
+                ],
+                duration: 5,
+                ratio: "9:16",
+                resolution: "480p",
+            },
+        ];
+
+        for (const payload of bodies) {
+            const body = JSON.stringify(payload);
+            const response = await POST(new Request(url, { method: "POST", headers: { "content-type": "application/json", ...signedModelHeaders(url, body, modelId, modelId, "video", `${modelId}-binding`) }, body }), {
+                params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations"] }),
+            });
+            expect(response.status).toBe(200);
+        }
+
+        const outbound = fetchMock.mock.calls.map((call) => JSON.parse(new TextDecoder().decode(call[1]?.body as ArrayBuffer)));
+        expect(outbound).toEqual([
+            expect.objectContaining({ duration: 5, ratio: "16:9" }),
+            expect.objectContaining({ duration: 5, ratio: "9:16", content: expect.arrayContaining([expect.objectContaining({ type: "image_url", role: "reference_image" })]) }),
+        ]);
+    });
+
+    it("logs a sanitized non-2xx video diagnostic while returning the original upstream body", async () => {
+        const modelId = "doubao-seedance-2.5";
+        const model = logicalModel(modelId, "video", modelId);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [model],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    name: "DFLOP 字节",
+                    enabled: true,
+                    baseUrl: "https://api.dflop.top",
+                    apiKey: "channel-secret",
+                    apiFormat: "openai",
+                    models: [modelId],
+                    advancedConfig: { protocol: "custom", createPath: "/v1/videos/generations" },
+                },
+            ],
+        });
+        const upstreamBody = JSON.stringify({ error: { message: "invalid image format at https://objects.example.com/reference.png?X-Amz-Date=secret-date&X-Amz-Security-Token=secret-token", request_id: "provider-request-one" } });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(upstreamBody, { status: 400, headers: { "content-type": "application/json", "x-gateway-trace": "trace-one" } }));
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const url = "http://localhost/api/ai/system/channel-one/v1/videos/generations";
+        const body = JSON.stringify({
+            model: modelId,
+            content: [
+                { type: "text", text: "Animate this image" },
+                { type: "image_url", role: "reference_image", image_url: { url: "https://objects.example.com/reference.png?X-Amz-Signature=do-not-log&X-Amz-Credential=credential" } },
+            ],
+            duration: 6,
+            ratio: "9:16",
+            resolution: "480p",
+            metadata: { access_token: "do-not-log-token" },
+        });
+        const response = await POST(
+            new Request(url, {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "x-vozeb-pro-generation-task-id": "video-task-one",
+                    "x-vozeb-pro-agent-run-id": "agent-run-one",
+                    ...signedModelHeaders(url, body, modelId, modelId, "video", `${modelId}-binding`),
+                },
+                body,
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations"] }) },
+        );
+
+        expect(response.status).toBe(400);
+        expect(await response.text()).toBe(upstreamBody);
+        const diagnostic = errorSpy.mock.calls.find(([message]) => message === "System API upstream non-2xx")?.[1] as Record<string, unknown>;
+        expect(diagnostic).toMatchObject({
+            provider: "custom",
+            channelId: "channel-one",
+            model: modelId,
+            endpoint: "https://api.dflop.top/v1/videos/generations",
+            status: 400,
+            upstreamResponseBody: JSON.stringify({ error: { message: "invalid image format at https://objects.example.com/reference.png?<redacted>", request_id: "provider-request-one" } }),
+            taskId: "video-task-one",
+            agentRunId: "agent-run-one",
+        });
+        const loggedPayload = JSON.stringify(diagnostic.requestPayload);
+        expect(loggedPayload).toContain("Animate this image");
+        expect(loggedPayload).not.toContain("do-not-log");
+        expect(loggedPayload).not.toContain("credential");
+        expect(loggedPayload).not.toContain("do-not-log-token");
+        expect(String(diagnostic.upstreamResponseBody)).not.toContain("secret-date");
+        expect(String(diagnostic.upstreamResponseBody)).not.toContain("secret-token");
+        expect(String(diagnostic.endpoint)).not.toContain("endpoint-secret");
+    });
+
+    it("removes query signatures from diagnostic endpoint and embedded URLs", () => {
+        expect(sanitizeDiagnosticText("https://api.dflop.top/v1/videos/generations?X-Amz-Signature=endpoint-secret")).toBe("https://api.dflop.top/v1/videos/generations?<redacted>");
+        expect(sanitizeDiagnosticText("failed to read https://objects.example.com/reference.png?X-Amz-Date=secret-date&X-Amz-Security-Token=secret-token")).toBe("failed to read https://objects.example.com/reference.png?<redacted>");
     });
 });
 

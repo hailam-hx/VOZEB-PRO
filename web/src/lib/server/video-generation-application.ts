@@ -11,9 +11,9 @@ import { buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcPreset } from "@/lib/gl
 import { createVideoTask, transitionVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
-import { normalizeVideoAspectRatio, resolveVideoDuration, withVideoReferenceFidelity } from "@/lib/server/video-task-config";
+import { isSeedanceVideoEdit, normalizeVideoAspectRatio, resolveSeedanceVideoEditParameters, resolveVideoDuration, withVideoReferenceFidelity } from "@/lib/server/video-task-config";
 import { parseImageDimensions } from "@/lib/image-size";
-import { signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
+import { resolveProviderReferenceUrls } from "@/lib/server/provider-reference-url";
 import { resolveVideoGenerationCandidates } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
@@ -69,9 +69,10 @@ export async function POST(request: Request) {
         const publicOrigin = requestPublicOrigin(request);
         let references: VideoGenerationReference[];
         try {
-            references = normalizeVideoGenerationReferences(body.references).map((reference) => ({ ...reference, url: signReferenceAssetInputUrl(reference.url, publicOrigin) }));
+            references = await resolveProviderReferenceUrls(normalizeVideoGenerationReferences(body.references), publicOrigin, user.id);
         } catch (error) {
-            return NextResponse.json({ error: error instanceof Error ? error.message : "视频参考素材不正确" }, { status: 400 });
+            const errorCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+            return NextResponse.json({ error: error instanceof Error ? error.message : "视频参考素材不正确", ...(errorCode ? { errorCode } : {}) }, { status: 400 });
         }
         const capability = resolveVideoGenerationCandidates(routedChannels, body.config || {}, settings.generationDefaults, references);
         if (!capability.candidates.length) return NextResponse.json({ error: capability.error?.message || "当前模型不支持所选生成参数" }, { status: 400 });
@@ -85,7 +86,9 @@ export async function POST(request: Request) {
         let attempts: GenerationAttempt[] = [];
         let localTask: VideoTask | undefined;
         for (let index = 0; index < channels.length; index += 1) {
-            const channel = channels[index];
+            const candidate = channels[index];
+            const videoEditParameters = resolveSeedanceVideoEditParameters({ model: candidate.model, ratio: candidate.size, duration: candidate.videoSeconds, references });
+            const channel = { ...candidate, size: videoEditParameters.ratio, videoSeconds: videoEditParameters.duration };
             const parameters = { ...body.config, size: channel.size, vquality: channel.vquality, videoSeconds: channel.videoSeconds };
             const geminiVideo = isGeminiVideoChannel(channel);
             try {
@@ -156,7 +159,7 @@ export async function POST(request: Request) {
                 lastUpstreamStatus: "submitting",
             });
             try {
-                const upstream = await createUpstream(user.id, origin, cookie, channel, providerPrompt, parameters, references, settings.generationPointMultipliers, billingRequestId, localTask.id, started.attempt.attemptNo);
+                const upstream = await createUpstream(user.id, origin, cookie, channel, providerPrompt, parameters, references, settings.generationPointMultipliers, billingRequestId, localTask.id, started.attempt.attemptNo, localTask.runId);
                 await updateVideoTask(localTask.id, { config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts });
                 const task = { ...localTask, config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts };
                 const submittedAt = Date.now();
@@ -193,6 +196,7 @@ export async function POST(request: Request) {
             const message = toSafeGenerationErrorMessage(lastError, "视频任务创建失败");
             await writeVideoGenerationLog({ ...localTask, attempts }, "failed", message, lastError instanceof SafeCandidateFailure);
             await transitionVideoTask(localTask, { status: "error", error: message, retryable: lastError instanceof SafeCandidateFailure });
+            await finalizeUsageBillingForBusiness({ userId: user.id, businessId: `video-task:${localTask.id}` });
             await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
         }
         return NextResponse.json({ error: toSafeGenerationErrorMessage(lastError, "视频任务创建失败"), canRetry: lastError instanceof SafeCandidateFailure }, { status: 502 });
@@ -206,9 +210,10 @@ function assertProviderVideoParameters(channel: NonNullable<ReturnType<typeof to
     const images = referenceUrls(regularReferences, "image");
     const videos = referenceUrls(regularReferences, "video");
     const audios = referenceUrls(regularReferences, "audio");
+    const providerParameters = resolveProviderVideoParameters(channel.model, raw, references);
     const input = {
-        duration: upstreamDuration(raw.videoSeconds),
-        ratio: upstreamRatio(raw.size),
+        duration: providerParameters.duration,
+        ratio: providerParameters.ratio,
         resolution: upstreamResolution(raw.vquality),
         generateAudio: optionalBoolean(raw.videoGenerateAudio),
         watermark: optionalBoolean(raw.videoWatermark),
@@ -263,6 +268,7 @@ export async function createUpstream(
     billingRequestId: string,
     taskId = "",
     attemptNumber = 1,
+    agentRunId = "",
 ) {
     let lastError = "";
     const regularReferences = regularVideoReferences(references);
@@ -274,20 +280,21 @@ export async function createUpstream(
     const requestImages = images;
     const firstFrameUrl = firstFrame?.url || "";
     const lastFrameUrl = lastFrame?.url || "";
-    const dimensions = videoDimensions(raw.size, raw.vquality);
+    const providerParameters = resolveProviderVideoParameters(channel.model, raw, references);
+    const dimensions = providerParameters.ratio === "adaptive" ? undefined : videoDimensions(raw.size, raw.vquality);
     const generateAudio = optionalBoolean(raw.videoGenerateAudio);
     const watermark = optionalBoolean(raw.videoWatermark);
     if (isGeminiVideoChannel(channel)) {
-        return createGeminiVideoUpstream({ userId, origin, cookie, channel, prompt, raw, references, generateAudio, multipliers, billingRequestId, taskId, attemptNumber });
+        return createGeminiVideoUpstream({ userId, origin, cookie, channel, prompt, raw, references, generateAudio, multipliers, billingRequestId, taskId, attemptNumber, agentRunId });
     }
     const values = {
         model: channel.model,
         prompt,
-        duration: upstreamDuration(raw.videoSeconds),
-        seconds: upstreamDuration(raw.videoSeconds),
-        ratio: upstreamRatio(raw.size),
-        aspect_ratio: upstreamRatio(raw.size),
-        size: upstreamSize(raw.size),
+        duration: providerParameters.duration,
+        seconds: providerParameters.duration,
+        ratio: providerParameters.ratio,
+        aspect_ratio: providerParameters.ratio,
+        size: providerParameters.size,
         resolution: upstreamResolution(raw.vquality),
         quality: upstreamResolution(raw.vquality),
         width: dimensions?.width,
@@ -390,6 +397,7 @@ export async function createUpstream(
                 ...(multipart ? {} : { "Content-Type": "application/json" }),
                 "Idempotency-Key": providerIdempotencyKey,
                 "X-Client-Request-Id": providerIdempotencyKey,
+                ...generationDiagnosticHeaders(taskId, agentRunId),
                 ...systemAiBillingHeaders(generationModelId(channel), generationSystemAiUsageContext(channel, "video", providerIdempotencyKey, userId) || providerIdempotencyKey, channel.model),
             },
             body: requestBody,
@@ -454,6 +462,7 @@ async function createGeminiVideoUpstream(input: {
     billingRequestId: string;
     taskId?: string;
     attemptNumber?: number;
+    agentRunId?: string;
 }) {
     const payload = await buildGeminiVideoRequest({
         prompt: input.prompt,
@@ -473,6 +482,7 @@ async function createGeminiVideoUpstream(input: {
             "Content-Type": "application/json",
             "Idempotency-Key": providerIdempotencyKey,
             "X-Client-Request-Id": providerIdempotencyKey,
+            ...generationDiagnosticHeaders(input.taskId, input.agentRunId),
             ...systemAiBillingHeaders(generationModelId(input.channel), generationSystemAiUsageContext(input.channel, "video", providerIdempotencyKey, input.userId) || providerIdempotencyKey, input.channel.model),
         },
         body: JSON.stringify(payload),
@@ -530,6 +540,12 @@ function proxyFetch(origin: string, baseUrl: string, path: string, cookie: strin
     else if (cookie) headers.set("cookie", cookie);
     return fetchInternalApi(`${origin}${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`, { ...init, headers });
 }
+function generationDiagnosticHeaders(taskId?: string, agentRunId?: string) {
+    return {
+        ...(taskId ? { "X-VOZEB-PRO-Generation-Task-Id": taskId } : {}),
+        ...(agentRunId ? { "X-VOZEB-PRO-Agent-Run-Id": agentRunId } : {}),
+    };
+}
 function publicTask(task: VideoTask) {
     return { id: task.id, status: task.status, model: generationModelId(task.config), upstreamId: task.upstream.id || undefined, durationSeconds: task.requestedDurationSeconds, canRetry: task.retryable === true };
 }
@@ -539,6 +555,15 @@ function duration(value: unknown) {
 function upstreamDuration(value: unknown) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+function resolveProviderVideoParameters(model: string, raw: Record<string, unknown>, references: readonly VideoGenerationReference[]) {
+    const videoEdit = isSeedanceVideoEdit(model, references);
+    const resolved = resolveSeedanceVideoEditParameters({ model, ratio: raw.size, duration: raw.videoSeconds, references });
+    return {
+        duration: videoEdit && Number(resolved.duration) === -1 ? -1 : upstreamDuration(resolved.duration),
+        ratio: videoEdit ? "adaptive" : upstreamRatio(resolved.ratio),
+        size: videoEdit ? "adaptive" : upstreamSize(resolved.ratio),
+    };
 }
 function ratio(value: unknown) {
     return normalizeVideoAspectRatio(value);

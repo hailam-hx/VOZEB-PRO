@@ -38,11 +38,10 @@ export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewC
 
 class AgentChildTaskTerminalError extends Error {}
 class AgentChildTaskDeferredError extends Error {}
-class AgentChildTaskDispatchError extends Error {}
 
 export async function canContinue(id: string, executionId: string) {
     const run = await getAgentRun(id);
-    return Boolean(run && run.executionId === executionId && !["paused", "cancelled", "completed"].includes(run.status));
+    return Boolean(run && run.executionId === executionId && !["paused", "cancelled", "completed", "failed"].includes(run.status));
 }
 
 export const agentPlanTool = {
@@ -611,6 +610,10 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                 if (finished && backgroundReview) await scheduleGenerationTask("agent", runId, { executionPhase: "review_pending", nextPollAt: Date.now(), lastUpstreamStatus: "review_pending" });
                 return;
             }
+            if (run.failureStage === "task_dispatch" && run.tasks.some((task) => task.status === "failed")) {
+                await failAgentRunForTerminalDispatch(run, origin, cookie, executionId);
+                return;
+            }
             const blocked = run.tasks.filter((task) => task.status === "ready");
             const terminalTasks = blocked.length ? run.tasks.map((task) => (task.status === "ready" ? { ...task, status: "failed" as const, error: "前置任务未完成" } : task)) : run.tasks;
             const partialSuccess = Boolean(run.assetIds.length) && terminalTasks.some((task) => task.status === "failed") && terminalTasks.every((task) => task.status === "completed" || task.status === "failed");
@@ -632,7 +635,7 @@ export async function executeTasks(runId: string, origin: string, cookie: string
             }
             await updateAgentRunById(
                 runId,
-                { status: "failed", executionId: undefined, failureStage: "task_execution", tasks: terminalTasks, timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), runCompletedAt: Date.now() } },
+                { status: "failed", executionId: undefined, failureStage: run.failureStage || "task_execution", tasks: terminalTasks, timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), runCompletedAt: Date.now() } },
                 { type: "run.failed", data: { message: agentRunFailureMessage(terminalTasks, run.responseLocale), responseLocale: run.responseLocale } },
                 ["running"],
                 executionId,
@@ -640,8 +643,75 @@ export async function executeTasks(runId: string, origin: string, cookie: string
             return;
         }
         const results = await Promise.all(ready.map((task) => runTaskWithRetry(runId, task, origin, cookie, executionId, settings)));
+        if (results.some((result) => result === "terminal_dispatch")) {
+            const latest = await getAgentRun(runId);
+            if (latest) await failAgentRunForTerminalDispatch(latest, origin, cookie, executionId);
+            return;
+        }
         if (results.some((result) => result === "deferred")) return;
     }
+}
+
+async function failAgentRunForTerminalDispatch(run: AgentRun, origin: string, cookie: string, executionId: string) {
+    const cancellation = await cancelSubmittedAgentTasks(run, origin, cookie);
+    const terminalTasks = run.tasks.map((task) => {
+        if (task.status === "completed" || task.status === "failed") return task;
+        const pendingChildren = normalizeChildTasks(task).filter((child) => child.status === "pending");
+        if (pendingChildren.some((child) => !cancellation.confirmed.has(`${task.id}:${child.id}`))) return task;
+        return { ...task, status: "failed" as const, error: task.error || "Agent Run 因生成任务创建被拒绝而终止" };
+    });
+    const failed = await updateAgentRunById(
+        run.id,
+        {
+            status: "failed",
+            executionId: undefined,
+            failureStage: "task_dispatch",
+            tasks: terminalTasks,
+            ...(cancellation.pendingTaskIds.length ? { cancellation: { requestedAt: Date.now(), pendingChildTaskIds: cancellation.pendingTaskIds } } : {}),
+            timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), runCompletedAt: Date.now() },
+        },
+        { type: "run.failed", data: { message: agentRunFailureMessage(terminalTasks, run.responseLocale), responseLocale: run.responseLocale } },
+        ["running"],
+        executionId,
+    );
+    if (failed && cancellation.pendingTaskIds.length) {
+        await scheduleGenerationTask("agent", run.id, { executionPhase: "cancel_requested", nextPollAt: Date.now(), lastUpstreamStatus: "terminal_dispatch_cleanup" }, { cancellation: true });
+    }
+    return failed;
+}
+
+async function cancelSubmittedAgentTasks(run: AgentRun, origin: string, cookie: string) {
+    const children = run.tasks
+        .filter((task) => task.status === "running")
+        .flatMap((task) =>
+            normalizeChildTasks(task)
+                .filter((child) => child.status === "pending")
+                .map((child) => ({ parentTaskId: task.id, type: task.type, taskId: child.id })),
+        );
+    const cancelled = new Set<string>();
+    const pendingTaskIds = new Set<string>();
+    await Promise.all(
+        children.map(async (child) => {
+            try {
+                const attemptId = child.type === "text" ? (await getTextTask(child.taskId))?.activeAttemptId : undefined;
+                const response = await fetchInternalApi(`${origin}/api/${child.type}-tasks/${encodeURIComponent(child.taskId)}`, {
+                    method: "PATCH",
+                    headers: runtimeRequestHeaders(cookie, { "Content-Type": "application/json" }),
+                    body: JSON.stringify({ status: "cancelled", ...(attemptId ? { attemptId } : {}) }),
+                });
+                await response.body?.cancel().catch(() => undefined);
+                if (response.ok || response.status === 404) cancelled.add(`${child.parentTaskId}:${child.taskId}`);
+                else {
+                    pendingTaskIds.add(child.taskId);
+                    console.warn("Agent sibling cancellation request was rejected", { runId: run.id, taskId: child.taskId, status: response.status });
+                }
+            } catch (error) {
+                pendingTaskIds.add(child.taskId);
+                console.warn("Agent sibling cancellation request failed", { runId: run.id, taskId: child.taskId, error: error instanceof Error ? error.message : String(error) });
+            }
+        }),
+    );
+    return { confirmed: cancelled, pendingTaskIds: Array.from(pendingTaskIds) };
 }
 
 function projectHandoffCompletion(surface: "canvas" | "drama", title: string, locale: AgentRun["responseLocale"]) {
@@ -883,10 +953,18 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         if (await canContinue(runId, executionId)) {
             const latest = await getAgentRun(runId);
             const latestTask = latest?.tasks.find((item) => item.id === task.id);
-            if (error instanceof AgentChildTaskDispatchError && latestTask && !agentTaskHasSubmittedChild(latestTask)) {
-                await patchTask(runId, task.id, { status: "ready", attempts: task.attempts, error: message }, "task.dispatch.failed", executionId);
+            if (latestTask && !agentTaskHasSubmittedChild(latestTask) && isRetryableDispatchFailure(error)) {
+                await patchTask(runId, task.id, { attempts: Math.max(latestTask.attempts, attempt), error: message }, "task.dispatch.failed", executionId);
                 await updateAgentRunById(runId, { failureStage: "task_dispatch" }, undefined, ["running"], executionId);
+                if (usesPostgresAgentRuntime()) {
+                    await deferAgentTask(runId, Math.max(1, latest?.planningCycle || 1), task.id, executionId, generationTaskNextPollAt({ consecutiveErrors: Math.max(1, latestTask.attempts) }), message);
+                }
                 return "deferred" as const;
+            }
+            if (latestTask && !agentTaskHasSubmittedChild(latestTask) && error instanceof GenerationApplicationError) {
+                await patchTask(runId, task.id, { status: "failed", attempts: Math.max(latestTask.attempts, attempt), error: message }, "task.dispatch.failed", executionId);
+                await updateAgentRunById(runId, { failureStage: "task_dispatch" }, undefined, ["running"], executionId);
+                return "terminal_dispatch" as const;
             }
             await patchTask(runId, task.id, { status: "failed", error: message }, "task.failed", executionId);
         }
@@ -925,6 +1003,44 @@ function agentTaskNeedsSubmission(task: AgentRunTask) {
 
 function agentTaskHasSubmittedChild(task: AgentRunTask) {
     return normalizeChildTasks(task).some((child) => Boolean(child.id));
+}
+
+function isRetryableDispatchFailure(error: unknown) {
+    if (error instanceof GenerationApplicationError) return error.outcome === "unknown" || error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+    if (!(error instanceof Error)) return false;
+    const code = "code" in error ? String(error.code) : error.cause && typeof error.cause === "object" && "code" in error.cause ? String(error.cause.code) : "";
+    return ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT"].includes(code) || (error instanceof TypeError && /fetch failed|network(?: request)? failed/i.test(error.message));
+}
+
+function isTimeoutDispatchFailure(error: unknown) {
+    return (error instanceof GenerationApplicationError && error.status === 504) || (error instanceof Error && (error.name === "TimeoutError" || /timed?\s*out|timeout/i.test(error.message)));
+}
+
+function taskDispatchPhaseData(run: AgentRun, task: AgentRunTask, settings: Awaited<ReturnType<typeof getAuthSettings>>, attempt: number) {
+    const resolved = task.model ? resolveLogicalModel(settings, task.type, task.model) : undefined;
+    return {
+        runId: run.id,
+        conversationId: run.conversationId,
+        phase: "task_dispatch",
+        taskId: task.id,
+        attempt,
+        provider: resolved?.channel.advancedConfig?.protocol || resolved?.channel.apiFormat || "openai",
+        model: resolved?.upstreamModel || task.model,
+    };
+}
+
+async function recordAgentRunPhase(runId: string, executionId: string, state: "started" | "completed" | "failed" | "timeout", data: ReturnType<typeof taskDispatchPhaseData>, startedAt: number, error?: unknown) {
+    const metadata =
+        error instanceof GenerationApplicationError
+            ? { status: error.status, outcome: error.outcome, ...(error.errorCode ? { errorCode: error.errorCode } : {}) }
+            : error instanceof Error
+              ? { errorCode: "code" in error ? String(error.code) : error.name }
+              : {};
+    try {
+        await updateAgentRunById(runId, {}, { type: `agent.run.phase.${state}`, data: { ...data, elapsedMs: Math.max(0, Date.now() - startedAt), ...metadata } }, ["running"], executionId);
+    } catch (diagnosticError) {
+        console.warn("Agent phase diagnostic persistence failed", { runId, phase: data.phase, taskId: data.taskId, state, error: diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError) });
+    }
 }
 
 export async function resumeDispatchedTask(run: AgentRun, task: AgentRunTask, taskId: string, attempt: number, origin: string, cookie: string, executionId: string) {
@@ -1023,6 +1139,9 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                 ...body,
                 context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
             };
+            const phaseStartedAt = Date.now();
+            const phaseData = taskDispatchPhaseData(run, childTask, settings, attempt);
+            await recordAgentRunPhase(run.id, executionId, "started", phaseData, phaseStartedAt);
             try {
                 const payload = await createAgentGenerationTask({
                     type: task.type,
@@ -1035,11 +1154,12 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                     idempotencyKey: bodyForCopy.context.clientRequestId,
                 });
                 const createdTaskId = payload.task?.id;
-                if (!createdTaskId) throw new AgentChildTaskDispatchError("生成任务未返回任务 ID");
+                if (!createdTaskId) throw new GenerationApplicationError("生成任务未返回任务 ID", 502, "unknown", "generation_task_id_missing");
                 taskId = createdTaskId;
+                await recordAgentRunPhase(run.id, executionId, "completed", phaseData, phaseStartedAt);
             } catch (error) {
-                if (error instanceof GenerationApplicationError && error.outcome === "unknown") throw new AgentChildTaskDeferredError(error.message);
-                throw new AgentChildTaskDispatchError(toSafeGenerationErrorMessage(error, "生成任务创建失败"));
+                await recordAgentRunPhase(run.id, executionId, isTimeoutDispatchFailure(error) ? "timeout" : "failed", phaseData, phaseStartedAt, error);
+                throw error;
             }
             await linkAgentChildTask(run, task, taskId, attempt);
             child = { ...agentGenerationSelection(childTask), id: taskId, status: "pending", attempt };

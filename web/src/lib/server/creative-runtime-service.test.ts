@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     getCreativeConversation: vi.fn(),
     getCreativeConversationsByIds: vi.fn(),
     registerCreativeAssets: vi.fn(),
+    writePersistentMediaBytes: vi.fn(),
     writePersistentMediaDataUrl: vi.fn(),
     deleteCreativeConversationAggregates: vi.fn(),
     deleteUserLocalMediaAssets: vi.fn(),
@@ -20,7 +21,10 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
     registerCreativeAssets: mocks.registerCreativeAssets,
     updateCreativeConversation: vi.fn(),
 }));
-vi.mock("@/lib/server/reference-asset-store", () => ({ writePersistentMediaDataUrl: mocks.writePersistentMediaDataUrl }));
+vi.mock("@/lib/server/reference-asset-store", () => ({
+    writePersistentMediaBytes: mocks.writePersistentMediaBytes,
+    writePersistentMediaDataUrl: mocks.writePersistentMediaDataUrl,
+}));
 vi.mock("@/lib/server/creative-entity-deletion-store", () => ({ deleteCreativeConversationAggregates: mocks.deleteCreativeConversationAggregates }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
@@ -34,6 +38,7 @@ describe("创作会话素材上传", () => {
     beforeEach(() => {
         mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", surface: "chat", status: "active" });
         mocks.getCreativeConversationsByIds.mockReset().mockResolvedValue([{ id: "conversation-one", userId: "user-one", surface: "chat", status: "active" }]);
+        mocks.writePersistentMediaBytes.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
         mocks.writePersistentMediaDataUrl.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
         mocks.deleteCreativeConversationAggregates.mockReset().mockResolvedValue({ deletedConversations: 1, deletedProjects: 0, mediaStorageKeys: ["permanent/one.png"] });
         mocks.deleteUserLocalMediaAssets.mockReset().mockResolvedValue({ deletedFiles: 1, deletedBytes: 4, blocked: [] });
@@ -55,19 +60,25 @@ describe("创作会话素材上传", () => {
     });
 
     it("stores image, video and audio as stable assets without persisting base64", async () => {
-        const asset = await uploadAssetForUser("user-one", "conversation-one", file("clip.mp4", "video/mp4"));
+        const bytes = new Uint8Array(4 * 1024 * 1024);
+        const upload = { name: "clip.mp4", type: "video/mp4", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer } as File;
+        mocks.writePersistentMediaBytes.mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: bytes.byteLength, mimeType: "video/mp4" });
 
-        expect(mocks.writePersistentMediaDataUrl).toHaveBeenCalledWith(
-            expect.stringMatching(/^data:video\/mp4;base64,/),
+        const asset = await uploadAssetForUser("user-one", "conversation-one", upload);
+
+        expect(mocks.writePersistentMediaBytes).toHaveBeenCalledWith(
+            expect.objectContaining({ byteLength: bytes.byteLength }),
+            "video/mp4",
             "video",
             expect.objectContaining({ ownerUserId: "user-one", conversationId: "conversation-one", originalName: "clip.mp4", maxBytes: 20 * 1024 * 1024 }),
         );
+        expect(mocks.writePersistentMediaDataUrl).not.toHaveBeenCalled();
         expect(asset).toMatchObject({ id: "asset-one", type: "video", serverUrl: "/api/reference-assets/persistent-one.mp4", storageKey: "persistent-one.mp4" });
         expect(JSON.stringify(mocks.registerCreativeAssets.mock.calls[0][0])).not.toContain("base64");
     });
 
     it("keeps the internal storage key while marking object-backed uploads", async () => {
-        mocks.writePersistentMediaDataUrl.mockResolvedValue({ token: "permanent/object.png", storage: "object", bytes: 4, mimeType: "image/png" });
+        mocks.writePersistentMediaBytes.mockResolvedValue({ token: "permanent/object.png", storage: "object", bytes: 4, mimeType: "image/png" });
 
         const asset = await uploadAssetForUser("user-one", "conversation-one", file("image.png", "image/png"));
 

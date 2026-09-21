@@ -48,6 +48,19 @@ export function resolveVideoDuration(value: unknown, fallback: number) {
     return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
+export function resolveSeedanceVideoEditParameters<TRatio, TDuration>(input: {
+    model: unknown;
+    ratio: TRatio;
+    duration: TDuration;
+    references: readonly Pick<VideoGenerationReference, "type" | "url" | "role">[];
+}): { ratio: TRatio | "adaptive"; duration: TDuration | -1 } {
+    return isSeedanceVideoEdit(input.model, input.references) ? { ratio: "adaptive", duration: -1 } : { ratio: input.ratio, duration: input.duration };
+}
+
+export function isSeedanceVideoEdit(model: unknown, references: readonly Pick<VideoGenerationReference, "type" | "url" | "role">[]) {
+    return /seedance\s*[-_.]?\s*2\s*[-_.]?\s*5(?!\d)/i.test(text(model)) && references.some((reference) => reference.type === "video");
+}
+
 export function withVideoReferenceFidelity(prompt: string, references: readonly VideoGenerationReference[]) {
     const source = prompt.trim();
     const hasFirstFrame = references.some((reference) => reference.role === "first_frame");

@@ -3,6 +3,7 @@ import { typedReferenceAliases } from "@/lib/creative-asset-references";
 import { closestImageAspectRatio, normalizeImageSizeValue, parseImageDimensions } from "@/lib/image-size";
 import type { AgentRun, AgentRunReference, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
+import { resolveSeedanceVideoEditParameters } from "@/lib/server/video-task-config";
 
 import { selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 import { agentCanvasOutputNodeIds, agentCanvasTaskNodeId } from "./agent-run-canvas-node-ids";
@@ -199,11 +200,13 @@ export function normalizeCanvasPlanForSelection(plan: AgentPlan, snapshot: unkno
 }
 
 export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, settings: AuthSettings) {
-    if (run.surface !== "canvas")
-        return {
+    if (run.surface !== "canvas") {
+        const retry = {
             ...task,
             ratio: resolveAgentTaskRatio({ type: task.type, requestedImageSize: run.requestedImageSize, configuredImageSize: agentSurfaceImageSize(run.surface, run.snapshot), plannedRatio: task.ratio, globalSize: settings.generationDefaults.imageSize }),
         };
+        return withSeedanceVideoEditRetryParameters(retry);
+    }
     const nodes = canvasSnapshotNodes(run.snapshot);
     const selected = new Set(selectedCanvasNodeIds(run.snapshot).filter((id) => nodes.has(id)));
     const targetNodeId = resolveCanvasTaskTargetNodeId(task.targetNodeId, task.type, selected, nodes);
@@ -216,7 +219,7 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
           : task.references;
     const primaryReference = references?.[0];
     const context = [target ? `基于画布已有节点进行局部修改：${target.summary}` : "", selectedReferences.length ? `使用本轮画布引用：\n${canvasReferenceContext(selectedReferences)}` : ""].filter(Boolean).join("\n\n");
-    return {
+    return withSeedanceVideoEditRetryParameters({
         ...task,
         targetNodeId: target ? targetNodeId : task.targetNodeId,
         referenceUrl: primaryReference?.url || task.referenceUrl,
@@ -231,7 +234,14 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
             reference: target || selectedReferences.find((reference) => reference.type === "image"),
         }),
         prompt: context && !task.prompt.includes(context) ? `${task.prompt}\n\n${context}` : task.prompt,
-    };
+    });
+}
+
+function withSeedanceVideoEditRetryParameters(task: AgentRunTask): AgentRunTask {
+    if (task.type !== "video") return task;
+    const references = task.references?.length ? task.references : task.referenceType && task.referenceUrl ? [{ type: task.referenceType, url: task.referenceUrl }] : [];
+    const parameters = resolveSeedanceVideoEditParameters({ model: task.model, ratio: task.ratio, duration: task.seconds, references });
+    return { ...task, ratio: parameters.ratio, seconds: parameters.duration };
 }
 
 export function failedAgentTaskRetryOps(run: AgentRun, task: AgentRunTask) {

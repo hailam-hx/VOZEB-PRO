@@ -19,6 +19,7 @@ export class GenerationApplicationError extends Error {
         message: string,
         readonly status: number,
         readonly outcome: "rejected" | "unknown" = "rejected",
+        readonly errorCode?: string,
     ) {
         super(message);
     }
@@ -47,11 +48,11 @@ export async function createAgentGenerationTask(input: { type: GenerationType; o
         await markDurableAgentToolCall(call.id, "unknown", message);
         throw new GenerationApplicationError(message, 503, "unknown");
     }
-    const payload = (await response.json().catch(() => ({}))) as TaskPayload & { error?: string };
+    const payload = (await response.json().catch(() => ({}))) as TaskPayload & { error?: string; errorCode?: string };
     if (!response.ok) {
         const message = payload.error || "生成任务创建失败";
         await markDurableAgentToolCall(call.id, "failed", message);
-        throw new GenerationApplicationError(message, response.status);
+        throw new GenerationApplicationError(message, response.status, "rejected", payload.errorCode);
     }
     const generationTaskId = payload.task?.id;
     if (!generationTaskId) {
@@ -65,8 +66,8 @@ export async function createAgentGenerationTask(input: { type: GenerationType; o
 export async function readAgentGenerationTask(input: { type: GenerationType; taskId: string; origin: string; headers: HeadersInit }) {
     const request = new Request(`${input.origin}${readPath(input.type, input.taskId)}`, { headers: input.headers });
     const response = await readHandler(input.type)(request, { params: Promise.resolve({ id: input.taskId }) });
-    const payload = (await response.json().catch(() => ({}))) as TaskPayload & { error?: string };
-    if (!response.ok) throw new GenerationApplicationError(payload.error || "生成任务查询失败", response.status, response.status >= 500 ? "unknown" : "rejected");
+    const payload = (await response.json().catch(() => ({}))) as TaskPayload & { error?: string; errorCode?: string };
+    if (!response.ok) throw new GenerationApplicationError(payload.error || "生成任务查询失败", response.status, response.status >= 500 ? "unknown" : "rejected", payload.errorCode);
     return payload;
 }
 

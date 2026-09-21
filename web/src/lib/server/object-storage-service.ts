@@ -19,6 +19,7 @@ const PREVIEW_MARKER = ".vozeb-preview";
 const IMAGE_PREVIEW_READ_URL_TTL_SECONDS = 120;
 const IMAGE_ORIGINAL_READ_URL_TTL_SECONDS = 600;
 const STREAMING_MEDIA_READ_URL_TTL_SECONDS = 3600;
+const PROVIDER_MEDIA_READ_URL_TTL_SECONDS = 3600;
 
 type ExternalMediaWriteInput = {
     registration: Omit<LocalMediaRegistration, "createdAt" | "storageProvider" | "externalStorageId" | "externalObjectKey" | "externalSyncedAt"> & { createdAt?: string };
@@ -60,6 +61,19 @@ export async function createExternalMediaReadUrl(request: Request, registration:
         contentType: registration.mimeType || undefined,
         contentDisposition: mediaContentDisposition(download ? "attachment" : "inline", registration.originalName || basename(registration.storageKey), registration.mimeType, download ? registration.storageKey : ""),
         expiresIn: registration.type === "video" || registration.type === "audio" ? STREAMING_MEDIA_READ_URL_TTL_SECONDS : IMAGE_ORIGINAL_READ_URL_TTL_SECONDS,
+    });
+}
+
+export async function createExternalProviderMediaReadUrl(registration: LocalMediaRegistration) {
+    if (registration.storageProvider !== "object" || !registration.externalObjectKey) return null;
+    if (registration.expiresAt && Date.parse(registration.expiresAt) <= Date.now()) return null;
+    const config = await getObjectStorageRuntimeConfig();
+    assertRegistrationConfig(config, registration);
+    return signObjectRead(config, {
+        key: registration.externalObjectKey,
+        contentType: registration.mimeType || undefined,
+        contentDisposition: mediaContentDisposition("inline", registration.originalName || basename(registration.storageKey), registration.mimeType),
+        expiresIn: PROVIDER_MEDIA_READ_URL_TTL_SECONDS,
     });
 }
 

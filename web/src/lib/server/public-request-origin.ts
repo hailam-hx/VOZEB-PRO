@@ -1,6 +1,6 @@
 import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
 
-export function resolvePublicRequestOrigin(request: Request, configuredValue = process.env.NEXT_PUBLIC_SITE_URL || "") {
+export function resolvePublicRequestOrigin(request: Request, configuredValue = process.env.VOZEB_PRO_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_SITE_URL || "") {
     const configured = normalizeWebOrigin(configuredValue);
     const requested = requestOrigin(request);
 

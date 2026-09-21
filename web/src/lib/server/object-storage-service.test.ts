@@ -45,7 +45,15 @@ vi.mock("@/lib/server/local-media-registry", () => ({
 }));
 vi.mock("@/lib/server/local-media-references", () => ({ countLocalMediaReferences: mocks.references }));
 
-import { createExternalMediaReadUrl, createExternalStorageImagePreviewUrl, deleteExternalStorageFiles, listExternalStorageFiles, migrateLocalMediaToObjectStorage, persistExternalMediaIfEnabled } from "./object-storage-service";
+import {
+    createExternalMediaReadUrl,
+    createExternalProviderMediaReadUrl,
+    createExternalStorageImagePreviewUrl,
+    deleteExternalStorageFiles,
+    listExternalStorageFiles,
+    migrateLocalMediaToObjectStorage,
+    persistExternalMediaIfEnabled,
+} from "./object-storage-service";
 
 const config = {
     id: "default" as const,
@@ -118,6 +126,14 @@ describe("object storage media service", () => {
         expect(url).toBe("https://oss.example.com/signed");
         expect(mocks.signRead).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }), expect.objectContaining({ key: objectRegistration.externalObjectKey, contentDisposition: expect.stringContaining("attachment"), expiresIn: 600 }));
         expect(mocks.signRead).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ contentDisposition: expect.stringContaining(".png") }));
+    });
+
+    it("signs provider reads long enough for submission and retry", async () => {
+        const objectRegistration = { ...registration, storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "vozeb-pro/media/reference/file.png" };
+
+        await createExternalProviderMediaReadUrl(objectRegistration);
+
+        expect(mocks.signRead).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ key: objectRegistration.externalObjectKey, expiresIn: 3600 }));
     });
 
     it("uses a bounded WebP object variant for image previews", async () => {

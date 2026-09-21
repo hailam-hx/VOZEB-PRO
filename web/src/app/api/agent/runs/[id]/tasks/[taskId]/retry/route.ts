@@ -4,6 +4,7 @@ import { readJsonBodyResult } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings } from "@/lib/auth/store";
 import { getAgentRun, updateAgentRunById } from "@/lib/server/agent-run-store";
+import { resetAgentTaskClaimsForRetry } from "@/lib/server/agent-runtime-repository";
 import { failedAgentTaskRetryOps, prepareFailedAgentTaskRetry } from "@/lib/server/agent-run-task-input";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
@@ -67,9 +68,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (result === null) return NextResponse.json({ code: 429, data: null, msg: `当前最多同时运行 ${limit} 个 Agent 任务` }, { status: 429 });
     const { updated } = result;
     if (!updated) return NextResponse.json({ code: 404, data: null, msg: "Agent 任务不存在" }, { status: 404 });
+    await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "task_retry" });
+    await resetAgentTaskClaimsForRetry(updated.id, requestedTaskIds).catch((error) =>
+        console.warn("Agent manual retry lease reset deferred", { runId: updated.id, taskIds: requestedTaskIds, error: error instanceof Error ? error.message : String(error) }),
+    );
     const origin = resolveInternalOrigin(new URL(request.url).origin);
     const cookie = request.headers.get("cookie") || "";
-    await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "task_retry" });
     after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id] }));
     return NextResponse.json({ code: 0, data: { run: publicAgentRun(updated) }, msg: "OK" });
 }

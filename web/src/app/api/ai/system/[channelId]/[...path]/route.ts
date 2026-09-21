@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { getAuthSettings, isAuthInputError, isQuotaExceededError, type ApiCallFormat, type GenerationPointMultipliers, type PointUsageKind } from "@/lib/auth/store";
+import { getAuthSettings, isAuthInputError, isQuotaExceededError, type ApiCallFormat, type GenerationPointMultipliers, type LogicalModelGenerationParameters, type PointUsageKind } from "@/lib/auth/store";
 import { getCurrentUser } from "@/lib/auth/session";
 import { DEFAULT_CHANNEL_CONNECT_ERROR } from "@/lib/server/generation-errors";
 import { UnsupportedMediaContentError } from "@/lib/server/media-content-validation";
@@ -25,6 +25,7 @@ import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-me
 import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
 import { meteredTextResponseBody } from "@/lib/server/system-ai-metered-text-stream";
+import { sanitizeDiagnosticText } from "@/lib/server/system-ai-diagnostics";
 import { deriveProxyBillableUsage, normalizeProxyBillableRequest } from "@/lib/server/usage-billing-adapter";
 import { attachUsageProviderEvidence, finishUsageProviderAttempt, recordUsageProviderAttempt, reserveUsageBilling, reuseExistingUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
 import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
@@ -46,6 +47,7 @@ type PointsRequest = { model: string; amount: number; usageKind: PointUsageKind 
 type ProxyRequestBody = { body?: BodyInit; pointsPayload?: ArrayBuffer | Record<string, unknown>; bodyDigest: string };
 const MAX_PROXY_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_PROXY_MULTIPART_BYTES = 25 * 1024 * 1024;
+const MAX_UPSTREAM_DIAGNOSTIC_BODY_CHARS = 64 * 1024;
 const SYSTEM_MEDIA_TIMEOUT_MS = 30 * 1000;
 const MAX_SYSTEM_MEDIA_REDIRECTS = 4;
 
@@ -200,10 +202,16 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             usageBilling = await reuseExistingUsageBilling({ userId, businessId: usageContext.businessRequestId, requestFingerprint: usageContext.requestFingerprint });
             if (!usageBilling) {
                 if (!logicalModel.saleRateCard) return NextResponse.json({ error: "逻辑模型缺少完整售卖价格快照" }, { status: 400 });
-                const inputLimits = capabilityProfile
-                    ? { maxInputTokens: capabilityProfile.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined, maxOutputTokens: capabilityProfile.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined }
-                    : undefined;
                 const billablePayload = await voiceCloneBillablePayload(userId, binding.generationParameters?.audioOperation, readRequestBody(contentType, requestBody.pointsPayload));
+                const maxDurationSeconds = inheritedVideoBillingDuration(access.capability, billablePayload, binding.generationParameters);
+                const inputLimits =
+                    capabilityProfile || maxDurationSeconds
+                        ? {
+                              maxInputTokens: capabilityProfile?.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined,
+                              maxOutputTokens: capabilityProfile?.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined,
+                              maxDurationSeconds,
+                          }
+                        : undefined;
                 const requestUsage = normalizeProxyBillableRequest({ capability: access.capability, payload: billablePayload, rateCard: logicalModel.saleRateCard, inputLimits });
                 usageBilling = await reserveUsageBilling({
                     userId,
@@ -258,12 +266,13 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             return NextResponse.json({ error: error instanceof Error ? error.message : "用量预留失败" }, { status: 400 });
         }
     }
+    const outboundBody = dflopSeedanceVideoEditBody({ target, capability: access.capability, upstreamModel, contentType, body: globalAdaptation?.body || requestBody.body, payload: requestBody.pointsPayload });
     let upstream: Response;
     try {
         upstream = await fetchSafeOutbound(target, {
             method: request.method,
             headers,
-            body: globalAdaptation?.body || requestBody.body,
+            body: outboundBody,
             cache: "no-store",
             redirect: "manual",
             signal: request.signal,
@@ -272,6 +281,25 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         if (usageBilling && usageContext) await finishUsageProviderAttempt({ billing: usageBilling, attemptNumber: usageContext.attemptNumber, status: "failed" });
         console.error("System API proxy request failed", error instanceof Error ? error.message : error);
         return NextResponse.json({ error: DEFAULT_CHANNEL_CONNECT_ERROR }, { status: 502, headers: responseHeaders(new Headers()) });
+    }
+
+    if (!upstream.ok) {
+        const upstreamResponseBody = await upstream
+            .clone()
+            .text()
+            .then(sanitizeDiagnosticResponseBody)
+            .catch(() => "<unavailable>");
+        console.error("System API upstream non-2xx", {
+            provider: modelConfig?.protocol || channel.advancedConfig?.protocol || apiFormat,
+            channelId: channel.id,
+            model: upstreamModel,
+            endpoint: sanitizeDiagnosticText(target),
+            requestPayload: await sanitizeDiagnosticRequestPayload(outboundBody, contentType).catch(() => "<unavailable>"),
+            status: upstream.status,
+            upstreamResponseBody,
+            taskId: cleanDiagnosticHeader(request.headers.get("x-vozeb-pro-generation-task-id")) || usageRecoveryIdentity(usageContext?.businessRequestId || "")?.taskId,
+            agentRunId: cleanDiagnosticHeader(request.headers.get("x-vozeb-pro-agent-run-id")),
+        });
     }
 
     if (!upstream.ok && usageBilling && usageContext) {
@@ -713,6 +741,80 @@ function referenceAssetStorageKey(value: unknown) {
     } catch {
         return "";
     }
+}
+
+function inheritedVideoBillingDuration(capability: string, payload: Record<string, unknown>, parameters: LogicalModelGenerationParameters | undefined) {
+    if (capability !== "video" || !parameters) return undefined;
+    const nested = payload.parameters && typeof payload.parameters === "object" && !Array.isArray(payload.parameters) ? (payload.parameters as Record<string, unknown>) : {};
+    const requested = payload.duration ?? payload.duration_seconds ?? payload.durationSeconds ?? payload.seconds ?? payload.videoSeconds ?? nested.durationSeconds ?? nested.duration_seconds ?? nested.duration ?? nested.seconds ?? nested.videoSeconds;
+    if (Number(requested) !== -1) return undefined;
+    const candidates = [...parameters.durationSeconds, parameters.durationRange?.max, parameters.customDurationRange?.max].filter((value): value is number => Number.isFinite(value) && Number(value) > 0);
+    return candidates.length ? String(Math.max(...candidates)) : undefined;
+}
+
+function dflopSeedanceVideoEditBody(input: { target: string; capability: string; upstreamModel: string; contentType: string | null; body?: BodyInit; payload?: ArrayBuffer | Record<string, unknown> }) {
+    if (input.capability !== "video" || !sameModel(input.upstreamModel, "doubao-seedance-2.5") || !input.contentType?.toLowerCase().includes("application/json")) return input.body;
+    try {
+        if (new URL(input.target).hostname.toLowerCase() !== "api.dflop.top") return input.body;
+    } catch {
+        return input.body;
+    }
+    const payload = readRequestBody(input.contentType, input.payload);
+    const referenceVideo = Array.isArray(payload.content)
+        ? payload.content.some((item) => item && typeof item === "object" && !Array.isArray(item) && (item as Record<string, unknown>).type === "video_url" && (item as Record<string, unknown>).role === "reference_video")
+        : false;
+    if (!referenceVideo || payload.ratio !== "adaptive" || Number(payload.duration) !== -1) return input.body;
+    const outbound = { ...payload };
+    delete outbound.duration;
+    const encoded = new TextEncoder().encode(JSON.stringify(outbound));
+    return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
+}
+
+async function sanitizeDiagnosticRequestPayload(body: BodyInit | undefined, contentType: string | null) {
+    if (!body) return undefined;
+    if (!contentType?.toLowerCase().includes("application/json")) return { contentType: contentType || "unknown", body: "<non-json>" };
+    const text = await bodyText(body);
+    if (!text) return "<unavailable>";
+    try {
+        return sanitizeDiagnosticValue(JSON.parse(text));
+    } catch {
+        return sanitizeDiagnosticText(text);
+    }
+}
+
+function sanitizeDiagnosticResponseBody(value: string) {
+    const bounded = value.slice(0, MAX_UPSTREAM_DIAGNOSTIC_BODY_CHARS);
+    try {
+        return JSON.stringify(sanitizeDiagnosticValue(JSON.parse(bounded)));
+    } catch {
+        return sanitizeDiagnosticText(bounded);
+    }
+}
+
+function sanitizeDiagnosticValue(value: unknown, depth = 0): unknown {
+    if (depth > 12) return "<max-depth>";
+    if (Array.isArray(value)) return value.map((item) => sanitizeDiagnosticValue(item, depth + 1));
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, isSensitiveDiagnosticKey(key) ? "<redacted>" : sanitizeDiagnosticValue(item, depth + 1)]));
+    }
+    return typeof value === "string" ? sanitizeDiagnosticText(value) : value;
+}
+
+function isSensitiveDiagnosticKey(key: string) {
+    return /(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|cookie|signature|credential)/i.test(key);
+}
+
+async function bodyText(body: BodyInit) {
+    if (typeof body === "string") return body;
+    if (body instanceof URLSearchParams) return body.toString();
+    if (body instanceof ArrayBuffer) return new TextDecoder().decode(body);
+    if (ArrayBuffer.isView(body)) return new TextDecoder().decode(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+    if (typeof Blob !== "undefined" && body instanceof Blob) return body.text();
+    return "";
+}
+
+function cleanDiagnosticHeader(value: string | null) {
+    return (value || "").trim().slice(0, 200) || undefined;
 }
 
 function readMultipartFields(text: string): Record<string, string> {

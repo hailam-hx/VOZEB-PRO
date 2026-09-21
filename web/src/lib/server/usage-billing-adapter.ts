@@ -7,7 +7,7 @@ type ProxyUsageInput = {
     capability: BillableCapability;
     payload: unknown;
     rateCard: PricingRateCardV1;
-    inputLimits?: { maxInputTokens?: string; maxOutputTokens?: string };
+    inputLimits?: { maxInputTokens?: string; maxOutputTokens?: string; maxDurationSeconds?: string };
 };
 
 export function normalizeProxyBillableRequest(input: ProxyUsageInput): NormalizedUsage {
@@ -47,18 +47,19 @@ export function normalizeProxyBillableRequest(input: ProxyUsageInput): Normalize
             megapixels: megapixels(resolution, count),
             quality,
             resolution,
-            durationSeconds: positiveDecimalText(
-                payload.duration ??
-                    payload.duration_seconds ??
-                    payload.durationSeconds ??
-                    payload.seconds ??
-                    payload.videoSeconds ??
-                    parameters.durationSeconds ??
-                    parameters.duration_seconds ??
-                    parameters.duration ??
-                    parameters.seconds ??
-                    parameters.videoSeconds,
-            ),
+            durationSeconds:
+                positiveDecimalText(
+                    payload.duration ??
+                        payload.duration_seconds ??
+                        payload.durationSeconds ??
+                        payload.seconds ??
+                        payload.videoSeconds ??
+                        parameters.durationSeconds ??
+                        parameters.duration_seconds ??
+                        parameters.duration ??
+                        parameters.seconds ??
+                        parameters.videoSeconds,
+                ) || positiveDecimalText(input.inputLimits?.maxDurationSeconds),
             format: firstText(payload.response_format, payload.format, payload.output_format, parameters.response_format, parameters.format, parameters.output_format),
         });
     }

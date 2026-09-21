@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     writeVideoGenerationLog: vi.fn(),
     scheduleGenerationTask: vi.fn(),
     finalizeUsageBillingForBusiness: vi.fn(),
+    resolveProviderReferenceUrls: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, _limit, handler) => handler()),
 }));
 
@@ -32,6 +33,7 @@ vi.mock("@/lib/auth/store", () => {
     return { AuthInputError, getAuthSettings: mocks.getAuthSettings, isAuthInputError: (error: unknown) => error instanceof AuthInputError, refundUserPoints: vi.fn() };
 });
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi, resolveInternalOrigin: vi.fn(() => "http://localhost") }));
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: vi.fn() }));
 vi.mock("@/lib/server/generation-task-store", () => ({
     withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit,
     linkStoredGenerationTask: mocks.linkStoredGenerationTask,
@@ -55,6 +57,8 @@ vi.mock("@/lib/server/video-task-store", () => ({
     transitionVideoTask: mocks.transitionVideoTask,
     updateVideoTask: mocks.updateVideoTask,
 }));
+vi.mock("@/lib/server/object-storage-service", () => ({}));
+vi.mock("@/lib/server/provider-reference-url", () => ({ resolveProviderReferenceUrls: mocks.resolveProviderReferenceUrls }));
 
 import { POST } from "./route";
 import { createUpstream } from "./video-generation-route";
@@ -101,6 +105,34 @@ describe("video generation candidate failover", () => {
         mocks.getVideoTask.mockImplementation(async () => storedTask);
         mocks.claimVideoTaskPoll.mockImplementation(async () => storedTask);
         mocks.after.mockImplementation(() => undefined);
+        mocks.resolveProviderReferenceUrls.mockImplementation(async (references) => references);
+    });
+
+    it("resolves provider-facing reference URLs and propagates task diagnostics without changing video parameters", async () => {
+        mocks.getAuthSettings.mockResolvedValue(publicUrlCompatibleSettings());
+        mocks.resolveProviderReferenceUrls.mockResolvedValue([{ type: "image", url: "https://objects.example.com/reference.png?X-Amz-Signature=secret" }]);
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "provider-task", status: "queued" }));
+
+        const response = await POST(request({ model: "video", size: "9:16", vquality: "480", videoSeconds: 6 }, [{ type: "image", url: "/api/reference-assets/permanent/reference.png" }], { runId: "agent-run-one" }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.resolveProviderReferenceUrls).toHaveBeenCalledWith([expect.objectContaining({ url: "/api/reference-assets/permanent/reference.png" })], "http://localhost", "user");
+        const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
+        const headers = new Headers(init.headers);
+        expect(headers.get("x-vozeb-pro-generation-task-id")).toBe("local-task");
+        expect(headers.get("x-vozeb-pro-agent-run-id")).toBe("agent-run-one");
+        expect(JSON.parse(String(init.body))).toMatchObject({ duration: 6, ratio: "9:16", image: "https://objects.example.com/reference.png?X-Amz-Signature=secret" });
+    });
+
+    it("returns a stable error code when reference URL validation rejects before task creation", async () => {
+        mocks.resolveProviderReferenceUrls.mockRejectedValue(Object.assign(new Error("参考素材必须使用上游可访问的公网 URL"), { code: "reference_url_not_public" }));
+
+        const response = await POST(request({ model: "video", size: "9:16", vquality: "480", videoSeconds: 6 }, [{ type: "image", url: "http://localhost/reference.png" }]));
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining("公网 URL"), errorCode: "reference_url_not_public" });
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.finalizeUsageBillingForBusiness).not.toHaveBeenCalled();
     });
 
     it("omits unresolved Auto video fields instead of injecting provider values", async () => {
@@ -120,6 +152,19 @@ describe("video generation candidate failover", () => {
 
         const body = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit | undefined)?.body));
         expect(body).toEqual({ model: "video-one", prompt: "A test video" });
+    });
+
+    it("submits Seedance 2.5 video edits with adaptive ratio and inherited duration", async () => {
+        mocks.getAuthSettings.mockResolvedValue(yumengSettings("seedance-2.5-c1"));
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "seedance-edit-task", status: "queued" }));
+
+        const response = await POST(request({ model: "seedance-2.5-c1", size: "21:9", vquality: "720", videoSeconds: 5 }, [{ type: "video", url: "https://cdn.example.com/reference.mp4" }]));
+
+        const body = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit | undefined)?.body));
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({ duration: -1, aspect_ratio: "adaptive" });
+        expect(JSON.stringify(body)).not.toContain("7:3");
+        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ size: "adaptive", videoSeconds: -1 }), requestedDurationSeconds: undefined }));
     });
 
     it("keeps 2K resolution canonical in a custom provider request", async () => {
@@ -210,6 +255,7 @@ describe("video generation candidate failover", () => {
         expect(response.status).toBe(502);
         expect((await response.json()).error).toBe("登录验证失败");
         expect(mocks.createVideoTask).toHaveBeenCalledOnce();
+        expect(mocks.finalizeUsageBillingForBusiness).toHaveBeenCalledWith({ userId: "user", businessId: "video-task:local-task" });
     });
 
     it("enqueues a GlobalAiOpc task for the recovery worker after creation", async () => {
@@ -1071,8 +1117,7 @@ function publicUrlCompatibleSettings() {
     };
 }
 
-function yumengSettings() {
-    const model = "sd_2.0_fast_special";
+function yumengSettings(model = "sd_2.0_fast_special") {
     const operation = {
         capability: "video" as const,
         source: "official" as const,
@@ -1111,7 +1156,7 @@ function yumengSettings() {
                 name: model,
                 capability: "video" as const,
                 enabled: true,
-                bindings: [{ id: "yumeng-seedance", channelId: "yumeng", upstreamModel: model, enabled: true, priority: 1, generationParameters: videoGenerationParameters() }],
+                bindings: [{ id: "yumeng-seedance", channelId: "yumeng", upstreamModel: model, enabled: true, priority: 1, generationParameters: videoGenerationParameters({ aspectRatios: ["21:9", "16:9", "9:16", "1:1"] }) }],
             },
         ],
     };

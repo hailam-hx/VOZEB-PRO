@@ -225,6 +225,20 @@ export async function claimDueAgentTasks(input: { workerId: string; now?: number
     return withPostgresTransaction((client) => claimReadyAgentTasks(client, input));
 }
 
+export async function resetAgentTaskClaimsForRetry(runId: string, taskKeys: string[]) {
+    if (!shouldUsePostgresAgentRuntimeRepository()) return 0;
+    const keys = Array.from(new Set(taskKeys.map((value) => value.trim()).filter(Boolean)));
+    if (!keys.length) return 0;
+    await ensurePostgresSchema();
+    const result = await postgresQuery(
+        `UPDATE agent_tasks
+         SET lease_owner = NULL, lease_until = NULL, next_attempt_at = now(), updated_at = now()
+         WHERE run_id = $1 AND task_key = ANY($2::text[]) AND status = 'ready'`,
+        [runId, keys],
+    );
+    return result.rowCount || 0;
+}
+
 export async function deferAgentTask(runId: string, planVersion: number, taskKey: string, workerId: string, nextAttemptAt: number, error: string) {
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     getAgentRun: vi.fn(),
     updateAgentRunById: vi.fn(),
+    resetAgentTaskClaimsForRetry: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -16,6 +17,7 @@ vi.mock("next/server", async (importOriginal) => {
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user" })) }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, updateAgentRunById: mocks.updateAgentRunById }));
+vi.mock("@/lib/server/agent-runtime-repository", () => ({ resetAgentTaskClaimsForRetry: mocks.resetAgentTaskClaimsForRetry }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, limit, handler, excludeTaskId) => ((await mocks.countActive(excludeTaskId)) >= limit ? null : handler())) }));
@@ -26,6 +28,7 @@ import { POST } from "./route";
 describe("Agent child task retry concurrency", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.resetAgentTaskClaimsForRetry.mockResolvedValue(0);
         mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", conversationId: "conversation-one", status: "failed", tasks: [{ id: "task", status: "failed" }] });
         mocks.countActive.mockResolvedValue(1);
         mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 1 }, generationDefaults: { imageSize: "1:1" } });
@@ -99,7 +102,21 @@ describe("Agent child task retry concurrency", () => {
             expect.objectContaining({ id: "task-complete", status: "completed", result: "完成" }),
         ]);
         expect(mocks.updateAgentRunById.mock.calls[0]?.[2]).toMatchObject({ type: "task.retry.requested", data: { taskId: "task-one", taskIds: ["task-one", "task-two"] } });
+        expect(mocks.resetAgentTaskClaimsForRetry).toHaveBeenCalledWith("run", ["task-one", "task-two"]);
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledTimes(1);
+        expect(mocks.runGenerationTaskRecoveryBatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps an accepted manual retry scheduled when the old lease cannot be reset immediately", async () => {
+        mocks.countActive.mockResolvedValue(0);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...(await mocks.getAgentRun()), ...patch }));
+        mocks.resetAgentTaskClaimsForRetry.mockRejectedValueOnce(new Error("database unavailable"));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/tasks/task/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", taskId: "task" }) });
+
+        expect(response.status).toBe(200);
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created" }));
+        expect(mocks.scheduleGenerationTask.mock.invocationCallOrder[0]).toBeLessThan(mocks.resetAgentTaskClaimsForRetry.mock.invocationCallOrder[0]!);
         expect(mocks.runGenerationTaskRecoveryBatch).toHaveBeenCalledTimes(1);
     });
 
@@ -161,6 +178,40 @@ describe("Agent child task retry concurrency", () => {
         const tasks = mocks.updateAgentRunById.mock.calls[0]?.[1]?.tasks;
         expect(tasks).toEqual([expect.objectContaining({ id: "task", status: "ready", attempts: 3, taskId: undefined, taskIds: undefined, childTasks: undefined, childSlots: undefined, result: undefined, error: undefined })]);
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "task_retry" }));
+    });
+
+    it("repairs stale Seedance 2.5 video-edit parameters before retrying", async () => {
+        const run = {
+            id: "run",
+            userId: "user",
+            surface: "create",
+            status: "failed",
+            tasks: [
+                {
+                    id: "task",
+                    title: "编辑视频",
+                    type: "video",
+                    model: "doubao-seedance-2.5-pro",
+                    prompt: "把视频里的文字改成继续加油",
+                    count: 1,
+                    ratio: "9:16",
+                    seconds: 5,
+                    dependencies: [],
+                    references: [{ type: "video", url: "https://cdn.example.com/reference.mp4" }],
+                    status: "failed",
+                    attempts: 1,
+                    error: "ratio must be adaptive",
+                },
+            ],
+        };
+        mocks.countActive.mockResolvedValue(0);
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...run, ...patch }));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/tasks/task/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", taskId: "task" }) });
+
+        expect(response.status).toBe(200);
+        expect(mocks.updateAgentRunById.mock.calls[0]?.[1]?.tasks[0]).toMatchObject({ status: "ready", ratio: "adaptive", seconds: -1 });
     });
 
     it("repairs legacy canvas image references and invalid ratios before retrying", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeVideoAspectRatio, normalizeVideoSize, resolveBindingVideoDuration, resolveUpstreamVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "./video-task-config";
+import { normalizeVideoAspectRatio, normalizeVideoSize, resolveBindingVideoDuration, resolveSeedanceVideoEditParameters, resolveUpstreamVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "./video-task-config";
 
 describe("resolveVideoGenerationParameters", () => {
     const defaults = { imageSize: "9:16", videoQuality: "1080", videoSeconds: 10 };
@@ -82,5 +82,36 @@ describe("resolveVideoGenerationParameters", () => {
         expect(withVideoReferenceFidelity("生成海边日落", [])).toBe("生成海边日落");
         const once = withVideoReferenceFidelity("让镜头缓慢推进", [{ type: "video", url: "https://cdn.example.com/reference.mp4" }]);
         expect(withVideoReferenceFidelity(once, [{ type: "video", url: "https://cdn.example.com/reference.mp4" }])).toBe(once);
+    });
+
+    it("forces Seedance 2.5 video edits to inherit ratio and duration from the reference video", () => {
+        expect(
+            resolveSeedanceVideoEditParameters({
+                model: "doubao-seedance-2.5-pro",
+                ratio: "21:9",
+                duration: 5,
+                references: [{ type: "video", url: "https://cdn.example.com/reference.mp4" }],
+            }),
+        ).toEqual({ ratio: "adaptive", duration: -1 });
+    });
+
+    it("does not change text-to-video, image-to-video, or other video models", () => {
+        expect(resolveSeedanceVideoEditParameters({ model: "doubao-seedance-2.5-pro", ratio: "21:9", duration: 5, references: [] })).toEqual({ ratio: "21:9", duration: 5 });
+        expect(
+            resolveSeedanceVideoEditParameters({
+                model: "doubao-seedance-2.5-pro",
+                ratio: "9:16",
+                duration: 8,
+                references: [{ type: "image", url: "https://cdn.example.com/reference.png" }],
+            }),
+        ).toEqual({ ratio: "9:16", duration: 8 });
+        expect(
+            resolveSeedanceVideoEditParameters({
+                model: "video-one",
+                ratio: "16:9",
+                duration: 10,
+                references: [{ type: "video", url: "https://cdn.example.com/reference.mp4" }],
+            }),
+        ).toEqual({ ratio: "16:9", duration: 10 });
     });
 });

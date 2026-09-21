@@ -90,6 +90,22 @@ describe("usage billing protocol adapters", () => {
         ).toMatchObject({ durationSeconds: "5", resolution: "480p", quality: "480" });
     });
 
+    it("reserves an administrator-configured maximum for inherited video duration", () => {
+        const rateCard = {
+            version: 1 as const,
+            components: [{ id: "duration-480", dimension: "durationSeconds" as const, unitPrice: "0.1009", when: { quality: "480" } }],
+        };
+
+        expect(
+            normalizeProxyBillableRequest({
+                capability: "video",
+                payload: { duration: -1, ratio: "adaptive", resolution: "480p" },
+                rateCard,
+                inputLimits: { maxDurationSeconds: "30" },
+            }),
+        ).toMatchObject({ durationSeconds: "30", resolution: "480p", quality: "480" });
+    });
+
     it("accumulates streaming usage incrementally without retaining response chunks", () => {
         const requestUsage = normalizeProxyBillableRequest({ capability: "text", payload: { messages: [{ role: "user", content: "hello" }], max_tokens: 128 }, rateCard: textRate });
         const accumulator = createStreamingUsageAccumulator("text", requestUsage);
