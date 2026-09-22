@@ -1117,6 +1117,7 @@
         "failedGenerationCount": "{count} 项生成失败",
         "creationTaskFailed": "创作任务执行失败",
         "videoInputCopyrightRestricted": "输入视频可能涉及版权限制，请更换为您拥有使用权或自行拍摄的视频后重试。",
+        "videoReferenceDurationExceeded": "参考视频时长不能超过 30.2 秒，请裁剪视频后重试。",
         "generatedVideoForYou": "已为你生成视频",
         "generatedAudioForYou": "已为你生成音频",
         "generatedImageForYou": "已为你生成图片",

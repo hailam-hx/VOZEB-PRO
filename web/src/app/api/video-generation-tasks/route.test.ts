@@ -262,6 +262,34 @@ describe("video generation candidate failover", () => {
         );
     });
 
+    it("returns a stable public code for a Seedance reference-video duration rejection", async () => {
+        mocks.fetchInternalApi.mockResolvedValue(
+            json(
+                {
+                    error: {
+                        code: "InvalidParameter",
+                        message:
+                            "The parameter `content[1]` specified in the request is not valid: the parameter video duration (seconds) specified in the request must be less than or equal to 30.2 for model doubao-seedance-2-5 in r2v. Request id: duration-request-one",
+                        param: "content[1]",
+                        type: "BadRequest",
+                    },
+                },
+                400,
+            ),
+        );
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+            errorCode: "video_reference_duration_exceeded",
+            outcome: "rejected",
+            canRetry: false,
+        });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
+        expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(false);
+    });
+
     it("preserves transient provider status and unknown outcome for Agent retry", async () => {
         mocks.fetchInternalApi.mockResolvedValue(json({ error: "provider unavailable" }, 503));
 

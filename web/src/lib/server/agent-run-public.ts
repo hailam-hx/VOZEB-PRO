@@ -3,6 +3,7 @@ import { toSafeGenerationErrorMessage } from "./generation-errors";
 import type { AgentRun, AgentRunTask } from "./agent-run-store";
 import { isAppLocale } from "@/i18n/config";
 import { agentRunCopy } from "@/lib/agent-run-copy";
+import { classifyVideoProviderPublicError } from "@/lib/server/video-provider-response";
 
 export function publicAgentRun(run: AgentRun) {
     return {
@@ -53,11 +54,12 @@ export function publicAgentRunEvent(event: CreativeRunEvent): CreativeRunEvent {
     }
     if (event.type === "task.dispatch.failed") {
         const data = recordValue(event.data);
+        const errorCode = textValue(data.errorCode) || classifyVideoProviderPublicError({ message: textValue(data.error) });
         return {
             ...event,
             data: {
                 ...data,
-                ...(data.errorCode === "video_input_copyright_restricted" ? { error: "生成任务失败" } : {}),
+                ...(errorCode ? { error: "生成任务失败", errorCode } : {}),
             },
         };
     }
@@ -71,6 +73,7 @@ export function publicAgentRunEvent(event: CreativeRunEvent): CreativeRunEvent {
 
 function publicAgentRunTask(task: AgentRunTask) {
     const optimizedPrompt = task.optimizedPrompt?.trim() || publicPromptFromExecutionPrompt(task.prompt);
+    const errorCode = task.errorCode || (task.type === "video" && task.error ? classifyVideoProviderPublicError({ message: task.error }) : undefined);
     return {
         id: task.id,
         title: task.title,
@@ -88,8 +91,8 @@ function publicAgentRunTask(task: AgentRunTask) {
         count: task.count,
         status: task.status,
         ...(task.type === "text" ? { activeAttemptId: task.activeAttemptId, textRevision: task.textRevision, textStatus: task.textStatus, visibleTextSnapshot: task.visibleTextSnapshot } : {}),
-        error: task.error ? (task.errorCode === "video_input_copyright_restricted" ? "生成任务失败" : toSafeGenerationErrorMessage(task.error, "生成任务失败")) : undefined,
-        errorCode: task.errorCode,
+        error: task.error ? (errorCode ? "生成任务失败" : toSafeGenerationErrorMessage(task.error, "生成任务失败")) : undefined,
+        errorCode,
     };
 }
 

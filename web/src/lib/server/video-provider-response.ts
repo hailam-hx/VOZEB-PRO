@@ -15,6 +15,10 @@ export type VideoProviderFailureDiagnostic = {
     requestId?: string;
 };
 
+export const VIDEO_INPUT_COPYRIGHT_RESTRICTED = "video_input_copyright_restricted";
+export const VIDEO_REFERENCE_DURATION_EXCEEDED = "video_reference_duration_exceeded";
+const SEEDANCE_COPYRIGHT_POLICY_CODE = "InputVideoSensitiveContentDetected.PolicyViolation";
+
 export function parseVideoProviderJson(value: string) {
     try {
         return JSON.parse(value) as unknown;
@@ -47,6 +51,16 @@ export function readVideoProviderFailureDiagnostic(value: string, status: number
         const resolvedRequestId = requestId({}, {}, message);
         return { status, message, ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}) };
     }
+}
+
+export function classifyVideoProviderPublicError(input: Pick<VideoProviderFailureDiagnostic, "message"> & Partial<Pick<VideoProviderFailureDiagnostic, "code" | "param">>) {
+    if (input.code === SEEDANCE_COPYRIGHT_POLICY_CODE) return VIDEO_INPUT_COPYRIGHT_RESTRICTED;
+    const message = input.message || "";
+    const durationRejection =
+        (!input.code || input.code === "InvalidParameter") &&
+        (!input.param || input.param === "content[1]") &&
+        /content\[1\].*video duration \(seconds\).*less than or equal to 30\.2.*doubao-seedance-2-5.*r2v/i.test(message);
+    return durationRejection ? VIDEO_REFERENCE_DURATION_EXCEEDED : undefined;
 }
 
 export function readVideoProviderId(value: unknown) {

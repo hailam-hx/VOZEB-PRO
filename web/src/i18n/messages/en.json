@@ -1138,6 +1138,7 @@
         "failedGenerationCount": "{count} generation items failed",
         "creationTaskFailed": "Creation task failed",
         "videoInputCopyrightRestricted": "The input video may be restricted due to copyright. Please use a video you own or have permission to use.",
+        "videoReferenceDurationExceeded": "The reference video must be 30.2 seconds or shorter. Please trim the video and try again.",
         "generatedVideoForYou": "Your video is ready",
         "generatedAudioForYou": "Your audio is ready",
         "generatedImageForYou": "Your image is ready",

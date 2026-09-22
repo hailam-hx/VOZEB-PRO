@@ -824,6 +824,72 @@ describe("CreativeMessages", () => {
         expect(markup).not.toContain("copyright restrictions");
     });
 
+    it.each([
+        ["zh-CN", "参考视频时长不能超过 30.2 秒，请裁剪视频后重试。"],
+        ["vi", "Video tham chiếu không được dài quá 30,2 giây. Vui lòng cắt ngắn video rồi thử lại."],
+        ["en", "The reference video must be 30.2 seconds or shorter. Please trim the video and try again."],
+    ] as const)("maps a reference-video duration rejection to a safe public message in %s", (locale, expected) => {
+        const raw = "The parameter video duration must be less than or equal to 30.2. Request id: secret-duration-request";
+        const userMessage: CreativeMessage = {
+            id: "duration-user",
+            conversationId: "conversation-one",
+            runId: "duration-run",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "Edit this video",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const assistantMessage: CreativeMessage = {
+            id: "duration-assistant",
+            conversationId: "conversation-one",
+            runId: "duration-run",
+            sequence: 2,
+            role: "assistant",
+            status: "failed",
+            content: raw,
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[userMessage, assistantMessage]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "duration-run": {
+                            id: "duration-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: userMessage.id,
+                            assistantMessageId: assistantMessage.id,
+                            status: "failed",
+                            generationPreferences: { mode: "video" },
+                            assetIds: [],
+                            tasks: [{ id: "video-task", title: "Video", type: "video", status: "failed", error: raw, errorCode: "video_reference_duration_exceeded" }],
+                        } as never,
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+            locale,
+        );
+
+        expect(markup).toContain(expected);
+        expect(markup).not.toContain("secret-duration-request");
+        expect(markup).not.toContain("video duration");
+    });
+
     it("uses the same compact identity spacing for ordinary text messages", () => {
         const markup = renderMessages(
             {

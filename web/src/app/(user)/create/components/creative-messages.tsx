@@ -624,7 +624,12 @@ function assetsForAssistant(message: CreativeMessage, assetsByMessage: Map<strin
 
 function CreativeGenerationFailure({ errorCode, onRetry }: { message: string; errorCode?: string; onRetry: () => Promise<boolean | void> }) {
     const t = useTranslations("create");
-    const displayMessage = errorCode === "video_input_copyright_restricted" ? t("videoInputCopyrightRestricted") : t("creationTaskFailed");
+    const displayMessage =
+        errorCode === "video_input_copyright_restricted"
+            ? t("videoInputCopyrightRestricted")
+            : errorCode === "video_reference_duration_exceeded"
+              ? t("videoReferenceDurationExceeded")
+              : t("creationTaskFailed");
     const [retrying, setRetrying] = useState(false);
     return (
         <div data-testid="creative-generation-failure" className="max-w-[620px] py-1">

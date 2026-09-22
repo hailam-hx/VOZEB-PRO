@@ -141,6 +141,43 @@ describe("publicAgentRun", () => {
         expect(JSON.stringify(event)).not.toContain("private-request-id");
     });
 
+    it("derives a safe duration code for an already-persisted video rejection", () => {
+        const raw =
+            "The parameter `content[1]` specified in the request is not valid: the parameter video duration (seconds) specified in the request must be less than or equal to 30.2 for model doubao-seedance-2-5 in r2v. Request id: private-duration-request";
+        const run = publicAgentRun({
+            id: "duration-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "edit this video",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [
+                {
+                    id: "video",
+                    title: "Video",
+                    type: "video",
+                    prompt: "edit this video",
+                    count: 1,
+                    dependencies: [],
+                    status: "failed",
+                    attempts: 1,
+                    error: raw,
+                },
+            ],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+
+        expect(run.tasks[0]).toMatchObject({ errorCode: "video_reference_duration_exceeded", error: "生成任务失败" });
+        expect(JSON.stringify(run)).not.toContain("private-duration-request");
+    });
+
     it("removes review details and internal Canvas planning nodes from SSE events", () => {
         expect(publicAgentRunEvent({ id: "1", runId: "run", type: "run.review.needs_revision", data: { review: { summary: "secret" } }, createdAt: 1 }).data).toBeUndefined();
         const event = publicAgentRunEvent({

@@ -1141,6 +1141,7 @@
         "failedGenerationCount": "{count} mục tạo thất bại",
         "creationTaskFailed": "Thực thi tác vụ sáng tạo thất bại",
         "videoInputCopyrightRestricted": "Video đầu vào có thể bị giới hạn bản quyền. Vui lòng sử dụng video do bạn sở hữu hoặc có quyền sử dụng rồi thử lại.",
+        "videoReferenceDurationExceeded": "Video tham chiếu không được dài quá 30,2 giây. Vui lòng cắt ngắn video rồi thử lại.",
         "generatedVideoForYou": "Video đã được tạo cho bạn",
         "generatedAudioForYou": "Âm thanh đã được tạo cho bạn",
         "generatedImageForYou": "Hình ảnh đã được tạo cho bạn",

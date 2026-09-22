@@ -20,7 +20,7 @@ import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy"
 import { mediaTaskSource } from "@/lib/media-management-contract";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
-import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderFailureDiagnostic, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl, type VideoProviderFailureDiagnostic } from "@/lib/server/video-provider-response";
+import { VIDEO_PROVIDER_MEDIA_KEYS, classifyVideoProviderPublicError, parseVideoProviderJson, readVideoProviderFailureDiagnostic, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl, type VideoProviderFailureDiagnostic } from "@/lib/server/video-provider-response";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
 import { assertGeminiVideoReferences, buildGeminiVideoRequest, geminiVideoCreatePath, parseGeminiVideoCreateResponse } from "@/lib/server/gemini-video-provider";
@@ -657,9 +657,6 @@ function normalizePublicOrigin(value: string) {
 }
 const MEDIA_KEYS = VIDEO_PROVIDER_MEDIA_KEYS;
 const SAFE_CREATE_FAILURE_STATUSES = new Set([400, 401, 403, 404, 405, 413, 415, 422, 429]);
-const VIDEO_INPUT_COPYRIGHT_RESTRICTED = "video_input_copyright_restricted";
-const SEEDANCE_COPYRIGHT_POLICY_CODE = "InputVideoSensitiveContentDetected.PolicyViolation";
-
 class VideoSubmissionFailure extends Error {
     readonly status: number;
     readonly outcome: "rejected" | "unknown";
@@ -699,12 +696,13 @@ class SafeCandidateFailure extends VideoSubmissionFailure {
 }
 
 function providerHttpFailure(diagnostic: VideoProviderFailureDiagnostic) {
-    if (diagnostic.code === SEEDANCE_COPYRIGHT_POLICY_CODE) {
+    const publicErrorCode = classifyVideoProviderPublicError(diagnostic);
+    if (publicErrorCode) {
         return new VideoSubmissionFailure(diagnostic.message, {
             status: diagnostic.status,
             outcome: "rejected",
             retryable: false,
-            errorCode: VIDEO_INPUT_COPYRIGHT_RESTRICTED,
+            errorCode: publicErrorCode,
             providerError: diagnostic,
         });
     }
