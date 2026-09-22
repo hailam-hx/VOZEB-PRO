@@ -53,6 +53,7 @@ export type CreativeAgentRun = {
             count?: number;
             status: "ready" | "running" | "completed" | "failed" | "cancelled";
             error?: string;
+            errorCode?: string;
         }
     >;
     cancellation?: { pendingCount: number };

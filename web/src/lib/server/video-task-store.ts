@@ -4,6 +4,7 @@ import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenera
 import type { SystemGenerationChannelConfig } from "@/lib/server/generation-channel";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
+import type { VideoProviderFailureDiagnostic } from "@/lib/server/video-provider-response";
 
 export type VideoTaskStatus = "running" | "success" | "error" | "cancelled";
 
@@ -25,6 +26,8 @@ export type VideoTask = GenerationTaskContext & {
     polling?: { lastAttemptAt?: number; nextAttemptAt?: number };
     result?: { url?: string; remoteUrl?: string; mimeType?: string; durationMs?: number };
     error?: string;
+    errorCode?: string;
+    providerError?: VideoProviderFailureDiagnostic;
     retryable?: boolean;
 };
 
@@ -55,7 +58,7 @@ export function failReconciledVideoTask(id: string, error: string, retryable = f
 
 export function transitionVideoTask(
     task: VideoTask,
-    patch: Partial<Pick<VideoTask, "result" | "error" | "retryable" | "upstream">> & { status: "success" | "error" | "cancelled" },
+    patch: Partial<Pick<VideoTask, "result" | "error" | "errorCode" | "providerError" | "retryable" | "upstream">> & { status: "success" | "error" | "cancelled" },
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
 ) {
     return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS, executionPatch);

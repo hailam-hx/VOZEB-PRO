@@ -36,3 +36,37 @@ export async function readRequestBodyBytes(request: Request, maxBytes: number) {
 export async function readRequestBodyText(request: Request, maxBytes: number) {
     return new TextDecoder().decode(await readRequestBodyBytes(request, maxBytes));
 }
+
+export async function readRequestFormDataWithinLimit(request: Request, maxBytes: number) {
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new RequestBodyTooLargeError();
+    if (!request.body) return new FormData();
+
+    const reader = request.body.getReader();
+    let total = 0;
+    const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            try {
+                const { done, value } = await reader.read();
+                if (done) {
+                    controller.close();
+                    return;
+                }
+                total += value.byteLength;
+                if (total > maxBytes) {
+                    await reader.cancel().catch(() => undefined);
+                    controller.error(new RequestBodyTooLargeError());
+                    return;
+                }
+                controller.enqueue(value);
+            } catch (error) {
+                controller.error(error);
+            }
+        },
+        cancel(reason) {
+            return reader.cancel(reason);
+        },
+    });
+    const contentType = request.headers.get("content-type") || "";
+    return new Response(body, { headers: { "content-type": contentType } }).formData();
+}

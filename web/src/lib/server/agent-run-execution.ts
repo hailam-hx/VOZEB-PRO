@@ -950,11 +950,12 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
             return "deferred" as const;
         }
         const message = toSafeGenerationErrorMessage(error, "生成任务失败");
+        const errorCode = error instanceof GenerationApplicationError ? error.errorCode : undefined;
         if (await canContinue(runId, executionId)) {
             const latest = await getAgentRun(runId);
             const latestTask = latest?.tasks.find((item) => item.id === task.id);
             if (latestTask && !agentTaskHasSubmittedChild(latestTask) && isRetryableDispatchFailure(error)) {
-                await patchTask(runId, task.id, { attempts: Math.max(latestTask.attempts, attempt), error: message }, "task.dispatch.failed", executionId);
+                await patchTask(runId, task.id, { attempts: Math.max(latestTask.attempts, attempt), error: message, errorCode }, "task.dispatch.failed", executionId);
                 await updateAgentRunById(runId, { failureStage: "task_dispatch" }, undefined, ["running"], executionId);
                 if (usesPostgresAgentRuntime()) {
                     await deferAgentTask(runId, Math.max(1, latest?.planningCycle || 1), task.id, executionId, generationTaskNextPollAt({ consecutiveErrors: Math.max(1, latestTask.attempts) }), message);
@@ -962,7 +963,7 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
                 return "deferred" as const;
             }
             if (latestTask && !agentTaskHasSubmittedChild(latestTask) && error instanceof GenerationApplicationError) {
-                await patchTask(runId, task.id, { status: "failed", attempts: Math.max(latestTask.attempts, attempt), error: message }, "task.dispatch.failed", executionId);
+                await patchTask(runId, task.id, { status: "failed", attempts: Math.max(latestTask.attempts, attempt), error: message, errorCode }, "task.dispatch.failed", executionId);
                 await updateAgentRunById(runId, { failureStage: "task_dispatch" }, undefined, ["running"], executionId);
                 return "terminal_dispatch" as const;
             }

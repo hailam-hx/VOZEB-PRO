@@ -103,7 +103,7 @@ async function upsertAgentTask(client: QueryExecutor, runId: string, planId: str
             status,
             JSON.stringify(agentTaskInput(task)),
             JSON.stringify(task),
-            task.error ? JSON.stringify({ message: task.error }) : null,
+            task.error ? JSON.stringify({ message: task.error, ...(task.errorCode ? { code: task.errorCode } : {}) }) : null,
             task.attempts,
             status === "ready" ? now : null,
             now,

@@ -80,6 +80,7 @@ export type AgentRunTask = AgentRunGenerationSelection &
         assetIds?: string[];
         result?: unknown;
         error?: string;
+        errorCode?: string;
     };
 export type AgentRun = {
     id: string;
@@ -433,6 +434,7 @@ export async function updateAgentRunTaskById(id: string, taskId: string, patch: 
                         status: task.status,
                         attempts: task.attempts,
                         error: task.error,
+                        errorCode: task.errorCode,
                         completedCount: completedChildren,
                         failedCount: failedChildren,
                         totalCount: totalChildren,

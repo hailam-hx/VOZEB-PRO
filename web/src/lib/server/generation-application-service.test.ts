@@ -85,4 +85,17 @@ describe("generation application service", () => {
         expect(mocks.bind).not.toHaveBeenCalled();
         expect(mocks.mark).toHaveBeenCalledWith("tool-1", "failed", "reference URL is not public");
     });
+
+    it("preserves an explicit unknown outcome from the generation application", async () => {
+        mocks.createImage.mockResolvedValue(Response.json({ error: "provider unavailable", errorCode: "provider_unavailable", outcome: "unknown", canRetry: true }, { status: 503 }));
+
+        const promise = createAgentGenerationTask(input);
+
+        await expect(promise).rejects.toMatchObject({
+            message: "provider unavailable",
+            status: 503,
+            outcome: "unknown",
+            errorCode: "provider_unavailable",
+        });
+    });
 });

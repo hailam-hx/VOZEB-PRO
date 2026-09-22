@@ -206,6 +206,91 @@ describe("video generation candidate failover", () => {
         expect(submittingSchedules.every(([, , patch]) => patch.nextPollAt >= startedAt + 30 * 60_000)).toBe(true);
     });
 
+    it("stops candidate failover and preserves a Seedance copyright policy rejection", async () => {
+        mocks.fetchInternalApi.mockResolvedValue(
+            json(
+                {
+                    error: {
+                        code: "InputVideoSensitiveContentDetected.PolicyViolation",
+                        message: "The request failed because the input video 'content[1]' may be related to copyright restrictions. Request id: provider-request-one",
+                        param: "content[1]",
+                        type: "BadRequest",
+                    },
+                },
+                400,
+            ),
+        );
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+            errorCode: "video_input_copyright_restricted",
+            outcome: "rejected",
+            canRetry: false,
+        });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
+        expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(false);
+        expect(mocks.createVideoTask).toHaveBeenCalledOnce();
+        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ upstream: expect.objectContaining({ id: "" }) }));
+        expect(mocks.updateVideoTask).toHaveBeenCalledWith(
+            "local-task",
+            expect.objectContaining({ attempts: [expect.objectContaining({ attemptNo: 1, status: "failed" })] }),
+        );
+        expect(mocks.transitionVideoTask).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "local-task" }),
+            expect.objectContaining({
+                status: "error",
+                retryable: false,
+                errorCode: "video_input_copyright_restricted",
+                providerError: {
+                    status: 400,
+                    code: "InputVideoSensitiveContentDetected.PolicyViolation",
+                    message: expect.stringContaining("copyright restrictions"),
+                    param: "content[1]",
+                    type: "BadRequest",
+                    requestId: "provider-request-one",
+                },
+            }),
+        );
+        expect(mocks.finalizeUsageBillingForBusiness).toHaveBeenCalledOnce();
+        expect(mocks.finalizeUsageBillingForBusiness).toHaveBeenCalledWith({ userId: "user", businessId: "video-task:local-task" });
+        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith(
+            "video",
+            "local-task",
+            expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "create_failed" }),
+        );
+    });
+
+    it("preserves transient provider status and unknown outcome for Agent retry", async () => {
+        mocks.fetchInternalApi.mockResolvedValue(json({ error: "provider unavailable" }, 503));
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(503);
+        await expect(response.json()).resolves.toMatchObject({ outcome: "unknown", canRetry: true });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps HTTP 429 eligible for candidate failover", async () => {
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => (url.includes("/api/ai/system/one/") ? json({ error: "rate limited" }, 429) : json({ id: "upstream-two", status: "queued" })));
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(200);
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(2);
+    });
+
+    it("preserves an unknown transport outcome as retryable", async () => {
+        mocks.fetchInternalApi.mockRejectedValue(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }));
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(502);
+        await expect(response.json()).resolves.toMatchObject({ outcome: "unknown", canRetry: true });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
+    });
+
     it("returns the original idempotent task before checking concurrency", async () => {
         mocks.getStoredGenerationTaskByRequest.mockResolvedValueOnce({
             id: "existing-task",

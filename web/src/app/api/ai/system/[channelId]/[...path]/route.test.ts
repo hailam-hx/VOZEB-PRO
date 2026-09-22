@@ -1394,7 +1394,15 @@ describe("configured versioned protocol billing", () => {
                 },
             ],
         });
-        const upstreamBody = JSON.stringify({ error: { message: "invalid image format at https://objects.example.com/reference.png?X-Amz-Date=secret-date&X-Amz-Security-Token=secret-token", request_id: "provider-request-one" } });
+        const upstreamBody = JSON.stringify({
+            error: {
+                code: "InputVideoSensitiveContentDetected.PolicyViolation",
+                message: "invalid image format at https://objects.example.com/reference.png?X-Amz-Date=secret-date&X-Amz-Security-Token=secret-token",
+                param: "content[1]",
+                type: "BadRequest",
+                request_id: "provider-request-one",
+            },
+        });
         vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(upstreamBody, { status: 400, headers: { "content-type": "application/json", "x-gateway-trace": "trace-one" } }));
         const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
         const url = "http://localhost/api/ai/system/channel-one/v1/videos/generations";
@@ -1432,7 +1440,15 @@ describe("configured versioned protocol billing", () => {
             model: modelId,
             endpoint: "https://api.dflop.top/v1/videos/generations",
             status: 400,
-            upstreamResponseBody: JSON.stringify({ error: { message: "invalid image format at https://objects.example.com/reference.png?<redacted>", request_id: "provider-request-one" } }),
+            upstreamResponseBody: JSON.stringify({
+                error: {
+                    code: "InputVideoSensitiveContentDetected.PolicyViolation",
+                    message: "invalid image format at https://objects.example.com/reference.png?<redacted>",
+                    param: "content[1]",
+                    type: "BadRequest",
+                    request_id: "provider-request-one",
+                },
+            }),
             taskId: "video-task-one",
             agentRunId: "agent-run-one",
         });

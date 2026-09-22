@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { CREATIVE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
+import { CREATIVE_UPLOAD_MAX_REQUEST_BYTES } from "@/lib/creative-upload";
 import { CreativeRuntimeServiceError, uploadAssetForUser } from "@/lib/server/creative-runtime-service";
-import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
+import { readRequestFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const MAX_UPLOAD_REQUEST_BYTES = CREATIVE_UPLOAD_MAX_BYTES + 64 * 1024;
 
 export async function POST(request: Request) {
     const user = await getCurrentUser();
@@ -18,8 +16,7 @@ export async function POST(request: Request) {
         if (!contentType.toLowerCase().includes("multipart/form-data")) throw new CreativeRuntimeServiceError("上传内容格式不正确", 400);
         let form: FormData;
         try {
-            const bytes = await readRequestBodyBytes(request, MAX_UPLOAD_REQUEST_BYTES);
-            form = await new Request(request.url, { method: "POST", headers: { "content-type": contentType }, body: bytes }).formData();
+            form = await readRequestFormDataWithinLimit(request, CREATIVE_UPLOAD_MAX_REQUEST_BYTES);
         } catch (error) {
             if (error instanceof RequestBodyTooLargeError) throw error;
             throw new CreativeRuntimeServiceError("上传内容格式不正确", 400);
@@ -31,7 +28,7 @@ export async function POST(request: Request) {
         const asset = await uploadAssetForUser(user.id, conversationId, file);
         return NextResponse.json({ code: 0, data: { asset }, msg: "素材已上传" });
     } catch (error) {
-        if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ code: error.status, data: null, msg: "单个素材不能超过 20MB" }, { status: error.status });
+        if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ code: error.status, data: null, msg: "上传请求不能超过 200MB" }, { status: error.status });
         if (error instanceof CreativeRuntimeServiceError) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
         throw error;
     }

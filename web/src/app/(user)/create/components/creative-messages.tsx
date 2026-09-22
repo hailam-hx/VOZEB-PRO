@@ -294,7 +294,11 @@ function CreativeMediaRound({
                         <div data-testid="creative-result-group" className="mt-3 flex w-fit max-w-full flex-col items-start">
                             {hasTextSnapshots && !textOutputs.length ? <CreativeTextTaskResults run={run!} /> : null}
                             {isFailedMediaRound ? (
-                                <CreativeGenerationFailure message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent} onRetry={() => onRetryMessage(assistantMessage, run)} />
+                                <CreativeGenerationFailure
+                                    message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent}
+                                    errorCode={failedTasks.length === 1 ? failedTasks[0]?.errorCode : undefined}
+                                    onRetry={() => onRetryMessage(assistantMessage, run)}
+                                />
                             ) : assistantMessage.status === "running" ? (
                                 <CreativeGenerationWaiting run={run} message={assistantMessage} />
                             ) : showAssistantText ? (
@@ -618,9 +622,9 @@ function assetsForAssistant(message: CreativeMessage, assetsByMessage: Map<strin
     return [...(assetsByMessage.get(message.id) || []), ...(message.runId ? assetsByMessage.get(message.runId) || [] : [])].filter((asset, index, list) => list.findIndex((current) => current.id === asset.id) === index);
 }
 
-function CreativeGenerationFailure({ onRetry }: { message: string; onRetry: () => Promise<boolean | void> }) {
+function CreativeGenerationFailure({ errorCode, onRetry }: { message: string; errorCode?: string; onRetry: () => Promise<boolean | void> }) {
     const t = useTranslations("create");
-    const displayMessage = t("creationTaskFailed");
+    const displayMessage = errorCode === "video_input_copyright_restricted" ? t("videoInputCopyrightRestricted") : t("creationTaskFailed");
     const [retrying, setRetrying] = useState(false);
     return (
         <div data-testid="creative-generation-failure" className="max-w-[620px] py-1">

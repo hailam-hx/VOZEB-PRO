@@ -20,7 +20,7 @@ import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy"
 import { mediaTaskSource } from "@/lib/media-management-contract";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
-import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl } from "@/lib/server/video-provider-response";
+import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderFailureDiagnostic, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl, type VideoProviderFailureDiagnostic } from "@/lib/server/video-provider-response";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
 import { assertGeminiVideoReferences, buildGeminiVideoRequest, geminiVideoCreatePath, parseGeminiVideoCreateResponse } from "@/lib/server/gemini-video-provider";
@@ -176,30 +176,33 @@ export async function POST(request: Request) {
                 after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
                 return NextResponse.json({ task: publicTask(task) });
             } catch (error) {
-                lastError = error;
-                attempts = finishGenerationAttempt(attempts, started.attempt.attemptNo, { status: "failed", error: toSafeGenerationErrorMessage(error, "视频任务创建失败") });
+                const failure = videoSubmissionFailure(error);
+                lastError = failure;
+                attempts = finishGenerationAttempt(attempts, started.attempt.attemptNo, { status: "failed", error: failure.message });
                 await updateVideoTask(localTask.id, { attempts });
-                if (error instanceof SafeCandidateFailure && index < channels.length - 1) continue;
-                const message = toSafeGenerationErrorMessage(error, "视频任务创建失败");
-                if (!(error instanceof SafeCandidateFailure)) {
-                    await writeVideoGenerationLog({ ...localTask, attempts }, "failed", message, false);
-                    await transitionVideoTask(localTask, { status: "error", error: message, retryable: false });
-                    await finalizeUsageBillingForBusiness({ userId: user.id, businessId: `video-task:${localTask.id}` });
-                    await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
-                    return NextResponse.json({ error: message, canRetry: false }, { status: 502 });
-                }
+                if (failure.allowCandidateFailover && index < channels.length - 1) continue;
                 break;
             }
         }
         if (!lastError && capabilityError) return NextResponse.json({ error: capabilityError instanceof Error ? capabilityError.message : "当前渠道不支持参考素材" }, { status: 400 });
         if (localTask && lastError) {
-            const message = toSafeGenerationErrorMessage(lastError, "视频任务创建失败");
-            await writeVideoGenerationLog({ ...localTask, attempts }, "failed", message, lastError instanceof SafeCandidateFailure);
-            await transitionVideoTask(localTask, { status: "error", error: message, retryable: lastError instanceof SafeCandidateFailure });
+            const failure = videoSubmissionFailure(lastError);
+            await writeVideoGenerationLog({ ...localTask, attempts }, "failed", failure.message, failure.retryable);
+            await transitionVideoTask(localTask, {
+                status: "error",
+                error: failure.message,
+                errorCode: failure.errorCode,
+                providerError: failure.providerError,
+                retryable: failure.retryable,
+            });
             await finalizeUsageBillingForBusiness({ userId: user.id, businessId: `video-task:${localTask.id}` });
-            await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
+            await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: failure.outcome === "unknown" ? "submission_outcome_unknown" : "create_failed" });
+            return NextResponse.json(
+                { error: failure.message, errorCode: failure.errorCode, outcome: failure.outcome, canRetry: failure.retryable },
+                { status: failure.status },
+            );
         }
-        return NextResponse.json({ error: toSafeGenerationErrorMessage(lastError, "视频任务创建失败"), canRetry: lastError instanceof SafeCandidateFailure }, { status: 502 });
+        return NextResponse.json({ error: "视频任务创建失败", outcome: "unknown", canRetry: true }, { status: 502 });
     });
     return response || NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429 });
 }
@@ -270,7 +273,7 @@ export async function createUpstream(
     attemptNumber = 1,
     agentRunId = "",
 ) {
-    let lastError = "";
+    let lastError: string | VideoSubmissionFailure = "";
     const regularReferences = regularVideoReferences(references);
     const { firstFrame, lastFrame } = videoFrameReferences(references);
     const images = referenceUrls(regularReferences, "image");
@@ -405,8 +408,10 @@ export async function createUpstream(
         });
         const text = await response.text();
         if (!response.ok) {
-            lastError = readVideoProviderHttpError(text, response.status);
-            if (!SAFE_CREATE_FAILURE_STATUSES.has(response.status)) throw new Error(lastError);
+            const diagnostic = readVideoProviderFailureDiagnostic(text, response.status);
+            const failure = providerHttpFailure(diagnostic);
+            if (!failure.allowPathFailover) throw failure;
+            lastError = failure;
             continue;
         }
         let data: unknown;
@@ -446,7 +451,7 @@ export async function createUpstream(
             pointsRecordId: response.headers.get("x-vozeb-pro-points-record-id") || undefined,
         };
     }
-    throw new SafeCandidateFailure(lastError || "没有可用的视频创建接口");
+    throw lastError instanceof VideoSubmissionFailure ? lastError : new VideoSubmissionFailure(lastError || "没有可用的视频创建接口", { allowCandidateFailover: true });
 }
 
 async function createGeminiVideoUpstream(input: {
@@ -652,5 +657,69 @@ function normalizePublicOrigin(value: string) {
 }
 const MEDIA_KEYS = VIDEO_PROVIDER_MEDIA_KEYS;
 const SAFE_CREATE_FAILURE_STATUSES = new Set([400, 401, 403, 404, 405, 413, 415, 422, 429]);
+const VIDEO_INPUT_COPYRIGHT_RESTRICTED = "video_input_copyright_restricted";
+const SEEDANCE_COPYRIGHT_POLICY_CODE = "InputVideoSensitiveContentDetected.PolicyViolation";
 
-class SafeCandidateFailure extends Error {}
+class VideoSubmissionFailure extends Error {
+    readonly status: number;
+    readonly outcome: "rejected" | "unknown";
+    readonly retryable: boolean;
+    readonly allowCandidateFailover: boolean;
+    readonly allowPathFailover: boolean;
+    readonly errorCode?: string;
+    readonly providerError?: VideoProviderFailureDiagnostic;
+
+    constructor(
+        message: string,
+        options: {
+            status?: number;
+            outcome?: "rejected" | "unknown";
+            retryable?: boolean;
+            allowCandidateFailover?: boolean;
+            allowPathFailover?: boolean;
+            errorCode?: string;
+            providerError?: VideoProviderFailureDiagnostic;
+        } = {},
+    ) {
+        super(message);
+        this.status = options.status || 502;
+        this.outcome = options.outcome || "unknown";
+        this.retryable = options.retryable ?? true;
+        this.allowCandidateFailover = options.allowCandidateFailover === true;
+        this.allowPathFailover = options.allowPathFailover === true;
+        this.errorCode = options.errorCode;
+        this.providerError = options.providerError;
+    }
+}
+
+class SafeCandidateFailure extends VideoSubmissionFailure {
+    constructor(message: string) {
+        super(message, { status: 502, outcome: "unknown", retryable: true, allowCandidateFailover: true });
+    }
+}
+
+function providerHttpFailure(diagnostic: VideoProviderFailureDiagnostic) {
+    if (diagnostic.code === SEEDANCE_COPYRIGHT_POLICY_CODE) {
+        return new VideoSubmissionFailure(diagnostic.message, {
+            status: diagnostic.status,
+            outcome: "rejected",
+            retryable: false,
+            errorCode: VIDEO_INPUT_COPYRIGHT_RESTRICTED,
+            providerError: diagnostic,
+        });
+    }
+    const retryable = diagnostic.status === 408 || diagnostic.status === 425 || diagnostic.status === 429 || diagnostic.status >= 500;
+    return new VideoSubmissionFailure(diagnostic.message, {
+        status: diagnostic.status,
+        outcome: diagnostic.status >= 500 ? "unknown" : "rejected",
+        retryable,
+        allowCandidateFailover: SAFE_CREATE_FAILURE_STATUSES.has(diagnostic.status),
+        allowPathFailover: SAFE_CREATE_FAILURE_STATUSES.has(diagnostic.status),
+        providerError: diagnostic,
+    });
+}
+
+function videoSubmissionFailure(error: unknown) {
+    if (error instanceof VideoSubmissionFailure) return error;
+    return new VideoSubmissionFailure(toSafeGenerationErrorMessage(error, "视频任务创建失败"), { status: 502, outcome: "unknown", retryable: true });
+}

@@ -51,6 +51,16 @@ export function publicAgentRunEvent(event: CreativeRunEvent): CreativeRunEvent {
         const data = recordValue(event.data);
         return { ...event, data: { message: data.partialConversation === true && textValue(data.message) ? textValue(data.message) : agentRunCopy(isAppLocale(data.responseLocale) ? data.responseLocale : undefined).failed } };
     }
+    if (event.type === "task.dispatch.failed") {
+        const data = recordValue(event.data);
+        return {
+            ...event,
+            data: {
+                ...data,
+                ...(data.errorCode === "video_input_copyright_restricted" ? { error: "生成任务失败" } : {}),
+            },
+        };
+    }
     if (event.type === "run.cancel.pending") return { ...event, data: { pendingCount: arrayValue(recordValue(event.data).pendingTaskIds).length } };
     if (event.type === "canvas.ops") {
         const data = recordValue(event.data);
@@ -78,7 +88,8 @@ function publicAgentRunTask(task: AgentRunTask) {
         count: task.count,
         status: task.status,
         ...(task.type === "text" ? { activeAttemptId: task.activeAttemptId, textRevision: task.textRevision, textStatus: task.textStatus, visibleTextSnapshot: task.visibleTextSnapshot } : {}),
-        error: task.error ? toSafeGenerationErrorMessage(task.error, "生成任务失败") : undefined,
+        error: task.error ? (task.errorCode === "video_input_copyright_restricted" ? "生成任务失败" : toSafeGenerationErrorMessage(task.error, "生成任务失败")) : undefined,
+        errorCode: task.errorCode,
     };
 }
 

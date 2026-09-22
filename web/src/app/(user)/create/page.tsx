@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { CREATIVE_UPLOAD_MAX_BYTES, CREATIVE_UPLOAD_MIME_TYPES, isCreativeUploadMimeType } from "@/lib/creative-upload";
+import { creativeUploadMaxBytesForMimeType, CREATIVE_UPLOAD_MIME_TYPES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { CreateOverviewAsset } from "@/lib/create-workbench-overview";
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences, CreativeMessage } from "@/lib/creative-runtime-contract";
 import { creativeReferenceAdditionAvailability, creativeReferenceCapabilityViolation, creativeReferenceInputFromMimeType, resolveCreativeGenerationCapability } from "@/lib/creative-generation-capabilities";
@@ -272,9 +272,10 @@ export default function CreatePage() {
             message.error(t("unsupportedFile", { name: unsupported.name }));
             return [] as CreativeAsset[];
         }
-        const oversized = files.find((file) => file.size > CREATIVE_UPLOAD_MAX_BYTES);
+        const oversized = files.find((file) => file.size > (creativeUploadMaxBytesForMimeType(file.type) || 0));
         if (oversized) {
-            message.error(t("fileTooLarge", { name: oversized.name }));
+            const limit = (creativeUploadMaxBytesForMimeType(oversized.type) || 0) / 1024 / 1024;
+            message.error(t("fileTooLarge", { name: oversized.name, limit }));
             return [] as CreativeAsset[];
         }
         const projectedAssets = [...agent.selectedAssets];

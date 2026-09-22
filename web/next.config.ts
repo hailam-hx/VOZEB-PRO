@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { parseChangelog } from "@/lib/release";
+import { CREATIVE_UPLOAD_MAX_REQUEST_BYTES } from "@/lib/creative-upload";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const localVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim() || "dev";
@@ -35,7 +36,7 @@ export default function nextConfig(phase: string): NextConfig {
         },
         experimental: {
             ...(Number.isSafeInteger(configuredBuildCpus) && configuredBuildCpus > 0 ? { cpus: configuredBuildCpus } : {}),
-            proxyClientMaxBodySize: "32mb",
+            proxyClientMaxBodySize: CREATIVE_UPLOAD_MAX_REQUEST_BYTES,
         },
         async rewrites() {
             return {

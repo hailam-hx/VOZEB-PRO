@@ -1,5 +1,5 @@
-import { creativeConversationSourceForSurface, isCreativeConversationSourceCompatible, normalizeCreativeConversationSource, normalizeCreativeSurface, type CreativeAssetType, type CreativeConversationStatus } from "@/lib/creative-runtime-contract";
-import { CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
+import { creativeConversationSourceForSurface, isCreativeConversationSourceCompatible, normalizeCreativeConversationSource, normalizeCreativeSurface, type CreativeConversationStatus } from "@/lib/creative-runtime-contract";
+import { creativeUploadMaxBytesForMimeType, creativeUploadMediaTypeFromMimeType } from "@/lib/creative-upload";
 import {
     createCreativeConversation,
     getCreativeAsset,
@@ -92,14 +92,15 @@ export async function getAssetForUser(userId: string, id: string) {
 export async function uploadAssetForUser(userId: string, conversationId: string, file: File) {
     const conversation = await getConversationForUser(userId, conversationId);
     if (conversation.status !== "active") throw new CreativeRuntimeServiceError("已归档会话不能上传素材", 409);
-    const type = isCreativeUploadMimeType(file.type) ? creativeAssetType(file.type) : null;
+    const type = creativeUploadMediaTypeFromMimeType(file.type);
     if (!type) throw new CreativeRuntimeServiceError("仅支持图片、视频和音频素材", 400);
     if (!file.size) throw new CreativeRuntimeServiceError("上传文件为空", 400);
-    if (file.size > CREATIVE_UPLOAD_MAX_BYTES) throw new CreativeRuntimeServiceError("单个素材不能超过 20MB", 413);
+    const maxBytes = creativeUploadMaxBytesForMimeType(file.type)!;
+    if (file.size > maxBytes) throw new CreativeRuntimeServiceError(`单个${type === "image" ? "图片" : type === "video" ? "视频" : "音频"}素材不能超过 ${maxBytes / 1024 / 1024}MB`, 413);
     const bytes = new Uint8Array(await file.arrayBuffer());
     let stored: Awaited<ReturnType<typeof writePersistentMediaBytes>>;
     try {
-        stored = await writePersistentMediaBytes(bytes, file.type, type, { ownerUserId: userId, source: "creative-upload", originalName: file.name, conversationId, maxBytes: CREATIVE_UPLOAD_MAX_BYTES });
+        stored = await writePersistentMediaBytes(bytes, file.type, type, { ownerUserId: userId, source: "creative-upload", originalName: file.name, conversationId, maxBytes });
     } catch (error) {
         throw new CreativeRuntimeServiceError(error instanceof Error ? error.message : "素材保存失败", 400);
     }
@@ -167,13 +168,6 @@ export async function registerGenerationTaskAssetsForUser(
 
 function normalizeStatus(value: unknown): CreativeConversationStatus | undefined {
     return value === "active" || value === "archived" ? value : undefined;
-}
-
-function creativeAssetType(mimeType: string): Exclude<CreativeAssetType, "text"> | null {
-    if (mimeType.startsWith("image/")) return "image";
-    if (mimeType.startsWith("video/")) return "video";
-    if (mimeType.startsWith("audio/")) return "audio";
-    return null;
 }
 
 function object(value: unknown) {

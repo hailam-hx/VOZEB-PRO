@@ -1,12 +1,12 @@
 import { copyFile, mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve, sep } from "node:path";
 
+import { CREATIVE_UPLOAD_MAX_BYTES_BY_TYPE } from "@/lib/creative-upload";
 import { createDatedMediaPath, REFERENCE_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
 import { persistExternalMediaIfEnabled } from "@/lib/server/object-storage-service";
 
 const REFERENCE_ASSET_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_REFERENCE_BYTES: Record<string, number> = { image: 20 * 1024 * 1024, video: 200 * 1024 * 1024, audio: 30 * 1024 * 1024 };
 
 type StoredReferenceAsset = {
     token: string;
@@ -52,7 +52,8 @@ async function writeMediaDataUrl(dataUrl: string, expectedType: "image" | "video
 
 async function writeMediaBytes(bytes: Buffer, mimeType: string, expectedType: "image" | "video" | "audio", persistent: boolean, context: ReferenceMediaWriteContext): Promise<StoredReferenceAsset> {
     if (!isSupportedMediaMimeType(mimeType) || !mimeType.startsWith(`${expectedType}/`) || !bytes.length) throw new Error("参考素材格式不正确");
-    if (bytes.length > Math.min(context.maxBytes || MAX_REFERENCE_BYTES[expectedType], MAX_REFERENCE_BYTES[expectedType])) throw new Error(`参考${expectedType === "image" ? "图" : expectedType === "video" ? "视频" : "音频"}文件过大`);
+    if (bytes.length > Math.min(context.maxBytes ?? CREATIVE_UPLOAD_MAX_BYTES_BY_TYPE[expectedType], CREATIVE_UPLOAD_MAX_BYTES_BY_TYPE[expectedType]))
+        throw new Error(`参考${expectedType === "image" ? "图" : expectedType === "video" ? "视频" : "音频"}文件过大`);
 
     const token = createDatedMediaPath(persistent ? "permanent" : "temporary", expectedType, extensionFromMime(mimeType));
     const registration = referenceRegistration(token, persistent, expectedType, mimeType, bytes.length, context);
@@ -73,7 +74,7 @@ async function writeMediaBytes(bytes: Buffer, mimeType: string, expectedType: "i
 export async function writeReferenceMediaFile(sourcePath: string, expectedType: "video" | "audio", mimeType: string, persistent: boolean, context: ReferenceMediaWriteContext): Promise<StoredReferenceAsset> {
     if (!mimeType.startsWith(`${expectedType}/`)) throw new Error("媒体文件格式不正确");
     const sourceStat = await stat(sourcePath);
-    if (!sourceStat.isFile() || sourceStat.size <= 0 || sourceStat.size > Math.min(context.maxBytes || MAX_REFERENCE_BYTES[expectedType], MAX_REFERENCE_BYTES[expectedType]))
+    if (!sourceStat.isFile() || sourceStat.size <= 0 || sourceStat.size > Math.min(context.maxBytes ?? CREATIVE_UPLOAD_MAX_BYTES_BY_TYPE[expectedType], CREATIVE_UPLOAD_MAX_BYTES_BY_TYPE[expectedType]))
         throw new Error(`生成${expectedType === "video" ? "视频" : "音频"}文件为空或过大`);
     const token = createDatedMediaPath(persistent ? "permanent" : "temporary", expectedType, extensionFromMime(mimeType));
     const registration = referenceRegistration(token, persistent, expectedType, mimeType, sourceStat.size, context);

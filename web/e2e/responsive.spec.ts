@@ -1231,6 +1231,23 @@ test("switching conversations keeps the previous Agent run isolated and resumabl
     expect(fixture.controlRequests(), "returning to A must not cancel, pause, resume, or retry it").toBe(0);
 });
 
+test("creative composer accepts a reference video above the former 20MB limit", async ({ page }) => {
+    const fileName = `reference-${randomUUID()}.mp4`;
+    await page.route("**/api/public/gallery?**", (route) => route.fulfill({ json: { code: 0, data: { items: [] }, msg: "OK" } }));
+    await page.route("**/api/notifications/interactions?**", (route) => route.fulfill({ json: { code: 0, data: { items: [], unreadCount: 0 }, msg: "OK" } }));
+
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await waitForCreativeComposerReady(page);
+
+    const chooserPromise = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "添加素材" }).click();
+    const chooser = await chooserPromise;
+    await chooser.setFiles({ name: fileName, mimeType: "video/mp4", buffer: Buffer.alloc(20 * 1024 * 1024 + 1) });
+
+    await expect(page.getByLabel(`已上传视频 ${fileName}`)).toBeVisible();
+    await expect(page.getByText(`${fileName} 超过 20MB`, { exact: true })).toHaveCount(0);
+});
+
 test("creative video first and last frame controls support upload, removal and reselection", async ({ page }, testInfo) => {
     const frameBuffer = readFileSync("public/generation-smoke.webp");
     const projectName = testInfo.project.name.replace(/[^a-z0-9]+/gi, "-");

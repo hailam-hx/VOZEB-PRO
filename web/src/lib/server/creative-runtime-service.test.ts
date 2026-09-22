@@ -70,7 +70,7 @@ describe("创作会话素材上传", () => {
             expect.objectContaining({ byteLength: bytes.byteLength }),
             "video/mp4",
             "video",
-            expect.objectContaining({ ownerUserId: "user-one", conversationId: "conversation-one", originalName: "clip.mp4", maxBytes: 20 * 1024 * 1024 }),
+            expect.objectContaining({ ownerUserId: "user-one", conversationId: "conversation-one", originalName: "clip.mp4", maxBytes: 200 * 1024 * 1024 }),
         );
         expect(mocks.writePersistentMediaDataUrl).not.toHaveBeenCalled();
         expect(asset).toMatchObject({ id: "asset-one", type: "video", serverUrl: "/api/reference-assets/persistent-one.mp4", storageKey: "persistent-one.mp4" });
@@ -85,11 +85,26 @@ describe("创作会话素材上传", () => {
         expect(asset).toMatchObject({ storageKind: "object", storageKey: "permanent/object.png", serverUrl: "/api/reference-assets/permanent/object.png" });
     });
 
-    it("rejects unsupported files, oversized files and other users' conversations", async () => {
+    it("enforces exact image, video and audio boundaries from the MIME type", async () => {
         await expect(uploadAssetForUser("user-one", "conversation-one", file("notes.pdf", "application/pdf"))).rejects.toMatchObject({ status: 400 });
         await expect(uploadAssetForUser("user-one", "conversation-one", file("vector.svg", "image/svg+xml"))).rejects.toMatchObject({ status: 400 });
-        await expect(uploadAssetForUser("user-one", "conversation-one", file("limit.mp4", "video/mp4", 20 * 1024 * 1024))).resolves.toMatchObject({ id: "asset-one" });
-        await expect(uploadAssetForUser("user-one", "conversation-one", file("large.mp4", "video/mp4", 20 * 1024 * 1024 + 1))).rejects.toMatchObject({ status: 413 });
+
+        for (const [mimeType, extension, limit] of [
+            ["image/png", "png", 20 * 1024 * 1024],
+            ["video/mp4", "mp4", 200 * 1024 * 1024],
+            ["audio/mpeg", "mp3", 30 * 1024 * 1024],
+        ] as const) {
+            await expect(uploadAssetForUser("user-one", "conversation-one", file(`below.${extension}`, mimeType, limit - 1))).resolves.toMatchObject({ id: "asset-one" });
+            await expect(uploadAssetForUser("user-one", "conversation-one", file(`limit.${extension}`, mimeType, limit))).resolves.toMatchObject({ id: "asset-one" });
+            await expect(uploadAssetForUser("user-one", "conversation-one", file(`large.${extension}`, mimeType, limit + 1))).rejects.toMatchObject({ status: 413 });
+        }
+    });
+
+    it("uses MIME rather than the filename extension for the authoritative limit", async () => {
+        await expect(uploadAssetForUser("user-one", "conversation-one", file("pretends-to-be-video.mp4", "image/png", 20 * 1024 * 1024 + 1))).rejects.toMatchObject({ status: 413, message: expect.stringContaining("20MB") });
+    });
+
+    it("rejects other users' conversations", async () => {
         mocks.getCreativeConversation.mockResolvedValueOnce({ id: "conversation-one", userId: "user-two", status: "active" });
         await expect(uploadAssetForUser("user-one", "conversation-one", file("image.png", "image/png"))).rejects.toMatchObject({ status: 404 });
     });

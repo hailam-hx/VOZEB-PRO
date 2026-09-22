@@ -41,7 +41,8 @@ describe("publicAgentRun", () => {
                     taskId: "child-secret",
                     childTasks: [{ id: "child-secret", status: "failed", attempt: 1, result: { raw: "secret" } }],
                     result: { raw: "secret" },
-                    error: "生成失败",
+                    error: "The request failed because content[1] is restricted. Request id: private-request-id",
+                    errorCode: "video_input_copyright_restricted",
                 },
             ],
             foundation: { complexity: "simple", brief: { objective: "secret" }, direction: { summary: "secret" } },
@@ -99,7 +100,7 @@ describe("publicAgentRun", () => {
         expect(publicRun).toMatchObject({
             prompt: "图片1 用户原始需求",
             cancellation: { pendingCount: 1 },
-            tasks: [{ id: "video", model: "video-pro", optimizedPrompt: "电影感海边日落运镜，人物动作自然流畅", seconds: 60, generateAudio: false, watermark: true, status: "failed" }],
+            tasks: [{ id: "video", model: "video-pro", optimizedPrompt: "电影感海边日落运镜，人物动作自然流畅", seconds: 60, generateAudio: false, watermark: true, status: "failed", error: "生成任务失败", errorCode: "video_input_copyright_restricted" }],
         });
         expect(serialized).not.toContain("内部执行提示词-secret");
         expect(serialized).not.toContain("@图片1");
@@ -119,6 +120,25 @@ describe("publicAgentRun", () => {
         expect(serialized).not.toContain("secret-skill-instructions");
         expect(serialized).not.toContain('"review"');
         expect(serialized).not.toContain('"result"');
+        expect(serialized).not.toContain("private-request-id");
+    });
+
+    it("keeps the stable copyright code but removes raw provider diagnostics from dispatch SSE", () => {
+        const event = publicAgentRunEvent({
+            id: "copyright",
+            runId: "run",
+            type: "task.dispatch.failed",
+            data: {
+                taskId: "video",
+                status: "failed",
+                errorCode: "video_input_copyright_restricted",
+                error: "The request failed because content[1] is restricted. Request id: private-request-id",
+            },
+            createdAt: 1,
+        });
+
+        expect(event.data).toMatchObject({ taskId: "video", status: "failed", errorCode: "video_input_copyright_restricted", error: "生成任务失败" });
+        expect(JSON.stringify(event)).not.toContain("private-request-id");
     });
 
     it("removes review details and internal Canvas planning nodes from SSE events", () => {

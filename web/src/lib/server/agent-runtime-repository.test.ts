@@ -57,6 +57,27 @@ describe("agent runtime repository", () => {
         expect(db.query.mock.calls.some(([, values]) => Array.isArray(values) && values.includes("run-1:plan:2:task-b") && values.includes("run-1:plan:2:task-a"))).toBe(true);
     });
 
+    it("persists a terminal task error code beside the diagnostic message", async () => {
+        const db = client();
+        const failedRun = {
+            ...run,
+            tasks: [
+                {
+                    ...run.tasks[1],
+                    status: "failed" as const,
+                    attempts: 1,
+                    error: "provider diagnostic",
+                    errorCode: "video_input_copyright_restricted",
+                },
+            ],
+        };
+
+        await syncAgentRuntimeProjection(db, failedRun);
+
+        const taskInsert = db.query.mock.calls.find(([statement]) => String(statement).includes("INSERT INTO agent_tasks"));
+        expect(JSON.parse(String(taskInsert?.[1]?.[9]))).toEqual({ message: "provider diagnostic", code: "video_input_copyright_restricted" });
+    });
+
     it("prepares a tool call before side effects with a stable idempotency key", async () => {
         const db = client([{ id: "tool-1", run_id: "run-1", task_id: "task-a", tool_name: "image.generate", idempotency_key: "stable-key", status: "created", input_json: { prompt: "A" } }]);
 

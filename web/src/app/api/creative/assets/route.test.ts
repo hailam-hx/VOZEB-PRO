@@ -44,6 +44,14 @@ describe("POST /api/creative/assets", () => {
         expect(mocks.uploadAssetForUser).toHaveBeenCalledWith("user-one", "conversation-one", expect.objectContaining({ name: "voice.mp3", type: "audio/mpeg" }));
     });
 
+    it("allows a video above 20MB through the bounded multipart transport", async () => {
+        const file = new File([new Uint8Array(20 * 1024 * 1024 + 1)], "clip.mp4", { type: "video/mp4" });
+        const response = await POST(request("conversation-one", file));
+
+        expect(response.status).toBe(200);
+        expect(mocks.uploadAssetForUser).toHaveBeenCalledWith("user-one", "conversation-one", expect.objectContaining({ name: "clip.mp4", size: 20 * 1024 * 1024 + 1, type: "video/mp4" }));
+    });
+
     it("rejects a missing conversation before calling the service", async () => {
         const response = await POST(request("", new File(["video"], "clip.mp4", { type: "video/mp4" })));
 
@@ -51,17 +59,17 @@ describe("POST /api/creative/assets", () => {
         expect(mocks.uploadAssetForUser).not.toHaveBeenCalled();
     });
 
-    it("rejects an oversized multipart request before parsing it", async () => {
+    it("rejects Content-Length above the bounded 200MB multipart envelope before parsing it", async () => {
         const response = await POST(
             new Request("http://localhost/api/creative/assets", {
                 method: "POST",
-                headers: { "content-type": "multipart/form-data; boundary=test", "content-length": String(20 * 1024 * 1024 + 64 * 1024 + 1) },
+                headers: { "content-type": "multipart/form-data; boundary=test", "content-length": String(200 * 1024 * 1024 + 64 * 1024 + 1) },
                 body: "--test--",
             }),
         );
 
         expect(response.status).toBe(413);
-        expect((await response.json()).msg).toBe("单个素材不能超过 20MB");
+        expect((await response.json()).msg).toBe("上传请求不能超过 200MB");
         expect(mocks.uploadAssetForUser).not.toHaveBeenCalled();
     });
 });

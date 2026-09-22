@@ -65,4 +65,18 @@ describe("reference asset lifecycle boundaries", () => {
         expect(mocks.writeFile).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ byteLength: bytes.byteLength }));
         expect(mocks.register).toHaveBeenCalledWith(expect.objectContaining({ bytes: bytes.byteLength, mimeType: "image/png" }));
     });
+
+    it("keeps object-storage persistence for uploaded video bytes", async () => {
+        mocks.persistExternal.mockResolvedValue({ provider: "s3-compatible", key: "permanent/video.mp4" });
+        const bytes = new Uint8Array(4);
+
+        await expect(writePersistentMediaBytes(bytes, "video/mp4", "video", { ownerUserId: "user-one", source: "creative-upload" })).resolves.toMatchObject({
+            bytes: 4,
+            mimeType: "video/mp4",
+            storage: "object",
+        });
+
+        expect(mocks.persistExternal).toHaveBeenCalledWith(expect.objectContaining({ bytes: expect.objectContaining({ byteLength: 4 }), registration: expect.objectContaining({ type: "video" }) }));
+        expect(mocks.writeFile).not.toHaveBeenCalled();
+    });
 });

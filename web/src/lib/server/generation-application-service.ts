@@ -48,11 +48,11 @@ export async function createAgentGenerationTask(input: { type: GenerationType; o
         await markDurableAgentToolCall(call.id, "unknown", message);
         throw new GenerationApplicationError(message, 503, "unknown");
     }
-    const payload = (await response.json().catch(() => ({}))) as TaskPayload & { error?: string; errorCode?: string };
+    const payload = (await response.json().catch(() => ({}))) as TaskPayload & { error?: string; errorCode?: string; outcome?: "rejected" | "unknown" };
     if (!response.ok) {
         const message = payload.error || "生成任务创建失败";
         await markDurableAgentToolCall(call.id, "failed", message);
-        throw new GenerationApplicationError(message, response.status, "rejected", payload.errorCode);
+        throw new GenerationApplicationError(message, response.status, payload.outcome === "unknown" ? "unknown" : "rejected", payload.errorCode);
     }
     const generationTaskId = payload.task?.id;
     if (!generationTaskId) {

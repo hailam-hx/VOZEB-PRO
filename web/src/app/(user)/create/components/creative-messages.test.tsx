@@ -758,6 +758,72 @@ describe("CreativeMessages", () => {
         expect(failureMarkup).not.toContain("Sparkles");
     });
 
+    it.each([
+        ["zh-CN", "输入视频可能涉及版权限制，请更换为您拥有使用权或自行拍摄的视频后重试。"],
+        ["vi", "Video đầu vào có thể bị giới hạn bản quyền. Vui lòng sử dụng video do bạn sở hữu hoặc có quyền sử dụng rồi thử lại."],
+        ["en", "The input video may be restricted due to copyright. Please use a video you own or have permission to use."],
+    ] as const)("maps a copyright rejection to a safe public message in %s", (locale, expected) => {
+        const raw = "The request failed because content[1] may be related to copyright restrictions. Request id: secret-provider-request";
+        const userMessage: CreativeMessage = {
+            id: "copyright-user",
+            conversationId: "conversation-one",
+            runId: "copyright-run",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "Edit this video",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const assistantMessage: CreativeMessage = {
+            id: "copyright-assistant",
+            conversationId: "conversation-one",
+            runId: "copyright-run",
+            sequence: 2,
+            role: "assistant",
+            status: "failed",
+            content: raw,
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[userMessage, assistantMessage]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "copyright-run": {
+                            id: "copyright-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: userMessage.id,
+                            assistantMessageId: assistantMessage.id,
+                            status: "failed",
+                            generationPreferences: { mode: "video" },
+                            assetIds: [],
+                            tasks: [{ id: "video-task", title: "Video", type: "video", status: "failed", error: raw, errorCode: "video_input_copyright_restricted" }],
+                        } as never,
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+            locale,
+        );
+
+        expect(markup).toContain(expected);
+        expect(markup).not.toContain("secret-provider-request");
+        expect(markup).not.toContain("copyright restrictions");
+    });
+
     it("uses the same compact identity spacing for ordinary text messages", () => {
         const markup = renderMessages(
             {

@@ -1549,6 +1549,33 @@ describe("executeAgentRun backend settings", () => {
         });
     });
 
+    it("keeps a Seedance copyright rejection terminal with monotonic attempts and no automatic resume", async () => {
+        mocks.run = runWithTasks([videoTask("video-copyright")]);
+        mocks.getAuthSettings.mockResolvedValue(videoSettings());
+        mocks.createAgentGenerationTask.mockRejectedValueOnce(
+            new GenerationApplicationError(
+                "The request failed because the input video 'content[1]' may be related to copyright restrictions.",
+                400,
+                "rejected",
+                "video_input_copyright_restricted",
+            ),
+        );
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.createAgentGenerationTask).toHaveBeenCalledOnce();
+        expect(mocks.run).toMatchObject({
+            status: "failed",
+            failureStage: "task_dispatch",
+            tasks: [expect.objectContaining({ id: "video-copyright", status: "failed", attempts: 1, errorCode: "video_input_copyright_restricted" })],
+        });
+        expect(mocks.linkStoredGenerationTask).not.toHaveBeenCalled();
+        expect(mocks.scheduleGenerationTask).not.toHaveBeenCalled();
+        expect(mocks.events.filter((event) => event.type === "task.dispatch.failed")).toHaveLength(1);
+        expect(mocks.events.filter((event) => event.type === "run.failed")).toHaveLength(1);
+        expect(mocks.events.filter((event) => event.type === "run.resumed")).toHaveLength(1);
+    });
+
     it("fails the run when a terminal dispatch rejection has a successful sibling", async () => {
         mocks.run = runWithTasks([videoTask("video-rejected"), videoTask("video-success")]);
         const currentSettings = videoSettings() as unknown as { generationConcurrency: { video: number } };
