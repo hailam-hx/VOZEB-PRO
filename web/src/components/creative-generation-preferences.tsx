@@ -286,7 +286,7 @@ function PreferencePanel({
     const customVideoQualityValues = localizedVideoQualityOptions.filter((option) => !videoQualityOptions.some((preset) => preset.value === option.value)).map((option) => option.value);
     const videoReferenceModeOptions = videoReferenceModeValues.map((value) => ({ value, label: t(videoReferenceModeMessageKeys[value]) }));
     const durationValues = configuredCreativeGenerationOptions(videoDurationValues.map(String), generationParameters?.durationMode === "discrete" ? generationParameters.durationSeconds.map(String) : undefined).map(Number);
-    const videoDurationOptions = durationValues.map((value) => ({ value, label: t("secondsValue", { value }), supported: creativeGenerationValueSupported(generationParameters, "videoDuration", value) }));
+    const videoDurationOptions = durationValues.map((value) => ({ value, label: t("secondsValue", { value }), shortLabel: String(value), supported: creativeGenerationValueSupported(generationParameters, "videoDuration", value) }));
     const selectedSize = capability === "image" ? preferences.image?.size || "auto" : preferences.video?.size || "auto";
     const selectedQuality = capability === "image" ? preferences.image?.quality || "auto" : preferences.video?.quality || "auto";
     const selectedCount = capability === "image" ? preferences.image?.count : preferences.video?.count;
@@ -406,8 +406,8 @@ function PreferencePanel({
                                         <button
                                             type="button"
                                             className={cn(
-                                                "inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40",
-                                                compact ? "h-8" : "h-9",
+                                                "inline-flex h-auto min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[11px] leading-[14px] transition disabled:cursor-not-allowed disabled:opacity-40",
+                                                compact ? "min-h-8" : "min-h-9",
                                                 selectedSize === ratio.value
                                                     ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
                                                     : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
@@ -421,7 +421,7 @@ function PreferencePanel({
                                             <span className="grid h-4 w-5 shrink-0 place-items-center">
                                                 {ratio.value === "auto" ? <Sparkles className="size-3.5" /> : <span className="rounded-[2px] border-[1.5px] border-current" style={{ width: ratio.width * 0.64, height: ratio.height * 0.64 }} />}
                                             </span>
-                                            <span className="truncate">{ratio.label}</span>
+                                            <span className="min-w-0 text-center">{ratio.label}</span>
                                         </button>
                                     </CapabilityControlTooltip>
                                 ))}
@@ -596,11 +596,11 @@ function GenerationCountGroup({
     return (
         <div className="grid gap-1.5">
             <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{t("quantity")}</p>
-            <div className="grid grid-cols-6 gap-1" role="group" aria-label={t("selectGenerationCount", { media: t(capabilityMessageKeys[capability]) })}>
+            <div className="grid gap-0.5" role="group" aria-label={t("selectGenerationCount", { media: t(capabilityMessageKeys[capability]) })} style={{ gridTemplateColumns: "max-content repeat(4, max-content) minmax(0, 1fr)" }}>
                 <button
                     type="button"
                     className={cn(
-                        "h-8 min-w-0 rounded-lg px-1 text-[11px] transition",
+                        "h-8 min-w-0 whitespace-nowrap rounded-lg px-1 text-[11px] transition",
                         value === undefined
                             ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
                             : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
@@ -615,7 +615,7 @@ function GenerationCountGroup({
                         <button
                             type="button"
                             className={cn(
-                                "h-8 min-w-0 flex-1 rounded-lg px-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40",
+                                "h-8 min-w-0 flex-1 whitespace-nowrap rounded-lg px-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40",
                                 value === option.value
                                     ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
                                     : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",
@@ -714,7 +714,7 @@ function CompactOptionGroup<T extends string | number>({
                         <button
                             type="button"
                             className={cn(
-                                "h-8 min-w-0 flex-1 rounded-lg px-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40",
+                                "min-h-8 min-w-0 flex-1 rounded-lg px-1 py-1.5 text-[11px] leading-[14px] transition disabled:cursor-not-allowed disabled:opacity-40",
                                 value === option.value
                                     ? "bg-[#eaf1f5] font-medium text-[#315d78] dark:bg-[#2a3b46] dark:text-[#a8c8dc]"
                                     : "bg-[#f5f6f7] text-[#687481] hover:bg-[#edf0f2] hover:text-[#20242a] dark:bg-[#24282e] dark:text-[#a6afb9] dark:hover:bg-[#30363e] dark:hover:text-white",

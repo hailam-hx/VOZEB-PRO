@@ -102,7 +102,7 @@ export function SuggestedPositiveIntegerField({
     ariaLabel: string;
     value?: number;
     suffix: string;
-    options: readonly { value: number; label: string; supported?: boolean }[];
+    options: readonly { value: number; label: string; shortLabel?: string; supported?: boolean }[];
     min?: number;
     max?: number;
     customEnabled: boolean;
@@ -114,12 +114,12 @@ export function SuggestedPositiveIntegerField({
     return (
         <div className="grid gap-1.5">
             <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{label}</p>
-            <div className="grid gap-1" role="group" aria-label={label} style={{ gridTemplateColumns: options.length ? `repeat(${options.length}, minmax(0, 1fr)) minmax(0, 1.35fr)` : "minmax(0, 1fr)" }}>
+            <div className="grid gap-1" role="group" aria-label={label} style={{ gridTemplateColumns: options.length ? `repeat(${options.length}, minmax(0, 1fr)) minmax(0, 1.8fr)` : "minmax(0, 1fr)" }}>
                 {options.map((option) => (
                     <OptionButton
                         key={option.value}
                         selected={value === option.value}
-                        label={option.label}
+                        label={option.shortLabel || option.label}
                         ariaLabel={`${ariaLabel} ${option.label}`}
                         disabled={option.supported === false}
                         disabledReason={disabledReason}

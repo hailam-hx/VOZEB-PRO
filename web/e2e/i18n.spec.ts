@@ -249,6 +249,175 @@ test("language menu remains inside a 390px viewport", async ({ page }, testInfo)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
+test("Vietnamese video generation options remain fully readable", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "The desktop project covers the Vietnamese responsive width matrix");
+    await page.context().addCookies([{ name: localeCookie, value: "vi", url: String(testInfo.project.use.baseURL) }]);
+
+    for (const viewport of [
+        { width: 814, height: 969 },
+        { width: 430, height: 932 },
+        { width: 390, height: 844 },
+    ]) {
+        await page.setViewportSize(viewport);
+        await page.goto("/create");
+        await page.getByRole("button", { name: /^Tham số tạo:/ }).click();
+        const popover = page.locator("[data-creative-generation-preferences]");
+        await expect(popover).toBeVisible();
+        await popover.getByRole("button", { name: "Video", exact: true }).click();
+
+        const referenceButtons = ["Tham chiếu thông minh", "Khung hình đầu", "Khung hình đầu và cuối"].map((label) => popover.getByRole("button", { name: `Chọn cách tham chiếu video ${label}`, exact: true }));
+        for (const button of referenceButtons) {
+            await expect(button).toBeVisible();
+            const dimensions = await button.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+            expect(dimensions.scrollHeight, `${viewport.width}px reference label should not be clipped`).toBeLessThanOrEqual(dimensions.clientHeight);
+        }
+
+        const smartRatioLabel = popover.getByRole("button", { name: "Chọn tỷ lệ Video Thông minh" }).locator("span:last-child");
+        const ratioDimensions = await smartRatioLabel.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+        expect(ratioDimensions.scrollWidth, `${viewport.width}px smart ratio should not be truncated`).toBeLessThanOrEqual(ratioDimensions.clientWidth);
+
+        const panelBounds = await popover.boundingBox();
+        expect(panelBounds).not.toBeNull();
+        expect(panelBounds!.x).toBeGreaterThanOrEqual(0);
+        expect(panelBounds!.x + panelBounds!.width).toBeLessThanOrEqual(viewport.width);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+});
+
+test("English video duration controls remain fully readable", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "The desktop project covers the English responsive width matrix");
+    await page.context().addCookies([{ name: localeCookie, value: "en", url: String(testInfo.project.use.baseURL) }]);
+    await page.route(/\/api\/auth\/session$/, async (route) => {
+        const response = await route.fetch();
+        const payload = (await response.json()) as { settings?: { logicalModels?: Array<Record<string, unknown>> } };
+        if (payload.settings?.logicalModels) {
+            payload.settings.logicalModels = payload.settings.logicalModels.map((model) => {
+                if (model.capability !== "video" || !Array.isArray(model.bindings)) return model;
+                return {
+                    ...model,
+                    bindings: model.bindings.map((binding) => {
+                        const item = binding as Record<string, unknown>;
+                        return {
+                            ...item,
+                            generationParameters: {
+                                ...((item.generationParameters as Record<string, unknown> | undefined) || {}),
+                                durationMode: "discrete",
+                                durationSeconds: [5, 15, 4, 30],
+                                supportsCustomDuration: true,
+                                customDurationRange: { min: 1, max: 60 },
+                            },
+                        };
+                    }),
+                };
+            });
+        }
+        await route.fulfill({ response, json: payload });
+    });
+
+    for (const viewport of [
+        { width: 1515, height: 969 },
+        { width: 430, height: 932 },
+        { width: 390, height: 844 },
+    ]) {
+        await page.setViewportSize(viewport);
+        await page.goto("/create");
+        await page.getByRole("button", { name: /^Generation parameters:/ }).click();
+        const popover = page.locator("[data-creative-generation-preferences]");
+        await expect(popover).toBeVisible();
+        await popover.getByRole("button", { name: "Video", exact: true }).click();
+        await popover.getByRole("tab", { name: "Output", exact: true }).click();
+
+        const durationGroup = popover.getByRole("group", { name: "Duration", exact: true });
+        await expect(durationGroup).toBeVisible();
+        const groupDimensions = await durationGroup.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+        expect(groupDimensions.scrollWidth, `${viewport.width}px duration row should not overflow`).toBeLessThanOrEqual(groupDimensions.clientWidth);
+        expect(groupDimensions.scrollHeight, `${viewport.width}px duration row should not clip vertically`).toBeLessThanOrEqual(groupDimensions.clientHeight);
+
+        for (const button of await durationGroup.getByRole("button").all()) {
+            const dimensions = await button.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+            expect(dimensions.scrollWidth, `${viewport.width}px duration preset should not be truncated`).toBeLessThanOrEqual(dimensions.clientWidth);
+            expect(dimensions.scrollHeight, `${viewport.width}px duration preset should not be clipped`).toBeLessThanOrEqual(dimensions.clientHeight);
+        }
+
+        const customControl = durationGroup.locator(".ant-space-compact");
+        const customDimensions = await customControl.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+        expect(customDimensions.scrollWidth, `${viewport.width}px custom duration should not overflow`).toBeLessThanOrEqual(customDimensions.clientWidth);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+});
+
+test("Vietnamese generation quantity controls remain fully readable", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "The desktop project covers the Vietnamese responsive width matrix");
+    await page.context().addCookies([{ name: localeCookie, value: "vi", url: String(testInfo.project.use.baseURL) }]);
+
+    for (const viewport of [
+        { width: 1515, height: 969 },
+        { width: 430, height: 932 },
+        { width: 390, height: 844 },
+    ]) {
+        await page.setViewportSize(viewport);
+        await page.goto("/create");
+        await page.getByRole("button", { name: /^Tham số tạo:/ }).click();
+        const popover = page.locator("[data-creative-generation-preferences]");
+        await expect(popover).toBeVisible();
+        await popover.getByRole("button", { name: "Video", exact: true }).click();
+        await popover.getByRole("tab", { name: "Đầu ra", exact: true }).click();
+
+        const quantityGroup = popover.getByRole("group", { name: /Chọn số lượng/ });
+        await expect(quantityGroup).toBeVisible();
+        const groupDimensions = await quantityGroup.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+        expect(groupDimensions.scrollWidth, `${viewport.width}px quantity row should not overflow`).toBeLessThanOrEqual(groupDimensions.clientWidth);
+        expect(groupDimensions.scrollHeight, `${viewport.width}px quantity row should not clip vertically`).toBeLessThanOrEqual(groupDimensions.clientHeight);
+
+        for (const button of await quantityGroup.getByRole("button").all()) {
+            const dimensions = await button.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+            expect(dimensions.scrollWidth, `${viewport.width}px quantity option should not be truncated`).toBeLessThanOrEqual(dimensions.clientWidth);
+            expect(dimensions.scrollHeight, `${viewport.width}px quantity option should not be clipped`).toBeLessThanOrEqual(dimensions.clientHeight);
+        }
+
+        const customCount = quantityGroup.getByRole("textbox", { name: "Số lượng tạo tùy chỉnh" });
+        await expect(customCount).toHaveAttribute("placeholder", "Tùy chỉnh");
+        expect(await customCount.evaluate((element) => element.clientWidth), `${viewport.width}px custom quantity should fit its Vietnamese placeholder`).toBeGreaterThanOrEqual(68);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+});
+
+test("English generation quantity controls remain fully readable", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "The desktop project covers the English responsive width matrix");
+    await page.context().addCookies([{ name: localeCookie, value: "en", url: String(testInfo.project.use.baseURL) }]);
+
+    for (const viewport of [
+        { width: 1515, height: 969 },
+        { width: 430, height: 932 },
+        { width: 390, height: 844 },
+    ]) {
+        await page.setViewportSize(viewport);
+        await page.goto("/create");
+        await page.getByRole("button", { name: /^Generation parameters:/ }).click();
+        const popover = page.locator("[data-creative-generation-preferences]");
+        await expect(popover).toBeVisible();
+        await popover.getByRole("button", { name: "Video", exact: true }).click();
+        await popover.getByRole("tab", { name: "Output", exact: true }).click();
+
+        const quantityGroup = popover.getByRole("group", { name: "Select the number of Video results", exact: true });
+        await expect(quantityGroup).toBeVisible();
+        const groupDimensions = await quantityGroup.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+        expect(groupDimensions.scrollWidth, `${viewport.width}px quantity row should not overflow`).toBeLessThanOrEqual(groupDimensions.clientWidth);
+        expect(groupDimensions.scrollHeight, `${viewport.width}px quantity row should not clip vertically`).toBeLessThanOrEqual(groupDimensions.clientHeight);
+
+        for (const button of await quantityGroup.getByRole("button").all()) {
+            const dimensions = await button.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+            expect(dimensions.scrollWidth, `${viewport.width}px English quantity option should not be truncated`).toBeLessThanOrEqual(dimensions.clientWidth);
+            expect(dimensions.scrollHeight, `${viewport.width}px English quantity option should not be clipped`).toBeLessThanOrEqual(dimensions.clientHeight);
+        }
+
+        const customCount = quantityGroup.getByRole("textbox", { name: "Custom generation count" });
+        await expect(customCount).toHaveAttribute("placeholder", "Custom");
+        expect(await customCount.evaluate((element) => element.clientWidth), `${viewport.width}px custom quantity should fit its English placeholder`).toBeGreaterThanOrEqual(52);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+});
+
 test("English and Vietnamese workspace top bars fit mobile light and dark themes", async ({ page }, testInfo) => {
     test.skip(!testInfo.project.name.startsWith("mobile-"), "This matrix runs in the 390px and 430px projects");
     const baseURL = String(testInfo.project.use.baseURL);
