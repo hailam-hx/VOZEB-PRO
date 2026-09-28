@@ -90,6 +90,18 @@ describe("serializePublicSettings", () => {
                             formats: ["mp3"],
                             speedRange: { min: 0.5, max: 2 },
                         },
+                        imageQualityProfile: {
+                            version: 1,
+                            controlType: "model_variant",
+                            selectionMode: "explicit",
+                            source: "manual",
+                            options: [
+                                { value: "standard", label: "标准", optionRevision: "ignored", effect: { type: "model_variant", targetBindingId: "secret-binding-standard" } },
+                                { value: "high", label: "高清", optionRevision: "ignored", effect: { type: "model_variant", targetBindingId: "secret-binding-high" } },
+                            ],
+                            profileRevision: "ignored",
+                            validation: { status: "VALID", reasons: [], validatedAt: "2026-09-25T00:00:00.000Z" },
+                        },
                         costRateCard: { version: 1, revision: "cost-secret", components: [{ id: "count", dimension: "count", unitPrice: "0.4" }] },
                     },
                 ],
@@ -111,6 +123,9 @@ describe("serializePublicSettings", () => {
         const result = serializePublicSettings(settings);
         const serialized = JSON.stringify(result);
 
+        expect(result.logicalModels[0]?.imageQualityProfile).toMatchObject({ supported: true, controlType: "model_variant", selectionMode: "explicit" });
+        expect(serialized).not.toContain("secret-binding-standard");
+
         expect(result.systemChannels).toEqual([
             {
                 id: "channel-one",
@@ -129,6 +144,7 @@ describe("serializePublicSettings", () => {
             upstreamModel: "vendor-image",
             enabled: true,
             priority: 1,
+            maxOutputTokens: 4096,
             generationParameters: {
                 referenceInputs: ["image"],
                 aspectRatios: ["16:9"],

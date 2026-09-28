@@ -1,23 +1,133 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ isSafeOutboundUrl: vi.fn(async () => true) }));
+const mocks = vi.hoisted(() => ({ isSafeOutboundUrl: vi.fn(async () => true), getAuthSettings: vi.fn() }));
 const savedChannel = { id: "saved", name: "已保存", baseUrl: "https://api.example.com/v1", apiKey: "test-secret-value", apiFormat: "openai", models: [], enabled: true };
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin", role: "admin", status: "active", adminPermissions: ["upstream.manage"] })) }));
-vi.mock("@/lib/auth/store", () => ({ getAuthSettings: vi.fn(async () => ({ systemChannels: [savedChannel] })) }));
+vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: mocks.isSafeOutboundUrl }));
 vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
 import { POST } from "./route";
+import { DEFAULT_SYSTEM_PRICING_POLICY } from "@/lib/billing/pricing-policy";
 
 describe("admin models route", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         mocks.isSafeOutboundUrl.mockClear();
         mocks.isSafeOutboundUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({ systemChannels: [savedChannel], logicalModels: [] });
         savedChannel.apiKey = "test-secret-value";
         (globalThis as typeof globalThis & { __vozebProModelFetchCooldowns?: Map<string, number> }).__vozebProModelFetchCooldowns?.clear();
+    });
+
+    it("keeps the complete DFLOP key-visible catalog and enriches it with public metadata", async () => {
+        const fetchMock = vi.fn(async (url: string | URL) => {
+            if (String(url).endsWith("/api/v1/config/currency")) return Response.json({ unit: "points", points_per_cny: 60, usd_to_cny_peg: 6.74, points_per_usd: 404.4 });
+            return String(url).endsWith("/api/v1/models/public")
+                ? Response.json({
+                      models: [
+                          { id: "opaque-image", display_name: "Opaque Image", callable: true, category: "image", endpoint_type: "images_generations", image_ratios: ["1:1"], price_per_image: 0.1 },
+                          { id: "voice-clone-pro", callable: true, endpoint_type: "audio_voices" },
+                          { id: "suno-v5", callable: true, endpoint_type: "music_generations" },
+                          { id: "unavailable", callable: false, endpoint_type: null, supported_protocols: ["openai_chat"] },
+                          { id: "public-only", callable: true, endpoint_type: null, supported_protocols: ["openai_chat"] },
+                      ],
+                  })
+                : Response.json({ data: [{ id: "opaque-image" }, { id: "voice-clone-pro" }, { id: "suno-v5" }, { id: "unavailable" }, { id: "registry-missing" }] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        const response = await POST(request({ baseUrl: "https://api.dflop.top/v1", apiKey: "secret", protocol: "dflop" }));
+        expect(response.status).toBe(200);
+        const payload = await response.json();
+        expect(payload.models).toHaveLength(5);
+        expect(payload.models).toEqual(expect.arrayContaining(["opaque-image", "voice-clone-pro", "suno-v5", "unavailable", "registry-missing"]));
+        expect(payload.models).not.toContain("public-only");
+        expect(payload).toMatchObject({
+            modelCapabilities: { "opaque-image": "image", "voice-clone-pro": "audio", "registry-missing": "text" },
+            modelConfigs: { "voice-clone-pro": { createPath: "/audio/voices" } },
+            modelDiscovery: {
+                "opaque-image": { kind: "image", callable: true, matched: true, routable: true },
+                "voice-clone-pro": { kind: "audio", callable: true, matched: true, routable: true },
+                "suno-v5": { kind: "other", callable: true, matched: true, routable: false },
+                unavailable: { kind: "text", callable: false, matched: true, routable: false },
+                "registry-missing": { kind: "text", matched: false, routable: true },
+            },
+            discoveryStats: { upstreamModels: 5, publicRegistry: 5, matched: 4, unmatched: 1, callable: 3, text: 2, image: 1, video: 0, audio: 1, other: 1, filtered: 2 },
+            discoveredCount: 5,
+            totalCount: 5,
+        });
+        expect(payload.modelDiscovery["opaque-image"].upstreamMetadata).toMatchObject({
+            displayName: "Opaque Image",
+            generationParameters: { aspectRatios: ["1:1"] },
+            providerPricingProfile: { status: "READY", dimensions: [expect.objectContaining({ kind: "IMAGE_OUTPUT", effectiveValue: "0.1" })] },
+        });
+        expect(payload.syncStats).toMatchObject({ created: 3, metadataFallbacks: 1 });
+        expect(payload.pricingPolicyPatch).toMatchObject({ dflopCreditsPerCny: "60", dflopCreditsPerCnySource: "upstream", cnyToUsd: "0.15" });
+        expect(payload.pricingSync).toMatchObject({ stats: { models: 5, pricingProfiles: 4, missingPricing: 4 } });
+        expect(fetchMock).toHaveBeenCalledWith("https://api.dflop.top/v1/models", expect.objectContaining({ headers: { authorization: "Bearer secret" } }));
+        expect(fetchMock).toHaveBeenCalledWith("https://api.dflop.top/api/v1/models/public", expect.objectContaining({ cache: "no-store", headers: { accept: "application/json", "user-agent": "HOTX-AI-DFLOP-Discovery" } }));
+        expect(fetchMock).toHaveBeenCalledWith("https://api.dflop.top/api/v1/config/currency", expect.objectContaining({ cache: "no-store", headers: { accept: "application/json", "user-agent": "HOTX-AI-DFLOP-Discovery" } }));
+    });
+
+    it("falls back to the key-visible DFLOP catalog when public metadata cannot be fetched", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string | URL) => (String(url).endsWith("/public") ? Response.json({}, { status: 503 }) : Response.json({ data: [{ id: "fallback-chat" }, { id: "fallback-video" }] }))),
+        );
+        const response = await POST(request({ baseUrl: "https://api.dflop.top/v1", apiKey: "secret", protocol: "dflop" }));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+            models: ["fallback-chat", "fallback-video"],
+            modelCapabilities: { "fallback-chat": "text", "fallback-video": "video" },
+            discoveryStats: { upstreamModels: 2, publicRegistry: 0, matched: 0, unmatched: 2, text: 1, video: 1, filtered: 0 },
+            warning: expect.stringContaining("公共模型元数据不可用"),
+        });
+    });
+
+    it("derives below-cost counts from the preview logical-model diagnostics", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            systemChannels: [savedChannel],
+            logicalModels: [],
+            pricingPolicy: { ...DEFAULT_SYSTEM_PRICING_POLICY, markupMultiplier: "0.9", version: "preview-policy" },
+        });
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string | URL) => {
+                if (String(url).endsWith("/api/v1/models/public")) return Response.json({ models: [{ id: "image-priced", category: "image", endpoint_type: "images_generations", callable: true, price_per_image: "80" }] });
+                if (String(url).endsWith("/api/v1/config/currency")) return Response.json({ unit: "points", points_per_cny: 60 });
+                return Response.json({ data: [{ id: "image-priced" }] });
+            }),
+        );
+
+        const response = await POST(request({ channelId: "saved", baseUrl: "https://api.dflop.top/v1", protocol: "dflop" }));
+
+        expect(await response.json()).toMatchObject({ pricingSync: { stats: { belowCostWarnings: 1 } } });
+    });
+
+    it("falls back when the DFLOP public endpoint returns an invalid registry shape", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string | URL) => (String(url).endsWith("/public") ? Response.json({ data: [] }) : Response.json({ data: [{ id: "fallback-chat" }] }))),
+        );
+
+        const response = await POST(request({ baseUrl: "https://api.dflop.top/v1", apiKey: "secret", protocol: "dflop" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ models: ["fallback-chat"], warning: expect.stringContaining("公共模型元数据不可用") });
+    });
+
+    it("does not use the public DFLOP registry when the API-key catalog request fails", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ error: { message: "invalid api key" } }, { status: 401 }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ baseUrl: "https://api.dflop.top/v1", apiKey: "bad-secret", protocol: "dflop" }));
+
+        expect(response.status).toBe(502);
+        expect(await response.json()).toEqual({ error: "invalid api key" });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock).toHaveBeenCalledWith("https://api.dflop.top/v1/models", expect.anything());
     });
 
     it("uses the saved server-side API key when the client sends only channelId", async () => {

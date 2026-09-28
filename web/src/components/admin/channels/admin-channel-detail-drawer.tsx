@@ -6,7 +6,7 @@ import { RefreshCw } from "lucide-react";
 import { SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
 import type { SystemModelChannel } from "@/lib/auth/store";
 import { channelProtocolDefinition, channelRequiresApiKey, channelSupportsModelCatalog } from "@/lib/channel-protocol-registry";
-import { capabilityLabel, channelModelCapability } from "@/lib/model-routing-config";
+import { capabilityLabel, channelModelCapability, channelModelDiscovery } from "@/lib/model-routing-config";
 
 import { ChannelStatusBadge } from "./admin-channel-status-badge";
 import { channelBindingCount, channelCapabilityLabels, channelProtocolLabel, channelWorkspaceStatus, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
@@ -26,7 +26,7 @@ export function AdminChannelDetailDrawer({ open, channel, settings, fetching, on
     if (!channel) return null;
     const status = channelWorkspaceStatus(channel);
     return (
-        <Drawer title={channel.name || "渠道详情"} size={720} styles={{ wrapper: { maxWidth: "100vw" } }} open={open} destroyOnHidden onClose={onClose}>
+        <Drawer title={channel.name || "渠道详情"} width="min(720px, 100vw)" styles={{ wrapper: { maxWidth: "100vw" } }} open={open} destroyOnHidden onClose={onClose}>
             <Tabs
                 items={[
                     {
@@ -110,12 +110,20 @@ function ChannelOverview({ channel, settings, status, onFetchModels, fetching }:
 function ChannelModels({ channel }: { channel: SystemModelChannel }) {
     return (
         <div className="divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
-            {channel.models.map((model) => (
-                <div key={model} className="flex min-w-0 items-center justify-between gap-3 py-3">
-                    <span className="min-w-0 truncate text-sm font-medium text-stone-950 dark:text-stone-100">{model}</span>
-                    <Tag className="m-0">{capabilityLabel(channelModelCapability(channel, model))}</Tag>
-                </div>
-            ))}
+            {channel.models.map((model) => {
+                const discovery = channelModelDiscovery(channel, model);
+                const label = discovery?.kind === "other" ? "其他" : capabilityLabel(discovery?.kind || channelModelCapability(channel, model));
+                const status = discovery?.callable === false ? "不可调用" : discovery?.routable === false ? "未接入" : "";
+                return (
+                    <div key={model} className="flex min-w-0 items-center justify-between gap-3 py-3">
+                        <span className="min-w-0 truncate text-sm font-medium text-stone-950 dark:text-stone-100">{model}</span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                            <Tag className="m-0">{label}</Tag>
+                            {status ? <Tag className="m-0">{status}</Tag> : null}
+                        </div>
+                    </div>
+                );
+            })}
             {!channel.models.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有上游模型" /> : null}
         </div>
     );

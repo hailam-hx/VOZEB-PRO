@@ -11,6 +11,8 @@ export type SystemGenerationChannelConfig = {
     model: string;
     channelId?: string;
     logicalModel?: string;
+    promptEnhancementDisabled?: boolean;
+    promptAudit?: import("@/lib/server/generation-prompt-audit").PromptAudit;
     advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig;
     capabilityProfile?: ReturnType<typeof import("@/lib/model-routing-config").resolveLogicalModelCapabilityProfile>;
     generationParameters?: import("@/lib/auth/store").LogicalModelGenerationParameters;

@@ -128,6 +128,17 @@ describe("GlobalAiOpc image task paths", () => {
         await expect(parseImagePayloadOrPoll(openAiConfig, { id: "upstream-one" }, "http://localhost/api/ai/system/openai-image", "", "http://localhost/api/ai/system/openai-image", true)).rejects.toThrow(ImageQueryContractError);
     });
 
+    it("uses the documented DFLOP image task endpoint when async image submission returns an id", () => {
+        const dflopConfig = {
+            baseUrl: "/api/ai/system/dflop-image",
+            model: "tvod-midjourney-v7",
+            apiFormat: "openai",
+            advancedConfig: { protocol: "dflop", createPath: "/images/generations", queryPath: "" },
+        } as never;
+
+        expect(imageTaskPollUrls(dflopConfig, "http://localhost/api/ai/system/dflop-image/images/generations", "task-one")).toEqual(["http://localhost/api/ai/system/dflop-image/images/generations/task-one"]);
+    });
+
     it("keeps every image returned by one upstream response", () => {
         const result = parseImagePayloadCompat({ data: [{ url: "https://cdn.example.com/first.png" }, { url: "https://cdn.example.com/second.png" }] }, "https://provider.example/v1/images/generations", {
             baseUrl: "https://provider.example/v1",

@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { fullGenerationParametersPreset, generationParametersCompatible, intersectGenerationParameters, normalizeGenerationParameters, unionAvailableGenerationParameters, unionGenerationParameters } from "./generation-parameters";
 
 describe("generation parameters", () => {
+    it("enforces an exact required reference image count", () => {
+        const parameters = normalizeGenerationParameters({ referenceInputs: ["image"], minReferenceImages: 1, maxReferenceImages: 1 });
+        expect(generationParametersCompatible(parameters, {})).toEqual({ compatible: false, field: "referenceCount" });
+        expect(generationParametersCompatible(parameters, { referenceInputs: ["image"], referenceCount: 1 })).toEqual({ compatible: true });
+        expect(generationParametersCompatible(parameters, { referenceInputs: ["image"], referenceCount: 2 })).toEqual({ compatible: false, field: "referenceCount" });
+    });
     it("builds complete editable presets from every option exposed by HOTX AI", () => {
         expect(fullGenerationParametersPreset("image")).toEqual({
             referenceInputs: ["image"],
@@ -97,7 +103,7 @@ describe("generation parameters", () => {
             pixelSizes: ["1024x768"],
             supportsCustomSize: true,
             qualities: ["high", "low"],
-            resolutions: ["720P", "1080P"],
+            resolutions: ["720", "1080"],
             durationMode: "discrete",
             durationSeconds: [5, 10],
             maxBatchSize: 3,

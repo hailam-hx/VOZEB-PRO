@@ -9,6 +9,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/lib/auth/store";
+import { applyChannelProtocol, emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
+import { parseDflopModelMetadata } from "@/lib/dflop-model-metadata";
 import { GenerationDefaultsPanel } from "./admin-generation-settings";
 import { AdminLogicalModelManager } from "./admin-logical-model-manager";
 
@@ -43,6 +45,15 @@ async function render(node: ReactNode) {
 }
 
 describe("GenerationDefaultsPanel creative prompt limit", () => {
+    it("lets an administrator toggle manual Prompt enhancement", async () => {
+        const settings = structuredClone(DEFAULT_SETTINGS);
+        const onChange = vi.fn();
+        const host = await render(<GenerationDefaultsPanel settings={settings} onChange={onChange} />);
+        expect(host.textContent).toContain("手动选择模型时允许增强 Prompt");
+        const switches = host.querySelectorAll('button[role="switch"]');
+        await userEvent.setup().click(switches[1]);
+        expect(onChange).toHaveBeenCalledWith("manualPromptEnhancementEnabled", false);
+    });
     it("lets an administrator hide Agent mode from the create page", async () => {
         const settings = structuredClone(DEFAULT_SETTINGS);
         (settings.generationDefaults as typeof settings.generationDefaults & { agentModeEnabled: boolean }).agentModeEnabled = true;
@@ -102,7 +113,7 @@ const textDefaults = { imageModel: "", videoModel: "", textModel: "gpt-5.6-sol",
 function videoModels(
     generationParameters?: Parameters<typeof LogicalModelHarness>[0]["logicalModels"][number]["bindings"][number]["generationParameters"],
     capabilityProfile?: Parameters<typeof LogicalModelHarness>[0]["logicalModels"][number]["bindings"][number]["capabilityProfile"],
-) {
+): Parameters<typeof LogicalModelHarness>[0]["logicalModels"] {
     return [{ id: "video", name: "视频", capability: "video" as const, enabled: true, bindings: [{ id: "video:one", channelId: "one", upstreamModel: "video", enabled: true, priority: 1, generationParameters, capabilityProfile }] }];
 }
 
@@ -129,6 +140,35 @@ function fieldInput(label: string) {
 }
 
 describe("admin generation controls", () => {
+    it("shows DFLOP description capability provenance and audit values", async () => {
+        const upstreamMetadata = parseDflopModelMetadata({ id: "video", category: "video", description: "支持参考图片，最多30张参考图片，可生成有声视频，24fps" });
+        const channel = applyChannelProtocol(
+            {
+                ...videoChannels[0],
+                baseUrl: "https://api.dflop.top/v1",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "dflop" },
+            },
+            "dflop",
+        );
+        channel.advancedConfig = {
+            ...channel.advancedConfig!,
+            modelCapabilities: { video: "video" },
+            modelDiscovery: { video: { kind: "video", callable: true, matched: true, routable: true, endpointType: "videos_generations", upstreamMetadata } },
+        };
+        const models = videoModels(upstreamMetadata.generationParameters);
+        models[0].bindings[0].generationParameterSources = upstreamMetadata.generationParameterSources;
+        models[0].bindings[0].upstreamMetadata = upstreamMetadata;
+        const host = await render(<LogicalModelHarness channels={[channel]} logicalModels={models} defaultModels={videoDefaults} />);
+
+        await openVideoEditor(host);
+
+        expect(document.body.textContent).toContain("DFLOP 能力识别");
+        expect(document.body.textContent).toContain("参考图片");
+        expect(document.body.textContent).toContain("最大参考图片数");
+        expect(document.body.textContent).toContain("生成音频");
+        expect(document.body.textContent).toContain("描述识别");
+    });
+
     it("opens the logical model drawer without deprecated Ant Design warnings", async () => {
         const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
         try {

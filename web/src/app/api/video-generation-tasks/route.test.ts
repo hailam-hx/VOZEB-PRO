@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     completeReconciledVideoTask: vi.fn(),
     failReconciledVideoTask: vi.fn(),
     getAuthSettings: vi.fn(),
+    getAgentRun: vi.fn(),
     getVideoTask: vi.fn(),
     linkStoredGenerationTask: vi.fn(),
     getStoredGenerationTaskByRequest: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/lib/auth/store", () => {
     }
     return { AuthInputError, getAuthSettings: mocks.getAuthSettings, isAuthInputError: (error: unknown) => error instanceof AuthInputError, refundUserPoints: vi.fn() };
 });
+vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi, resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: vi.fn() }));
 vi.mock("@/lib/server/generation-task-store", () => ({
@@ -45,7 +47,11 @@ vi.mock("@/lib/server/security", () => ({
 }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: vi.fn() }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
-vi.mock("@/lib/server/usage-billing-runtime", () => ({ attachSystemAiUsageUpstreamTask: vi.fn(), finalizeUsageBillingForBusiness: mocks.finalizeUsageBillingForBusiness }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({
+    attachAuthoritativeVideoUsageForBusiness: vi.fn(async () => ({ state: "not_required" })),
+    attachSystemAiUsageUpstreamTask: vi.fn(),
+    finalizeUsageBillingForBusiness: mocks.finalizeUsageBillingForBusiness,
+}));
 vi.mock("@/lib/server/video-task-log", () => ({ writeVideoGenerationLog: mocks.writeVideoGenerationLog }));
 vi.mock("@/lib/server/video-task-store", () => ({
     createVideoTask: mocks.createVideoTask,
@@ -97,6 +103,7 @@ describe("video generation candidate failover", () => {
         mocks.fetchInternalApi.mockReset();
         resetChannelRuntimeHealth();
         mocks.getAuthSettings.mockResolvedValue(settings);
+        mocks.getAgentRun.mockResolvedValue(undefined);
         storedTask = undefined;
         mocks.createVideoTask.mockImplementation(async (input) => {
             storedTask = { ...input, id: "local-task", status: "running", createdAt: Date.now(), updatedAt: Date.now() };
@@ -106,6 +113,44 @@ describe("video generation candidate failover", () => {
         mocks.claimVideoTaskPoll.mockImplementation(async () => storedTask);
         mocks.after.mockImplementation(() => undefined);
         mocks.resolveProviderReferenceUrls.mockImplementation(async (references) => references);
+    });
+
+    it("sends the exact manual prompt and separate reference URL when enhancement is disabled", async () => {
+        const original = "让这个人物慢慢向前走";
+        mocks.getAgentRun.mockResolvedValue({ id: "manual-run", userId: "user", prompt: original, originalPrompt: original, requestedModelIds: ["video"], manualPromptEnhancementEnabled: false });
+        mocks.getAuthSettings.mockResolvedValue(publicUrlCompatibleSettings());
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-video", status: "queued" }));
+        const response = await POST(request({ model: "video", videoSeconds: 5, size: "16:9", vquality: "720" }, [{ type: "image", url: "https://cdn.example.com/reference.jpg" }], { runId: "manual-run" }));
+        const payload = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).body));
+        expect(response.status).toBe(200);
+        expect(payload.prompt).toBe(original);
+        expect(payload.image).toBe("https://cdn.example.com/reference.jpg");
+        expect(payload.duration).toBe(5);
+    });
+
+    it("keeps the final DFLOP video payload prompt exact when enhancement is disabled", async () => {
+        const original = "让这个人物慢慢向前走";
+        const compatible = publicUrlCompatibleSettings();
+        mocks.getAuthSettings.mockResolvedValue({ ...compatible, systemChannels: [{ ...compatible.systemChannels[0], advancedConfig: { ...compatible.systemChannels[0].advancedConfig, protocol: "dflop" } }] });
+        mocks.getAgentRun.mockResolvedValue({ id: "dflop-run", userId: "user", prompt: original, originalPrompt: original, requestedModelIds: ["video"], manualPromptEnhancementEnabled: false });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-dflop", status: "queued" }));
+        const response = await POST(request({ model: "video", videoSeconds: 5, size: "16:9", vquality: "720" }, [{ type: "image", url: "https://cdn.example.com/reference.jpg" }], { runId: "dflop-run" }));
+        expect(response.status).toBe(200);
+        const payload = JSON.parse(String((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).body));
+        expect(payload.prompt).toBe(original);
+        expect(payload.image).toBe("https://cdn.example.com/reference.jpg");
+    });
+
+    it("still enhances manual video with the setting on and leaves Smart Planning output unchanged", async () => {
+        mocks.getAuthSettings.mockResolvedValue(publicUrlCompatibleSettings());
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-video", status: "queued" }));
+        mocks.getAgentRun.mockResolvedValue({ id: "manual-run", userId: "user", prompt: "A test video", requestedModelIds: ["video"], manualPromptEnhancementEnabled: true });
+        await POST(request({ model: "video" }, [{ type: "image", url: "https://cdn.example.com/reference.jpg" }], { runId: "manual-run" }));
+        expect(JSON.parse(String((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).body)).prompt).toContain("参考素材一致性要求");
+        mocks.fetchInternalApi.mockClear();
+        mocks.getAgentRun.mockResolvedValue({ id: "smart-run", userId: "user", prompt: "A test video", requestedModelIds: [], manualPromptEnhancementEnabled: false });
+        await POST(request({ model: "video" }, [{ type: "image", url: "https://cdn.example.com/reference.jpg" }], { runId: "smart-run" }));
+        expect(JSON.parse(String((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).body)).prompt).toContain("参考素材一致性要求");
     });
 
     it("resolves provider-facing reference URLs and propagates task diagnostics without changing video parameters", async () => {
@@ -233,10 +278,7 @@ describe("video generation candidate failover", () => {
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(false);
         expect(mocks.createVideoTask).toHaveBeenCalledOnce();
         expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ upstream: expect.objectContaining({ id: "" }) }));
-        expect(mocks.updateVideoTask).toHaveBeenCalledWith(
-            "local-task",
-            expect.objectContaining({ attempts: [expect.objectContaining({ attemptNo: 1, status: "failed" })] }),
-        );
+        expect(mocks.updateVideoTask).toHaveBeenCalledWith("local-task", expect.objectContaining({ attempts: [expect.objectContaining({ attemptNo: 1, status: "failed" })] }));
         expect(mocks.transitionVideoTask).toHaveBeenCalledWith(
             expect.objectContaining({ id: "local-task" }),
             expect.objectContaining({
@@ -255,11 +297,7 @@ describe("video generation candidate failover", () => {
         );
         expect(mocks.finalizeUsageBillingForBusiness).toHaveBeenCalledOnce();
         expect(mocks.finalizeUsageBillingForBusiness).toHaveBeenCalledWith({ userId: "user", businessId: "video-task:local-task" });
-        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith(
-            "video",
-            "local-task",
-            expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "create_failed" }),
-        );
+        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith("video", "local-task", expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "create_failed" }));
     });
 
     it("returns a stable public code for a Seedance reference-video duration rejection", async () => {
@@ -288,6 +326,30 @@ describe("video generation candidate failover", () => {
         });
         expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(false);
+    });
+
+    it("returns a stable public code when the provider rejects a reference-image aspect ratio", async () => {
+        mocks.fetchInternalApi.mockImplementation(async () =>
+            json({ error: "Error while downloading image, error: expected the aspect ratio to be between 0.39 and 2.50, but received image with aspect ratio: 2.65 instead Request id: provider-aspect-request" }, 400),
+        );
+
+        const response = await POST(request());
+
+        expect({ status: response.status, payload: await response.json() }).toMatchObject({ status: 400, payload: { errorCode: "video_reference_aspect_ratio_unsupported", outcome: "rejected", canRetry: false } });
+        expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(true);
+    });
+
+    it("tries another binding when one provider rejects a reference-image aspect ratio", async () => {
+        mocks.fetchInternalApi.mockImplementation(async (url: string) =>
+            url.includes("/api/ai/system/one/")
+                ? json({ error: "Error while downloading image, error: expected the aspect ratio to be between 0.39 and 2.50, but received image with aspect ratio: 2.65 instead" }, 400)
+                : json({ id: "upstream-two", status: "queued" }),
+        );
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({ task: { upstreamId: "upstream-two" } });
     });
 
     it("preserves transient provider status and unknown outcome for Agent retry", async () => {
@@ -458,7 +520,7 @@ describe("video generation candidate failover", () => {
         expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ requestedDurationSeconds: 8 }));
     });
 
-    it("resolves Auto size, resolution, and duration against the selected binding before submission", async () => {
+    it("keeps Smart size unresolved while resolving resolution and duration before submission", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             ...settings,
             logicalModels: [
@@ -485,8 +547,9 @@ describe("video generation candidate failover", () => {
         const upstreamBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls[0]?.[1]?.body));
 
         expect(response.status).toBe(200);
-        expect(upstreamBody).toMatchObject({ duration: 8, ratio: "4:3", resolution: "480p" });
-        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ size: "4:3", vquality: "480", videoSeconds: 8 }) }));
+        expect(upstreamBody).toMatchObject({ duration: 8, resolution: "480p" });
+        expect(upstreamBody).not.toHaveProperty("ratio");
+        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ size: undefined, vquality: "480", videoSeconds: 8 }) }));
     });
 
     it("creates a Gemini Veo long-running operation with the native request contract", async () => {

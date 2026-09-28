@@ -9,8 +9,9 @@ import { ModelIcon } from "@/components/model-picker";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { cn } from "@/lib/utils";
 import { CREATIVE_RUN_MODEL_LIMIT } from "@/lib/creative-runtime-contract";
+import type { PublicLogicalImageQualityProfile } from "@/lib/image-quality-profile";
 
-export type CreativeAgentModelOption = { id: string; name: string; capability: "image" | "video" | "audio" };
+export type CreativeAgentModelOption = { id: string; name: string; capability: "image" | "video" | "audio"; imageQualityProfile?: PublicLogicalImageQualityProfile };
 export type CreativeAgentControlTheme = { panel: string; border: string; text: string; muted: string; activeBackground: string; activeText: string };
 export const creativeAgentModelCapabilities = ["image", "video", "audio"] as const;
 

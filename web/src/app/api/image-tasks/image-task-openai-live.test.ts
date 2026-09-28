@@ -4,7 +4,7 @@ vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher
 
 import { createProtocolFixtureServer } from "../../../../scripts/protocol-fixture-server.mjs";
 import { runGeminiImageTask } from "./image-task-gemini";
-import { buildResponsesImageBodies, runOpenAiImageTask } from "./image-task-openai";
+import { buildDflopKlingExpandBody, buildOpenAiImageGenerationBody, buildResponsesImageBodies, runOpenAiImageTask } from "./image-task-openai";
 import { runCustomImageTask } from "./image-task-custom";
 import type { ImageTask } from "@/lib/server/image-task-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
@@ -23,6 +23,107 @@ beforeEach(() => {
 });
 
 describe("OpenAI image provider over a live compatible fixture", () => {
+    it("keeps the exact DFLOP image payload prompt when manual enhancement is disabled", () => {
+        const original = "让这个人物慢慢向前走";
+        const task = liveImageTask("http://provider.example", {
+            prompt: original,
+            config: {
+                baseUrl: "http://provider.example/v1",
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "tvod-midjourney-v7",
+                promptEnhancementDisabled: true,
+                systemPrompt: "hidden instruction",
+                imageQualityContext: { effectivePrompt: `${original} --hd` } as never,
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "dflop", createPath: "/images/generations" },
+            },
+        });
+        expect(buildOpenAiImageGenerationBody(task, undefined, undefined, "url", false).prompt).toBe(original);
+    });
+
+    it("sends the exact manual prompt in the final DFLOP image request", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const original = "让这个人物慢慢向前走";
+        const task = liveImageTask(origin, {
+            prompt: original,
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "mock-image",
+                channelId: "fixture-dflop",
+                promptEnhancementDisabled: true,
+                promptAudit: { originalPrompt: original, executionPrompt: original, manualPromptEnhancementEnabled: false },
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "dflop", createPath: "/images/generations" },
+            },
+        });
+        try {
+            await runOpenAiImageTask(task, "", "", "", true);
+            expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}").prompt).toBe(original);
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+    it("uses the DFLOP Kling expand generation contract with exactly one image", () => {
+        const task = liveImageTask("http://provider.example", {
+            kind: "edit",
+            references: [{ dataUrl: "https://cdn.example/reference.png" }],
+            config: {
+                baseUrl: "http://provider.example/v1",
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "tvod-kling-expand",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "dflop", createPath: "/images/generations" },
+            },
+        });
+        expect(buildDflopKlingExpandBody(task, "https://cdn.example/reference.png")).toEqual({
+            model: "tvod-kling-expand",
+            prompt: "create a blue protocol test image",
+            image: "https://cdn.example/reference.png",
+            async: true,
+        });
+        expect(() => buildDflopKlingExpandBody({ ...task, references: [] }, "")).toThrow("需要且只能使用 1 张参考图");
+    });
+
+    it.each(["tvod-midjourney-v7", "tvod-midjourney-v8.1"])("uses the DFLOP fixed-grid async contract for %s", (model) => {
+        const task = liveImageTask("http://provider.example", {
+            config: {
+                baseUrl: "http://provider.example/v1",
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model,
+                count: 4,
+                size: "16:9",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "dflop", createPath: "/images/generations", queryPath: "/images/generations/{taskId}" },
+            },
+        });
+        expect(buildOpenAiImageGenerationBody(task, "high", "1824x1024", "url", false)).toEqual({
+            model,
+            prompt: "create a blue protocol test image",
+            n: 1,
+            size: "2048x1152",
+            async: true,
+        });
+    });
+
+    it("keeps Qwen's required single output count after capability normalization", () => {
+        const task = liveImageTask("http://provider.example", {
+            config: {
+                baseUrl: "http://provider.example/v1",
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "qwen-image-3.0-pro",
+                size: "1024x1024",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "dflop", createPath: "/images/generations" },
+            },
+        });
+
+        expect(buildOpenAiImageGenerationBody(task, undefined, "1024x1024", "url", false)).toMatchObject({ model: "qwen-image-3.0-pro", size: "1024x1024", n: 1 });
+    });
     it("keeps image capability on every Responses fallback payload", () => {
         const task: ImageTask = {
             id: "responses-image-fallback",
@@ -72,6 +173,50 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             expect(fixture.requests[0]).toMatchObject({ method: "POST", path: "/v1/images/generations" });
             expect(fixture.requests[0]?.headers.authorization).toBe("Bearer fixture-key");
             expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toMatchObject({ model: "mock-image", n: 2, response_format: "url" });
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("sends the binding-resolved effective prompt without mutating the user prompt", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-quality-prompt-live",
+            prompt: "a cat --sd",
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "mock-image",
+                channelId: "fixture-image",
+                imageQualityContext: {
+                    version: 1,
+                    logicalModelId: "midjourney",
+                    bindingId: "midjourney-binding",
+                    qualityProfileRevision: "profile-v1",
+                    selectedQualityValue: "high",
+                    controlType: "prompt_flag",
+                    selectionMode: "explicit",
+                    resolvedPromptSuffix: "--hd",
+                    effectivePrompt: "a cat --hd",
+                    requestParameters: { style: "vivid" },
+                    requestCount: 1,
+                    billableOutputCount: 4,
+                    pricingConditions: { quality: "high" },
+                },
+            },
+        });
+
+        try {
+            await runOpenAiImageTask(task, "http://internal", "http://public", "", true);
+            const body = JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}");
+            expect(body.prompt).toBe("a cat --hd");
+            expect(body.style).toBe("vivid");
+            expect(task.prompt).toBe("a cat --sd");
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }
@@ -246,6 +391,20 @@ describe("OpenAI image provider over a live compatible fixture", () => {
                 apiFormat: "gemini",
                 model: "gemini-image",
                 channelId: "fixture-gemini",
+                imageQualityContext: {
+                    version: 1,
+                    logicalModelId: "gemini-image",
+                    bindingId: "gemini-binding",
+                    qualityProfileRevision: "profile-v1",
+                    selectedQualityValue: "high",
+                    controlType: "request_parameter",
+                    selectionMode: "explicit",
+                    effectivePrompt: "create a fixture image",
+                    requestParameters: { responseMimeType: "image/png" },
+                    requestCount: 1,
+                    billableOutputCount: 1,
+                    pricingConditions: { quality: "high" },
+                },
                 advancedConfig: { ...emptyAdvancedConfig(), protocol: "compatible", createPath: "/models/:model:generateContent", supportsReferenceImage: true },
             },
         });
@@ -256,6 +415,7 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             expect(fixture.requests[0]?.path).toBe("/v1beta/models/gemini-image:generateContent");
             const body = JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}");
             expect(body.contents[0].parts[1]).toEqual({ inlineData: { mimeType: "image/png", data: PNG_BASE64 } });
+            expect(body.generationConfig).toMatchObject({ responseModalities: ["TEXT", "IMAGE"], responseMimeType: "image/png" });
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }

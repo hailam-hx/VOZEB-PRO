@@ -24,6 +24,7 @@ import { scheduleGenerationTask } from "./generation-task-scheduler";
 import { getStoredGenerationTaskRecord } from "./generation-task-store";
 
 import {
+    attachAuthoritativeVideoUsageForBusiness,
     attachUsageProviderEvidence,
     attachUsageProviderUpstreamTaskId,
     finalizeUsageBillingForBusiness,
@@ -88,6 +89,42 @@ afterAll(() => {
 });
 
 describe("usage billing runtime", () => {
+    it("persists the immutable Seedance estimate and hold context across reload", async () => {
+        const billingRequestContext = {
+            pricingBasis: "video_token" as const,
+            billingBasis: "with_video_input" as const,
+            resolution: "720p",
+            requestedOutputDurationSeconds: "5",
+            hasReferenceVideo: true,
+            verifiedInputVideoDurationSeconds: "10",
+            referenceVideoDurationSource: "server-probed" as const,
+            estimatePixelWidth: "1680",
+            estimatePixelHeight: "720",
+            estimatedTokens: "425250",
+            estimateStatus: "CONSERVATIVE_ESTIMATE" as const,
+            holdTokens: "992250",
+            holdInputVideoDurationSeconds: "30",
+            holdPixelWidth: "1680",
+            holdPixelHeight: "720",
+            saleRateCardRevision: "sale-r1",
+        };
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "video-task:immutable-context",
+            requestFingerprint: "9".repeat(64),
+            logicalModelId: "seedance",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "1" }] },
+            requestUsage: normalizeBillableUsage({ capability: "video", source: "request", request: "1", outputTokens: "992250", durationSeconds: "5", resolution: "720p", billingBasis: "with_video_input", hasReferenceVideo: true }),
+            description: "Seedance 视频预留",
+            billingRequestContext,
+        });
+
+        expect(billing.snapshot.requestUsage.operationScope).toBe("video_generation");
+        expect((await loadUsageBilling(billing.holdId)).snapshot.requestUsage.operationScope).toBe("video_generation");
+
+        expect((await loadUsageBilling(billing.holdId)).snapshot.billingRequestContext).toEqual(billingRequestContext);
+    });
+
     it("enriches a failed provider attempt when usage evidence arrives after terminalization", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",
@@ -690,6 +727,105 @@ describe("usage billing runtime", () => {
         expect(db.walletHolds[0]).toMatchObject({ status: "settled" });
         expect(db.providerUsageAttempts[0]).toMatchObject({ status: "succeeded", nativeCostAmount: "0.375" });
         expect(db.usageCharges).toEqual([expect.objectContaining({ settledCredits: "1.5", estimated: false })]);
+    });
+
+    it("persists authoritative Seedance token usage and settles the provider attempt exactly once", async () => {
+        const requestUsage = normalizeBillableUsage({ capability: "video", source: "request", request: "1", durationSeconds: "5", resolution: "720p", billingBasis: "default", hasReferenceVideo: false });
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "video-task:seedance-token",
+            requestFingerprint: createHash("sha256").update("seedance-token").digest("hex"),
+            logicalModelId: "doubao-seedance-2.0",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "2" }] },
+            requestUsage,
+            description: "Seedance 视频预留",
+            recovery: { taskType: "video", taskId: "seedance-token" },
+        });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "dflop",
+            bindingId: "dflop-seedance",
+            upstreamTaskId: "upstream-seedance",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: {
+                version: 1,
+                components: [{ id: "video-token-default-720p", dimension: "outputTokens", unitPrice: "4.65", per: "1000000", when: { billingBasis: "default", resolution: "720p" } }],
+            },
+            normalizedUsage: requestUsage,
+        });
+
+        const first = await attachAuthoritativeVideoUsageForBusiness({
+            userId: billing.userId,
+            businessId: billing.businessId,
+            upstreamTaskId: "upstream-seedance",
+            payload: { usage: { completion_tokens: 411300, total_tokens: 411300, duration_sec: "5" } },
+        });
+        const second = await attachAuthoritativeVideoUsageForBusiness({
+            userId: billing.userId,
+            businessId: billing.businessId,
+            upstreamTaskId: "upstream-seedance",
+            payload: { usage: { completion_tokens: 411300, total_tokens: 411300, duration_sec: "5" } },
+        });
+
+        expect(first).toMatchObject({ state: "attached", completionTokens: "411300" });
+        expect(second).toMatchObject({ state: "attached", completionTokens: "411300" });
+        await finalizeUsageBillingForBusiness({ userId: billing.userId, businessId: billing.businessId, inspect: async () => ({ state: "succeeded" }) });
+        await finalizeUsageBillingForBusiness({ userId: billing.userId, businessId: billing.businessId, inspect: async () => ({ state: "succeeded" }) });
+
+        const db = await readAuthDb();
+        expect(db.providerUsageAttempts).toHaveLength(1);
+        expect(db.providerUsageAttempts[0]).toMatchObject({
+            status: "succeeded",
+            nativeCostAmount: "1.912545",
+            observedUsage: { outputTokens: "411300", totalTokens: "411300", resolution: "720p", billingBasis: "default", hasReferenceVideo: false },
+        });
+        expect(db.usageCharges).toHaveLength(1);
+    });
+
+    it("keeps a Seedance hold active for review when terminal authoritative usage is missing", async () => {
+        const requestUsage = normalizeBillableUsage({ capability: "video", source: "request", request: "1", durationSeconds: "5", resolution: "720p", billingBasis: "with_video_input", hasReferenceVideo: true });
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "video-task:seedance-missing-usage",
+            requestFingerprint: createHash("sha256").update("seedance-missing-usage").digest("hex"),
+            logicalModelId: "doubao-seedance-2.0",
+            saleRateSnapshot: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "2" }] },
+            requestUsage,
+            description: "Seedance 视频预留",
+            recovery: { taskType: "video", taskId: "seedance-missing-usage" },
+        });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "dflop",
+            bindingId: "dflop-seedance",
+            upstreamTaskId: "upstream-missing",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: {
+                version: 1,
+                components: [{ id: "video-token-input-720p", dimension: "outputTokens", unitPrice: "5", per: "1000000", when: { billingBasis: "with_video_input", resolution: "720p" } }],
+            },
+            normalizedUsage: requestUsage,
+        });
+
+        await expect(attachAuthoritativeVideoUsageForBusiness({ userId: billing.userId, businessId: billing.businessId, upstreamTaskId: "upstream-missing", payload: { status: "completed" } })).resolves.toEqual({
+            state: "needs_review",
+            code: "AUTHORITATIVE_USAGE_MISSING",
+        });
+
+        const db = await readAuthDb();
+        expect(db.walletHolds[0]).toMatchObject({ status: "active", reviewReason: expect.stringContaining("AUTHORITATIVE_USAGE_MISSING") });
+        expect(db.providerUsageAttempts[0]).toMatchObject({
+            status: "pending",
+            nativeCostAmount: "0",
+            observedUsage: { billingBasis: "with_video_input", resolution: "720p", hasReferenceVideo: true, providerUsage: { rawResponse: { status: "completed" } } },
+        });
+        expect(db.usageCharges).toEqual([]);
     });
 
     it("releases an active business hold without a usage charge when its persisted task fails", async () => {

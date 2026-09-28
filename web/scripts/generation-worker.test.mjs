@@ -1,12 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 const workerScript = fileURLToPath(new URL("./generation-worker.mjs", import.meta.url));
+const buildVersion = readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
 
 describe("generation worker startup", () => {
-    it("starts only maintenance lanes backed by current PAYG routes", () => {
+    it("starts generation and video-validation work sources on the existing maintenance lanes", () => {
         const preload = `
             const calls = [];
             globalThis.fetch = (input, init) => {
@@ -34,11 +36,13 @@ describe("generation worker startup", () => {
             "http://worker.test/api/maintenance/generation-tasks/heartbeat",
             "http://worker.test/api/maintenance/usage-holds/run",
             "http://worker.test/api/maintenance/generation-tasks/run",
+            "http://worker.test/api/maintenance/video-validation/run",
             "http://worker.test/api/maintenance/generation-tasks/run",
+            "http://worker.test/api/maintenance/video-validation/run",
         ]);
         for (const call of calls)
             expect(call.headers).toMatchObject({
-                "x-vozeb-pro-worker-build-version": "v0.0.6",
+                "x-vozeb-pro-worker-build-version": buildVersion,
                 "x-vozeb-pro-worker-git-sha": "test-sha",
                 "x-vozeb-pro-worker-schema-version": "20260916_agent_runtime_v2",
                 "x-vozeb-pro-worker-runtime-protocol": "1",

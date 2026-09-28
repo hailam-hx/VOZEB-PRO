@@ -1,17 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_CHANNEL_CONNECT_ERROR, toSafeGenerationErrorMessage } from "./generation-errors";
+import { imagePersistenceFailure, imageSubmissionFailure } from "./generation-errors";
 
-describe("generation error messages", () => {
-    it("keeps actionable business errors", () => {
-        expect(toSafeGenerationErrorMessage(new Error("当前用户视频任务已达到并发上限"), "视频生成失败")).toBe("当前用户视频任务已达到并发上限");
-        expect(toSafeGenerationErrorMessage(new Error('{"code":400,"data":null,"msg":"积分不足，无法生成"}'), "生成失败")).toBe("积分不足");
-        expect(toSafeGenerationErrorMessage(new Error('{"error":{"message":"MetaJing video requests must use application/json"}}'), "生成失败")).toBe("MetaJing video requests must use application/json");
+describe("image generation error taxonomy", () => {
+    it("maps a rejected 400 without exposing its raw body publicly", () => {
+        const raw = "invalid size; signed_url=https://secret.example/token";
+        expect(imageSubmissionFailure(400, raw)).toEqual({
+            code: "UPSTREAM_BAD_REQUEST",
+            category: "upstream",
+            message: raw,
+            publicMessage: "上游拒绝了当前生成参数，请调整参数或更换模型后重试。",
+            actionHint: "请检查比例、尺寸、画质和参考素材是否符合当前模型要求。",
+            retryable: false,
+        });
     });
 
-    it("does not expose infrastructure addresses or environment names", () => {
-        expect(toSafeGenerationErrorMessage(new Error("POST http://localhost:3000 failed"), "生成失败")).toBe(DEFAULT_CHANNEL_CONNECT_ERROR);
-        expect(toSafeGenerationErrorMessage(new Error("参考图需要公网图片 URL，请配置 NEXT_PUBLIC_SITE_URL"), "生成失败")).toBe("参考素材暂时无法提交给当前生成渠道，请重新上传或稍后重试。");
-        expect(toSafeGenerationErrorMessage(new Error("<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center></body></html>"), "生成失败")).toBe(DEFAULT_CHANNEL_CONNECT_ERROR);
+    it("maps a 502 to submission unknown and disables blind retry", () => {
+        expect(imageSubmissionFailure(502, "<html>gateway error</html>")).toMatchObject({ code: "SUBMISSION_UNKNOWN", category: "upstream", retryable: false });
+    });
+
+    it("preserves a private persistence diagnostic separately from public copy", () => {
+        const failure = imagePersistenceFailure("https://signed.example/token timed out");
+        expect(failure).toMatchObject({ code: "MEDIA_DOWNLOAD_TIMEOUT", category: "persistence", retryable: false });
+        expect(failure.publicMessage).not.toContain("signed.example");
     });
 });

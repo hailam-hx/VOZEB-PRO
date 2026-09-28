@@ -3,6 +3,8 @@ export class GenerationTaskRequestError extends Error {
         message: string,
         readonly status: number,
         readonly canRetry = false,
+        readonly errorCode?: string,
+        readonly currentProfileRevision?: string,
     ) {
         super(message);
         this.name = "GenerationTaskRequestError";

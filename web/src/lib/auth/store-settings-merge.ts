@@ -9,9 +9,12 @@ export function preserveLogicalModelPricing(current: LogicalModel[], incoming: L
         return {
             ...model,
             saleRateCard: currentModel?.saleRateCard,
+            salePriceSource: currentModel?.salePriceSource,
+            salePriceApproval: currentModel?.salePriceApproval,
+            suggestedSaleRateCard: currentModel?.suggestedSaleRateCard,
             bindings: model.bindings.map((binding) => {
                 const currentBinding = currentBindings.get(bindingKey(binding));
-                return currentBinding ? { ...binding, costRateCard: currentBinding.costRateCard, providerCostUnit: currentBinding.providerCostUnit } : withoutBindingPricing(binding);
+                return currentBinding ? { ...binding, costRateCard: currentBinding.costRateCard, providerCostUnit: currentBinding.providerCostUnit, providerPricingProfile: currentBinding.providerPricingProfile } : withoutBindingPricing(binding);
             }),
         };
     });
@@ -22,5 +25,5 @@ function bindingKey(binding: LogicalModel["bindings"][number]) {
 }
 
 function withoutBindingPricing<T extends LogicalModel["bindings"][number]>(binding: T) {
-    return { ...binding, costRateCard: undefined, providerCostUnit: undefined };
+    return { ...binding, costRateCard: undefined, providerCostUnit: undefined, providerPricingProfile: undefined };
 }

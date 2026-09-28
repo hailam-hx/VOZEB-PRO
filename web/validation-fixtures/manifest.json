@@ -1,0 +1,75 @@
+{
+    "version": 1,
+    "assets": {
+        "talking-video": {
+            "publicUrl": null,
+            "mimeType": "video/mp4",
+            "sha256": null,
+            "durationMs": null,
+            "width": null,
+            "height": null,
+            "audioPresent": null,
+            "speechPresent": null,
+            "faceCount": null,
+            "purpose": "lip-sync source, clip ASR and subtitle source",
+            "annotationEvidence": null,
+            "reachabilityEvidence": null
+        },
+        "driving-audio": {
+            "publicUrl": null,
+            "mimeType": "audio/mpeg",
+            "sha256": null,
+            "durationMs": null,
+            "width": null,
+            "height": null,
+            "audioPresent": true,
+            "speechPresent": null,
+            "faceCount": null,
+            "purpose": "lip-sync and avatar driving audio",
+            "annotationEvidence": null,
+            "reachabilityEvidence": null
+        },
+        "motion-source": {
+            "publicUrl": null,
+            "mimeType": "video/mp4",
+            "sha256": null,
+            "durationMs": null,
+            "width": null,
+            "height": null,
+            "audioPresent": null,
+            "speechPresent": null,
+            "faceCount": null,
+            "purpose": "motion source video",
+            "annotationEvidence": null,
+            "reachabilityEvidence": null
+        },
+        "portrait-1": {
+            "publicUrl": null,
+            "mimeType": "image/webp",
+            "sha256": null,
+            "durationMs": null,
+            "width": null,
+            "height": null,
+            "audioPresent": false,
+            "speechPresent": null,
+            "faceCount": null,
+            "purpose": "motion face reference 1",
+            "annotationEvidence": null,
+            "reachabilityEvidence": null
+        },
+        "portrait-2": {
+            "publicUrl": null,
+            "mimeType": "image/webp",
+            "sha256": null,
+            "durationMs": null,
+            "width": null,
+            "height": null,
+            "audioPresent": false,
+            "speechPresent": null,
+            "faceCount": null,
+            "purpose": "motion face reference 2",
+            "annotationEvidence": null,
+            "reachabilityEvidence": null
+        }
+    }
+}

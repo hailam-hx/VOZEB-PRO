@@ -42,6 +42,164 @@ describe("creative result references", () => {
 });
 
 describe("CreativeMessages", () => {
+    it("shows a public preflight failure instead of replacing it with a generic task failure", () => {
+        const message: CreativeMessage = { id: "failed-request", conversationId: "pending", sequence: 2, role: "assistant", status: "failed", content: "当前模型不支持所选生成参数", metadata: { publicSubmissionError: true }, createdAt: 1, updatedAt: 1 };
+        const markup = renderMessages(message);
+        expect(markup).toContain("当前模型不支持所选生成参数");
+        expect(markup).not.toContain("创作任务执行失败");
+    });
+
+    it("does not offer direct retry for a permanent submission failure", () => {
+        const user: CreativeMessage = { id: "request", conversationId: "pending", sequence: 1, role: "user", status: "completed", content: "生成图片", metadata: {}, createdAt: 1, updatedAt: 1 };
+        const message: CreativeMessage = {
+            id: "failed-request",
+            conversationId: "pending",
+            sequence: 2,
+            role: "assistant",
+            status: "failed",
+            content: "当前模型不支持所选参数",
+            metadata: { publicSubmissionError: true, submissionRetryable: false },
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderMessages(user, [], message);
+        expect(markup).toContain("当前模型不支持所选参数");
+        expect(markup).toContain("请调整输入或模型后重新提交");
+        expect(markup).not.toContain("直接重试");
+    });
+
+    it("keeps an unmarked internal failure hidden", () => {
+        const message: CreativeMessage = { id: "internal-failure", conversationId: "conversation-one", sequence: 2, role: "assistant", status: "failed", content: "provider-token=private", metadata: {}, createdAt: 1, updatedAt: 1 };
+        const markup = renderMessages(message);
+        expect(markup).toContain("创作任务执行失败");
+        expect(markup).not.toContain("provider-token=private");
+    });
+
+    it("does not offer a retry before failed Run details have loaded", () => {
+        const user: CreativeMessage = { id: "request", conversationId: "conversation-one", runId: "unavailable-run", sequence: 1, role: "user", status: "completed", content: "生成语音", metadata: {}, createdAt: 1, updatedAt: 1 };
+        const assistant: CreativeMessage = { ...user, id: "assistant", sequence: 2, role: "assistant", status: "failed", content: "private provider response" };
+        const markup = renderMessages(user, [], assistant);
+        expect(markup).not.toContain("private provider response");
+        expect(markup).toContain("任务详情暂时无法读取");
+        expect(markup).not.toContain("直接重试");
+    });
+
+    it("shows why the failed child failed when a media round has another successful result", () => {
+        const user: CreativeMessage = { id: "partial-user", conversationId: "conversation-one", runId: "partial-run", sequence: 1, role: "user", status: "completed", content: "生成两张图片", metadata: {}, createdAt: 1, updatedAt: 1 };
+        const assistant: CreativeMessage = { ...user, id: "partial-assistant", sequence: 2, role: "assistant", status: "failed", content: "Agent 执行失败" };
+        const asset = { ...mediaAsset("partial-image"), messageId: assistant.id, sourceRunId: "partial-run" };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[user, assistant]}
+                    assets={[asset]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "partial-run": {
+                            id: "partial-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: user.id,
+                            assistantMessageId: assistant.id,
+                            status: "failed",
+                            assetIds: [asset.id],
+                            tasks: [
+                                { id: "ok", title: "图片一", type: "image", status: "completed" },
+                                { id: "failed", title: "图片二", type: "image", status: "failed", error: "生成任务失败", errorCode: "UPSTREAM_UNAVAILABLE", retryable: true },
+                            ],
+                        } as never,
+                    }}
+                    onMaterializeProject={vi.fn()}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+        expect(markup).toContain("图片二");
+        expect(markup).toContain("上游服务暂时不可用");
+        expect(markup).toContain("直接重试");
+    });
+
+    it("shows each public failure when image and audio tasks both fail", () => {
+        const user: CreativeMessage = { id: "all-failed-user", conversationId: "conversation-one", runId: "all-failed-run", sequence: 1, role: "user", status: "completed", content: "生成图片和语音", metadata: {}, createdAt: 1, updatedAt: 1 };
+        const assistant: CreativeMessage = { ...user, id: "all-failed-assistant", sequence: 2, role: "assistant", status: "failed", content: "内部错误详情" };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[user, assistant]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "all-failed-run": {
+                            id: "all-failed-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: user.id,
+                            assistantMessageId: assistant.id,
+                            status: "failed",
+                            generationPreferences: { mode: "audio" },
+                            assetIds: [],
+                            tasks: [
+                                { id: "image-failed", title: "图片生成", type: "image", status: "failed", error: "生成任务失败", errorCode: "UPSTREAM_BAD_REQUEST" },
+                                { id: "audio-failed", title: "语音生成", type: "audio", status: "failed", error: "Bearer provider-secret at /srv/private/voice.ts", errorCode: "INVALID_ASSET", retryable: false },
+                            ],
+                        } as never,
+                    }}
+                    onMaterializeProject={vi.fn()}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+        expect(markup).toContain("图片生成");
+        expect(markup).toContain("上游拒绝了当前生成参数");
+        expect(markup).toContain("语音生成");
+        expect(markup).toContain("参考素材或音色无效");
+        expect(markup).not.toContain("内部错误详情");
+        expect(markup).not.toContain("provider-secret");
+        expect(markup).toContain("直接重试");
+    });
+
+    it("explains a planner balance failure without offering direct retry", () => {
+        const user: CreativeMessage = { id: "balance-user", conversationId: "conversation-one", runId: "balance-run", sequence: 1, role: "user", status: "completed", content: "生成语音", metadata: {}, createdAt: 1, updatedAt: 1 };
+        const assistant: CreativeMessage = { ...user, id: "balance-assistant", sequence: 2, role: "assistant", status: "failed", content: "internal balance failure" };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[user, assistant]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "balance-run": {
+                            id: "balance-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: user.id,
+                            assistantMessageId: assistant.id,
+                            status: "failed",
+                            failure: { errorCode: "INSUFFICIENT_BALANCE", retryable: false },
+                            generationPreferences: { mode: "audio" },
+                            assetIds: [],
+                            tasks: [],
+                        } as never,
+                    }}
+                    onMaterializeProject={vi.fn()}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+        expect(markup).toContain("积分不足");
+        expect(markup).not.toContain("internal balance failure");
+        expect(markup).not.toContain("直接重试");
+    });
+
     it.each(["running", "failed", "cancelled"] as const)("shows durable partial text while the text task is %s", (status) => {
         const message: CreativeMessage = { id: "assistant", conversationId: "conversation", runId: "run", sequence: 2, role: "assistant", status, content: "内部进度摘要", metadata: {}, createdAt: 1, updatedAt: 1 };
         const markup = renderToStaticMarkup(
@@ -758,6 +916,120 @@ describe("CreativeMessages", () => {
         expect(failureMarkup).not.toContain("Sparkles");
     });
 
+    it("shows the sanitized task failure reason for an image generation", () => {
+        const userMessage: CreativeMessage = {
+            id: "failed-image-user",
+            conversationId: "conversation-one",
+            runId: "failed-image-run",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "生成一张图片",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const assistantMessage: CreativeMessage = {
+            id: "failed-image-assistant",
+            conversationId: "conversation-one",
+            runId: "failed-image-run",
+            sequence: 2,
+            role: "assistant",
+            status: "failed",
+            content: "创作任务执行失败",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[userMessage, assistantMessage]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "failed-image-run": {
+                            id: "failed-image-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: userMessage.id,
+                            assistantMessageId: assistantMessage.id,
+                            status: "failed",
+                            generationPreferences: { mode: "image" },
+                            assetIds: [],
+                            tasks: [{ id: "image-task", title: "图片生成", type: "image", status: "failed", error: "生成任务失败", errorCode: "UPSTREAM_UNAVAILABLE", retryable: true }],
+                        } as never,
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+
+        expect(markup).toContain("创作任务执行失败");
+        expect(markup).toContain("当前模型或上游服务暂时不可用，请稍后重试或更换模型。");
+        expect(markup).toContain('aria-label="直接重试本次创作"');
+    });
+
+    it.each([
+        ["zh-CN", "手动选择的模型「gpt-image-2.5-flare」当前不可用或不支持已保存的生成参数"],
+        ["vi", "Mô hình đã chọn thủ công “gpt-image-2.5-flare” hiện không khả dụng hoặc không hỗ trợ các tham số tạo đã lưu."],
+        ["en", "The manually selected model “gpt-image-2.5-flare” is unavailable or does not support the saved generation parameters."],
+    ] as const)("localizes an unavailable manually selected model in %s", (locale, expected) => {
+        const raw = "手动选择的模型「gpt-image-2.5-flare」当前不可用或不支持已保存的生成参数";
+        const userMessage: CreativeMessage = {
+            id: "manual-model-user",
+            conversationId: "conversation-one",
+            runId: "manual-model-run",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "Generate an image",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const assistantMessage: CreativeMessage = { ...userMessage, id: "manual-model-assistant", sequence: 2, role: "assistant", status: "failed", content: raw };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[userMessage, assistantMessage]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "manual-model-run": {
+                            id: "manual-model-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: userMessage.id,
+                            assistantMessageId: assistantMessage.id,
+                            status: "failed",
+                            generationPreferences: { mode: "image" },
+                            assetIds: [],
+                            tasks: [{ id: "image-task", title: "Image", type: "image", model: "gpt-image-2.5-flare", status: "failed", error: "生成任务失败", errorCode: "manual_model_unavailable_or_incompatible" }],
+                        } as never,
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+            locale,
+        );
+
+        expect(markup).toContain(expected);
+        if (locale !== "zh-CN") expect(markup).not.toContain("手动选择的模型");
+    });
+
     it.each([
         ["zh-CN", "输入视频可能涉及版权限制，请更换为您拥有使用权或自行拍摄的视频后重试。"],
         ["vi", "Video đầu vào có thể bị giới hạn bản quyền. Vui lòng sử dụng video do bạn sở hữu hoặc có quyền sử dụng rồi thử lại."],
@@ -888,6 +1160,75 @@ describe("CreativeMessages", () => {
         expect(markup).toContain(expected);
         expect(markup).not.toContain("secret-duration-request");
         expect(markup).not.toContain("video duration");
+    });
+
+    it.each([
+        ["zh-CN", "video_reference_aspect_ratio_unsupported", "参考图片的宽高比超出当前视频模型支持范围，请裁剪图片或更换图片后重试。"],
+        ["vi", "video_reference_aspect_ratio_unsupported", "Tỷ lệ khung hình của ảnh tham chiếu vượt ngoài phạm vi mà mô hình video hỗ trợ. Vui lòng cắt ảnh hoặc chọn ảnh khác rồi thử lại."],
+        ["en", "video_reference_aspect_ratio_unsupported", "The reference image's aspect ratio is outside the video model's supported range. Please crop the image or choose another one and try again."],
+        ["zh-CN", "video_output_sensitive_content", "生成的视频可能包含敏感内容，模型已拒绝输出。请调整描述或参考素材后重新提交。"],
+        ["vi", "video_output_sensitive_content", "Video được tạo có thể chứa nội dung nhạy cảm nên mô hình đã từ chối xuất kết quả. Vui lòng điều chỉnh mô tả hoặc tư liệu tham chiếu rồi gửi lại."],
+        ["en", "video_output_sensitive_content", "The generated video may contain sensitive content, so the model rejected the output. Please revise the prompt or reference media and submit again."],
+        ["zh-CN", "video_text_too_long", "发送给视频模型的文字超出长度限制，请缩短创作描述后重新提交。"],
+        ["vi", "video_text_too_long", "Văn bản gửi tới mô hình video vượt quá giới hạn độ dài. Vui lòng rút ngắn mô tả rồi gửi lại."],
+        ["en", "video_text_too_long", "The text sent to the video model exceeds its length limit. Please shorten the description and submit again."],
+        ["zh-CN", "image_size_below_provider_minimum", "所选比例生成的图片尺寸低于当前模型要求，请更换模型或比例后重新提交。"],
+        ["vi", "image_size_below_provider_minimum", "Kích thước ảnh tạo từ tỷ lệ đã chọn thấp hơn yêu cầu của mô hình. Hãy đổi mô hình hoặc tỷ lệ rồi gửi lại."],
+        ["en", "image_size_below_provider_minimum", "The image size from the selected aspect ratio is below this model's requirement. Change the model or ratio and submit again."],
+        ["zh-CN", "SUBMISSION_UNKNOWN", "任务提交结果暂时无法确认。为避免重复扣费，请稍后查看任务状态，不要立即重复提交。"],
+        ["vi", "SUBMISSION_UNKNOWN", "Chưa thể xác nhận kết quả gửi tác vụ. Hãy kiểm tra lại sau và không gửi lại ngay để tránh tính phí trùng."],
+        ["en", "SUBMISSION_UNKNOWN", "The submission result cannot be confirmed yet. Check the task later and do not resubmit immediately to avoid duplicate charges."],
+    ] as const)("shows a safe %s error for %s", (locale, errorCode, expected) => {
+        const raw = "Provider error. Request id: secret-video-request";
+        const userMessage: CreativeMessage = {
+            id: "aspect-user",
+            conversationId: "conversation-one",
+            runId: "aspect-run",
+            sequence: 1,
+            role: "user",
+            status: "completed",
+            content: "Animate this image",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const assistantMessage: CreativeMessage = { ...userMessage, id: "aspect-assistant", sequence: 2, role: "assistant", status: "failed", content: raw };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[userMessage, assistantMessage]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "aspect-run": {
+                            id: "aspect-run",
+                            conversationId: "conversation-one",
+                            inputMessageId: userMessage.id,
+                            assistantMessageId: assistantMessage.id,
+                            status: "failed",
+                            generationPreferences: { mode: "video" },
+                            assetIds: [],
+                            tasks: [{ id: "video-task", title: "Video", type: "video", status: "failed", error: "生成任务失败", errorCode, retryable: false }],
+                        } as never,
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+            locale,
+        );
+
+        expect(markup).toContain(expected.replaceAll("'", "&#x27;"));
+        expect(markup).not.toContain("secret-video-request");
+        expect(markup).not.toContain("Provider error");
+        expect(markup).toContain('data-testid="creative-generation-failure"');
+        if (errorCode === "SUBMISSION_UNKNOWN") expect(markup).not.toContain("直接重试");
     });
 
     it("uses the same compact identity spacing for ordinary text messages", () => {

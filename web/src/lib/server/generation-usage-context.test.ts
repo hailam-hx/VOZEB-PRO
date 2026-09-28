@@ -22,6 +22,37 @@ describe("generation usage context", () => {
         expect(second).toMatchObject({ businessRequestId: "image-task:task-one", attemptNumber: 2, requestFingerprint: first?.requestFingerprint });
     });
 
+    it("copies only the normalized image billing context into the signed draft", () => {
+        const imageQualityContext = {
+            version: 1 as const,
+            logicalModelId: "image-pro",
+            bindingId: "binding-backup",
+            qualityProfileRevision: "profile-v1",
+            selectedQualityValue: "2k",
+            controlType: "resolution_tier" as const,
+            selectionMode: "explicit" as const,
+            resolvedSize: "2048x2048",
+            resolvedWidth: 2048,
+            resolvedHeight: 2048,
+            resolvedResolutionTier: "2k",
+            effectivePrompt: "cat",
+            requestCount: 1,
+            billableOutputCount: 1,
+            pricingConditions: { resolution: "2k" },
+            saleRateCardRevision: "sale-v1",
+        };
+        const context = generationSystemAiUsageContext({ ...config, imageQualityContext }, "image", "image-task:task-one:attempt:1", "user-one");
+        expect(context?.imageQualityContext).toEqual({
+            bindingId: "binding-backup",
+            qualityProfileRevision: "profile-v1",
+            saleRateCardRevision: "sale-v1",
+            selectedQualityValue: "2k",
+            resolvedSize: "2048x2048",
+            resolvedResolutionTier: "2k",
+            billableOutputCount: 1,
+        });
+    });
+
     it("derives only known stable task identities for recovery", () => {
         expect(usageRecoveryIdentity("video-task:video-one")).toEqual({ taskType: "video", taskId: "video-one" });
         expect(usageRecoveryIdentity("text-task:text-one:cycle:retry-cycle")).toEqual({ taskType: "text", taskId: "text-one" });

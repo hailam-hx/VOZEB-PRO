@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { normalizeGenerationConcurrency, normalizeGenerationDefaults } from "./store-normalizers";
 
 describe("generation default normalization", () => {
+    it("enables manual prompt enhancement by default and persists an administrator disable", () => {
+        expect(normalizeGenerationDefaults({}).manualPromptEnhancementEnabled).toBe(true);
+        expect(normalizeGenerationDefaults({ manualPromptEnhancementEnabled: false }).manualPromptEnhancementEnabled).toBe(false);
+    });
     it("shows Agent mode by default and preserves an administrator disable", () => {
         expect((normalizeGenerationDefaults({}) as unknown as { agentModeEnabled?: boolean }).agentModeEnabled).toBe(true);
         expect((normalizeGenerationDefaults({ agentModeEnabled: false } as never) as unknown as { agentModeEnabled?: boolean }).agentModeEnabled).toBe(false);
@@ -24,6 +28,7 @@ describe("generation default normalization", () => {
     });
 
     it("preserves every generation-default Auto sentinel", () => {
+        expect(normalizeGenerationDefaults({}).imageSize).toBe("auto");
         expect(normalizeGenerationDefaults({ imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto" })).toMatchObject({
             imageSize: "auto",
             imageQuality: "auto",

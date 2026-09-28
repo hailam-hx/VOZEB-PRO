@@ -1,4 +1,22 @@
 export const POSTGRESQL_TRIGGER_SCHEMA_SQL = `
+CREATE OR REPLACE FUNCTION vozeb_pro_validation_history_immutable() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'model validation history is append-only'; END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS model_validation_verifications_immutable ON model_validation_verifications;
+CREATE TRIGGER model_validation_verifications_immutable BEFORE UPDATE OR DELETE ON model_validation_verifications FOR EACH ROW EXECUTE FUNCTION vozeb_pro_validation_history_immutable();
+DROP TRIGGER IF EXISTS video_validation_runs_set_updated_at ON video_validation_runs;
+CREATE TRIGGER video_validation_runs_set_updated_at BEFORE UPDATE ON video_validation_runs FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS video_validation_items_set_updated_at ON video_validation_items;
+CREATE TRIGGER video_validation_items_set_updated_at BEFORE UPDATE ON video_validation_items FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+CREATE OR REPLACE FUNCTION vozeb_pro_validation_item_identity_immutable() RETURNS trigger AS $$
+BEGIN
+    IF (OLD.run_id, OLD.binding_id, OLD.channel_id, OLD.upstream_model_id, OLD.case_id, OLD.fingerprint_version, OLD.fingerprint_hash, OLD.fingerprint_snapshot, OLD.execution_snapshot_hash, OLD.request_payload_digest, OLD.normalized_context, OLD.pricing_revision, OLD.estimated_credits, OLD.estimated_provider_cost, OLD.bound_evidence, OLD.actual_cost_capability, OLD.actual_cost_capability_evidence, OLD.idempotency_key)
+       IS DISTINCT FROM
+       (NEW.run_id, NEW.binding_id, NEW.channel_id, NEW.upstream_model_id, NEW.case_id, NEW.fingerprint_version, NEW.fingerprint_hash, NEW.fingerprint_snapshot, NEW.execution_snapshot_hash, NEW.request_payload_digest, NEW.normalized_context, NEW.pricing_revision, NEW.estimated_credits, NEW.estimated_provider_cost, NEW.bound_evidence, NEW.actual_cost_capability, NEW.actual_cost_capability_evidence, NEW.idempotency_key)
+    THEN RAISE EXCEPTION 'video validation execution identity is immutable'; END IF;
+    RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS video_validation_items_identity_immutable ON video_validation_items;
+CREATE TRIGGER video_validation_items_identity_immutable BEFORE UPDATE ON video_validation_items FOR EACH ROW EXECUTE FUNCTION vozeb_pro_validation_item_identity_immutable();
+
 
 DROP TRIGGER IF EXISTS app_settings_set_updated_at ON app_settings;
 CREATE TRIGGER app_settings_set_updated_at BEFORE UPDATE ON app_settings FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();

@@ -1,4 +1,5 @@
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
+import { auditGenerationPrompt } from "@/lib/server/generation-prompt-audit";
 import { fileTypeFromBuffer } from "file-type";
 import { mediaTaskSource } from "@/lib/media-management-contract";
 import { audioTaskRefundIdempotencyKey, refundAudioTask } from "@/lib/server/audio-task-refund";
@@ -53,7 +54,7 @@ export async function createAudioTaskUpstreamStep(task: AudioTask, origin: strin
                 response_format: config.format,
                 format: config.format,
                 ...(config.speed !== undefined && config.speed !== "" ? { speed: Number(config.speed) } : {}),
-                ...(config.instructions ? { instructions: config.instructions } : {}),
+                ...(!config.promptEnhancementDisabled && config.instructions ? { instructions: config.instructions } : {}),
             };
             let payload: Record<string, unknown>;
             try {
@@ -176,6 +177,11 @@ async function createAudioUpstream(task: AudioTask, origin: string, cookie: stri
     let lastError = "";
     const idempotencyKey = `audio-task:${task.id}:attempt:${task.attemptNo || 1}`;
     for (const path of resolvedProviderCreatePaths(task.config.advancedConfig, "audio", ["/audio/speech"])) {
+        try {
+            auditGenerationPrompt({ audit: task.config.promptAudit, strict: task.config.promptEnhancementDisabled, body: JSON.stringify(payload), capability: "audio", channelId: task.config.channelId, model: task.config.model });
+        } catch (error) {
+            throw new GenerationSubmissionSafeFailure(error instanceof Error ? error.message : "音频 Prompt 审计失败");
+        }
         let response: Response;
         try {
             response = await providerFetch(task, origin, cookie, workerUserId, path, {

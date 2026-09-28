@@ -38,6 +38,8 @@ export type ImageGenerationTask = {
 type ImageTaskPayload = {
     task?: ImageGenerationTask & { result?: ImageGenerationResult & { results?: ImageGenerationResult[] }; error?: string; canRetry?: boolean };
     error?: string;
+    errorCode?: string;
+    currentProfileRevision?: string;
 };
 
 export type ImageGenerationResult = {
@@ -103,7 +105,10 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
     });
     throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, requestConfig.apiSource);
-    if (!response.ok) throw new GenerationTaskRequestError(await readFetchError(response, "创建图片任务失败"), response.status);
+    if (!response.ok) {
+        const failure = await readFetchErrorDetails(response, "创建图片任务失败");
+        throw new GenerationTaskRequestError(failure.message, response.status, false, failure.errorCode, failure.currentProfileRevision);
+    }
     const payload = (await response.json()) as ImageTaskPayload;
     if (!payload.task?.id) throw new Error(payload.error || "创建图片任务失败");
     return payload.task;
@@ -229,15 +234,23 @@ function isRemoteReferenceUrl(value?: string) {
 }
 
 async function readFetchError(response: Response, fallback: string) {
+    return (await readFetchErrorDetails(response, fallback)).message;
+}
+
+async function readFetchErrorDetails(response: Response, fallback: string) {
     const text = await response.text();
-    if (!text) return statusError(response.status, fallback);
+    if (!text) return { message: statusError(response.status, fallback) };
     try {
-        const payload = JSON.parse(text) as { msg?: unknown; error?: unknown };
+        const payload = JSON.parse(text) as { msg?: unknown; error?: unknown; errorCode?: unknown; currentProfileRevision?: unknown };
         const nestedError = payload.error && typeof payload.error === "object" ? (payload.error as { message?: unknown }).message : undefined;
         const message = typeof payload.msg === "string" ? payload.msg : typeof payload.error === "string" ? payload.error : typeof nestedError === "string" ? nestedError : "";
-        return message || statusError(response.status, fallback);
+        return {
+            message: message || statusError(response.status, fallback),
+            ...(typeof payload.errorCode === "string" ? { errorCode: payload.errorCode } : {}),
+            ...(typeof payload.currentProfileRevision === "string" ? { currentProfileRevision: payload.currentProfileRevision } : {}),
+        };
     } catch {
-        return text.slice(0, 300) || statusError(response.status, fallback);
+        return { message: text.slice(0, 300) || statusError(response.status, fallback) };
     }
 }
 

@@ -51,6 +51,7 @@ export function assertGeminiVideoReferences(references: readonly VideoGeneration
 
 export async function buildGeminiVideoRequest(input: {
     prompt: string;
+    preservePrompt?: boolean;
     durationSeconds: unknown;
     aspectRatio: unknown;
     resolution: unknown;
@@ -68,7 +69,7 @@ export async function buildGeminiVideoRequest(input: {
         ...regularImages.map((reference) => imageInlineData(reference.url, input.origin, input.cookie)),
     ]);
     const instance: GeminiVideoRequest["instances"][number] = {
-        prompt: input.prompt.trim(),
+        prompt: input.preservePrompt ? input.prompt : input.prompt.trim(),
         ...(firstFrameImage ? { image: firstFrameImage } : {}),
         ...(lastFrameImage ? { lastFrame: lastFrameImage } : {}),
         ...(referenceImages.length ? { referenceImages: referenceImages.map((image) => ({ image: image!, referenceType: "asset" as const })) } : {}),

@@ -29,7 +29,7 @@ const channel = {
 describe("channel protocol registry", () => {
     it("exposes only active protocols and keeps SD2 separate from Stable Diffusion", () => {
         const protocols = channelProtocolOptions().map((item) => item.value);
-        expect(protocols).toEqual(["openai", "yumeng", "gemini", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "custom", "compatible", "auto"]);
+        expect(protocols).toEqual(["openai", "dflop", "yumeng", "gemini", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "custom", "compatible", "auto"]);
         expect(protocols).not.toEqual(expect.arrayContaining(["vozeb-recommended", "seedance-special", "globalaiopc"]));
         expect(channelProtocolDefinition("openai").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("sub2api").modelCatalogPaths).toEqual(["/v1/models"]);
@@ -46,6 +46,49 @@ describe("channel protocol registry", () => {
             builtInModels: expect.any(Array),
         });
         expect(channelProtocolDefinition("yumeng").builtInModels).toHaveLength(26);
+    });
+
+    it("applies the fixed DFLOP routes, normalizes /v1, and overrides voice cloning", () => {
+        const configured = applyChannelProtocol(
+            {
+                ...channel,
+                baseUrl: "https://api.dflop.top/",
+                models: ["voice-clone-pro"],
+                advancedConfig: {
+                    protocol: "dflop",
+                    textModel: "",
+                    imageModel: "",
+                    videoModel: "",
+                    createPath: "",
+                    editPath: "",
+                    imageToVideoPath: "",
+                    queryPath: "",
+                    requestTemplate: "",
+                    resultField: "",
+                    statusField: "",
+                    durationRange: "",
+                    referenceRule: "",
+                    supportsReferenceImage: false,
+                    supportsReferenceVideo: false,
+                    supportsReferenceAudio: false,
+                    modelCapabilities: { "voice-clone-pro": "audio" },
+                },
+            },
+            "dflop",
+        );
+        expect(configured.baseUrl).toBe("https://api.dflop.top/v1");
+        expect(configured.advancedConfig).toMatchObject({ protocol: "dflop", authMode: "bearer", modelCatalogPaths: ["/v1/models"] });
+        expect(configured.advancedConfig?.modelConfigs?.["voice-clone-pro"]).toMatchObject({
+            capability: "audio",
+            createPath: "/audio/voices",
+            queryPath: "/audio/voices/:task_id",
+            catalogPath: "/audio/voices",
+            deletePath: "/audio/voices/:voice_id",
+        });
+        expect(channelProtocolValidationErrors(configured)).toEqual([]);
+        expect(channelProtocolValidationErrors(applyChannelProtocol({ ...channel, models: ["unknown"] }, "dflop"))).toContain("unknown 缺少 DFLOP 模型能力，请手动指定");
+        expect(protocolAuthHeaders("secret", configured.advancedConfig)).toEqual({ authorization: "Bearer secret" });
+        expect(applyChannelProtocol({ ...channel, baseUrl: "https://api.dflop.top/v1/", models: [] }, "dflop").baseUrl).toBe("https://api.dflop.top/v1");
     });
 
     it("keeps strict protocol paths and request contracts isolated", () => {

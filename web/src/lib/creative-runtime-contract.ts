@@ -124,7 +124,7 @@ export type CreativeRunEvent = {
 export type CreativeGenerationMode = "image" | "video" | "audio";
 export type CreativeGenerationPreferences = {
     mode?: CreativeGenerationMode;
-    image?: { size?: string; quality?: string; count?: number };
+    image?: { size?: string; quality?: string; qualityProfileRevision?: string; qualityOptionRevision?: string; count?: number };
     video?: {
         size?: string;
         quality?: string;
@@ -145,6 +145,7 @@ export type CreativeRunRequest = {
     conversationId?: string;
     projectId?: string;
     prompt: string;
+    originalPrompt?: string;
     publicPrompt?: string;
     snapshot?: unknown;
     assetIds: string[];
@@ -157,6 +158,8 @@ export class CreativeRuntimeInputError extends Error {
     constructor(
         message: string,
         public readonly status = 400,
+        public readonly errorCode?: string,
+        public readonly currentProfileRevision?: string,
     ) {
         super(message);
     }
@@ -173,12 +176,15 @@ export function normalizeCreativeRunRequest(value: unknown, configuredPromptMaxL
     const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
     const promptMaxLength = Number.isSafeInteger(configuredPromptMaxLength) && configuredPromptMaxLength > 0 ? configuredPromptMaxLength : MAX_PROMPT;
     if (typeof input.prompt === "string" && input.prompt.length > promptMaxLength) throw new CreativeRuntimeInputError(`创作需求不能超过 ${promptMaxLength} 个字符`);
+    if (typeof input.originalPrompt === "string" && input.originalPrompt.length > promptMaxLength) throw new CreativeRuntimeInputError(`创作需求不能超过 ${promptMaxLength} 个字符`);
     if (typeof input.publicPrompt === "string" && input.publicPrompt.length > promptMaxLength) throw new CreativeRuntimeInputError(`创作需求不能超过 ${promptMaxLength} 个字符`);
     const clientRequestId = text(input.clientRequestId, MAX_CLIENT_REQUEST_ID);
     const surface = normalizeCreativeSurface(input.surface);
     const conversationId = optionalText(input.conversationId, MAX_ID);
     const projectId = optionalText(input.projectId, MAX_ID);
     const prompt = text(input.prompt, promptMaxLength);
+    const originalPrompt = typeof input.originalPrompt === "string" && input.originalPrompt.trim() ? input.originalPrompt : prompt;
+    if (originalPrompt.trim() !== prompt) throw new CreativeRuntimeInputError("原始提示词与创作需求不一致");
     const publicPrompt = optionalText(input.publicPrompt, promptMaxLength);
     const snapshot = input.snapshot;
     const assetIds = Array.from(new Set((Array.isArray(input.assetIds) ? input.assetIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
@@ -195,7 +201,7 @@ export function normalizeCreativeRunRequest(value: unknown, configuredPromptMaxL
     if (surface !== "chat" && !projectId) throw new CreativeRuntimeInputError(surface === "canvas" ? "画布标识不能为空" : "短剧项目标识不能为空");
     if (snapshot !== undefined && new TextEncoder().encode(JSON.stringify(snapshot)).length > MAX_SNAPSHOT_BYTES) throw new CreativeRuntimeInputError("当前项目快照过大", 413);
 
-    return { clientRequestId, surface, conversationId, projectId, prompt, ...(publicPrompt && publicPrompt !== prompt ? { publicPrompt } : {}), snapshot, assetIds, skillIds, modelIds, ...(preferences ? { preferences } : {}) };
+    return { clientRequestId, surface, conversationId, projectId, prompt, originalPrompt, ...(publicPrompt && publicPrompt !== prompt ? { publicPrompt } : {}), snapshot, assetIds, skillIds, modelIds, ...(preferences ? { preferences } : {}) };
 }
 
 function normalizeCreativeGenerationPreferences(value: unknown): CreativeGenerationPreferences | undefined {
@@ -215,9 +221,19 @@ function normalizeImagePreferences(value: unknown) {
     const size = normalizePreferenceSize(input.size);
     const rawQuality = optionalText(input.quality, 40);
     const quality = rawQuality?.toLowerCase() === "auto" ? undefined : rawQuality;
+    const qualityProfileRevision = optionalText(input.qualityProfileRevision, 240);
+    const qualityOptionRevision = optionalText(input.qualityOptionRevision, 240);
     const count = Number(input.count);
     const normalizedCount = Number.isSafeInteger(count) && count > 0 ? count : undefined;
-    return size || quality || normalizedCount ? { ...(size ? { size } : {}), ...(quality ? { quality } : {}), ...(normalizedCount ? { count: normalizedCount } : {}) } : undefined;
+    return size || quality || qualityProfileRevision || qualityOptionRevision || normalizedCount
+        ? {
+              ...(size ? { size } : {}),
+              ...(quality ? { quality } : {}),
+              ...(qualityProfileRevision ? { qualityProfileRevision } : {}),
+              ...(qualityOptionRevision ? { qualityOptionRevision } : {}),
+              ...(normalizedCount ? { count: normalizedCount } : {}),
+          }
+        : undefined;
 }
 
 function normalizeVideoPreferences(value: unknown) {

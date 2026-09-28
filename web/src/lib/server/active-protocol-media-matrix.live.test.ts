@@ -56,6 +56,43 @@ describe("active media protocols over TCP fixtures", () => {
         expectCreateRequest(new URL(`${baseUrl}${operation.editPath || operation.createPath}`).pathname, true);
     });
 
+    it("keeps every DFLOP image result and sends first-frame video media without a role", async () => {
+        await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        fixture = createProtocolFixtureServer({ dflop: true });
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        origin = `http://127.0.0.1:${address.port}`;
+
+        const image = await runOpenAiImageTask(imageTask(`${origin}/v1`, "mock-image", "dflop", imageConfig("dflop")), origin, origin, "", true);
+        expect(image.results).toHaveLength(2);
+        expect(image.results?.map((result) => result.remoteUrl)).toEqual([`${origin}/media/fixture.png?result=1`, `${origin}/media/fixture.png?result=2`]);
+        const edit = await runOpenAiImageTask(imageTask(`${origin}/v1`, "mock-image", "dflop", imageConfig("dflop"), true), origin, origin, "", true);
+        expect(edit.results).toHaveLength(2);
+        expect(fixture.requests.filter((request) => request.method === "POST" && request.path.includes("/images"))).toMatchObject([{ path: "/v1/images/generations" }, { path: "/v1/images/edits" }]);
+
+        const config = videoConfig("dflop", `${origin}/v1`, "mock-video");
+        const upstream = await createUpstream(
+            "user-live",
+            "",
+            "",
+            config,
+            "animate frame",
+            { videoSeconds: 5, size: "16:9", vquality: "720" },
+            [{ type: "image", role: "first_frame", url: `${origin}/media/fixture.png` }],
+            MULTIPLIERS,
+            "dflop-first-frame",
+        );
+        await expectVideoResult(config, upstream);
+        const replay = await createUpstream("user-live", "", "", config, "animate frame", { videoSeconds: 5, size: "16:9", vquality: "720" }, [{ type: "image", role: "first_frame", url: `${origin}/media/fixture.png` }], MULTIPLIERS, "dflop-first-frame");
+        expect(replay.id).toBe(upstream.id);
+        expect(fixture.requests.filter((item) => item.method === "POST" && item.path === "/v1/videos/generations").map((item) => item.headers["idempotency-key"])).toEqual(["video-request:dflop-first-frame", "video-request:dflop-first-frame"]);
+        expect(Array.from(fixture.tasks.values()).filter((item) => item.kind === "dflop-video")).toHaveLength(1);
+        const request = fixture.requests.find((item) => item.method === "POST" && item.path === "/v1/videos/generations");
+        expect(JSON.parse(request?.body.toString("utf8") || "{}").content).toMatchObject([{ type: "text" }, { type: "image_url", image_url: { url: `${origin}/media/fixture.png` } }]);
+        expect(JSON.parse(request?.body.toString("utf8") || "{}").content[1]).not.toHaveProperty("role");
+    });
+
     it.each(STRICT_VIDEO_PROTOCOLS)("completes $id video creation and polling without path fallback", async (definition) => {
         const model = definition.builtInModels?.find((item) => item.capability === "video")?.id || "mock-video";
         const createPath = definition.operations.video!.createPath!;

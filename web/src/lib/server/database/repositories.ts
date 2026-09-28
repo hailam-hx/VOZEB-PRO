@@ -6,6 +6,7 @@ import { ReferralRepository } from "./referral-repository";
 import { WorkPublicationRepository } from "./work-publication-repository";
 import { WorkGovernanceRepository } from "./work-governance-repository";
 import { WorkCommunityRepository } from "./work-community-repository";
+import { VideoValidationRepository } from "./video-validation-repository";
 import { AnnouncementsRepository, GenerationLogsRepository, PromptsRepository } from "./content-repository";
 import { CdkRepository, EmailCodesRepository, PointsRepository, SessionsRepository, UsersRepository } from "./user-repository";
 import type { AppSettingsRecord, SystemModelChannelRecord } from "./repository-shared";
@@ -74,6 +75,7 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
         workGovernance: new WorkGovernanceRepository(executor),
         workCommunity: new WorkCommunityRepository(executor),
         auditLogs: new AuditLogsRepository(executor),
+        videoValidation: new VideoValidationRepository(executor),
     };
 }
 
@@ -117,6 +119,7 @@ class SettingsRepository {
         if (input.generationDefaults !== undefined) add("generation_defaults", jsonParam(input.generationDefaults));
         if (input.paymentConfig !== undefined) add("payment_config", jsonParam(input.paymentConfig));
         if (input.logicalModels !== undefined) add("logical_models", jsonParam(input.logicalModels));
+        if (input.pricingPolicy !== undefined) add("pricing_policy", jsonParam(input.pricingPolicy));
         if (input.defaultModels !== undefined) add("default_models", jsonParam(input.defaultModels));
         if (input.agentSkills !== undefined) add("agent_skills", jsonParam(input.agentSkills));
         if (!assignments.length) throw new Error("Settings update requires at least one field");
@@ -178,6 +181,7 @@ function mapSettings(row: Record<string, unknown>): AppSettingsRecord {
         generationDefaults: jsonValue(row.generation_defaults),
         paymentConfig: jsonValue(row.payment_config),
         logicalModels: jsonValue(row.logical_models),
+        pricingPolicy: jsonValue(row.pricing_policy),
         defaultModels: jsonValue(row.default_models),
         agentSkills: jsonValue(row.agent_skills),
         createdAt: isoValue(row.created_at),

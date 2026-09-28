@@ -11,21 +11,30 @@ type NormalizedGeneratedImage = {
     height?: number;
 };
 
-export async function normalizeGeneratedImageBytes(bytes: Buffer, mimeType: string, targetSize?: string): Promise<NormalizedGeneratedImage> {
+export async function normalizeGeneratedImageBytes(bytes: Buffer, mimeType: string, targetSize?: string, maxOutputBytes?: number): Promise<NormalizedGeneratedImage> {
     const metadata = await sharp(bytes, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS }).metadata();
     const dimensions = orientedDimensions(metadata);
     const target = targetSize ? parseImageDimensions(targetSize) : null;
-    if (!target) return { bytes, mimeType: imageMimeType(metadata.format, mimeType), ...dimensions };
+    if (!target) return compressToStorageLimit({ bytes, mimeType: imageMimeType(metadata.format, mimeType), ...dimensions }, maxOutputBytes);
     assertTargetDimensions(target.width, target.height);
-    if (dimensions.width === target.width && dimensions.height === target.height) return { bytes, mimeType: imageMimeType(metadata.format, mimeType), ...dimensions };
+    if (dimensions.width === target.width && dimensions.height === target.height) return compressToStorageLimit({ bytes, mimeType: imageMimeType(metadata.format, mimeType), ...dimensions }, maxOutputBytes);
 
     const result = await sharp(bytes, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS }).rotate().resize(target.width, target.height, { fit: "cover", position: "centre" }).toBuffer({ resolveWithObject: true });
-    return {
-        bytes: result.data,
-        mimeType: imageMimeType(result.info.format, mimeType),
-        width: result.info.width,
-        height: result.info.height,
-    };
+    return compressToStorageLimit(
+        {
+            bytes: result.data,
+            mimeType: imageMimeType(result.info.format, mimeType),
+            width: result.info.width,
+            height: result.info.height,
+        },
+        maxOutputBytes,
+    );
+}
+
+async function compressToStorageLimit(image: NormalizedGeneratedImage, maxOutputBytes?: number): Promise<NormalizedGeneratedImage> {
+    if (!maxOutputBytes || image.bytes.length <= maxOutputBytes) return image;
+    const result = await sharp(image.bytes, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS }).rotate().webp({ quality: 90, smartSubsample: true }).toBuffer({ resolveWithObject: true });
+    return { bytes: result.data, mimeType: "image/webp", width: result.info.width, height: result.info.height };
 }
 
 function orientedDimensions(metadata: Metadata) {

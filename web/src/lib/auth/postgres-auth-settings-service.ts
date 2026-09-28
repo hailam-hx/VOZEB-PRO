@@ -1,5 +1,5 @@
 import { createPostgresRepositories, ensurePostgresSchema, withPostgresTransaction, type JsonValue } from "@/lib/server/database";
-import type { AppSettingsRecord } from "@/lib/server/database/repository-types";
+import type { AppSettingsRecord, AuditLogRecord } from "@/lib/server/database/repository-types";
 
 import { encryptAuthSettingsSecrets, normalizeSettings } from "./store-normalizers";
 import { readPostgresAuthSettings } from "./store-repository";
@@ -53,6 +53,23 @@ export async function mutatePostgresAuthLogicalModels(mutator: (models: LogicalM
     });
 }
 
+export async function mutatePostgresAuthLogicalModelsWithAudit<T>(mutator: (models: LogicalModel[], pricingPolicy: AuthSettings["pricingPolicy"]) => { models: LogicalModel[]; auditLogs: AuditLogRecord[]; result: T }) {
+    await ensurePostgresSchema();
+    return withPostgresTransaction(async (client) => {
+        const repositories = createPostgresRepositories(client);
+        await repositories.settings.lock();
+        const current = await readPostgresAuthSettings(client);
+        const planned = mutator(current.logicalModels, current.pricingPolicy);
+        const settings = normalizeSettings({ ...current, logicalModels: planned.models });
+        if (planned.auditLogs.length) {
+            const encrypted = encryptAuthSettingsSecrets(settings);
+            await repositories.settings.updateSettings({ logicalModels: asJson(encrypted.logicalModels) });
+            for (const auditLog of planned.auditLogs) await repositories.auditLogs.create(auditLog);
+        }
+        return { settings, result: planned.result };
+    });
+}
+
 function postgresSettingsPatch(patch: Partial<AuthSettings>, settings: AuthSettings) {
     const result: Partial<Omit<AppSettingsRecord, "id" | "createdAt" | "updatedAt">> = {};
     if (patch.site !== undefined) result.site = asJson(settings.site);
@@ -66,7 +83,8 @@ function postgresSettingsPatch(patch: Partial<AuthSettings>, settings: AuthSetti
     if (patch.dataLifecycle !== undefined) result.dataLifecycle = asJson(settings.dataLifecycle);
     if (patch.generationConcurrency !== undefined) result.generationConcurrency = asJson(settings.generationConcurrency);
     if (patch.generationDefaults !== undefined) result.generationDefaults = asJson(settings.generationDefaults);
-    if (patch.logicalModels !== undefined) result.logicalModels = asJson(settings.logicalModels);
+    if (patch.logicalModels !== undefined || patch.pricingPolicy !== undefined) result.logicalModels = asJson(settings.logicalModels);
+    if (patch.pricingPolicy !== undefined) result.pricingPolicy = asJson(settings.pricingPolicy);
     if (patch.defaultModels !== undefined) result.defaultModels = asJson(settings.defaultModels);
     if (patch.agentSkills !== undefined) result.agentSkills = asJson(settings.agentSkills);
     return result;

@@ -44,7 +44,8 @@ describe("generation capability recovery integration", () => {
         const initialSettings = await getAuthSettings();
         const routed = resolveLogicalModelCandidates(initialSettings, "image", "image-logical").map(toSystemGenerationChannel);
         const resolved = resolveImageGenerationCandidates(routed, { quality: "auto", size: "auto", count: 1 }, initialSettings.generationDefaults, 0, false);
-        expect(resolved.candidates[0]).toMatchObject({ logicalModel: "image-logical", quality: "high", size: "1:1", count: 1 });
+        expect(resolved.candidates[0]).toMatchObject({ logicalModel: "image-logical", quality: "high", count: 1 });
+        expect(resolved.candidates[0]).not.toHaveProperty("size");
 
         const task = await createImageTask({
             userId: "recovery-user",

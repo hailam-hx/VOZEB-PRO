@@ -18,6 +18,28 @@ import {
 import { agentSurfaceImageSize, normalizeCanvasPlanForSelection, resolveAgentTaskRatio } from "./agent-run-task-input";
 
 describe("directAgentPlan", () => {
+    it("keeps the exact manual prompt when enhancement is disabled while Smart tasks retain their planned prompt", () => {
+        const original = "  让这个人物慢慢向前走  ";
+        const plan = directAgentPlan([{ id: "image-pro", name: "Image", capability: "image" }], original, []);
+        const settings = generationSettings() as never;
+        const [manual] = normalizeTasks(plan, [], settings, undefined, original, "chat", [], undefined, { mode: "image" }, false);
+        const [enhanced] = normalizeTasks(plan, [], settings, undefined, original, "chat", [], undefined, { mode: "image" }, true);
+        expect(manual.prompt).toBe(original);
+        expect(enhanced.prompt).toContain("统一创作约束：");
+    });
+    it("keeps exact speech text for a manual audio model while Smart speech uses the planned text", () => {
+        const original = "  你好，请慢慢说。  ";
+        const plan = directAgentPlan([{ id: "audio-pro", name: "Audio", capability: "audio" }], original, []);
+        const settings = generationSettings() as never;
+        const [manual] = normalizeTasks(plan, [], settings, undefined, original, "chat", [], undefined, { mode: "audio" }, false);
+        const [enabled] = normalizeTasks(plan, [], settings, undefined, original, "chat", [], undefined, { mode: "audio" }, true);
+        expect(manual.prompt).toBe(original);
+        expect(enabled.prompt).toBe(original.trim());
+
+        const smart = { ...plan, deliverables: [{ ...plan.deliverables[0], prompt: "规划后的朗读文本" }] };
+        const [planned] = normalizeTasks(smart, [], settings, undefined, original, "chat", [], undefined, { mode: "audio" });
+        expect(planned.prompt).toBe("规划后的朗读文本");
+    });
     it("exposes effective logical-model parameters and filters Smart options for explicit preferences", () => {
         const nextSettings = generationSettings() as never;
         const models = agentModelOptions(nextSettings);
@@ -87,6 +109,7 @@ describe("directAgentPlan", () => {
         expect(
             resolveAgentTaskBinding(models, task, "manual", {
                 agentModeEnabled: true,
+                manualPromptEnhancementEnabled: true,
                 createPromptMaxLength: 4000,
                 imageSize: "1:1",
                 imageQuality: "high",
@@ -99,10 +122,60 @@ describe("directAgentPlan", () => {
             }),
         ).toMatchObject({
             model: "manual",
-            ratio: "1:1",
+            ratio: "auto",
             quality: "low",
             count: 3,
         });
+    });
+
+    it("re-resolves the inherent single output without requiring a declared batch capability", () => {
+        const models = [
+            {
+                id: "single-image",
+                name: "Single image",
+                capability: "image" as const,
+                generationParameterCandidates: [generationParameters({ aspectRatios: ["1:1"] })],
+                imageQualityProfile: { supported: false, controlType: "none" as const, selectionMode: "none" as const, options: [], profileRevision: "profile-one" },
+            },
+        ];
+        const persistedTask = { id: "image", title: "Image", type: "image" as const, model: "single-image", prompt: "test", count: 1, ratio: "1:1", dependencies: [], status: "ready" as const, attempts: 0 };
+
+        expect(
+            resolveAgentTaskBinding(models, persistedTask, "single-image", {
+                agentModeEnabled: true,
+                manualPromptEnhancementEnabled: true,
+                createPromptMaxLength: 4000,
+                imageSize: "auto",
+                imageQuality: "auto",
+                imageCount: "auto",
+                canvasImageCount: "auto",
+                videoQuality: "auto",
+                videoSeconds: 5,
+                audioVoice: "auto",
+                audioFormat: "auto",
+            }),
+        ).toMatchObject({ model: "single-image", ratio: "1:1", count: 1 });
+    });
+
+    it("keeps a Smart ratio as Auto instead of selecting the binding's first ratio", () => {
+        const models = [{ id: "smart-image", name: "Smart image", capability: "image" as const, generationParameterCandidates: [generationParameters({ aspectRatios: ["1:1", "16:9"] })] }];
+        const task = { id: "image", title: "Image", type: "image" as const, model: "smart-image", prompt: "test", count: 0, ratio: "auto", dependencies: [], status: "ready" as const, attempts: 0 };
+
+        expect(
+            resolveAgentTaskBinding(models, task, "smart-image", {
+                agentModeEnabled: true,
+                manualPromptEnhancementEnabled: true,
+                createPromptMaxLength: 4000,
+                imageSize: "auto",
+                imageQuality: "auto",
+                imageCount: "auto",
+                canvasImageCount: "auto",
+                videoQuality: "auto",
+                videoSeconds: 5,
+                audioVoice: "auto",
+                audioFormat: "auto",
+            }),
+        ).toMatchObject({ model: "smart-image", ratio: "auto", count: 1 });
     });
 
     it("keeps the Smart planned model when its binding can resolve Auto differently from global defaults", () => {
@@ -115,6 +188,7 @@ describe("directAgentPlan", () => {
         expect(
             resolveAgentTaskWithFallback(models, task, "default-high", {
                 agentModeEnabled: true,
+                manualPromptEnhancementEnabled: true,
                 createPromptMaxLength: 4000,
                 imageSize: "16:9",
                 imageQuality: "high",
@@ -127,7 +201,7 @@ describe("directAgentPlan", () => {
             }),
         ).toMatchObject({
             model: "planned-low",
-            ratio: "1:1",
+            ratio: "auto",
             quality: "low",
         });
     });
@@ -298,9 +372,12 @@ describe("directAgentPlan", () => {
             deliverables: [{ id: "hero", title: "主视觉", type: "image", model: "image-pro", prompt: "产品海报", count: 1, ratio: "1:1", quality: "low", dependencies: [] }],
         };
 
-        const [task] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, "产品海报", "chat", [], undefined, { mode: "image", image: { size: "16:9", quality: "high", count: 4 } });
+        const [task] = normalizeTasks(plan as never, [], generationSettings() as never, undefined, "产品海报", "chat", [], undefined, {
+            mode: "image",
+            image: { size: "16:9", quality: "high", count: 4, qualityProfileRevision: "profile-v1", qualityOptionRevision: "high-v1" },
+        });
 
-        expect(task).toMatchObject({ type: "image", ratio: "16:9", quality: "high", count: 4 });
+        expect(task).toMatchObject({ type: "image", ratio: "16:9", quality: "high", qualityProfileRevision: "profile-v1", qualityOptionRevision: "high-v1", count: 4 });
     });
 
     it("将逐图引用别名和稳定资产 ID 一起写入真实上游提示词", () => {

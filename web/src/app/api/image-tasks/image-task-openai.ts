@@ -12,7 +12,20 @@ import { generationModelId, toSystemGenerationChannel } from "@/lib/server/gener
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
-import { countActiveImageTasksForUser, createImageTask, getImageTask, touchImageTask, transitionImageTask, type ImageTask, type ImageTaskConfig, type ImageTaskReference, updateImageTask } from "@/lib/server/image-task-store";
+import {
+    countActiveImageTasksForUser,
+    createImageTask,
+    getImageTask,
+    imageTaskEffectivePrompt,
+    imageTaskReferencePrompt,
+    imageTaskRequestParameters,
+    touchImageTask,
+    transitionImageTask,
+    type ImageTask,
+    type ImageTaskConfig,
+    type ImageTaskReference,
+    updateImageTask,
+} from "@/lib/server/image-task-store";
 import { isGenerationSource, recordGenerationLog } from "@/lib/server/generation-log-store";
 import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
 import { resolveImageTaskOptions } from "@/lib/server/image-task-config";
@@ -129,6 +142,7 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
     const requestSize = resolveRequestSize(quality, config.size || "auto");
     const globalPreset = globalAiOpcImagePreset(config);
     if (globalPreset) return runGlobalAiOpcImageTask(task, origin, publicOrigin, cookie, quality, requestSize, singleStep);
+    if (isDflopKlingExpand(config)) return runDflopKlingExpandTask(task, origin, publicOrigin, cookie, singleStep);
     const path = await openAiImageTaskPath(config, task.kind);
     const url = taskUrl(config, path, origin);
     const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId);
@@ -158,14 +172,7 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
         response = await imageSubmissionFetch(config, url, {
             method: "POST",
             headers,
-            body: JSON.stringify({
-                model: config.model,
-                prompt: withSystemPrompt(config, task.prompt),
-                ...(config.count ? { n: config.count } : {}),
-                ...(quality ? { quality } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
-                ...(allowProtocolFallback ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
-            }),
+            body: JSON.stringify(buildOpenAiImageGenerationBody(task, quality, requestSize, responseFormat, allowProtocolFallback)),
             cache: "no-store",
         });
         if (!response.ok) {
@@ -187,6 +194,64 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
     return result;
 }
 
+function isDflopKlingExpand(config: ImageTaskConfig) {
+    return config.advancedConfig?.protocol === "dflop" && config.model.trim().toLowerCase() === "tvod-kling-expand";
+}
+
+export function buildDflopKlingExpandBody(task: ImageTask, imageUrl: string) {
+    if (task.references.length !== 1 || !imageUrl) throw new GenerationSubmissionSafeFailure("可灵扩图需要且只能使用 1 张参考图", 400);
+    return {
+        model: task.config.model,
+        prompt: withSystemPrompt(task.config, imageTaskEffectivePrompt(task)),
+        image: imageUrl,
+        async: true,
+        ...imageTaskRequestParameters(task),
+    };
+}
+
+async function runDflopKlingExpandTask(task: ImageTask, origin: string, publicOrigin: string, cookie: string, singleStep: boolean): Promise<ImageTaskRunResult> {
+    const config = task.config;
+    if (task.references.length !== 1) throw new GenerationSubmissionSafeFailure("可灵扩图需要且只能使用 1 张参考图", 400);
+    const imageUrl = await publicImageReferenceRequestUrl(task.references[0], origin, publicOrigin, { ownerUserId: task.userId, taskId: task.id });
+    const url = taskUrl(config, config.advancedConfig?.createPath || "/images/generations", origin);
+    const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId);
+    headers.set("content-type", "application/json");
+    const response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: JSON.stringify(buildDflopKlingExpandBody(task, imageUrl)), cache: "no-store" });
+    if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "图片扩展失败"));
+    const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
+    const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+    return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
+}
+
+export function buildOpenAiImageGenerationBody(task: ImageTask, quality: string | undefined, requestSize: string | undefined, responseFormat: (typeof IMAGE_RESPONSE_FORMATS)[number], allowProtocolFallback: boolean) {
+    const config = task.config;
+    const midjourney = config.advancedConfig?.protocol === "dflop" && /^tvod-midjourney-v(?:7|8\.1)$/i.test(config.model);
+    const qwenImagePro = config.advancedConfig?.protocol === "dflop" && config.model.trim().toLowerCase() === "qwen-image-3.0-pro";
+    return {
+        model: config.model,
+        prompt: withSystemPrompt(config, imageTaskEffectivePrompt(task)),
+        ...(midjourney ? { n: 1, size: dflopMidjourneyRequestSize(config.size || requestSize || "1:1"), async: true } : qwenImagePro ? { n: config.count || 1 } : config.count ? { n: config.count } : {}),
+        ...(!midjourney && quality && config.advancedConfig?.protocol !== "dflop" ? { quality } : {}),
+        ...(!midjourney && requestSize ? { size: requestSize } : {}),
+        ...(!midjourney && allowProtocolFallback ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
+        ...(!midjourney ? imageTaskRequestParameters(task) : {}),
+    };
+}
+
+function dflopMidjourneyRequestSize(size: string) {
+    const ratio = imageRequestAspectRatio(size);
+    const sizes: Record<string, string> = {
+        "1:1": "2048x2048",
+        "16:9": "2048x1152",
+        "9:16": "1152x2048",
+        "4:3": "2048x1536",
+        "3:4": "1536x2048",
+    };
+    const resolved = sizes[ratio];
+    if (!resolved) throw new GenerationSubmissionSafeFailure(`Midjourney 不支持比例 ${ratio}`);
+    return resolved;
+}
+
 async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOrigin: string, cookie: string, quality: string | undefined, requestSize: string | undefined, singleStep: boolean): Promise<ImageTaskRunResult> {
     const config = task.config;
     const preset = globalAiOpcImagePreset(config);
@@ -204,7 +269,7 @@ async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOr
         body: JSON.stringify(
             buildGlobalAiOpcImageRequest(preset, {
                 model: config.model,
-                prompt: withSystemPrompt(config, buildImageReferencePromptText(task.prompt, task.references)),
+                prompt: withSystemPrompt(config, imageTaskReferencePrompt(task)),
                 quality,
                 size: requestSize,
                 ratio,
@@ -304,7 +369,7 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
         headers,
         body: JSON.stringify({
             model: config.model,
-            prompt: withSystemPrompt(config, task.prompt),
+            prompt: withSystemPrompt(config, imageTaskEffectivePrompt(task)),
             ...(config.count ? { n: config.count } : {}),
             ...(quality ? { quality } : {}),
             ...(requestSize ? { size: requestSize } : {}),
@@ -347,7 +412,7 @@ export async function runOpenAiResponsesImageTask(task: ImageTask, origin: strin
 }
 
 export function buildResponsesImageBodies(task: ImageTask, origin: string) {
-    const prompt = withSystemPrompt(task.config, buildImageReferencePromptText(task.prompt, task.references));
+    const prompt = withSystemPrompt(task.config, imageTaskReferencePrompt(task));
     const imageContent = task.references.map((reference) => ({ type: "input_image", image_url: referenceRequestUrl(reference, origin) }));
     const content = [{ type: "input_text", text: prompt }, ...imageContent];
     return [
@@ -355,11 +420,13 @@ export function buildResponsesImageBodies(task: ImageTask, origin: string) {
             model: task.config.model,
             input: [{ role: "user", content }],
             tools: [{ type: "image_generation" }],
+            ...imageTaskRequestParameters(task),
         },
         {
             model: task.config.model,
             input: prompt,
             tools: [{ type: "image_generation" }],
+            ...imageTaskRequestParameters(task),
         },
     ];
 }
@@ -380,7 +447,8 @@ export async function buildJsonImageEditBodies(
         await Promise.all(task.references.map((reference) => (publicUrlReferenceMode ? publicImageReferenceRequestUrl(reference, origin, publicOrigin, referenceContext) : Promise.resolve(jsonImageReferenceRequestUrl(reference, origin)))))
     ).filter(Boolean);
     const mask = task.mask ? (publicUrlReferenceMode ? await publicImageReferenceRequestUrl(task.mask, origin, publicOrigin, referenceContext) : jsonImageReferenceRequestUrl(task.mask, origin)) : "";
-    const prompt = imageUrlObjectOnlyMode ? buildSub2ApiImageEditPrompt(task.prompt, task.references) : buildImageReferencePromptText(task.prompt, task.references);
+    const effectivePrompt = imageTaskEffectivePrompt(task);
+    const prompt = task.config.promptEnhancementDisabled ? task.prompt : imageUrlObjectOnlyMode ? buildSub2ApiImageEditPrompt(effectivePrompt, task.references) : buildImageReferencePromptText(effectivePrompt, task.references);
     const base = {
         model: task.config.model,
         prompt: withSystemPrompt(task.config, prompt),
@@ -389,6 +457,7 @@ export async function buildJsonImageEditBodies(
         ...(requestSize ? { size: requestSize } : {}),
         ...(includeCompatibilityFields ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
         ...(mask ? { mask } : {}),
+        ...imageTaskRequestParameters(task),
     };
     if (!images.length) return [base];
     const first = images[0];
@@ -404,6 +473,7 @@ export async function buildJsonImageEditBodies(
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(mask ? { mask } : {}),
                 image_urls: images,
+                ...imageTaskRequestParameters(task),
             },
         ];
     }

@@ -6,6 +6,11 @@ const firstImage = "data:image/png;base64,AQID";
 const lastImage = "data:image/webp;base64,BAUG";
 
 describe("Gemini Veo provider", () => {
+    it("preserves the exact manual prompt when requested", async () => {
+        const original = "  让这个人物慢慢向前走  ";
+        const request = await buildGeminiVideoRequest({ prompt: original, preservePrompt: true, durationSeconds: 5, aspectRatio: "16:9", resolution: "720p", references: [], origin: "http://localhost", cookie: "" });
+        expect(request.instances[0].prompt).toBe(original);
+    });
     it("builds text-to-video parameters with supported duration tiers", async () => {
         const request = await buildGeminiVideoRequest({ prompt: "A quiet lake", durationSeconds: 5, aspectRatio: "16:9", resolution: "720p", generateAudio: true, references: [], origin: "http://localhost", cookie: "" });
 

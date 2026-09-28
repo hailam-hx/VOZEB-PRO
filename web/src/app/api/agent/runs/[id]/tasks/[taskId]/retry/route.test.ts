@@ -49,6 +49,24 @@ describe("Agent child task retry concurrency", () => {
         expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
     });
 
+    it("rejects an atomic retry that includes a permanent failure", async () => {
+        mocks.getAgentRun.mockResolvedValue({
+            id: "run",
+            userId: "user",
+            conversationId: "conversation-one",
+            status: "failed",
+            tasks: [
+                { id: "temporary", status: "failed", retryable: true },
+                { id: "permanent", status: "failed", retryable: false, errorCode: "UPSTREAM_BAD_REQUEST" },
+            ],
+        });
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/tasks/temporary/retry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskIds: ["temporary", "permanent"] }) }), {
+            params: Promise.resolve({ id: "run", taskId: "temporary" }),
+        });
+        expect(response.status).toBe(409);
+        expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
+    });
+
     it("uses the current backend limit before changing the failed task", async () => {
         const response = await POST(new Request("http://localhost/api/agent/runs/run/tasks/task/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", taskId: "task" }) });
 

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { decimal } from "@/lib/billing/decimal";
+import { normalizeSystemPricingPolicy } from "@/lib/billing/pricing-policy";
 
 import { formatAccountId, parseAccountId } from "@/lib/account-id";
 import { decryptSecretValue, encryptSecretValue, isEncryptedSecretValue } from "@/lib/server/secret-crypto";
@@ -179,7 +180,8 @@ export function countActiveFullAdmins(db: AuthDatabase, excludingUserId?: string
 
 export function normalizeSettings(settings: AuthSettings): AuthSettings {
     const systemChannels = Array.isArray(settings.systemChannels) ? settings.systemChannels.map(normalizeSystemChannel).filter((channel) => channel.name || channel.baseUrl || channel.models.length) : [];
-    const logicalModels = normalizeLogicalModels(settings.logicalModels, systemChannels);
+    const pricingPolicy = normalizeSystemPricingPolicy(settings.pricingPolicy);
+    const logicalModels = normalizeLogicalModels(settings.logicalModels, systemChannels, pricingPolicy);
     const site = normalizeSiteSettings(settings.site);
     return {
         site,
@@ -195,13 +197,14 @@ export function normalizeSettings(settings: AuthSettings): AuthSettings {
         generationDefaults: normalizeGenerationDefaults(settings.generationDefaults),
         systemChannels,
         logicalModels,
+        pricingPolicy,
         defaultModels: normalizeDefaultModelsConfig(settings.defaultModels, logicalModels, systemChannels),
         agentSkills: normalizeAgentSkills(settings.agentSkills),
     };
 }
 
-export function normalizeLogicalModels(models: LogicalModel[] | undefined, channels: SystemModelChannel[]): LogicalModel[] {
-    return normalizeLogicalModelsConfig(models, channels);
+export function normalizeLogicalModels(models: LogicalModel[] | undefined, channels: SystemModelChannel[], pricingPolicy = DEFAULT_SETTINGS.pricingPolicy): LogicalModel[] {
+    return normalizeLogicalModelsConfig(models, channels, pricingPolicy);
 }
 
 export function deriveLogicalModels(channels: SystemModelChannel[]): LogicalModel[] {
@@ -283,6 +286,7 @@ export function normalizeAgentSkills(skills: AgentSkill[] | undefined) {
 export function normalizeGenerationDefaults(settings: Partial<GenerationDefaultSettings> | undefined): GenerationDefaultSettings {
     return {
         agentModeEnabled: settings?.agentModeEnabled !== false,
+        manualPromptEnhancementEnabled: settings?.manualPromptEnhancementEnabled !== false,
         createPromptMaxLength: normalizePositiveSafeInteger(settings?.createPromptMaxLength, DEFAULT_SETTINGS.generationDefaults.createPromptMaxLength),
         canvasImageCount: normalizeGenerationDefaultCount(settings?.canvasImageCount),
         imageSize: normalizeGenerationDefaultImageSize(settings?.imageSize),
@@ -536,7 +540,7 @@ export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): Sy
         enabled: channel.enabled !== false,
         advancedConfig: normalizeSystemChannelAdvancedConfig(channel.advancedConfig),
     };
-    return normalized.advancedConfig?.protocol === "yumeng" ? applyChannelProtocol(normalized, "yumeng") : normalized;
+    return normalized.advancedConfig?.protocol === "yumeng" || normalized.advancedConfig?.protocol === "dflop" ? applyChannelProtocol(normalized, normalized.advancedConfig.protocol) : normalized;
 }
 
 export function normalizePoints(value: unknown, fallback: number) {

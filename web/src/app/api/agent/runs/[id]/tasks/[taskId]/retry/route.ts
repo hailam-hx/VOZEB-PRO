@@ -10,7 +10,7 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
-import { publicAgentRun } from "@/lib/server/agent-run-public";
+import { publicAgentRun, publicAgentTaskRetryable } from "@/lib/server/agent-run-public";
 
 export const maxDuration = 2400;
 
@@ -30,6 +30,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const requestedTaskIdSet = new Set(requestedTaskIds);
     const requestedTasks = run.tasks.filter((item) => requestedTaskIdSet.has(item.id));
     if (requestedTasks.length !== requestedTaskIds.length || requestedTasks.some((task) => task.status !== "failed")) return NextResponse.json({ code: 409, data: null, msg: "只有失败任务可以重试" }, { status: 409 });
+    if (requestedTasks.some((task) => publicAgentTaskRetryable(task) === false))
+        return NextResponse.json({ code: 409, data: { publicMessage: "部分任务需要调整输入或模型后重新提交，不能直接重试" }, msg: "部分任务需要调整输入或模型后重新提交，不能直接重试" }, { status: 409 });
     const settings = await getAuthSettings();
     const limit = settings.generationConcurrency.agent;
     const tasks = run.tasks.map((item) => {

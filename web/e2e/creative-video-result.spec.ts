@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
-type MediaType = "image" | "video";
+type MediaType = "image" | "video" | "audio";
 type MediaSize = { width: number; height: number; label: string };
 
 const IMAGE_SIZES: MediaSize[] = [
@@ -360,9 +360,9 @@ test("multiple videos switch src, poster and size while releasing the previous p
     await captureResult(result, testInfo, "video-multiple-results");
 });
 
-test("failed image and video generations expose only in-place retry", async ({ page }, testInfo) => {
+test("failed image, video and audio generations expose only in-place retry", async ({ page }, testInfo) => {
     await preparePage(page, testInfo);
-    for (const type of ["image", "video"] as const) {
+    for (const type of ["image", "video", "audio"] as const) {
         const fixture = await mockCreativeRound(page, { type, sizes: [], failed: true });
         await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
 
@@ -370,12 +370,86 @@ test("failed image and video generations expose only in-place retry", async ({ p
         await expect(round).toBeVisible({ timeout: 45_000 });
         await expect(round.getByTestId("creative-generation-failure")).toBeVisible();
         await expect(round.getByText("创作任务执行失败", { exact: true })).toBeVisible();
+        await expect(round.getByText("当前模型或上游服务暂时不可用，请稍后重试或更换模型。", { exact: true })).toBeVisible();
         await expect(round.getByRole("button", { name: "直接重试本次创作" })).toHaveText("直接重试");
         await expect(round.getByTestId("creative-primary-result")).toHaveCount(0);
         await expect(round.getByRole("button", { name: /编辑.*重试/ })).toHaveCount(0);
         await expectNoHorizontalOverflow(page);
         await captureResult(round, testInfo, `${type}-generation-failed`);
     }
+});
+
+test("manual model compatibility failures follow all three interface languages", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "三语错误文案在桌面基准项目验证");
+    await preparePage(page, testInfo);
+    const baseURL = String(testInfo.project.use.baseURL);
+    const cases = [
+        ["zh-CN", "手动选择的模型「gpt-image-2.5-flare」当前不可用或不支持已保存的生成参数"],
+        ["vi", "Mô hình đã chọn thủ công “gpt-image-2.5-flare” hiện không khả dụng hoặc không hỗ trợ các tham số tạo đã lưu."],
+        ["en", "The manually selected model “gpt-image-2.5-flare” is unavailable or does not support the saved generation parameters."],
+    ] as const;
+
+    for (const [locale, expected] of cases) {
+        await page.context().addCookies([{ name: "vozeb-pro-locale", value: locale, url: baseURL }]);
+        const fixture = await mockCreativeRound(page, { type: "image", sizes: [], failed: true, errorCode: "manual_model_unavailable_or_incompatible", model: "gpt-image-2.5-flare" });
+        await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+        await expect(page.getByTestId("creative-generation-failure").getByText(expected, { exact: true })).toBeVisible();
+    }
+});
+
+test("provider image-size failures use safe guidance in all three interface languages", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "三语错误文案在桌面基准项目验证");
+    await preparePage(page, testInfo);
+    const baseURL = String(testInfo.project.use.baseURL);
+    const cases = [
+        ["zh-CN", "所选比例生成的图片尺寸低于当前模型要求，请更换模型或比例后重新提交。"],
+        ["vi", "Kích thước ảnh tạo từ tỷ lệ đã chọn thấp hơn yêu cầu của mô hình. Hãy đổi mô hình hoặc tỷ lệ rồi gửi lại."],
+        ["en", "The image size from the selected aspect ratio is below this model's requirement. Change the model or ratio and submit again."],
+    ] as const;
+
+    for (const [locale, expected] of cases) {
+        await page.context().addCookies([{ name: "vozeb-pro-locale", value: locale, url: baseURL }]);
+        const fixture = await mockCreativeRound(page, { type: "image", sizes: [], failed: true, errorCode: "image_size_below_provider_minimum", model: "doubao-seedream-5-0-260128" });
+        await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+        const failure = page.getByTestId("creative-generation-failure");
+        await expect(failure.getByText(expected, { exact: true })).toBeVisible();
+        await expect(failure).not.toContainText("Request id");
+        await expect(failure).not.toContainText("3686400");
+        await expect(failure.getByRole("button", { name: "直接重试本次创作" })).toHaveCount(0);
+    }
+});
+
+test("a rejected reference-image aspect ratio explains the video failure", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    const fixture = await mockCreativeRound(page, { type: "video", sizes: [], failed: true, errorCode: "video_reference_aspect_ratio_unsupported" });
+    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+
+    const failure = page.getByTestId("creative-generation-failure");
+    await expect(failure.getByText("参考图片的宽高比超出当前视频模型支持范围，请裁剪图片或更换图片后重试。", { exact: true })).toBeVisible();
+    await expect(failure.getByRole("button", { name: "直接重试本次创作" })).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+});
+
+test("a rejected output video explains its content failure", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    const fixture = await mockCreativeRound(page, { type: "video", sizes: [], failed: true, errorCode: "video_output_sensitive_content" });
+    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+
+    const failure = page.getByTestId("creative-generation-failure");
+    await expect(failure.getByText("生成的视频可能包含敏感内容，模型已拒绝输出。请调整描述或参考素材后重新提交。", { exact: true })).toBeVisible();
+    await expect(failure.getByRole("button", { name: "直接重试本次创作" })).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+});
+
+test("an overlong video text input explains the failure", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    const fixture = await mockCreativeRound(page, { type: "video", sizes: [], failed: true, errorCode: "video_text_too_long" });
+    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+
+    const failure = page.getByTestId("creative-generation-failure");
+    await expect(failure.getByText("发送给视频模型的文字超出长度限制，请缩短创作描述后重新提交。", { exact: true })).toBeVisible();
+    await expect(failure.getByRole("button", { name: "直接重试本次创作" })).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
 });
 
 test("planning failure retries the same run, conversation and message round", async ({ page }, testInfo) => {
@@ -400,8 +474,46 @@ test("planning failure retries the same run, conversation and message round", as
     await expectNoHorizontalOverflow(page);
 });
 
+test("planner billing failure explains the balance problem and cannot be retried", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    const fixture = await mockCreativeRound(page, { type: "audio", sizes: [], failed: true, planningFailure: true, runFailure: { errorCode: "INSUFFICIENT_BALANCE", retryable: false } });
+    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+    const failure = page.getByTestId("creative-generation-failure");
+    await expect(failure).toContainText("积分不足");
+    await expect(failure.getByRole("button", { name: "直接重试本次创作" })).toHaveCount(0);
+    await expect(failure).not.toContainText("provider-token");
+    await expectNoHorizontalOverflow(page);
+});
+
+test("history load failure stays visible and can be retried", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    let allowRecovery = false;
+    await page.route(/\/api\/creative\/conversations\?/, (route) => {
+        return route.fulfill({ json: allowRecovery ? { code: 0, data: { conversations: [], hasMore: false }, msg: "OK" } : { code: 503, data: null, msg: "private provider path" } });
+    });
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "打开创作历史" }).click();
+    const alert = page.getByRole("alert").filter({ hasText: "操作暂时无法完成" });
+    await expect(alert).toBeVisible();
+    await expect(alert).not.toContainText("private provider path");
+    allowRecovery = true;
+    await alert.getByRole("button", { name: "直接重试" }).click();
+    await expect(alert).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+});
+
+test("missing Run details show refresh guidance without a false retry", async ({ page }, testInfo) => {
+    await preparePage(page, testInfo);
+    const fixture = await mockCreativeRound(page, { type: "audio", sizes: [], failed: true });
+    await page.route(new RegExp(`/api/agent/runs/${fixture.runId}$`), (route) => route.fulfill({ json: { code: 503, data: null, msg: "provider-token=private" } }));
+    await page.goto(`/create?conversationId=${fixture.id}`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("任务详情暂时无法读取，请刷新页面后查看状态。", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "直接重试本次创作" })).toHaveCount(0);
+    await expect(page.getByText("provider-token=private")).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+});
+
 test("partial image and video runs keep every successful result visible with a failed-task retry", async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== "chromium", "部分成功结果由桌面基准项目验证");
     await preparePage(page, testInfo);
 
     for (const type of ["image", "video"] as const) {
@@ -413,6 +525,7 @@ test("partial image and video runs keep every successful result visible with a f
         await expect(result).toBeVisible({ timeout: 45_000 });
         await expect(result).toHaveAttribute("data-results-count", "2");
         await expect(result.getByTestId("creative-result-switcher")).toHaveAttribute("data-results-count", "2");
+        await expect(round.getByTestId("creative-partial-failures")).toContainText(`${type === "image" ? "图片" : "视频"}生成：当前模型或上游服务暂时不可用`);
         await expect(round.getByRole("button", { name: "直接重试本次创作" })).toBeVisible();
         await expect(round.getByRole("button", { name: `重试 ${type === "image" ? "图片" : "视频"}生成` })).toHaveCount(0);
         await expectNoHorizontalOverflow(page);
@@ -582,11 +695,26 @@ async function preparePage(page: Page, testInfo: TestInfo) {
     await installBrowserSpies(page);
 }
 
-async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: MediaSize[]; failed?: boolean; planningFailure?: boolean; partialFailure?: boolean; omitDimensions?: boolean; reportedRatio?: string; withholdPrompts?: boolean }) {
+async function mockCreativeRound(
+    page: Page,
+    options: {
+        type: MediaType;
+        sizes: MediaSize[];
+        failed?: boolean;
+        errorCode?: string;
+        model?: string;
+        planningFailure?: boolean;
+        runFailure?: { errorCode: string; retryable: boolean };
+        partialFailure?: boolean;
+        omitDimensions?: boolean;
+        reportedRatio?: string;
+        withholdPrompts?: boolean;
+    },
+) {
     const id = `e2e-result-${randomUUID()}`;
     const runId = `e2e-run-${randomUUID()}`;
     const timestamp = Date.now();
-    const prompt = options.type === "image" ? `生成 ${Math.max(1, options.sizes.length)} 张商业主视觉` : `生成 ${Math.max(1, options.sizes.length)} 条产品短视频`;
+    const prompt = options.type === "image" ? `生成 ${Math.max(1, options.sizes.length)} 张商业主视觉` : options.type === "audio" ? "生成一段产品介绍语音" : `生成 ${Math.max(1, options.sizes.length)} 条产品短视频`;
     const optimizedPromptFor = (index: number) => (options.type === "image" ? "夏日海边商业主视觉，人物自然微笑，通透明亮，保留真实肤质" : `产品短视频镜头 ${index + 1}，运镜平稳，动作自然，光线连贯`);
     const assets = [] as Array<Record<string, unknown>>;
 
@@ -640,11 +768,13 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
                     id: `${options.type}-task`,
                     title: options.type === "image" ? "图片生成" : "视频生成",
                     type: options.type,
-                    model: `${options.type}-gen`,
+                    model: options.model || `${options.type}-gen`,
                     optimizedPrompt: optimizedPromptFor(0),
                     count: 1,
                     status: "failed",
                     error: "当前模型暂不可用，请切换模型或稍后重试。",
+                    errorCode: options.errorCode || "UPSTREAM_UNAVAILABLE",
+                    retryable: !options.errorCode || options.errorCode === "UPSTREAM_UNAVAILABLE",
                 },
             ]
           : options.partialFailure
@@ -658,6 +788,8 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
                       count: options.sizes.length + 1,
                       status: "failed",
                       error: "部分结果生成失败",
+                      errorCode: "UPSTREAM_UNAVAILABLE",
+                      retryable: true,
                       childTasks: [
                           ...assets.map((asset, index) => ({ id: `${options.type}-child-${index + 1}`, status: "completed", attempt: 1, result: { serverUrl: asset.serverUrl } })),
                           { id: `${options.type}-child-failed`, status: "failed", attempt: 1, error: "上游拒绝了一个结果" },
@@ -696,11 +828,16 @@ async function mockCreativeRound(page: Page, options: { type: MediaType; sizes: 
         inputMessageId: userMessage.id,
         assistantMessageId: assistantMessage.id,
         status: options.failed ? "failed" : "completed",
+        ...(options.runFailure ? { failure: options.runFailure } : {}),
         prompt,
         referencedAssetIds: [],
         requestedModelIds: [`${options.type}-gen`],
         generationPreferences:
-            options.type === "image" ? { mode: "image", image: { size: options.reportedRatio || primarySize.label, quality: "high" } } : { mode: "video", video: { size: options.reportedRatio || primarySize.label, quality: "high", seconds: 15 } },
+            options.type === "image"
+                ? { mode: "image", image: { size: options.reportedRatio || primarySize.label, quality: "high" } }
+                : options.type === "audio"
+                  ? { mode: "audio", audio: {} }
+                  : { mode: "video", video: { size: options.reportedRatio || primarySize.label, quality: "high", seconds: 15 } },
         assetIds: assets.map((asset) => asset.id),
         tasks,
         createdAt: timestamp,

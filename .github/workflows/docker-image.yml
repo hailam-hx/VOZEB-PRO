@@ -72,6 +72,14 @@ jobs:
           VOZEB_PRO_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           VOZEB_PRO_RUN_POSTGRES_INTEGRATION: "1"
           RUN_WORK_COMMUNITY_POSTGRES_INTEGRATION: "1"
+      - name: Create isolated validation database
+        run: PGPASSWORD=vozeb-e2e-password psql -h 127.0.0.1 -U vozeb -d postgres -c 'CREATE DATABASE vozeb_pro_validation'
+      - name: Video validation PostgreSQL integration
+        run: pnpm exec vitest run src/lib/server/database/video-validation.postgres.test.ts --no-file-parallelism
+        env:
+          VOZEB_PRO_DATABASE_PROVIDER: postgres
+          DATABASE_URL: postgres://vozeb:vozeb-e2e-password@127.0.0.1:5432/vozeb_pro_validation
+          VOZEB_PRO_RUN_POSTGRES_INTEGRATION: "1"
 
   security:
     runs-on: ubuntu-latest

@@ -1,10 +1,17 @@
-import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
+import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, LogicalModelGenerationParameterSources, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
 import { normalizeGenerationParameters } from "@/lib/generation-parameters";
 import { inferModelCapability, isCreativeGenerationModel, normalizeModelId } from "@/lib/model-capability";
 import { channelConnectionReady, protocolCatalogCapability } from "@/lib/channel-protocol-registry";
 import { validatePricingRateCard } from "@/lib/billing/pricing";
 import { validateProviderCostUnit } from "@/lib/billing/money";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
+import { mergeDflopGenerationParameters, normalizeDflopUpstreamModelMetadata, reconcileDflopUpstreamModelMetadata } from "@/lib/dflop-model-metadata";
+import { applyProviderPricingConversion, normalizeProviderPricingProfile, providerPricingCostUnit, providerPricingProfileToCostRateCard, reconcileProviderPricingProfile } from "@/lib/billing/provider-pricing";
+import { reapplyStoredCapabilityProbe } from "@/lib/billing/provider-capability-probe";
+import { DEFAULT_SYSTEM_PRICING_POLICY, normalizeSalePriceApproval, normalizeSuggestedSaleRateCard, normalizeSystemPricingPolicy, type SystemPricingPolicy } from "@/lib/billing/pricing-policy";
+import { applySuggestedPricingToLogicalModels } from "@/lib/billing/suggested-model-pricing";
+import { deriveDflopImageQualityProfile } from "@/lib/dflop-image-quality-profile";
+import { normalizeImageQualityProfile } from "@/lib/image-quality-profile";
 
 const DEFAULT_MODEL_SPECS: ReadonlyArray<{ capability: LogicalModelCapability; key: keyof SystemDefaultModels; audioOperation?: "speech" | "voice-clone" }> = [
     { capability: "text", key: "textModel" },
@@ -14,15 +21,16 @@ const DEFAULT_MODEL_SPECS: ReadonlyArray<{ capability: LogicalModelCapability; k
     { capability: "audio", key: "voiceCloneModel", audioOperation: "voice-clone" },
 ];
 
-export function normalizeLogicalModelsConfig(models: LogicalModel[] | undefined, channels: SystemModelChannel[]) {
-    return synchronizeLogicalModelsWithChannels(Array.isArray(models) ? models : [], channels);
+export function normalizeLogicalModelsConfig(models: LogicalModel[] | undefined, channels: SystemModelChannel[], pricingPolicy: SystemPricingPolicy = DEFAULT_SYSTEM_PRICING_POLICY) {
+    return synchronizeLogicalModelsWithChannels(Array.isArray(models) ? models : [], channels, pricingPolicy);
 }
 
-export function deriveLogicalModelsConfig(channels: SystemModelChannel[]): LogicalModel[] {
-    return synchronizeLogicalModelsWithChannels([], channels);
+export function deriveLogicalModelsConfig(channels: SystemModelChannel[], pricingPolicy: SystemPricingPolicy = DEFAULT_SYSTEM_PRICING_POLICY): LogicalModel[] {
+    return synchronizeLogicalModelsWithChannels([], channels, pricingPolicy);
 }
 
-export function synchronizeLogicalModelsWithChannels(existingModels: LogicalModel[], channels: SystemModelChannel[]): LogicalModel[] {
+export function synchronizeLogicalModelsWithChannels(existingModels: LogicalModel[], channels: SystemModelChannel[], pricingPolicy: SystemPricingPolicy = DEFAULT_SYSTEM_PRICING_POLICY): LogicalModel[] {
+    const normalizedPricingPolicy = normalizeSystemPricingPolicy(pricingPolicy);
     const catalogBindings: Array<{
         key: string;
         modelKey: string;
@@ -35,7 +43,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
     channels.forEach((channel, channelIndex) => {
         channel.models.forEach((upstreamModel) => {
             const id = rawModelName(upstreamModel);
-            if (!id || !isCreativeGenerationModel(id)) return;
+            if (!id || !isCreativeGenerationModel(id) || !channelModelIsRoutable(channel, upstreamModel)) return;
             const detected = resolveChannelModelCapability(channel, upstreamModel);
             const modelKey = normalizeModelName(id);
             catalogBindings.push({ key: bindingKey(channel.id, upstreamModel), modelKey, channel, channelIndex, upstreamModel, ...detected });
@@ -68,24 +76,32 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
             })
             .map(({ catalog, stored }) => {
                 claimedBindings.add(catalog.key);
-                return normalizedCatalogBinding(catalog, stored);
+                return normalizedCatalogBinding(catalog, stored, normalizedPricingPolicy);
             });
         const modelKeys = new Set(bindings.map((binding) => normalizeModelName(binding.upstreamModel)));
         for (const catalog of catalogBindings) {
             if (claimedBindings.has(catalog.key) || savedOwner.has(catalog.key) || !modelKeys.has(catalog.modelKey) || (catalog.authoritative && catalog.capability !== capability)) continue;
             claimedBindings.add(catalog.key);
-            bindings.push(normalizedCatalogBinding(catalog));
+            bindings.push(normalizedCatalogBinding(catalog, undefined, normalizedPricingPolicy));
         }
         if (!bindings.length) return [];
         bindings.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
         const saleRateCard = existing.saleRateCard === undefined ? undefined : validatePricingRateCard(existing.saleRateCard);
+        const salePriceSource = saleRateCard ? existing.salePriceSource || "manual" : undefined;
+        const salePriceApproval = salePriceSource === "approved" ? normalizeSalePriceApproval(existing.salePriceApproval) : undefined;
+        const suggestedSaleRateCard = normalizeSuggestedSaleRateCard(existing.suggestedSaleRateCard);
+        const nameSource = logicalNameSource(existing, bindings);
         return [
             {
                 id: uniqueLogicalModelId(existing.id, usedModelIds),
-                name: text(existing.name, 120) || bindings[0].upstreamModel,
+                name: synchronizedLogicalModelName(existing, bindings, nameSource),
+                nameSource,
                 capability,
                 enabled: existing.enabled !== false,
                 ...(saleRateCard ? { saleRateCard } : {}),
+                ...(salePriceSource ? { salePriceSource } : {}),
+                ...(salePriceApproval ? { salePriceApproval } : {}),
+                ...(suggestedSaleRateCard ? { suggestedSaleRateCard } : {}),
                 bindings,
             },
         ];
@@ -100,20 +116,90 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
     const created = Array.from(unassigned.values()).map((catalog) => {
         const authoritative = catalog.find((binding) => binding.authoritative);
         const capability = authoritative?.capability || catalog[0].capability;
-        const bindings = catalog.map((binding) => normalizedCatalogBinding(binding)).sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+        const bindings = catalog.map((binding) => normalizedCatalogBinding(binding, undefined, normalizedPricingPolicy)).sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
         return {
             id: uniqueLogicalModelId(catalog[0].upstreamModel, usedModelIds),
-            name: rawModelName(catalog[0].upstreamModel),
+            name: catalogDisplayName(catalog[0]) || rawModelName(catalog[0].upstreamModel),
+            nameSource: catalogDisplayName(catalog[0]) ? ("upstream" as const) : ("manual" as const),
             capability,
             enabled: true,
             bindings,
         };
     });
-    return [...preserved, ...created];
+    const synchronized = [...preserved, ...created];
+    return applySuggestedPricingToLogicalModels(synchronized, channels, normalizedPricingPolicy, pricingCalculationTime(synchronized));
 }
 
 export function mergeChannelModelsIntoLogicalModels(logicalModels: LogicalModel[], channels: SystemModelChannel[]) {
     return synchronizeLogicalModelsWithChannels(logicalModels, channels);
+}
+
+export function dflopModelSyncStats(existingModels: LogicalModel[], channels: SystemModelChannel[], updatedChannel: SystemModelChannel, pricingPolicy: SystemPricingPolicy = DEFAULT_SYSTEM_PRICING_POLICY) {
+    const previousIds = new Set(existingModels.map((model) => model.id.toLowerCase()));
+    const previousBindings = new Map(existingModels.flatMap((model) => model.bindings.map((binding) => [bindingKey(binding.channelId, binding.upstreamModel), { model, binding }] as const)));
+    const nextChannels = channels.some((channel) => channel.id === updatedChannel.id) ? channels.map((channel) => (channel.id === updatedChannel.id ? updatedChannel : channel)) : [...channels, updatedChannel];
+    const nextModels = synchronizeLogicalModelsWithChannels(existingModels, nextChannels, pricingPolicy);
+    let updated = 0;
+    let manualOverridesPreserved = 0;
+    let capabilityDrifts = 0;
+    const changedModels: Array<{ modelId: string; displayName?: string; category?: string; endpointType?: string | null; capabilitySource: string; changedFields: string[] }> = [];
+    const imageQualityProfiles = { total: 0, valid: 0, drift: 0, needsReview: 0, invalid: 0, manual: 0, none: 0, unprofiled: 0 };
+    for (const model of nextModels) {
+        for (const binding of model.bindings.filter((item) => item.channelId === updatedChannel.id)) {
+            if (model.capability === "image") {
+                imageQualityProfiles.total += 1;
+                const profile = normalizeImageQualityProfile(binding.imageQualityProfile);
+                if (!profile) imageQualityProfiles.unprofiled += 1;
+                else {
+                    if (profile.validation.status === "VALID") imageQualityProfiles.valid += 1;
+                    if (profile.validation.status === "DRIFT") imageQualityProfiles.drift += 1;
+                    if (profile.validation.status === "NEEDS_REVIEW") imageQualityProfiles.needsReview += 1;
+                    if (profile.validation.status === "INVALID") imageQualityProfiles.invalid += 1;
+                    if (profile.source === "manual") imageQualityProfiles.manual += 1;
+                    if (profile.controlType === "none") imageQualityProfiles.none += 1;
+                }
+            }
+            const previous = previousBindings.get(bindingKey(binding.channelId, binding.upstreamModel));
+            const changedFields = metadataChangedFields(previous?.binding.upstreamMetadata, binding.upstreamMetadata);
+            if (previous && (changedFields.length || previous.model.name !== model.name)) updated += 1;
+            manualOverridesPreserved += binding.capabilityDrifts?.length || 0;
+            capabilityDrifts += binding.capabilityDrifts?.length || 0;
+            if (changedFields.length || !previous) {
+                changedModels.push({
+                    modelId: binding.upstreamModel,
+                    ...(binding.upstreamMetadata?.displayName ? { displayName: binding.upstreamMetadata.displayName } : {}),
+                    ...(binding.upstreamMetadata?.category ? { category: binding.upstreamMetadata.category } : {}),
+                    ...(binding.upstreamMetadata?.endpointType !== undefined ? { endpointType: binding.upstreamMetadata.endpointType } : {}),
+                    capabilitySource: binding.upstreamMetadata ? "upstream" : "fallback",
+                    changedFields,
+                });
+            }
+        }
+    }
+    return { created: nextModels.filter((model) => !previousIds.has(model.id.toLowerCase())).length, updated, manualOverridesPreserved, capabilityDrifts, imageQualityProfiles, changedModels };
+}
+
+function metadataChangedFields(previous: LogicalModelBinding["upstreamMetadata"], next: LogicalModelBinding["upstreamMetadata"]) {
+    const keys = new Set([...Object.keys(previous || {}), ...Object.keys(next || {})]);
+    return Array.from(keys).filter((key) => JSON.stringify(comparableMetadataField(key, previous?.[key as keyof typeof previous])) !== JSON.stringify(comparableMetadataField(key, next?.[key as keyof typeof next])));
+}
+
+function comparableMetadataField(key: string, value: unknown) {
+    if (key !== "providerPricingProfile") return value;
+    const profile = normalizeProviderPricingProfile(value);
+    if (!profile) return value;
+    return {
+        provider: profile.provider,
+        modelId: profile.modelId,
+        status: profile.status,
+        raw: profile.raw,
+        discount: profile.discount,
+        dimensions: profile.dimensions.map(({ syncedAt: _syncedAt, providerCostHotxCredits: _converted, ...dimension }) => dimension),
+        unknownFields: profile.unknownFields,
+        missingFields: profile.missingFields,
+        warnings: profile.warnings,
+        metadata: profile.metadata,
+    };
 }
 
 export function normalizeDefaultModelsConfig(defaults: Partial<SystemDefaultModels> | undefined, logicalModels: LogicalModel[], channels: SystemModelChannel[]): SystemDefaultModels {
@@ -198,6 +284,14 @@ export function channelModelCapability(channel: Pick<SystemModelChannel, "advanc
     return resolveChannelModelCapability(channel, model).capability;
 }
 
+export function channelModelDiscovery(channel: Pick<SystemModelChannel, "advancedConfig">, model: string) {
+    return channel.advancedConfig?.modelDiscovery?.[normalizeModelId(model)];
+}
+
+export function channelModelIsRoutable(channel: Pick<SystemModelChannel, "advancedConfig">, model: string) {
+    return channelModelDiscovery(channel, model)?.routable !== false;
+}
+
 function resolveChannelModelCapability(channel: Pick<SystemModelChannel, "advancedConfig">, model: string) {
     const key = normalizeModelId(model);
     if (key === "auto") return { capability: "text" as const, authoritative: true };
@@ -212,7 +306,7 @@ function resolveChannelModelCapability(channel: Pick<SystemModelChannel, "advanc
 }
 
 export function channelDetectedCapabilities(channel: Pick<SystemModelChannel, "advancedConfig" | "models">) {
-    return new Set(channel.models.filter(isCreativeGenerationModel).map((model) => channelModelCapability(channel, model)));
+    return new Set(channel.models.filter((model) => isCreativeGenerationModel(model) && channelModelIsRoutable(channel, model)).map((model) => channelModelCapability(channel, model)));
 }
 
 export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelBinding, "capabilityProfile">, capability: LogicalModelCapability, channel?: Pick<SystemModelChannel, "advancedConfig">, upstreamModel = "") {
@@ -231,12 +325,44 @@ function bindingKey(channelId: string, upstreamModel: string) {
     return `${channelId}:${normalizeModelName(upstreamModel)}`;
 }
 
-function normalizedCatalogBinding(catalog: { channel: SystemModelChannel; channelIndex: number; upstreamModel: string }, stored?: LogicalModelBinding): LogicalModelBinding {
-    const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile);
-    const generationParameters = normalizeGenerationParameters(stored?.generationParameters);
+function normalizedCatalogBinding(
+    catalog: { channel: SystemModelChannel; channelIndex: number; upstreamModel: string; capability: LogicalModelCapability },
+    stored: LogicalModelBinding | undefined,
+    pricingPolicy: SystemPricingPolicy,
+): LogicalModelBinding {
+    const dflopVoiceClone = catalog.channel.advancedConfig?.protocol === "dflop" && normalizeModelId(catalog.upstreamModel) === "voice-clone-pro";
+    const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile ?? (!stored && dflopVoiceClone ? { supportsIdempotency: true } : undefined));
+    const discoveredMetadata = normalizeDflopUpstreamModelMetadata(channelModelDiscovery(catalog.channel, catalog.upstreamModel)?.upstreamMetadata);
+    const upstreamMetadata = reconcileDflopUpstreamModelMetadata(stored?.upstreamMetadata, discoveredMetadata);
+    const upstreamMerge = discoveredMetadata
+        ? mergeDflopGenerationParameters(
+              stored?.generationParameters,
+              stored?.generationParameterSources,
+              discoveredMetadata.generationParameters,
+              discoveredMetadata.generationParameterSources,
+              false,
+              stored?.upstreamMetadata?.generationParameterEvidence,
+              discoveredMetadata.generationParameterEvidence,
+          )
+        : undefined;
+    const discoveredGenerationParameters =
+        upstreamMerge && (stored?.generationParameters || upstreamMetadata?.generationParameters)
+            ? upstreamMerge.parameters
+            : normalizeGenerationParameters(stored?.generationParameters ?? (!stored && dflopVoiceClone ? { audioOperation: "voice-clone" } : undefined));
+    const isDflopImage = catalog.channel.advancedConfig?.protocol === "dflop" && catalog.capability === "image";
+    const generationParameters = isDflopImage && discoveredGenerationParameters ? { ...discoveredGenerationParameters, qualities: [] } : discoveredGenerationParameters;
+    const generationParameterSources = upstreamMerge?.sources || normalizeGenerationParameterSources(stored?.generationParameterSources, stored?.generationParameters);
     const weight = clampWeight(stored?.weight);
-    const costRateCard = stored?.costRateCard === undefined ? undefined : validatePricingRateCard(stored.costRateCard);
-    const providerCostUnit = stored?.providerCostUnit === undefined ? undefined : validateProviderCostUnit(stored.providerCostUnit);
+    const discoveredPricingProfile = normalizeProviderPricingProfile(upstreamMetadata?.providerPricingProfile);
+    const storedPricingProfile = normalizeProviderPricingProfile(stored?.providerPricingProfile);
+    const reconciledPricingProfile = discoveredPricingProfile ? reapplyStoredCapabilityProbe(reconcileProviderPricingProfile(storedPricingProfile, discoveredPricingProfile)) : storedPricingProfile;
+    const providerPricingProfile = reconciledPricingProfile ? applyProviderPricingConversion(reconciledPricingProfile, pricingPolicy, discoveredPricingProfile?.syncedAt || reconciledPricingProfile.syncedAt) : undefined;
+    const projectedCostRateCard = providerPricingProfile?.conversion ? providerPricingProfileToCostRateCard(providerPricingProfile) : undefined;
+    const costRateCard = projectedCostRateCard || (stored?.costRateCard === undefined ? undefined : validatePricingRateCard(stored.costRateCard));
+    const providerCostUnit = projectedCostRateCard ? providerPricingCostUnit(pricingPolicy) : stored?.providerCostUnit === undefined ? undefined : validateProviderCostUnit(stored.providerCostUnit);
+    const imageQualityProfile = isDflopImage
+        ? deriveDflopImageQualityProfile({ modelId: catalog.upstreamModel, currentProfile: stored?.imageQualityProfile, structuredProfile: upstreamMetadata?.imageQualityProfile, providerPricingProfile, syncedAt: providerPricingProfile?.syncedAt })
+        : stored?.imageQualityProfile;
     if (costRateCard && !providerCostUnit) throw new Error("供应商成本价格卡必须指定有效的供应商成本单位");
     return {
         id: text(stored?.id, 120) || `${catalog.channel.id}:${rawModelName(catalog.upstreamModel)}`,
@@ -247,9 +373,81 @@ function normalizedCatalogBinding(catalog: { channel: SystemModelChannel; channe
         ...(weight !== undefined ? { weight } : {}),
         ...(capabilityProfile ? { capabilityProfile } : {}),
         ...(generationParameters ? { generationParameters } : {}),
+        ...(Object.keys(generationParameterSources).length ? { generationParameterSources } : {}),
+        ...(upstreamMerge?.drifts.length ? { capabilityDrifts: upstreamMerge.drifts } : {}),
+        ...(upstreamMerge?.descriptionEvidenceMissing.length ? { descriptionEvidenceMissing: upstreamMerge.descriptionEvidenceMissing } : {}),
+        ...(upstreamMetadata ? { upstreamMetadata } : {}),
         ...(costRateCard ? { costRateCard } : {}),
         ...(providerCostUnit ? { providerCostUnit } : {}),
+        ...(providerPricingProfile ? { providerPricingProfile } : {}),
+        ...(imageQualityProfile ? { imageQualityProfile } : {}),
     };
+}
+
+export function resynchronizeDflopBindingFromUpstream(binding: LogicalModelBinding, channel: SystemModelChannel, pricingPolicy: SystemPricingPolicy = DEFAULT_SYSTEM_PRICING_POLICY) {
+    const discoveredMetadata = normalizeDflopUpstreamModelMetadata(channelModelDiscovery(channel, binding.upstreamModel)?.upstreamMetadata);
+    if (!discoveredMetadata) return binding;
+    const upstreamMetadata = reconcileDflopUpstreamModelMetadata(binding.upstreamMetadata, discoveredMetadata);
+    const merged = discoveredMetadata.generationParameters
+        ? mergeDflopGenerationParameters(
+              binding.generationParameters,
+              binding.generationParameterSources,
+              discoveredMetadata.generationParameters,
+              discoveredMetadata.generationParameterSources,
+              true,
+              binding.upstreamMetadata?.generationParameterEvidence,
+              discoveredMetadata.generationParameterEvidence,
+          )
+        : undefined;
+    const discoveredPricingProfile = normalizeProviderPricingProfile(discoveredMetadata.providerPricingProfile);
+    const providerPricingProfile = discoveredPricingProfile
+        ? applyProviderPricingConversion(reapplyStoredCapabilityProbe(reconcileProviderPricingProfile(binding.providerPricingProfile, discoveredPricingProfile)), pricingPolicy, discoveredPricingProfile.syncedAt)
+        : binding.providerPricingProfile;
+    const costRateCard = providerPricingProfile?.conversion ? providerPricingProfileToCostRateCard(providerPricingProfile) : binding.costRateCard;
+    const isImage = channelModelCapability(channel, binding.upstreamModel) === "image";
+    const imageQualityProfile = isImage
+        ? deriveDflopImageQualityProfile({ modelId: binding.upstreamModel, currentProfile: binding.imageQualityProfile, structuredProfile: upstreamMetadata?.imageQualityProfile, providerPricingProfile, syncedAt: providerPricingProfile?.syncedAt })
+        : binding.imageQualityProfile;
+    return {
+        ...binding,
+        ...(merged ? { generationParameters: isImage ? { ...merged.parameters, qualities: [] } : merged.parameters, generationParameterSources: merged.sources, capabilityDrifts: undefined } : {}),
+        ...(merged ? (merged.descriptionEvidenceMissing.length ? { descriptionEvidenceMissing: merged.descriptionEvidenceMissing } : { descriptionEvidenceMissing: undefined }) : {}),
+        upstreamMetadata,
+        ...(providerPricingProfile ? { providerPricingProfile } : {}),
+        ...(costRateCard ? { costRateCard, providerCostUnit: providerPricingCostUnit(pricingPolicy) } : {}),
+        ...(imageQualityProfile ? { imageQualityProfile } : {}),
+    };
+}
+
+function synchronizedLogicalModelName(existing: LogicalModel, bindings: LogicalModelBinding[], nameSource: "upstream" | "manual") {
+    if (nameSource !== "upstream") return text(existing.name, 120) || bindings[0].upstreamModel;
+    return bindings.map((binding) => binding.upstreamMetadata?.displayName).find(Boolean) || text(existing.name, 120) || bindings[0].upstreamModel;
+}
+
+function logicalNameSource(existing: LogicalModel, bindings: LogicalModelBinding[]): "upstream" | "manual" {
+    if (existing.nameSource) return existing.nameSource;
+    const name = normalizeModelName(existing.name);
+    return name === normalizeModelName(existing.id) || bindings.some((binding) => name === normalizeModelName(binding.upstreamModel)) ? "upstream" : "manual";
+}
+
+function catalogDisplayName(catalog: { channel: SystemModelChannel; upstreamModel: string }) {
+    return channelModelDiscovery(catalog.channel, catalog.upstreamModel)?.upstreamMetadata?.displayName;
+}
+
+function normalizeGenerationParameterSources(value: LogicalModelGenerationParameterSources | undefined, parameters: LogicalModelBinding["generationParameters"]) {
+    if (value) return { ...value };
+    if (!parameters) return {};
+    return Object.fromEntries(Object.keys(parameters).map((field) => [field, "manual"])) as LogicalModelGenerationParameterSources;
+}
+
+function pricingCalculationTime(models: LogicalModel[]) {
+    return (
+        models
+            .flatMap((model) => [model.suggestedSaleRateCard?.calculatedAt, ...model.bindings.flatMap((binding) => [binding.providerPricingProfile?.conversion?.calculatedAt, binding.providerPricingProfile?.syncedAt])])
+            .filter((value): value is string => Boolean(value))
+            .sort()
+            .at(-1) || new Date(0).toISOString()
+    );
 }
 
 function uniqueLogicalModelId(value: string, usedIds: Set<string>) {

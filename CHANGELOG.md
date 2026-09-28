@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- [生成运维] “低成本视频验收”按运行合同指纹选择 canary 并支持只验证变更模型；新增原子预算预留、未知提交对账、成本上界违约保护和实际/保守结算来源审计，缺少可信上界或公开参考素材时不提交收费任务。
+- [计费/预计积分] 用户侧改用统一正式售价估价引擎，按 HOTX pricing basis 计算文本 token 上限、图片数量与输入图、普通/参考视频、Seedance token 与二阶段、TTS、克隆、音乐、数字人和按次能力；后台新增可路由模型估价覆盖统计，未知用量与缺失售价显示明确状态且不影响既有预留、结算和退款。
+- [上游协议] 新增 DFLOP 官方渠道预设；模型同步以 API Key 可见的 `/v1/models` 为边界，合并公开 registry 的 `callable`、`endpoint_type` 与协议元数据，完整保留文本、图片、视频、音频及其他条目并标记不可路由项。异步 TTS、声音克隆与媒体任务继续使用固定路径、鉴权和幂等请求。
 - [上游路由] 文本逻辑模型绑定的 Provider Health / Circuit Breaker 按 `planner` / `text_task`、渠道、Provider 与上游模型隔离 CLOSED/DEGRADED/OPEN/HALF_OPEN 状态；Agent Planner 使用持久化排名、原子 HALF_OPEN probe 和 dispatch 前跳过，不再以进程内冷却决定 eligibility。跳过不会创建 Planner/Provider attempt、用量、计费或钱包变更；合法终止流后的 invalid plan 仅记为 Planner quality failure，不会中毒 provider health。
 - [Agent/架构] 完成 Agent 稳定性重构：PostgreSQL 新增不可变计划、一等任务、DAG 依赖、租约领取、持久重试和稳定 ToolCall，Agent 通过共享生成应用层直接复用图片、视频、音频与文本运行时，不再站内 HTTP 调用自身 Route；未知上游结果不盲重提，并在现有生成运维中串联任务、Generation、资产与结算。普通复盘改为异步，严格复盘模式仍阻塞；部署以 Git SHA、Schema 和运行协议拒绝不兼容 Worker。
 - [Agent/稳定性] 图片 Responses 回退不再移除生图工具；Planner 暂时性结算失败和 child 派发失败保留原 Run 供 Worker 恢复，已完成兄弟任务与资产不会被批次失败覆盖；text child 使用服务端稳定请求身份防止重复创建。App 与 generation-worker 同时校验 build、Git SHA、Schema 和 runtime protocol，不兼容 Worker 无法领取生成或计费恢复批次。

@@ -1,4 +1,5 @@
 import type { BillableCapability } from "@/lib/billing/pricing";
+import type { ResolvedImageQualityContext } from "@/lib/image-quality-profile";
 import type { SystemAiUsageContextDraft } from "./system-ai-billing";
 import { systemAiUsageRequestFingerprint } from "./system-ai-billing";
 import { resolveModelRequestTimeoutMs } from "./model-request-policy";
@@ -9,6 +10,7 @@ type PricedGenerationConfig = {
     channelId?: string;
     capabilityProfile?: { supportsIdempotency?: boolean; timeoutMs?: number };
     usagePricing?: { logicalModelId: string; bindingId: string };
+    imageQualityContext?: ResolvedImageQualityContext;
 };
 
 type PricedTextCandidate = {
@@ -22,6 +24,7 @@ export function generationSystemAiUsageContext(config: PricedGenerationConfig, c
     const pricing = config.usagePricing;
     const parsed = parseAttemptKey(providerIdempotencyKey);
     if (!pricing || !parsed || !config.channelId?.trim() || !userId.trim()) return undefined;
+    if (config.imageQualityContext && (capability !== "image" || config.imageQualityContext.bindingId !== pricing.bindingId)) return undefined;
     const providerIdempotencySupported = config.capabilityProfile?.supportsIdempotency === true;
     return {
         businessRequestId: parsed.businessRequestId,
@@ -34,6 +37,21 @@ export function generationSystemAiUsageContext(config: PricedGenerationConfig, c
         bindingId: pricing.bindingId,
         providerIdempotencySupported,
         ...(providerIdempotencySupported ? { providerIdempotencyKey } : {}),
+        ...(config.imageQualityContext ? { imageQualityContext: imageQualityBillingContext(config.imageQualityContext) } : {}),
+    };
+}
+
+function imageQualityBillingContext(context: ResolvedImageQualityContext) {
+    return {
+        bindingId: context.bindingId,
+        qualityProfileRevision: context.qualityProfileRevision,
+        ...(context.optionRevision ? { optionRevision: context.optionRevision } : {}),
+        ...(context.saleRateCardRevision ? { saleRateCardRevision: context.saleRateCardRevision } : {}),
+        ...(context.selectedQualityValue ? { selectedQualityValue: context.selectedQualityValue } : {}),
+        ...(context.resolvedSize ? { resolvedSize: context.resolvedSize } : {}),
+        ...(context.resolvedResolutionTier ? { resolvedResolutionTier: context.resolvedResolutionTier } : {}),
+        ...(context.resolvedPixelTier ? { resolvedPixelTier: context.resolvedPixelTier } : {}),
+        billableOutputCount: context.billableOutputCount,
     };
 }
 

@@ -8,6 +8,9 @@ export type VideoGenerationReference = {
     type: "image" | "video" | "audio";
     url: string;
     role?: VideoReferenceRole;
+    assetId?: string;
+    trustedDurationMs?: number;
+    durationSource?: "server-probed";
 };
 
 export function normalizeVideoReferenceRole(value: unknown): VideoReferenceRole | undefined {
@@ -24,9 +27,10 @@ export function normalizeVideoGenerationReferences(value: unknown): VideoGenerat
         const type = source.type === "image" || source.type === "video" || source.type === "audio" ? source.type : undefined;
         const url = typeof source.url === "string" ? source.url.trim() : "";
         const role = source.role === undefined ? "reference" : normalizeVideoReferenceRole(source.role);
+        const assetId = typeof source.assetId === "string" && source.assetId.trim() ? source.assetId.trim().slice(0, 200) : undefined;
         if (!type || !url || !role) throw new Error("视频参考素材类型、地址或角色不正确");
         if (role !== "reference" && type !== "image") throw new Error("视频首尾帧只能使用图片素材");
-        references.push({ type, url, role });
+        references.push({ type, url, role, ...(assetId ? { assetId } : {}) });
     }
     const firstFrames = references.filter((reference) => reference.role === "first_frame");
     const lastFrames = references.filter((reference) => reference.role === "last_frame");

@@ -8,7 +8,7 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
-import { publicAgentRun } from "@/lib/server/agent-run-public";
+import { publicAgentRun, publicAgentRunFailure } from "@/lib/server/agent-run-public";
 
 export const maxDuration = 2400;
 
@@ -33,6 +33,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         run.status === "failed" &&
         ((run.failureStage === "planner_settlement" && (run.tasks.length > 0 || (run.responseKind === "conversation" && Boolean(run.conversationReply?.trim())))) || (run.failureStage === "task_dispatch" && run.tasks.length > 0));
     if (action === "retry" && (run.status !== "failed" || (run.tasks.length > 0 && !retriesPersistedPlan))) return NextResponse.json({ code: 409, data: null, msg: "只有规划阶段失败或尚未提交的任务可以整体重试" }, { status: 409 });
+    if (action === "retry" && publicAgentRunFailure(run)?.retryable === false)
+        return NextResponse.json({ code: 409, data: { publicMessage: "当前失败无法直接重试，请调整账户或联系管理员。" }, msg: "当前失败无法直接重试，请调整账户或联系管理员。" }, { status: 409 });
     if (action === "pause" && !["planning", "running"].includes(run.status)) return NextResponse.json({ code: 409, data: null, msg: "当前任务无法暂停" }, { status: 409 });
     if (action === "resume" && (run.status !== "paused" || run.cancellation)) return NextResponse.json({ code: 409, data: null, msg: run.cancellation ? "任务正在取消，无法恢复" : "只有暂停中的任务可以恢复" }, { status: 409 });
     const limit = action === "resume" || action === "retry" ? (await getAuthSettings()).generationConcurrency.agent : 0;

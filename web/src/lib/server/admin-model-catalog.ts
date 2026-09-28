@@ -1,8 +1,9 @@
 import { agnesModelCatalog, agnesModelConfigs } from "@/lib/agnes-model-catalog";
 import { capabilityFromHint, inferModelCapability, isCreativeGenerationModel, normalizeModelId, type ModelCatalogEntry, type ModelCatalogSource } from "@/lib/model-capability";
 import type { LogicalModelCapability } from "@/lib/auth/store-types";
-import type { SystemChannelModelConfig, SystemChannelProtocol } from "@/lib/auth/store-types";
+import type { SystemChannelModelConfig, SystemChannelModelDiscovery, SystemChannelProtocol } from "@/lib/auth/store-types";
 import { protocolCatalogCapability } from "@/lib/channel-protocol-registry";
+import { parseDflopModelMetadata } from "@/lib/dflop-model-metadata";
 
 type ModelsResponse = Record<string, unknown> & {
     data?: unknown;
@@ -73,10 +74,44 @@ export function parseModels(payload: ModelsResponse) {
     return parseModelCatalog(payload).map((entry) => entry.id);
 }
 
+export function mergeDflopModelDiscovery(keyModels: readonly { id: string }[], publicPayload: unknown) {
+    const allowed = new Map<string, string>();
+    for (const { id } of keyModels) {
+        const key = normalizeModelId(id);
+        if (key && !allowed.has(key)) allowed.set(key, id.trim().replace(/^models\//i, ""));
+    }
+    const publicModels = publicPayload && typeof publicPayload === "object" && Array.isArray((publicPayload as Record<string, unknown>).models) ? ((publicPayload as Record<string, unknown>).models as unknown[]) : [];
+    const registry = new Map<string, Record<string, unknown>>();
+    for (const value of publicModels) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const metadata = value as Record<string, unknown>;
+        const id = typeof metadata.id === "string" ? metadata.id : typeof metadata.model === "string" ? metadata.model : "";
+        const key = normalizeModelId(id);
+        if (key && !registry.has(key)) registry.set(key, metadata);
+    }
+
+    const modelDiscovery: Record<string, SystemChannelModelDiscovery> = {};
+    const catalog: ModelCatalogEntry[] = [];
+    const stats = { upstreamModels: allowed.size, publicRegistry: registry.size, matched: 0, unmatched: 0, callable: 0, text: 0, image: 0, video: 0, audio: 0, other: 0, filtered: 0 };
+    const unmatchedIds: string[] = [];
+    for (const [key, id] of allowed) {
+        const metadata = registry.get(key);
+        const discovery = metadata ? dflopDiscoveryFromMetadata(metadata) : dflopFallbackDiscovery(id);
+        modelDiscovery[key] = discovery;
+        stats[discovery.matched ? "matched" : "unmatched"] += 1;
+        stats[discovery.kind] += 1;
+        if (discovery.callable === true) stats.callable += 1;
+        if (!discovery.routable) stats.filtered += 1;
+        if (!discovery.matched) unmatchedIds.push(id);
+        if (discovery.routable && discovery.kind !== "other") catalog.push({ id, capability: discovery.kind, source: "provider" });
+    }
+    return { models: Array.from(allowed.values()).sort((left, right) => left.localeCompare(right)), catalog: mergeModelCatalogEntries(catalog), modelDiscovery, stats, unmatchedIds };
+}
+
 export function parseModelCatalog(payload: unknown, source: ModelCatalogSource = "provider", protocol?: SystemChannelProtocol) {
     return mergeModelCatalogEntries(
         ...collectModelValues(payload)
-            .filter(({ id }) => isCreativeGenerationModel(id))
+            .filter(({ id }) => protocol === "dflop" || isCreativeGenerationModel(id))
             .map(({ id, metadata }) => [
                 {
                     id,
@@ -85,6 +120,54 @@ export function parseModelCatalog(payload: unknown, source: ModelCatalogSource =
                 },
             ]),
     );
+}
+
+function dflopDiscoveryFromMetadata(metadata: Record<string, unknown>): SystemChannelModelDiscovery {
+    const endpointType = typeof metadata.endpoint_type === "string" ? metadata.endpoint_type.trim().toLowerCase() : metadata.endpoint_type === null ? null : undefined;
+    const supportedProtocols = Array.isArray(metadata.supported_protocols)
+        ? Array.from(new Set(metadata.supported_protocols.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim().toLowerCase())))
+        : [];
+    const callable = typeof metadata.callable === "boolean" ? metadata.callable : undefined;
+    const category = typeof metadata.category === "string" ? metadata.category.trim().toLowerCase() : "";
+    const signals = [endpointType, metadata.capability, metadata.capabilities, metadata.kind, metadata.type]
+        .flatMap((value) => (Array.isArray(value) ? value : [value]))
+        .filter((value): value is string => typeof value === "string")
+        .join(" ")
+        .toLowerCase();
+    const endpointTokens = String(endpointType || "")
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+    const has = (value: string) => endpointTokens.includes(value) || new RegExp(`(?:^|[^a-z0-9])${value}(?:$|[^a-z0-9])`).test(signals);
+    const specializedKind: SystemChannelModelDiscovery["kind"] | undefined = endpointType && (endpointType.includes("music") || endpointType.includes("avatar")) ? "other" : undefined;
+    const categoryKind: SystemChannelModelDiscovery["kind"] | undefined =
+        category === "text" ? "text" : category === "image" ? "image" : category === "video" ? "video" : category === "audio" || category === "voice" ? "audio" : category === "music" || category === "avatar" ? "other" : undefined;
+    const kind: SystemChannelModelDiscovery["kind"] =
+        specializedKind ||
+        categoryKind ||
+        (endpointType == null && supportedProtocols.some((protocol) => protocol.includes("chat") || protocol.includes("messages") || protocol.includes("responses"))
+            ? "text"
+            : (has("image") || has("images")) && (has("generation") || has("generations") || has("edit") || has("edits"))
+              ? "image"
+              : ((has("video") || has("videos")) && (has("generation") || has("generations") || has("task") || has("tasks"))) || endpointType === "contents_generations_tasks"
+                ? "video"
+                : (has("audio") || has("speech") || has("voice") || has("voices") || has("tts")) && !has("music")
+                  ? "audio"
+                  : "other");
+    const protocolCompatible = kind !== "text" || supportedProtocols.includes("openai_chat");
+    return {
+        kind,
+        ...(callable !== undefined ? { callable } : {}),
+        matched: true,
+        routable: callable !== false && kind !== "other" && protocolCompatible,
+        ...(endpointType !== undefined ? { endpointType } : {}),
+        ...(supportedProtocols.length ? { supportedProtocols } : {}),
+        upstreamMetadata: parseDflopModelMetadata(metadata),
+    };
+}
+
+function dflopFallbackDiscovery(id: string): SystemChannelModelDiscovery {
+    if (!isCreativeGenerationModel(id)) return { kind: "other", matched: false, routable: false };
+    return { kind: inferModelCapability(id), matched: false, routable: true };
 }
 
 export function parseModelConfigs(payload: unknown, protocol?: SystemChannelProtocol) {
@@ -317,6 +400,7 @@ function isChannelProtocol(value: unknown): value is SystemChannelProtocol {
     return (
         value === "auto" ||
         value === "openai" ||
+        value === "dflop" ||
         value === "yumeng" ||
         value === "gemini" ||
         value === "sub2api" ||

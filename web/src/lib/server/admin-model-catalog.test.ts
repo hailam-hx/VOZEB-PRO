@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
     buildModelCatalogUrls,
     buildModelsUrl,
+    mergeDflopModelDiscovery,
     configuredModelCatalog,
     isModelCatalogUnsupported,
     mergeModelCatalogEntries,
@@ -16,6 +17,46 @@ import {
 } from "./admin-model-catalog";
 
 describe("admin model catalog", () => {
+    it("enriches and canonicalizes every DFLOP key-visible model without using model-name guesses when metadata exists", () => {
+        const result = mergeDflopModelDiscovery(
+            [{ id: "GPT-6" }, { id: "models/gpt-6" }, { id: "opaque-image" }, { id: "opaque-video" }, { id: "opaque-speech" }, { id: "opaque-music" }, { id: "opaque-avatar" }, { id: "opaque-unknown" }, { id: "placeholder" }, { id: "mystery-video" }],
+            {
+                models: [
+                    { id: "gpt-6", callable: true, category: "text", supported_protocols: ["openai_chat"] },
+                    { id: "opaque-image", callable: true, endpoint_type: "future_image_generation" },
+                    { id: "opaque-video", callable: true, endpoint_type: "future_video_generation_tasks" },
+                    { id: "opaque-speech", callable: true, endpoint_type: "tts_synthesize" },
+                    { id: "opaque-music", callable: true, category: "audio", endpoint_type: "music_generations" },
+                    { id: "opaque-avatar", callable: true, category: "video", endpoint_type: "avatar_create" },
+                    { id: "opaque-unknown", callable: true, endpoint_type: "quantum_jobs" },
+                    { id: "placeholder", callable: false, endpoint_type: null, supported_protocols: ["openai_chat"] },
+                    { id: "public-only", callable: true, endpoint_type: null, supported_protocols: ["openai_chat"] },
+                ],
+            },
+        );
+
+        expect(result.models).toHaveLength(9);
+        expect(result.models).not.toContain("public-only");
+        expect(result.catalog).toEqual([
+            { id: "GPT-6", capability: "text", source: "provider" },
+            { id: "mystery-video", capability: "video", source: "provider" },
+            { id: "opaque-image", capability: "image", source: "provider" },
+            { id: "opaque-speech", capability: "audio", source: "provider" },
+            { id: "opaque-video", capability: "video", source: "provider" },
+        ]);
+        expect(result.modelDiscovery).toMatchObject({
+            "gpt-6": { kind: "text", matched: true, routable: true },
+            "opaque-image": { kind: "image", matched: true, routable: true },
+            "opaque-video": { kind: "video", matched: true, routable: true },
+            "opaque-speech": { kind: "audio", matched: true, routable: true },
+            "opaque-music": { kind: "other", matched: true, routable: false },
+            "opaque-avatar": { kind: "other", matched: true, routable: false },
+            "opaque-unknown": { kind: "other", matched: true, routable: false },
+            placeholder: { kind: "text", callable: false, matched: true, routable: false },
+            "mystery-video": { kind: "video", matched: false, routable: true },
+        });
+        expect(result.stats).toEqual({ upstreamModels: 9, publicRegistry: 9, matched: 8, unmatched: 1, callable: 7, text: 2, image: 1, video: 2, audio: 1, other: 3, filtered: 4 });
+    });
     it("builds OpenAI and Gemini model URLs", () => {
         expect(buildModelsUrl("https://api.example.com/v1", "openai")).toBe("https://api.example.com/v1/models");
         expect(buildModelsUrl("https://generativelanguage.googleapis.com/v1beta", "gemini")).toBe("https://generativelanguage.googleapis.com/v1beta/models");

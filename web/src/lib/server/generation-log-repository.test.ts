@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { normalizeStoredLog, readPostgresGenerationLogDb } from "./generation-log-repository";
+import sharp from "sharp";
+
+import { deleteLocalAsset, normalizeStoredLog, readPostgresGenerationLogDb, writeDataUrlAsset } from "./generation-log-repository";
+
+vi.mock("@/lib/server/object-storage-service", () => ({ deleteExternalMediaObject: vi.fn(), persistExternalMediaIfEnabled: vi.fn().mockResolvedValue(null) }));
+vi.mock("@/lib/server/local-media-registry", () => ({ deleteLocalMediaRegistrations: vi.fn().mockResolvedValue(undefined), getLocalMediaRegistration: vi.fn().mockResolvedValue(null), registerLocalMediaAsset: vi.fn().mockResolvedValue(undefined) }));
 
 function storedLogWithAssets(count: number) {
     return normalizeStoredLog({
@@ -26,6 +31,23 @@ function storedLogWithAssets(count: number) {
 }
 
 describe("generation log asset normalization", () => {
+    it("normalizes a generated image whose upstream payload exceeds the stored image limit", async () => {
+        const image = await sharp({ create: { width: 64, height: 32, channels: 3, background: "#234567" } })
+            .png()
+            .toBuffer();
+        const oversizedPayload = Buffer.concat([image, Buffer.alloc(20 * 1024 * 1024)]);
+
+        const stored = await writeDataUrlAsset(`data:image/png;base64,${oversizedPayload.toString("base64")}`, "image", {
+            ownerUserId: "user-1",
+            source: "image-workbench",
+            taskId: "large-upstream-image",
+        });
+
+        expect(stored).toMatchObject({ type: "image", mimeType: "image/webp", width: 64, height: 32 });
+        expect(stored?.bytes).toBeLessThanOrEqual(20 * 1024 * 1024);
+        if (stored?.serverUrl) await deleteLocalAsset(stored.serverUrl);
+    });
+
     it("keeps all eight successful images in a workbench batch", () => {
         expect(storedLogWithAssets(8).assets).toHaveLength(8);
     });

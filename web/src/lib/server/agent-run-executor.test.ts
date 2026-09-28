@@ -370,7 +370,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
-    it("resolves manual Auto fields inside the selected logical model without substituting it", async () => {
+    it("keeps manual Smart size unresolved while resolving other fields inside the selected logical model", async () => {
         mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "生成商品主图", requestedModelIds: ["image-low"] });
         const currentSettings = agentCapabilitySettings() as unknown as { generationDefaults: Record<string, unknown> };
         currentSettings.generationDefaults = { imageQuality: "high", imageSize: "16:9", imageCount: 3, canvasImageCount: 1 };
@@ -380,8 +380,8 @@ describe("executeAgentRun backend settings", () => {
 
         const createCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"));
         const createBody = JSON.parse(String(createCall?.[1]?.body)) as { config: { model: string; size?: string; quality?: string } };
-        expect(createBody.config).toMatchObject({ model: "image-low", size: "16:9", quality: "low" });
-        expect(mocks.run?.tasks[0]).toMatchObject({ model: "image-low", ratio: "16:9", quality: "low", count: 3 });
+        expect(createBody.config).toMatchObject({ model: "image-low", size: "auto", quality: "low" });
+        expect(mocks.run?.tasks[0]).toMatchObject({ model: "image-low", ratio: "auto", quality: "low", count: 3 });
         expect(mocks.fetchInternalApi.mock.calls.filter(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toHaveLength(3);
         expect(mocks.run?.status).toBe("completed");
     });
@@ -1552,14 +1552,7 @@ describe("executeAgentRun backend settings", () => {
     it("keeps a Seedance copyright rejection terminal with monotonic attempts and no automatic resume", async () => {
         mocks.run = runWithTasks([videoTask("video-copyright")]);
         mocks.getAuthSettings.mockResolvedValue(videoSettings());
-        mocks.createAgentGenerationTask.mockRejectedValueOnce(
-            new GenerationApplicationError(
-                "The request failed because the input video 'content[1]' may be related to copyright restrictions.",
-                400,
-                "rejected",
-                "video_input_copyright_restricted",
-            ),
-        );
+        mocks.createAgentGenerationTask.mockRejectedValueOnce(new GenerationApplicationError("The request failed because the input video 'content[1]' may be related to copyright restrictions.", 400, "rejected", "video_input_copyright_restricted"));
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 

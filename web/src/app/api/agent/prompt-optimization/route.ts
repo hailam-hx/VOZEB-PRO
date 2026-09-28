@@ -8,6 +8,7 @@ import type { CreativeGenerationMode } from "@/lib/creative-runtime-contract";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { optimizeCreativePrompt, PromptOptimizationError } from "@/lib/server/prompt-optimization-service";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { hasInsufficientPointsError } from "@/lib/creative-generation-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,9 +46,14 @@ export async function POST(request: Request) {
         });
         return NextResponse.json({ code: 0, data: { prompt: optimizedPrompt }, msg: "OK" });
     } catch (error) {
+        console.error("Prompt optimization failed", { requestId, error });
         const status = error instanceof PromptOptimizationError ? error.status : 502;
-        const message = error instanceof PromptOptimizationError ? error.message : "提示词优化失败，请稍后重试";
-        return NextResponse.json({ code: status, data: null, msg: message }, { status });
+        const message = hasInsufficientPointsError(error)
+            ? "积分不足，请充值后再优化提示词。"
+            : status === 503 && error instanceof PromptOptimizationError && error.message === "后台尚未配置可用的默认文本模型"
+              ? error.message
+              : "提示词优化暂时不可用，请稍后重试。";
+        return NextResponse.json({ code: status, data: { publicMessage: message, ...(hasInsufficientPointsError(error) ? { errorCode: "INSUFFICIENT_BALANCE" } : {}) }, msg: message }, { status });
     }
 }
 

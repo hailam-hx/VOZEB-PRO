@@ -78,8 +78,49 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         return sendJson(response, 200, { ok: true });
     }
     if (request.method === "GET" && ["/models", "/api/v3/models"].includes(path)) {
+        if (options.dflop) return sendJson(response, 200, { object: "list", data: ["mock-text", "mock-image", "mock-video", "voice-tts-pro", "voice-clone-pro", "suno-v5", "placeholder"].map((id) => ({ id, object: "model" })) });
         const catalog = url.searchParams.has("protocol") ? [...models, { id: "opaque-catalog-model" }] : models;
         return sendJson(response, 200, { object: "list", data: catalog });
+    }
+    if (options.dflop && request.method === "GET" && path === "/api/v1/models/public") {
+        return sendJson(response, 200, {
+            models: [
+                {
+                    id: "mock-text",
+                    callable: true,
+                    category: "text",
+                    endpoint_type: null,
+                    supported_protocols: ["openai_chat"],
+                    input_per_1m: "60",
+                    cached_input_per_1m: "6",
+                    output_per_1m: "120",
+                    cache_creation_per_1m: "9",
+                    long_context_threshold_tokens: 200000,
+                    input_per_1m_long: "90",
+                    output_per_1m_long: "180",
+                    price_per_server_tool_call: "2",
+                },
+                { id: "mock-image", callable: true, category: "image", endpoint_type: "images_generations", price_per_image: "24", price_per_input_image: "6", price_per_image_large: "48", images_per_request: 4, discount: "0.8" },
+                {
+                    id: "mock-video",
+                    callable: true,
+                    category: "video",
+                    endpoint_type: "videos_generations",
+                    price_per_video_second: "224.532",
+                    video_price_tiers: { "480p": "40.3515", "720p": "90.72", "1080p": "224.532", "future-tier": "333.125" },
+                    video_token_price_per_1m: { default: "4200", with_video_input: "2520", "default@1080p": "4620" },
+                    video_second_stage_per_second: { "720p": "2.5" },
+                },
+                { id: "voice-tts-pro", callable: true, category: "audio", endpoint_type: "audio_speech", price_per_tts_char: "0.06" },
+                { id: "voice-clone-pro", callable: true, category: "voice", endpoint_type: "audio_voices", price_per_voice_clone: "600" },
+                { id: "suno-v5", callable: true, category: "music", endpoint_type: "music_generations", price_per_music_generation: "1200" },
+                { id: "placeholder", callable: false, endpoint_type: null },
+                { id: "mock-text", callable: true, input_per_1m: "999999" },
+            ],
+        });
+    }
+    if (options.dflop && request.method === "GET" && path === "/api/v1/config/currency") {
+        return sendJson(response, 200, { unit: "points", points_per_cny: 60.0, usd_to_cny_peg: 6.74, points_per_usd: 404.4 });
     }
     if (request.method === "GET" && path === "/sdapi/v1/sd-models") {
         return sendJson(response, 200, [{ title: "mock-image", model_name: "mock-image", id: "mock-image" }, ...(url.searchParams.has("protocol") ? [{ id: "opaque-catalog-model" }] : [])]);
@@ -146,7 +187,9 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     }
     if (request.method === "POST" && ["/images/generations", "/images/edits"].includes(path)) {
         const model = requestedModel(body, request.headers["content-type"] || "");
+        if (options.dflop && request.headers["x-fixture-status"]) return sendJson(response, Number(request.headers["x-fixture-status"]), { error: { code: "fixture_error", message: "fixture image failure" } });
         if (options.failImage || shouldFailRequest(request, model)) return sendJson(response, options.failImage || model.includes("-fail") ? 400 : 503, { error: { message: "fixture image failure" } });
+        if (options.dflop) return sendJson(response, 200, { model, data: [1, 2].map((number) => ({ url: `${url.origin}/media/fixture.png?result=${number}` })) });
         return sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ b64_json: (await fixtureImage(options)).toString("base64"), revised_prompt: "protocol fixture" }] });
     }
     if (request.method === "POST" && ["/sdapi/v1/txt2img", "/sdapi/v1/img2img"].includes(path)) {
@@ -164,6 +207,14 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         return sendJson(response, 200, { id, task_id: id, status: "queued" });
     }
     if (request.method === "POST" && path === "/videos/generations") {
+        if (options.dflop) {
+            if (request.headers["x-fixture-status"]) return sendJson(response, Number(request.headers["x-fixture-status"]), { error: { code: "fixture_error", message: "fixture video failure" } });
+            const key = String(request.headers["idempotency-key"] || "");
+            const existing = key ? Array.from(tasks.entries()).find(([, task]) => task.kind === "dflop-video" && task.idempotencyKey === key) : undefined;
+            const id = existing?.[0] || nextTaskId("dflop-video");
+            if (!existing) tasks.set(id, { kind: "dflop-video", status: "succeeded", idempotencyKey: key });
+            return sendJson(response, 200, { id, status: "queued", model: jsonBody(body).model }, existing ? { "Idempotency-Replayed": "true" } : {});
+        }
         if (
             !String(request.headers["content-type"] || "")
                 .toLowerCase()
@@ -205,6 +256,12 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     const vozebVideoId = path.match(/^\/videos\/generations\/([^/]+)$/)?.[1];
     if (request.method === "GET" && vozebVideoId) {
         const id = decodeURIComponent(vozebVideoId);
+        if (options.dflop)
+            return sendJson(response, 200, {
+                id,
+                status: tasks.get(id)?.status || "failed",
+                ...(tasks.get(id)?.status === "succeeded" ? { content: { video_url: `${url.origin}/media/fixture.mp4` }, video_url: `${url.origin}/media/fixture.mp4` } : { error: { message: "fixture video failure" } }),
+            });
         return sendJson(response, 200, { id, task_id: id, object: "video", status: "completed", progress: 100, metadata: { url: `${url.origin}/media/fixture.mp4` } });
     }
     const videoId = videoTaskId(path);
@@ -268,9 +325,16 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     }
     if (request.method === "POST" && path === "/audio/speech") {
         const model = requestedModel(body, request.headers["content-type"] || "");
+        if (options.dflop && jsonBody(body).async === true) {
+            const id = nextTaskId("dflop-speech");
+            tasks.set(id, { kind: "dflop-speech", status: "succeeded" });
+            return sendJson(response, 200, { id, model, status: "pending" });
+        }
         if (shouldFailRequest(request, model)) return sendJson(response, model.includes("-fail") ? 400 : 503, { error: { message: "fixture audio failure" } });
         return sendBytes(response, 200, "audio/wav", createWave(), { "x-gateway-trace": "fixture-audio-speech" });
     }
+    const speechTaskId = path.match(/^\/audio\/speech\/([^/]+)$/)?.[1];
+    if (options.dflop && request.method === "GET" && speechTaskId) return sendJson(response, 200, { id: speechTaskId, status: tasks.get(speechTaskId)?.status || "failed", audio_url: `${url.origin}/media/fixture.wav` });
     if (request.method === "POST" && path === "/custom/audio") return sendJson(response, 200, { data: { audio_url: `${url.origin}/media/fixture.wav` } });
     if (request.method === "GET" && path === "/media/fixture.wav") return sendBytes(response, 200, "audio/wav", createWave());
     if ((request.method === "POST" || request.method === "DELETE") && /\/(?:cancel|videos\/[^/]+)$/.test(path)) {

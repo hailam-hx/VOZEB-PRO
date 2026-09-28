@@ -4,11 +4,13 @@ const mocks = vi.hoisted(() => ({
     getRegistration: vi.fn(),
     createExternalProviderUrl: vi.fn(),
     isSafeOutboundUrl: vi.fn(),
+    getCreativeAsset: vi.fn(),
 }));
 
 vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistration: mocks.getRegistration }));
 vi.mock("@/lib/server/object-storage-service", () => ({ createExternalProviderMediaReadUrl: mocks.createExternalProviderUrl }));
 vi.mock("@/lib/server/outbound-url-security", () => ({ isSafeOutboundUrl: mocks.isSafeOutboundUrl }));
+vi.mock("@/lib/server/creative-runtime-store", () => ({ getCreativeAsset: mocks.getCreativeAsset }));
 
 import { resolveProviderReferenceUrls } from "./provider-reference-url";
 
@@ -17,6 +19,7 @@ describe("provider reference URL resolution", () => {
         vi.clearAllMocks();
         vi.stubEnv("VOZEB_PRO_REFERENCE_ASSET_SIGNING_KEY", "test-signing-key");
         mocks.isSafeOutboundUrl.mockResolvedValue(true);
+        mocks.getCreativeAsset.mockResolvedValue(null);
     });
 
     afterEach(() => vi.unstubAllEnvs());
@@ -73,5 +76,23 @@ describe("provider reference URL resolution", () => {
 
         await expect(resolveProviderReferenceUrls([{ type: "image", url: "/api/reference-assets/permanent/images/reference.png" }], "https://media.example.com", "user-one")).rejects.toThrow("无权访问");
         expect(mocks.createExternalProviderUrl).not.toHaveBeenCalled();
+    });
+
+    it("uses the owned asset URL and server-verified duration instead of forged client fields", async () => {
+        mocks.getCreativeAsset.mockResolvedValue({
+            id: "asset-video",
+            userId: "user-one",
+            type: "video",
+            status: "ready",
+            serverUrl: "/api/reference-assets/permanent/videos/trusted.mp4",
+            durationMs: 12_345,
+            metadata: { mediaProbe: { status: "verified", source: "ffprobe" } },
+        });
+        mocks.getRegistration.mockResolvedValue({ storageKey: "permanent/videos/trusted.mp4", ownerUserId: "user-one", storageProvider: "object" });
+        mocks.createExternalProviderUrl.mockResolvedValue("https://objects.example.com/trusted.mp4");
+
+        const [result] = await resolveProviderReferenceUrls([{ type: "video", url: "https://attacker.example/long.mp4", assetId: "asset-video" }], "https://media.example.com", "user-one");
+
+        expect(result).toMatchObject({ assetId: "asset-video", url: "https://objects.example.com/trusted.mp4", trustedDurationMs: 12_345, durationSource: "server-probed" });
     });
 });

@@ -9,10 +9,11 @@ import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import { resolveChannelModelAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import type { PricingRateCardV1 } from "@/lib/billing/pricing";
+import type { PublicLogicalImageQualityProfile } from "@/lib/image-quality-profile";
 import type { VoiceSelection } from "@/lib/voice-selection";
 
 type ApiCallFormat = "openai" | "gemini";
-type SystemChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
+type SystemChannelProtocol = "auto" | "openai" | "dflop" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
 
 type SystemChannelAdvancedConfig = {
     protocol: SystemChannelProtocol;
@@ -105,7 +106,8 @@ type LogicalModel = {
     capability: ModelCapability;
     enabled: boolean;
     saleRateCard?: PricingRateCardV1;
-    bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number; generationParameters?: LogicalModelGenerationParameters }>;
+    imageQualityProfile?: PublicLogicalImageQualityProfile;
+    bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number; maxOutputTokens?: number; generationParameters?: LogicalModelGenerationParameters }>;
 };
 
 export type AiConfig = {

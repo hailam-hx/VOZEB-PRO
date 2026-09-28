@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     getImageTask: vi.fn(),
     getSchedule: vi.fn(),
     recover: vi.fn(),
+    refund: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -19,6 +20,7 @@ vi.mock("@/lib/server/generation-task-store", () => ({ getStoredGenerationTaskRe
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 vi.mock("@/lib/server/points-response", () => ({ pointsResponseHeaders: vi.fn(() => new Headers()) }));
 vi.mock("@/lib/server/generation-channel", () => ({ generationModelId: vi.fn(() => "image-model") }));
+vi.mock("@/lib/server/image-task-refund", () => ({ refundImageTask: mocks.refund }));
 
 import { after } from "next/server";
 import { GET } from "./route";
@@ -65,6 +67,26 @@ describe("GET /api/image-tasks/[id]", () => {
         expect(payload).toMatchObject({ status: "error", error: "图片提交结果无法确认", canRetry: false, executionPhase: "completed" });
         expect(payload).not.toHaveProperty("needsReview");
         expect(payload).not.toHaveProperty("reviewReason");
+    });
+
+    it("does not refund an upstream-success task whose local media persistence failed", async () => {
+        mocks.getImageTask.mockResolvedValue(
+            imageTask({
+                status: "error",
+                error: "signed media URL timed out",
+                failure: { code: "MEDIA_DOWNLOAD_TIMEOUT", category: "persistence", message: "signed media URL timed out", publicMessage: "图片已由上游生成，但保存到媒体库时超时。", actionHint: "请联系管理员恢复保存。", retryable: false },
+                billing: { pointsCost: 1, pointsRecordId: "charge-one", refunded: false },
+                result: { dataUrl: "https://upstream.example/result.png", remoteUrl: "https://upstream.example/result.png" },
+            }),
+        );
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "completed" });
+
+        const response = await GET(new Request("http://localhost/api/image-tasks/image-one"), context);
+        const payload = (await response.json()).task;
+
+        expect(mocks.refund).not.toHaveBeenCalled();
+        expect(payload).toMatchObject({ errorCode: "MEDIA_DOWNLOAD_TIMEOUT", errorCategory: "persistence", canRetry: false, result: { remoteUrl: "https://upstream.example/result.png" } });
+        expect(payload.publicMessage).not.toContain("signed media URL");
     });
 });
 

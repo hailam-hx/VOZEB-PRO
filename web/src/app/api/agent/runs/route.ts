@@ -12,6 +12,9 @@ import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { publicAgentRun } from "@/lib/server/agent-run-public";
 import { defaultLocale, isAppLocale } from "@/i18n/config";
+import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
+import { resolveBindingImageGenerationCandidates } from "@/lib/server/capability-constraints";
+import { ImageQualityResolutionError } from "@/lib/server/image-quality-resolver";
 
 export const maxDuration = 2400;
 
@@ -49,12 +52,13 @@ export async function POST(request: Request) {
         const [settings, locale] = await Promise.all([getAuthSettings(), getLocale()]);
         const responseLocale = isAppLocale(locale) ? locale : defaultLocale;
         const input = normalizeCreativeRunRequest(await readJsonBody<unknown>(request), settings.generationDefaults.createPromptMaxLength);
+        validateCreativeRunImageQuality(settings, input);
         const existing = await getAgentRunByClientRequestId(user.id, input.clientRequestId);
         if (existing) return NextResponse.json({ code: 0, data: { run: publicAgentRun(existing), created: false }, msg: "Agent 任务已存在" });
         const rate = await checkRateLimit(`agent-run:${user.id}`, { maxRequests: 10, windowMs: 60 * 1000 });
         if (!rate.allowed) return NextResponse.json({ code: 429, data: null, msg: "Agent 请求过于频繁，请稍后重试" }, { status: 429 });
         const response = await withGenerationConcurrencyLimit(user.id, "agent", 10 * 60 * 1000, settings.generationConcurrency.agent, async () => {
-            const created = await createAgentRun(user.id, input, responseLocale);
+            const created = await createAgentRun(user.id, input, responseLocale, settings.generationDefaults.manualPromptEnhancementEnabled);
             if (created.created) {
                 const origin = resolveInternalOrigin(new URL(request.url).origin);
                 after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [created.run.id] }));
@@ -63,7 +67,31 @@ export async function POST(request: Request) {
         });
         return response || NextResponse.json({ code: 429, data: null, msg: `当前最多同时运行 ${settings.generationConcurrency.agent} 个 Agent 任务` }, { status: 429 });
     } catch (error) {
-        if (error instanceof CreativeRuntimeInputError || error instanceof CreativeStoreConflict) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
+        if (error instanceof CreativeRuntimeInputError || error instanceof CreativeStoreConflict)
+            return NextResponse.json(
+                {
+                    code: error.status,
+                    data: {
+                        publicMessage: error.message,
+                        ...(error instanceof CreativeRuntimeInputError && error.errorCode ? { errorCode: error.errorCode, ...(error.currentProfileRevision ? { currentProfileRevision: error.currentProfileRevision } : {}) } : {}),
+                    },
+                    msg: error.message,
+                },
+                { status: error.status },
+            );
         throw error;
+    }
+}
+
+function validateCreativeRunImageQuality(settings: Awaited<ReturnType<typeof getAuthSettings>>, input: ReturnType<typeof normalizeCreativeRunRequest>) {
+    if (input.preferences?.mode !== "image" || !input.modelIds.length) return;
+    for (const modelId of input.modelIds) {
+        const logicalModel = settings.logicalModels.find((model) => model.enabled && model.id === modelId && model.capability === "image");
+        if (!logicalModel) continue;
+        const candidates = resolveLogicalModelCandidates(settings, "image", modelId);
+        const resolved = resolveBindingImageGenerationCandidates(candidates, input.preferences.image || {}, settings.generationDefaults, input.assetIds.length, false, input.prompt, (candidate) => candidate);
+        if (resolved.candidates.length) continue;
+        if (resolved.error instanceof ImageQualityResolutionError) throw new CreativeRuntimeInputError(resolved.error.message, resolved.error.status, resolved.error.code, resolved.error.currentProfileRevision);
+        throw new CreativeRuntimeInputError(resolved.error?.message || "当前模型不支持所选图片生成参数");
     }
 }

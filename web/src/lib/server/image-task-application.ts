@@ -3,6 +3,7 @@ import { after, NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
+import { getAgentRun } from "@/lib/server/agent-run-store";
 import { getAuthSettings, isAuthInputError, refundUserPoints } from "@/lib/auth/store";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
@@ -19,8 +20,10 @@ import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
 import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
-import { resolveImageGenerationCandidates } from "@/lib/server/capability-constraints";
+import { resolveBindingImageGenerationCandidates } from "@/lib/server/capability-constraints";
+import { ImageQualityResolutionError } from "@/lib/server/image-quality-resolver";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { referenceImageRequiredFailure } from "@/lib/server/generation-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,23 +153,56 @@ export async function POST(request: Request) {
     }
     if (requestId) resolvedBody.context = { ...(resolvedBody.context || {}), clientRequestId: requestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
     const settings = await getAuthSettings();
+    const sourceRun = resolvedBody.context?.runId ? await getAgentRun(resolvedBody.context.runId) : undefined;
+    const strictManualPrompt = sourceRun?.userId === currentUser.id && Boolean(sourceRun.requestedModelIds?.length) && sourceRun.manualPromptEnhancementEnabled === false;
     const response = await withGenerationConcurrencyLimit(currentUser.id, "image", 10 * 60 * 1000, settings.generationConcurrency.image, async () => {
-        const configs = resolveLogicalModelCandidates(settings, "image", resolvedBody.config?.model || settings.defaultModels.imageModel).map((resolved) => {
-            const channel = toSystemGenerationChannel(resolved);
-            return { ...channel, channelId: resolved.channelId, systemPrompt: "", advancedConfig: sanitizeAdvancedConfig(channel.advancedConfig) };
-        });
-        const prompt = (resolvedBody.prompt || "").trim();
+        const resolvedCandidates = resolveLogicalModelCandidates(settings, "image", resolvedBody.config?.model || settings.defaultModels.imageModel);
+        const prompt = strictManualPrompt ? sourceRun!.originalPrompt || sourceRun!.prompt : (resolvedBody.prompt || "").trim();
         const kind = resolvedBody.kind === "edit" ? "edit" : "generation";
-        if (!configs.length || !prompt) return NextResponse.json({ error: "任务参数不完整" }, { status: 400 });
+        if (!resolvedCandidates.length || !prompt) return NextResponse.json({ error: "任务参数不完整" }, { status: 400 });
         const references = Array.isArray(resolvedBody.references) ? resolvedBody.references.filter((item) => Boolean(item?.dataUrl || item?.url || item?.remoteUrl || item?.serverUrl)) : [];
-        const capability = resolveImageGenerationCandidates(
-            configs,
+        const exactSingleReferenceRequired = resolvedCandidates.length > 0 && resolvedCandidates.every((candidate) => candidate.generationParameters?.minReferenceImages === 1 && candidate.generationParameters?.maxReferenceImages === 1);
+        if (exactSingleReferenceRequired && references.length !== 1) {
+            const failure = referenceImageRequiredFailure();
+            return NextResponse.json({ error: failure.publicMessage, errorCode: failure.code, category: failure.category, publicMessage: failure.publicMessage, actionHint: failure.actionHint, retryable: failure.retryable }, { status: 400 });
+        }
+        const capability = resolveBindingImageGenerationCandidates(
+            resolvedCandidates,
             (resolvedBody.config || {}) as Record<string, unknown>,
             settings.generationDefaults,
             references.length,
             Boolean(resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl),
+            prompt,
+            (resolved) => {
+                const channel = toSystemGenerationChannel(resolved);
+                return {
+                    ...channel,
+                    channelId: resolved.channelId,
+                    systemPrompt: "",
+                    promptEnhancementDisabled: strictManualPrompt,
+                    ...(sourceRun?.userId === currentUser.id
+                        ? { promptAudit: { originalPrompt: sourceRun.originalPrompt || sourceRun.prompt, executionPrompt: resolvedBody.prompt || "", manualPromptEnhancementEnabled: sourceRun.manualPromptEnhancementEnabled !== false } }
+                        : {}),
+                    advancedConfig: sanitizeAdvancedConfig(channel.advancedConfig),
+                };
+            },
         );
-        if (!capability.candidates.length) return NextResponse.json({ error: capability.error?.message || "当前模型不支持所选生成参数" }, { status: 400 });
+        if (!capability.candidates.length) {
+            if (capability.error instanceof ImageQualityResolutionError)
+                return NextResponse.json(
+                    {
+                        error: capability.error.message,
+                        errorCode: capability.error.code,
+                        category: "validation",
+                        publicMessage: capability.error.message,
+                        actionHint: "请重新选择当前模型支持的比例、尺寸或画质。",
+                        retryable: false,
+                        ...(capability.error.currentProfileRevision ? { currentProfileRevision: capability.error.currentProfileRevision } : {}),
+                    },
+                    { status: capability.error.status },
+                );
+            return NextResponse.json({ error: capability.error?.message || "当前模型不支持所选生成参数" }, { status: 400 });
+        }
         const compatibleConfigs = capability.candidates.filter((config) => {
             try {
                 assertReferenceCapabilities(config.advancedConfig, [...references.map(() => ({ type: "image" })), ...(resolvedBody.mask ? [{ type: "image" }] : [])]);
@@ -177,6 +213,16 @@ export async function POST(request: Request) {
         });
         if (!compatibleConfigs.length) return NextResponse.json({ error: "当前模型能力不满足参考素材或数量参数" }, { status: 400 });
         const config = compatibleConfigs[0];
+        const quality = typeof resolvedBody.config?.quality === "string" && resolvedBody.config.quality.trim().toLowerCase() !== "auto" ? resolvedBody.config.quality.trim() : undefined;
+        const imageQualityIntent = config.imageQualityContext
+            ? {
+                  ...(quality ? { value: quality } : {}),
+                  ...(typeof resolvedBody.config?.qualityProfileRevision === "string" && resolvedBody.config.qualityProfileRevision.trim() ? { logicalProfileRevision: resolvedBody.config.qualityProfileRevision.trim() } : {}),
+                  ...(typeof resolvedBody.config?.qualityOptionRevision === "string" && resolvedBody.config.qualityOptionRevision.trim() ? { optionRevision: resolvedBody.config.qualityOptionRevision.trim() } : {}),
+                  ...(typeof resolvedBody.config?.size === "string" && /^\d+\s*[x×]\s*\d+$/i.test(resolvedBody.config.size.trim()) ? { requestedSize: resolvedBody.config.size.trim().replace(/\s*[×X]\s*/i, "x") } : {}),
+                  ...(typeof resolvedBody.config?.size === "string" && /^\d+\s*:\s*\d+$/.test(resolvedBody.config.size.trim()) ? { requestedAspectRatio: resolvedBody.config.size.trim().replace(/\s+/g, "") } : {}),
+              }
+            : undefined;
         const task = await createImageTask({
             ...(resolvedBody.context || {}),
             userId: currentUser.id,
@@ -188,6 +234,7 @@ export async function POST(request: Request) {
             config,
             candidateConfigs: compatibleConfigs.slice(1),
             prompt,
+            ...(imageQualityIntent ? { imageQualityIntent } : {}),
             references,
             mask: resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl ? resolvedBody.mask : undefined,
         });

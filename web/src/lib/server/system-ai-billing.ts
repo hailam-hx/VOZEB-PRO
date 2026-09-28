@@ -20,6 +20,8 @@ export const SYSTEM_AI_BILLING_EXPIRES_AT_HEADER = "x-vozeb-pro-billing-expires-
 export const SYSTEM_AI_USAGE_HOLD_HEADER = "x-vozeb-pro-usage-hold-id";
 export const SYSTEM_AI_USAGE_ATTEMPT_HEADER = "x-vozeb-pro-usage-attempt-number";
 export const SYSTEM_AI_USAGE_FINGERPRINT_HEADER = "x-vozeb-pro-usage-request-fingerprint";
+export const SYSTEM_AI_VIDEO_BILLING_CONTEXT_HEADER = "x-vozeb-pro-video-billing-context";
+export const SYSTEM_AI_IMAGE_QUALITY_CONTEXT_HEADER = "x-vozeb-pro-image-quality-context";
 
 const SYSTEM_AI_POINTS_SIGNATURE_VERSION = "v1";
 const SYSTEM_AI_POINTS_PROCESS_SECRET = "__vozebProSystemAiPointsProcessSecret" as const;
@@ -44,6 +46,26 @@ export type SystemAiUsageContext = {
     bindingId: string;
     providerIdempotencySupported: boolean;
     providerIdempotencyKey?: string;
+    videoBillingContext?: SystemAiVideoBillingContext;
+    imageQualityContext?: SystemAiImageQualityContext;
+};
+
+export type SystemAiVideoBillingContext = {
+    hasReferenceVideo: boolean;
+    verifiedInputVideoDurationSeconds?: string;
+    referenceVideoDurationSource?: "server-probed";
+};
+
+export type SystemAiImageQualityContext = {
+    bindingId: string;
+    qualityProfileRevision: string;
+    optionRevision?: string;
+    saleRateCardRevision?: string;
+    selectedQualityValue?: string;
+    resolvedSize?: string;
+    resolvedResolutionTier?: string;
+    resolvedPixelTier?: string;
+    billableOutputCount: number;
 };
 
 export type SystemAiUsageContextDraft = Omit<SystemAiUsageContext, "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">;
@@ -83,6 +105,8 @@ export function systemAiBillingHeaders(logicalModel: string, idempotencyKey?: st
                       ? { [SYSTEM_AI_BILLING_METHOD_HEADER]: context.method, [SYSTEM_AI_BILLING_PATH_HEADER]: context.canonicalPath, [SYSTEM_AI_BILLING_QUERY_HEADER]: context.canonicalQuery, [SYSTEM_AI_BILLING_BODY_DIGEST_HEADER]: context.bodyDigest }
                       : {}),
                   ...(usage.providerIdempotencyKey ? { [SYSTEM_AI_PROVIDER_IDEMPOTENCY_KEY_HEADER]: usage.providerIdempotencyKey } : {}),
+                  ...(usage.videoBillingContext ? { [SYSTEM_AI_VIDEO_BILLING_CONTEXT_HEADER]: JSON.stringify(usage.videoBillingContext) } : {}),
+                  ...(usage.imageQualityContext ? { [SYSTEM_AI_IMAGE_QUALITY_CONTEXT_HEADER]: JSON.stringify(usage.imageQualityContext) } : {}),
               }
             : {}),
         ...(normalizedUpstreamModel ? { [SYSTEM_AI_UPSTREAM_MODEL_HEADER]: normalizedUpstreamModel } : {}),
@@ -134,6 +158,8 @@ export function readVerifiedSystemAiUsageContext(
         bindingId: headers.get(SYSTEM_AI_BILLING_BINDING_HEADER) || "",
         providerIdempotencySupported: headers.get(SYSTEM_AI_PROVIDER_IDEMPOTENCY_SUPPORTED_HEADER) === "1",
         providerIdempotencyKey: headers.get(SYSTEM_AI_PROVIDER_IDEMPOTENCY_KEY_HEADER) || undefined,
+        videoBillingContext: parseVideoBillingContext(headers.get(SYSTEM_AI_VIDEO_BILLING_CONTEXT_HEADER)),
+        imageQualityContext: parseImageQualityContext(headers.get(SYSTEM_AI_IMAGE_QUALITY_CONTEXT_HEADER)),
     });
     const signature = headers.get(SYSTEM_AI_POINTS_SIGNATURE_HEADER)?.trim() || "";
     if (!context || Date.now() > context.expiresAtMs || !signature || (expectedBinding && !sameRequestBinding(context, expectedBinding))) return undefined;
@@ -203,6 +229,8 @@ function signSystemAiUsageContext(logicalModel: string, upstreamModel: string, c
                 context.bindingId,
                 context.providerIdempotencySupported ? "1" : "0",
                 context.providerIdempotencyKey || "",
+                context.videoBillingContext ? JSON.stringify(context.videoBillingContext) : "",
+                context.imageQualityContext ? JSON.stringify(context.imageQualityContext) : "",
             ].join("\0"),
         )
         .digest("base64url");
@@ -227,6 +255,8 @@ function normalizeUsageDraft(value: SystemAiUsageContext | SystemAiUsageContextD
     const requestFingerprint = value.requestFingerprint.trim().toLowerCase();
     const bindingId = value.bindingId.trim().slice(0, 200);
     const providerIdempotencyKey = value.providerIdempotencyKey?.trim().slice(0, 200) || undefined;
+    const videoBillingContext = normalizeVideoBillingContext(value.videoBillingContext);
+    const imageQualityContext = normalizeImageQualityContext(value.imageQualityContext);
     const expiresAtMs = value.expiresAtMs;
     if (
         !userId ||
@@ -253,6 +283,8 @@ function normalizeUsageDraft(value: SystemAiUsageContext | SystemAiUsageContextD
         bindingId,
         providerIdempotencySupported: value.providerIdempotencySupported,
         ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
+        ...(videoBillingContext ? { videoBillingContext } : {}),
+        ...(imageQualityContext ? { imageQualityContext } : {}),
     };
 }
 
@@ -268,7 +300,69 @@ function readSystemAiUsageDraft(headers: Headers) {
         bindingId: headers.get(SYSTEM_AI_BILLING_BINDING_HEADER) || "",
         providerIdempotencySupported: headers.get(SYSTEM_AI_PROVIDER_IDEMPOTENCY_SUPPORTED_HEADER) === "1",
         providerIdempotencyKey: headers.get(SYSTEM_AI_PROVIDER_IDEMPOTENCY_KEY_HEADER) || undefined,
+        videoBillingContext: parseVideoBillingContext(headers.get(SYSTEM_AI_VIDEO_BILLING_CONTEXT_HEADER)),
+        imageQualityContext: parseImageQualityContext(headers.get(SYSTEM_AI_IMAGE_QUALITY_CONTEXT_HEADER)),
     });
+}
+
+function parseVideoBillingContext(value: string | null) {
+    if (!value) return undefined;
+    try {
+        return normalizeVideoBillingContext(JSON.parse(value));
+    } catch {
+        return undefined;
+    }
+}
+
+function normalizeVideoBillingContext(value: unknown): SystemAiVideoBillingContext | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const source = value as Record<string, unknown>;
+    if (typeof source.hasReferenceVideo !== "boolean") return undefined;
+    const duration =
+        typeof source.verifiedInputVideoDurationSeconds === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(source.verifiedInputVideoDurationSeconds) && source.verifiedInputVideoDurationSeconds !== "0" ? source.verifiedInputVideoDurationSeconds : undefined;
+    const durationSource = source.referenceVideoDurationSource === "server-probed" ? "server-probed" : undefined;
+    if ((duration && !durationSource) || (!duration && durationSource)) return undefined;
+    return { hasReferenceVideo: source.hasReferenceVideo, ...(duration ? { verifiedInputVideoDurationSeconds: duration, referenceVideoDurationSource: durationSource } : {}) };
+}
+
+function parseImageQualityContext(value: string | null) {
+    if (!value) return undefined;
+    try {
+        return normalizeImageQualityContext(JSON.parse(value));
+    } catch {
+        return undefined;
+    }
+}
+
+function normalizeImageQualityContext(value: unknown): SystemAiImageQualityContext | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const source = value as Record<string, unknown>;
+    const bindingId = boundedText(source.bindingId, 200);
+    const qualityProfileRevision = boundedText(source.qualityProfileRevision, 240);
+    const optionRevision = boundedText(source.optionRevision, 240);
+    const saleRateCardRevision = typeof source.saleRateCardRevision === "string" && source.saleRateCardRevision.trim() ? source.saleRateCardRevision.trim() : undefined;
+    const selectedQualityValue = boundedText(source.selectedQualityValue, 80);
+    const resolvedSize = boundedText(source.resolvedSize, 80);
+    const resolvedResolutionTier = boundedText(source.resolvedResolutionTier, 80);
+    const resolvedPixelTier = source.resolvedPixelTier === "normal" || source.resolvedPixelTier === "large" ? source.resolvedPixelTier : undefined;
+    const billableOutputCount = Number(source.billableOutputCount);
+    if (!bindingId || !qualityProfileRevision || !Number.isSafeInteger(billableOutputCount) || billableOutputCount < 1) return undefined;
+    if (resolvedSize && !/^\d+x\d+$/i.test(resolvedSize)) return undefined;
+    return {
+        bindingId,
+        qualityProfileRevision,
+        ...(optionRevision ? { optionRevision } : {}),
+        ...(saleRateCardRevision ? { saleRateCardRevision } : {}),
+        ...(selectedQualityValue ? { selectedQualityValue } : {}),
+        ...(resolvedSize ? { resolvedSize } : {}),
+        ...(resolvedResolutionTier ? { resolvedResolutionTier } : {}),
+        ...(resolvedPixelTier ? { resolvedPixelTier } : {}),
+        billableOutputCount,
+    };
+}
+
+function boundedText(value: unknown, maxLength: number) {
+    return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
 }
 
 function sameRequestBinding(context: SystemAiUsageContext, expected: Pick<SystemAiUsageContext, "userId" | "channelId" | "capability" | "method" | "canonicalPath" | "canonicalQuery" | "bodyDigest">) {

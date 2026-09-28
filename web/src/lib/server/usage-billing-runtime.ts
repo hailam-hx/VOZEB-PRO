@@ -9,19 +9,31 @@ import {
     validatePricingRateCardForCapability,
     type FinalSaleCharge,
     type NormalizedUsage,
+    type PricingJsonValue,
     type PricingRateCardV1,
 } from "@/lib/billing/pricing";
 import { validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/money";
 import type { ProviderUsageAttempt, UsageBillingHoldSnapshot, WalletHold } from "@/lib/auth/store-types";
 import { readSystemAiUsageBilling } from "./system-ai-billing";
-import { deriveProxyBillableUsage } from "./usage-billing-adapter";
+import { AuthoritativeVideoUsageError, deriveProxyBillableUsage, normalizeAuthoritativeVideoUsage } from "./usage-billing-adapter";
+import { readVideoProviderUsage } from "./video-provider-response";
 import { getTextTask, type TextTask } from "./text-task-store";
 import { textTaskBillingBusinessId } from "./generation-usage-context";
 import { getImageTask } from "./image-task-store";
 import { getVideoTask } from "./video-task-store";
 import { getAudioTask } from "./audio-task-store";
 import { getVoiceCloneTask } from "./voice-profile-store";
-import { listExpiredActiveWalletHolds, getWalletHoldByBusinessId, getWalletHoldById, listProviderUsageAttemptsForHold, recordProviderUsageAttempt, releaseWalletHold, reserveWalletCredits, settleWalletHold } from "./points-wallet-service";
+import {
+    listExpiredActiveWalletHolds,
+    getWalletHoldByBusinessId,
+    getWalletHoldById,
+    listProviderUsageAttemptsForHold,
+    markWalletHoldNeedsReview,
+    recordProviderUsageAttempt,
+    releaseWalletHold,
+    reserveWalletCredits,
+    settleWalletHold,
+} from "./points-wallet-service";
 
 export type UsageBilling = {
     holdId: string;
@@ -38,8 +50,10 @@ export type ReserveUsageBillingInput = {
     logicalModelId: string;
     saleRateSnapshot: PricingRateCardV1;
     requestUsage: NormalizedUsage;
+    imageQualityContext?: UsageBillingHoldSnapshot["imageQualityContext"];
     description: string;
     inputLimits?: UsageBillingHoldSnapshot["inputLimits"];
+    billingRequestContext?: UsageBillingHoldSnapshot["billingRequestContext"];
     providerIdempotency?: UsageBillingHoldSnapshot["providerIdempotency"];
     recovery?: UsageBillingHoldSnapshot["recovery"];
     expiresAt?: Date;
@@ -75,9 +89,11 @@ export async function reserveUsageBilling(input: ReserveUsageBillingInput): Prom
         capability: input.requestUsage.capability,
         saleRateSnapshot,
         requestUsage: input.requestUsage,
+        ...(input.imageQualityContext ? { imageQualityContext: input.imageQualityContext } : {}),
         reserve,
         reservedCredits: reserve.credits,
         ...(input.inputLimits ? { inputLimits: input.inputLimits } : {}),
+        ...(input.billingRequestContext ? { billingRequestContext: input.billingRequestContext } : {}),
         ...(input.providerIdempotency ? { providerIdempotency: input.providerIdempotency } : {}),
         ...(input.recovery ? { recovery: input.recovery } : {}),
     };
@@ -223,6 +239,93 @@ export async function attachUsageProviderEvidence(input: { billing: UsageBilling
         observedUsage: input.usage,
         now: input.now,
     });
+}
+
+export async function attachAuthoritativeVideoUsageForBusiness(input: { userId: string; businessId: string; upstreamTaskId?: string; payload: unknown; now?: Date }) {
+    const hold = await getWalletHoldByBusinessId(input.businessId);
+    if (!hold || hold.userId !== input.userId || hold.status !== "active" || !hold.runtimeSnapshot) return { state: "closed" as const };
+    const billing = billingFromHold(hold);
+    const attempts = await listProviderUsageAttemptsForHold(hold.id);
+    const attempt = (input.upstreamTaskId ? attempts.findLast((item) => item.upstreamTaskId === input.upstreamTaskId) : undefined) || attempts.findLast((item) => item.status === "pending");
+    if (!attempt) return { state: "not_required" as const };
+    try {
+        const usage = normalizeAuthoritativeVideoUsage({ requestUsage: billing.snapshot.requestUsage, payload: input.payload, costRateCard: attempt.costRateSnapshot });
+        if (!usage) return { state: "not_required" as const };
+        await attachUsageProviderEvidence({ billing, attemptNumber: attempt.attemptNumber, usage, now: input.now });
+        console.info("DFLOP video usage", {
+            taskId: billing.snapshot.recovery?.taskId,
+            attemptId: attempt.id,
+            modelId: billing.snapshot.logicalModelId,
+            status: "attached",
+            usageSeen: true,
+            completionTokens: usage.outputTokens,
+            resolution: usage.resolution,
+            billingBasis: usage.billingBasis,
+            hasReferenceVideo: usage.hasReferenceVideo,
+            deliveredDurationSeconds: usage.durationSeconds,
+            pricingBasis: "video_token",
+            tokenRateMatched: true,
+            secondStageApplied: attempt.costRateSnapshot?.components.some((component) => component.id.startsWith("video-second-stage")) === true,
+        });
+        return { state: "attached" as const, completionTokens: usage.outputTokens };
+    } catch (error) {
+        if (!(error instanceof AuthoritativeVideoUsageError)) throw error;
+        const provider = readVideoProviderUsage(input.payload);
+        const diagnosticUsage = normalizeBillableUsage({
+            ...billing.snapshot.requestUsage,
+            capability: "video",
+            source: "actual",
+            durationSeconds: provider.deliveredDurationSeconds,
+            inputVideoDurationSeconds: provider.inputVideoDurationSeconds,
+            framesPerSecond: provider.framesPerSecond,
+            providerUsage: {
+                ...(provider.rawUsage || {}),
+                rawResponse: jsonAuditValue(input.payload),
+            },
+        });
+        await recordProviderUsageAttempt({
+            id: attempt.id,
+            holdId: hold.id,
+            attemptNumber: attempt.attemptNumber,
+            status: "pending",
+            provider: attempt.provider,
+            bindingId: attempt.bindingId,
+            requestFingerprint: attempt.requestFingerprint,
+            providerIdempotencySupported: attempt.providerIdempotencySupported,
+            providerIdempotencyKey: attempt.providerIdempotencyKey,
+            upstreamTaskId: attempt.upstreamTaskId,
+            nativeCostAmount: attempt.nativeCostAmount,
+            nativeCostUnit: attempt.nativeCostUnit,
+            costRateSnapshot: attempt.costRateSnapshot,
+            normalizedUsage: attempt.normalizedUsage,
+            observedUsage: diagnosticUsage,
+            now: input.now,
+        });
+        await markWalletHoldNeedsReview(hold.id, `${error.code}: ${error.message}`, input.now);
+        console.error("DFLOP video usage", {
+            taskId: billing.snapshot.recovery?.taskId,
+            attemptId: attempt.id,
+            modelId: billing.snapshot.logicalModelId,
+            status: "needs_review",
+            usageSeen: false,
+            resolution: billing.snapshot.requestUsage.resolution,
+            billingBasis: billing.snapshot.requestUsage.billingBasis,
+            hasReferenceVideo: billing.snapshot.requestUsage.hasReferenceVideo,
+            pricingBasis: "video_token",
+            tokenRateMatched: error.code !== "AUTHORITATIVE_PRICING_DIMENSION_MISSING",
+            reason: error.code,
+        });
+        return { state: "needs_review" as const, code: error.code };
+    }
+}
+
+function jsonAuditValue(value: unknown): PricingJsonValue {
+    try {
+        const serialized = JSON.stringify(value);
+        return serialized === undefined ? null : (JSON.parse(serialized) as PricingJsonValue);
+    } catch {
+        return null;
+    }
 }
 
 export async function finishSystemAiTextAttempt(headers: Headers, input: { status: "succeeded" | "failed" | "canceled"; payload?: unknown; normalizedUsage?: NormalizedUsage; reason?: string }) {
@@ -544,6 +647,7 @@ function normalizedUsageKey(usage: NormalizedUsage) {
         usage.inputTokens,
         usage.cachedInputTokens,
         usage.outputTokens,
+        usage.totalTokens,
         usage.maxOutputTokens,
         usage.count,
         usage.megapixels,
@@ -551,6 +655,10 @@ function normalizedUsageKey(usage: NormalizedUsage) {
         usage.quality,
         usage.resolution,
         usage.durationSeconds,
+        usage.inputVideoDurationSeconds,
+        usage.billingBasis,
+        usage.hasReferenceVideo === undefined ? undefined : String(usage.hasReferenceVideo),
+        usage.framesPerSecond,
         usage.format,
     ]
         .map((value) => value ?? "")

@@ -8,6 +8,7 @@ import { isPostgresDatabaseEnabled, type QueryExecutor } from "@/lib/server/data
 import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { normalizeGeneratedImageBytes } from "@/lib/server/generated-image-normalizer";
 import { createDatedMediaPath, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
+import { MAX_MEDIA_PROXY_BYTES } from "@/lib/server/media-response-limit";
 import { deleteLocalMediaRegistrations, getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
 import { deleteExternalMediaObject, persistExternalMediaIfEnabled } from "@/lib/server/object-storage-service";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
@@ -93,7 +94,7 @@ export async function writeDataUrlAsset(dataUrl: string, type: GenerationLogKind
     const mimeType = match[1] || (type === "video" ? "video/mp4" : "image/png");
     if (!mimeType.startsWith(`${type}/`)) return null;
     const bytes = Buffer.from(match[2], "base64");
-    if (bytes.length > maxServerAssetBytes(type)) return null;
+    if (bytes.length > maxServerAssetInputBytes(type)) return null;
     return writeAssetBytes(bytes, mimeType, type, context);
 }
 
@@ -105,7 +106,7 @@ export async function writeRemoteAsset(url: string, type: GenerationLogKind, con
         const response = await fetchSafeOutbound(url, { cache: "no-store", redirect: "manual", signal: controller.signal });
         if (!response.ok || !response.body) return null;
         const contentLength = Number(response.headers.get("content-length") || 0);
-        const maxBytes = maxServerAssetBytes(type);
+        const maxBytes = maxServerAssetInputBytes(type);
         if (contentLength > maxBytes) return null;
         const bytes = Buffer.from(await response.arrayBuffer());
         if (bytes.length > maxBytes) return null;
@@ -124,7 +125,8 @@ export async function isSafeRemoteAssetUrl(value: string) {
 }
 
 export async function writeAssetBytes(bytes: Buffer, mimeType: string, type: GenerationLogKind, context: GenerationAssetContext): Promise<GenerationLogAsset> {
-    const normalized: { bytes: Buffer; mimeType: string; width?: number; height?: number } = type === "image" ? await normalizeGeneratedImageBytes(bytes, mimeType, context.targetSize) : { bytes, mimeType };
+    const normalized: { bytes: Buffer; mimeType: string; width?: number; height?: number } = type === "image" ? await normalizeGeneratedImageBytes(bytes, mimeType, context.targetSize, MAX_SERVER_IMAGE_BYTES) : { bytes, mimeType };
+    if (normalized.bytes.length > maxServerAssetBytes(type)) throw new Error("生成媒体规范化后仍超过服务器存储限制");
     bytes = normalized.bytes;
     mimeType = normalized.mimeType;
     const extension = extensionFromMime(mimeType, type);
@@ -159,6 +161,10 @@ export async function writeAssetBytes(bytes: Buffer, mimeType: string, type: Gen
 
 export function maxServerAssetBytes(type: GenerationLogKind) {
     return type === "video" ? MAX_SERVER_VIDEO_BYTES : MAX_SERVER_IMAGE_BYTES;
+}
+
+function maxServerAssetInputBytes(type: GenerationLogKind) {
+    return type === "image" ? MAX_MEDIA_PROXY_BYTES : MAX_SERVER_VIDEO_BYTES;
 }
 
 export function isRemoteAssetUrl(value: string) {

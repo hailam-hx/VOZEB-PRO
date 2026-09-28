@@ -376,6 +376,29 @@ describe("split Postgres repositories", () => {
         expect(params).toEqual([JSON.stringify(dataLifecycle)]);
     });
 
+    it("persists the system pricing policy as structured settings", async () => {
+        const timestamp = "2026-09-24T00:00:00.000Z";
+        const pricingPolicy = {
+            version: "pricing-policy-v1:test",
+            dflopCreditsPerCny: "60",
+            dflopCreditsPerCnySource: "upstream",
+            cnyToUsd: "0.15",
+            hotxUsdPerCredit: "1",
+            markupMultiplier: "1",
+            minimumMarginRate: null,
+            costBasis: "max_active_binding_cost",
+            autoApplySalePrice: false,
+        };
+        const { executor, query } = mockExecutor([[{ id: "default", pricing_policy: pricingPolicy, created_at: timestamp, updated_at: timestamp }]]);
+
+        const settings = await createPostgresRepositories(executor).settings.updateSettings({ pricingPolicy });
+        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
+
+        expect(settings.pricingPolicy).toEqual(pricingPolicy);
+        expect(sql).toContain("pricing_policy = $1");
+        expect(params).toEqual([JSON.stringify(pricingPolicy)]);
+    });
+
     it("locks wallet rows and resolves point records by idempotency and refund source", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([

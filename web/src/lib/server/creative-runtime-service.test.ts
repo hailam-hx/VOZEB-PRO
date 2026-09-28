@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     writePersistentMediaDataUrl: vi.fn(),
     deleteCreativeConversationAggregates: vi.fn(),
     deleteUserLocalMediaAssets: vi.fn(),
+    probeMediaBytes: vi.fn(),
 }));
 
 vi.mock("@/lib/server/creative-runtime-store", () => ({
@@ -27,6 +28,7 @@ vi.mock("@/lib/server/reference-asset-store", () => ({
 }));
 vi.mock("@/lib/server/creative-entity-deletion-store", () => ({ deleteCreativeConversationAggregates: mocks.deleteCreativeConversationAggregates }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
+vi.mock("@/lib/server/media-metadata-probe", () => ({ probeMediaBytes: mocks.probeMediaBytes }));
 
 import { deleteConversationsForUser, registerGenerationTaskAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
 
@@ -42,6 +44,7 @@ describe("创作会话素材上传", () => {
         mocks.writePersistentMediaDataUrl.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
         mocks.deleteCreativeConversationAggregates.mockReset().mockResolvedValue({ deletedConversations: 1, deletedProjects: 0, mediaStorageKeys: ["permanent/one.png"] });
         mocks.deleteUserLocalMediaAssets.mockReset().mockResolvedValue({ deletedFiles: 1, deletedBytes: 4, blocked: [] });
+        mocks.probeMediaBytes.mockReset().mockResolvedValue(undefined);
         mocks.registerCreativeAssets.mockReset().mockImplementation(async ([input]) => [{ ...input, id: "asset-one", status: "ready", metadata: input.metadata || {}, createdAt: 1, updatedAt: 1 }]);
     });
 
@@ -75,6 +78,25 @@ describe("创作会话素材上传", () => {
         expect(mocks.writePersistentMediaDataUrl).not.toHaveBeenCalled();
         expect(asset).toMatchObject({ id: "asset-one", type: "video", serverUrl: "/api/reference-assets/persistent-one.mp4", storageKey: "persistent-one.mp4" });
         expect(JSON.stringify(mocks.registerCreativeAssets.mock.calls[0][0])).not.toContain("base64");
+    });
+
+    it("does not turn a storage exception into a public upload validation message", async () => {
+        mocks.writePersistentMediaBytes.mockRejectedValue(new Error("S3 secret at /srv/private/media.ts"));
+        await expect(uploadAssetForUser("user-one", "conversation-one", file("image.png", "image/png"))).rejects.toMatchObject({ message: expect.not.stringContaining("S3 secret") });
+    });
+
+    it("persists only server-probed video duration and dimensions as verified metadata", async () => {
+        mocks.probeMediaBytes.mockResolvedValue({ durationMs: 12_345, width: 1920, height: 1080 });
+
+        const asset = await uploadAssetForUser("user-one", "conversation-one", file("clip.mp4", "video/mp4"));
+
+        expect(mocks.probeMediaBytes).toHaveBeenCalledWith(expect.any(Uint8Array), "video/mp4");
+        expect(asset).toMatchObject({
+            durationMs: 12_345,
+            width: 1920,
+            height: 1080,
+            metadata: { mediaProbe: { status: "verified", source: "ffprobe" } },
+        });
     });
 
     it("keeps the internal storage key while marking object-backed uploads", async () => {

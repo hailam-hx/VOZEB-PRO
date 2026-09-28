@@ -34,6 +34,8 @@ export type AgentRunGenerationSelection = {
     model?: string;
     ratio?: string;
     quality?: string;
+    qualityProfileRevision?: string;
+    qualityOptionRevision?: string;
     seconds?: number;
     voice?: string;
     voiceSelection?: VoiceSelection;
@@ -81,6 +83,7 @@ export type AgentRunTask = AgentRunGenerationSelection &
         result?: unknown;
         error?: string;
         errorCode?: string;
+        retryable?: boolean;
     };
 export type AgentRun = {
     id: string;
@@ -92,6 +95,8 @@ export type AgentRun = {
     inputMessageId: string;
     assistantMessageId: string;
     prompt: string;
+    originalPrompt?: string;
+    manualPromptEnhancementEnabled?: boolean;
     publicPrompt?: string;
     snapshot?: unknown;
     referencedAssetIds: string[];
@@ -185,7 +190,7 @@ export type AgentRunTimings = {
 };
 const TTL = 365 * 24 * 60 * 60 * 1000;
 
-export async function createAgentRun(userId: string, input: CreativeRunRequest, responseLocale?: AppLocale) {
+export async function createAgentRun(userId: string, input: CreativeRunRequest, responseLocale?: AppLocale, manualPromptEnhancementEnabled = true) {
     await assertVideoFrameAssets(userId, input);
     const now = Date.now();
     const conversationId = input.conversationId || `conversation-${nanoid()}`;
@@ -200,6 +205,8 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest, 
         inputMessageId: `message-${nanoid()}`,
         assistantMessageId: `message-${nanoid()}`,
         prompt: input.prompt,
+        originalPrompt: input.originalPrompt || input.prompt,
+        manualPromptEnhancementEnabled,
         ...(input.publicPrompt ? { publicPrompt: input.publicPrompt } : {}),
         snapshot,
         referencedAssetIds: input.assetIds,

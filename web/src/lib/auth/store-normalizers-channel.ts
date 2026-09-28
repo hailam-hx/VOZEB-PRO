@@ -1,9 +1,10 @@
 import { safeProtocolDocumentationUrl } from "@/lib/channel-protocol-security";
 import { isGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
+import { normalizeDflopUpstreamModelMetadata } from "@/lib/dflop-model-metadata";
 
 import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelProtocol } from "./store-types";
 
-const CHANNEL_PROTOCOLS: SystemChannelProtocol[] = ["auto", "openai", "yumeng", "gemini", "sub2api", "newapi", "vozeb-recommended", "globalaiopc", "seedance", "stable-diffusion", "volcengine-video", "seedance-special", "custom", "compatible"];
+const CHANNEL_PROTOCOLS: SystemChannelProtocol[] = ["auto", "openai", "dflop", "yumeng", "gemini", "sub2api", "newapi", "vozeb-recommended", "globalaiopc", "seedance", "stable-diffusion", "volcengine-video", "seedance-special", "custom", "compatible"];
 
 export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChannelAdvancedConfig> | undefined): SystemChannelAdvancedConfig | undefined {
     if (!config || typeof config !== "object") return undefined;
@@ -12,6 +13,7 @@ export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChann
     const legacyGlobalAiOpcPreset = isGlobalAiOpcPreset(config.globalAiOpcPreset) ? config.globalAiOpcPreset : undefined;
     const modelCapabilities = normalizeChannelModelCapabilities(config.modelCapabilities);
     const modelConfigs = normalizeChannelModelConfigs(config.modelConfigs);
+    const modelDiscovery = normalizeChannelModelDiscovery(config.modelDiscovery);
     const operationConfigs = normalizeChannelOperationConfigs(config.operationConfigs);
     const modelCatalogPaths = Array.from(new Set((Array.isArray(config.modelCatalogPaths) ? config.modelCatalogPaths : []).map(normalizeApiPath).filter(Boolean))).slice(0, 12);
     return {
@@ -47,8 +49,38 @@ export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChann
         ...(modelCatalogPaths.length ? { modelCatalogPaths } : {}),
         ...(Object.keys(modelCapabilities).length ? { modelCapabilities } : {}),
         ...(Object.keys(modelConfigs).length ? { modelConfigs } : {}),
+        ...(Object.keys(modelDiscovery).length ? { modelDiscovery } : {}),
         ...(Object.keys(operationConfigs).length ? { operationConfigs } : {}),
     };
+}
+
+function normalizeChannelModelDiscovery(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {} as NonNullable<SystemChannelAdvancedConfig["modelDiscovery"]>;
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).flatMap(([model, raw]) => {
+            const key = normalizeChannelModelKey(model);
+            if (!key || !raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+            const entry = raw as Record<string, unknown>;
+            const kind = isModelCapability(entry.kind) || entry.kind === "other" ? entry.kind : "other";
+            const endpointType = entry.endpointType === null ? null : textOrEmpty(entry.endpointType, 200) || undefined;
+            const supportedProtocols = Array.from(new Set((Array.isArray(entry.supportedProtocols) ? entry.supportedProtocols : []).map((item) => textOrEmpty(item, 120).toLowerCase()).filter(Boolean)));
+            const upstreamMetadata = normalizeDflopUpstreamModelMetadata(entry.upstreamMetadata);
+            return [
+                [
+                    key,
+                    {
+                        kind,
+                        ...(typeof entry.callable === "boolean" ? { callable: entry.callable } : {}),
+                        matched: Boolean(entry.matched),
+                        routable: Boolean(entry.routable),
+                        ...(endpointType !== undefined ? { endpointType } : {}),
+                        ...(supportedProtocols.length ? { supportedProtocols } : {}),
+                        ...(upstreamMetadata ? { upstreamMetadata } : {}),
+                    },
+                ] as const,
+            ];
+        }),
+    ) as NonNullable<SystemChannelAdvancedConfig["modelDiscovery"]>;
 }
 
 export function normalizeApiPath(value: unknown) {

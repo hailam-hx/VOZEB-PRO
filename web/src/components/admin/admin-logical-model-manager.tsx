@@ -1,17 +1,29 @@
 "use client";
 
-import { App, Button, Checkbox, Drawer, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Tag } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Tag, Tooltip } from "antd";
 import { AlertTriangle, GitBranch, Pencil, Plus, RefreshCw, Route, Search, Trash2 } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 
 import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
-import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, LogicalModelGenerationParameters, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
+import type {
+    DflopDescriptionCapabilityField,
+    LogicalModel,
+    LogicalModelBinding,
+    LogicalModelCapability,
+    LogicalModelCapabilityProfile,
+    LogicalModelGenerationParameterSources,
+    LogicalModelGenerationParameters,
+    ModelMetadataSource,
+    SystemDefaultModels,
+    SystemModelChannel,
+} from "@/lib/auth/store";
 import { fullGenerationParametersPreset, normalizeGenerationParameters } from "@/lib/generation-parameters";
 import { generationParametersStatus } from "@/lib/generation-defaults-validation";
 import { validateGenerationParametersInput } from "@/lib/generation-parameters-admin-validation";
 import { normalizeModelId } from "@/lib/model-capability";
-import { capabilityLabel, channelModelCapability, isLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
+import { capabilityLabel, channelModelCapability, isLogicalModelResolvable, normalizeDefaultModelsConfig, resynchronizeDflopBindingFromUpstream, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
+import { normalizeImageQualityProfile } from "@/lib/image-quality-profile";
 
 type Props = {
     channels: SystemModelChannel[];
@@ -76,6 +88,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
         });
     }, [channels, draft, editingId, logicalModels]);
     const selectedFallbackBinding = fallbackBindingOptions.find((option) => option.value === fallbackBindingKey);
+    const upstreamDraftName = draft?.bindings.map((binding) => binding.upstreamMetadata?.displayName).find(Boolean);
 
     const openEdit = (model: LogicalModel) => {
         setEditingId(model.id);
@@ -240,7 +253,6 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
             <Drawer
                 title="模型路由设置"
                 size="min(760px, 100vw)"
-                styles={{ wrapper: { maxWidth: "100vw" } }}
                 open={drawerOpen}
                 destroyOnHidden
                 onClose={() => setDrawerOpen(false)}
@@ -257,16 +269,23 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                     <>
                         <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-900/40">
                             <div className="truncate text-xs text-stone-500 dark:text-stone-400">逻辑 ID：{draft.id}（由上游模型自动建立）</div>
-                            <div className="mt-2 grid gap-3 sm:max-w-[456px] sm:grid-cols-[192px_144px_96px]">
+                            <div className="mt-2 grid gap-3 sm:grid-cols-[minmax(300px,1fr)_144px_96px]">
                                 <LabeledControl label="前端昵称">
-                                    <Input
-                                        className="!w-full"
-                                        aria-label="前端展示昵称"
-                                        maxLength={120}
-                                        value={draft.name}
-                                        placeholder={draft.bindings[0]?.upstreamModel || draft.id}
-                                        onChange={(event) => setDraft((current) => (current ? { ...current, name: event.target.value } : current))}
-                                    />
+                                    <div className="flex gap-1">
+                                        <Input
+                                            className="!w-full"
+                                            aria-label="前端展示昵称"
+                                            maxLength={120}
+                                            value={draft.name}
+                                            placeholder={draft.bindings[0]?.upstreamModel || draft.id}
+                                            onChange={(event) => setDraft((current) => (current ? { ...current, name: event.target.value, nameSource: "manual" } : current))}
+                                        />
+                                        {upstreamDraftName ? (
+                                            <Button title={`恢复为 ${upstreamDraftName}`} onClick={() => setDraft((current) => (current ? { ...current, name: upstreamDraftName, nameSource: "upstream" } : current))}>
+                                                恢复上游名称
+                                            </Button>
+                                        ) : null}
+                                    </div>
                                 </LabeledControl>
                                 <LabeledControl label="能力类型">
                                     <Select className="w-full" value={draft.capability} options={capabilityOptions} onChange={(capability) => setDraft((current) => (current ? { ...current, capability } : current))} />
@@ -342,6 +361,8 @@ function BindingEditor({
     onRemove: () => void;
 }) {
     const { message } = App.useApp();
+    const [qualityEditorOpen, setQualityEditorOpen] = useState(false);
+    const [qualityProfileDraft, setQualityProfileDraft] = useState("");
     const channel = channels.find((item) => item.id === binding.channelId);
     const profile = binding.capabilityProfile || {};
     const effectiveAsync = profile.supportsAsync ?? (capability === "image" || capability === "video");
@@ -372,7 +393,41 @@ function BindingEditor({
         const raw = { ...(binding.generationParameters || {}), ...patch };
         const error = validateGenerationParametersInput(raw);
         if (error) return message.error(error);
-        onChange({ generationParameters: normalizeGenerationParameters(raw) });
+        onChange({ generationParameters: normalizeGenerationParameters(raw), generationParameterSources: markParameterSources(binding.generationParameterSources, patch, "manual"), capabilityDrifts: undefined });
+    };
+    const openQualityProfileEditor = () => {
+        const current = binding.imageQualityProfile;
+        setQualityProfileDraft(
+            JSON.stringify(
+                current
+                    ? {
+                          ...current,
+                          source: "manual",
+                          upstreamCandidate:
+                              current.source === "manual"
+                                  ? current.upstreamCandidate
+                                  : {
+                                        ...current,
+                                        upstreamCandidate: undefined,
+                                    },
+                      }
+                    : {},
+                null,
+                2,
+            ),
+        );
+        setQualityEditorOpen(true);
+    };
+    const applyManualQualityProfile = () => {
+        try {
+            const parsed = JSON.parse(qualityProfileDraft) as Record<string, unknown>;
+            const normalized = normalizeImageQualityProfile({ ...parsed, source: "manual" });
+            if (!normalized) return message.error("图片画质控制 JSON 无效，请检查控制类型、选项 effect 和 validation");
+            onChange({ imageQualityProfile: normalized });
+            setQualityEditorOpen(false);
+        } catch {
+            message.error("图片画质控制 JSON 格式无效");
+        }
     };
     const applyList = (label: string, field: "aspectRatios" | "pixelSizes" | "qualities" | "resolutions" | "voices" | "formats", value: string) => {
         const requested = value
@@ -385,7 +440,7 @@ function BindingEditor({
             message.error(error);
             return;
         }
-        onChange({ generationParameters: normalizeGenerationParameters(raw) });
+        onChange({ generationParameters: normalizeGenerationParameters(raw), generationParameterSources: markParameterSources(binding.generationParameterSources, { [field]: requested }, "manual"), capabilityDrifts: undefined });
     };
     const applyDurationList = (value: string) => {
         const requested = value
@@ -398,7 +453,11 @@ function BindingEditor({
             message.error(error);
             return;
         }
-        onChange({ generationParameters: normalizeGenerationParameters(raw) });
+        onChange({
+            generationParameters: normalizeGenerationParameters(raw),
+            generationParameterSources: markParameterSources(binding.generationParameterSources, { durationMode: "discrete", durationSeconds: requested.map(Number) }, "manual"),
+            capabilityDrifts: undefined,
+        });
     };
     return (
         <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-900/40">
@@ -448,6 +507,25 @@ function BindingEditor({
                             >
                                 {generationParametersStatus(capability, binding.generationParameters).label}
                             </Tag>
+                            {binding.capabilityDrifts?.length ? <Tag color="orange">上游参数已更新 · {binding.capabilityDrifts.length}</Tag> : null}
+                            {channel?.advancedConfig?.protocol === "dflop" && binding.upstreamMetadata?.generationParameters ? (
+                                <Popconfirm
+                                    title="从上游重新同步能力？"
+                                    description={
+                                        <div className="max-w-80 text-xs">
+                                            <div>{binding.capabilityDrifts?.length ? "确认后将覆盖这些手动字段：" : "确认后将按最新上游元数据更新这些字段："}</div>
+                                            {(binding.capabilityDrifts?.length ? binding.capabilityDrifts : Object.keys(binding.upstreamMetadata.generationParameterSources || {}).map((field) => ({ field }))).map((drift) => (
+                                                <div key={drift.field}>· {generationFieldLabel(drift.field)}</div>
+                                            ))}
+                                        </div>
+                                    }
+                                    okText="确认同步"
+                                    cancelText="取消"
+                                    onConfirm={() => onChange(resynchronizeDflopBindingFromUpstream(binding, channel))}
+                                >
+                                    <Button size="small">从上游重新同步能力</Button>
+                                </Popconfirm>
+                            ) : null}
                             {binding.generationParameters ? (
                                 <>
                                     <Popconfirm
@@ -455,20 +533,30 @@ function BindingEditor({
                                         description="将使用 HOTX AI 全部当前选项替换这个 binding 的能力草稿。"
                                         okText="覆盖"
                                         cancelText="取消"
-                                        onConfirm={() => onChange({ generationParameters: fullGenerationParametersPreset(capability) })}
+                                        onConfirm={() => {
+                                            const generationParameters = fullGenerationParametersPreset(capability);
+                                            onChange({ generationParameters, generationParameterSources: sourcesForParameters(generationParameters, "default"), capabilityDrifts: undefined });
+                                        }}
                                     >
                                         <Button size="small">重新启用全部选项</Button>
                                     </Popconfirm>
-                                    <Button size="small" onClick={() => onChange({ generationParameters: undefined })}>
+                                    <Button size="small" onClick={() => onChange({ generationParameters: undefined, generationParameterSources: undefined, capabilityDrifts: undefined })}>
                                         清除能力配置
                                     </Button>
                                 </>
                             ) : (
                                 <>
-                                    <Button size="small" type="primary" onClick={() => onChange({ generationParameters: fullGenerationParametersPreset(capability) })}>
+                                    <Button
+                                        size="small"
+                                        type="primary"
+                                        onClick={() => {
+                                            const generationParameters = fullGenerationParametersPreset(capability);
+                                            onChange({ generationParameters, generationParameterSources: sourcesForParameters(generationParameters, "default") });
+                                        }}
+                                    >
                                         启用全部选项
                                     </Button>
-                                    <Button size="small" onClick={() => onChange({ generationParameters: normalizeGenerationParameters({}) })}>
+                                    <Button size="small" onClick={() => onChange({ generationParameters: normalizeGenerationParameters({}), generationParameterSources: {} })}>
                                         空白配置
                                     </Button>
                                 </>
@@ -478,13 +566,74 @@ function BindingEditor({
                     <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
                         快速模板只覆盖 HOTX AI 当前选项，不代表上游已确认支持；保存前请删除不支持的参数。
                     </div>
+                    {capability === "image" && binding.imageQualityProfile ? (
+                        <div className="mb-3 rounded-md border border-stone-200 bg-stone-50 p-2.5 text-[11px] dark:border-stone-800 dark:bg-stone-900/70">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="font-semibold text-stone-700 dark:text-stone-200">图片画质控制</div>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    <Tag className="m-0">{binding.imageQualityProfile.selectionMode}</Tag>
+                                    <Tag className="m-0">{binding.imageQualityProfile.controlType}</Tag>
+                                    <Tag className="m-0">{binding.imageQualityProfile.source}</Tag>
+                                    <Tag className="m-0" color={binding.imageQualityProfile.validation.status === "VALID" ? "green" : binding.imageQualityProfile.validation.status === "DRIFT" ? "orange" : "red"}>
+                                        {binding.imageQualityProfile.validation.status}
+                                    </Tag>
+                                </div>
+                            </div>
+                            <div className="mt-2 grid gap-1 text-stone-600 dark:text-stone-300">
+                                <div>选项：{binding.imageQualityProfile.options.length ? binding.imageQualityProfile.options.map((option) => `${option.label} (${option.value} / ${option.effect.type})`).join("、") : "无独立画质选项"}</div>
+                                <div className="break-all">Revision：{binding.imageQualityProfile.profileRevision}</div>
+                                {binding.imageQualityProfile.validation.reasons.map((reason) => (
+                                    <div key={`${reason.code}:${reason.message}`} className={reason.severity === "blocking" ? "text-red-600 dark:text-red-300" : "text-amber-700 dark:text-amber-300"}>
+                                        {reason.code}：{reason.message}
+                                    </div>
+                                ))}
+                            </div>
+                            {binding.imageQualityProfile.source === "manual" && binding.imageQualityProfile.upstreamCandidate ? (
+                                <Button className="mt-2" size="small" onClick={() => onChange({ imageQualityProfile: binding.imageQualityProfile?.upstreamCandidate })}>
+                                    移除手动覆盖
+                                </Button>
+                            ) : null}
+                            <Button className="mt-2" size="small" onClick={openQualityProfileEditor}>
+                                编辑手动画质配置
+                            </Button>
+                            {qualityEditorOpen ? (
+                                <div className="mt-2 space-y-2">
+                                    <Input.TextArea aria-label="图片画质控制 JSON" autoSize={{ minRows: 8, maxRows: 16 }} value={qualityProfileDraft} onChange={(event) => setQualityProfileDraft(event.target.value)} />
+                                    <div className="flex justify-end gap-2">
+                                        <Button size="small" onClick={() => setQualityEditorOpen(false)}>
+                                            取消
+                                        </Button>
+                                        <Button size="small" type="primary" onClick={applyManualQualityProfile}>
+                                            应用手动配置
+                                        </Button>
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : null}
+                    {binding.upstreamMetadata?.descriptionCapabilities ? <DflopDescriptionCapabilityAudit binding={binding} /> : null}
                     {binding.generationParameters ? (
-                        <GenerationCapabilityEditor capability={capability} parameters={binding.generationParameters} onUpdate={updateGenerationParameters} onApplyList={applyList} onApplyDurationList={applyDurationList} />
+                        <GenerationCapabilityEditor
+                            capability={capability}
+                            parameters={binding.generationParameters}
+                            sources={binding.generationParameterSources}
+                            onUpdate={updateGenerationParameters}
+                            onApplyList={applyList}
+                            onApplyDurationList={applyDurationList}
+                        />
                     ) : null}
                 </div>
             ) : null}
             <div className="mt-3 rounded-md border border-stone-200/80 bg-white/70 p-3 dark:border-stone-800 dark:bg-stone-950/40">
                 <div className="mb-3 text-xs font-semibold text-stone-700 dark:text-stone-200">运行与计费设置</div>
+                {binding.upstreamMetadata?.runtime || binding.upstreamMetadata?.providerPricingProfile ? (
+                    <div className="mb-3 grid gap-2 rounded-md border border-blue-200 bg-blue-50 p-2.5 text-[11px] text-blue-900 sm:grid-cols-2 dark:border-blue-900/70 dark:bg-blue-950/30 dark:text-blue-100">
+                        <div className="min-w-0 break-all">上游运行元数据：{metadataSummary(binding.upstreamMetadata.runtime)}</div>
+                        <div className="min-w-0 break-all">
+                            上游成本参考：{metadataSummary(binding.upstreamMetadata.providerPricingProfile?.raw)}（{binding.upstreamMetadata.providerPricingProfile?.status || "NEEDS_REVIEW"}，不修改 HOTX 售价）
+                        </div>
+                    </div>
+                ) : null}
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <div className="flex flex-wrap items-center gap-3 text-xs text-stone-600 dark:text-stone-300 sm:col-span-2 lg:col-span-4">
                         <Checkbox checked={effectiveAsync} onChange={(event) => updateProfile({ supportsAsync: event.target.checked })}>
@@ -572,12 +721,14 @@ function commitStreamingTimeoutDrafts(binding: LogicalModelBinding, capability: 
 function GenerationCapabilityEditor({
     capability,
     parameters,
+    sources,
     onUpdate,
     onApplyList,
     onApplyDurationList,
 }: {
     capability: Exclude<LogicalModelCapability, "text">;
     parameters: LogicalModelGenerationParameters;
+    sources?: LogicalModelGenerationParameterSources;
     onUpdate: (patch: Partial<LogicalModelGenerationParameters>) => void;
     onApplyList: (label: string, field: "aspectRatios" | "pixelSizes" | "qualities" | "resolutions" | "voices" | "formats", value: string) => void;
     onApplyDurationList: (value: string) => void;
@@ -585,7 +736,7 @@ function GenerationCapabilityEditor({
     const toggleReference = (value: LogicalModelGenerationParameters["referenceInputs"][number], checked: boolean) =>
         onUpdate({ referenceInputs: checked ? [...parameters.referenceInputs, value] : parameters.referenceInputs.filter((item) => item !== value) });
     const listInput = (label: string, field: "aspectRatios" | "pixelSizes" | "qualities" | "resolutions" | "voices" | "formats", placeholder: string) => (
-        <LabeledControl label={label}>
+        <LabeledControl label={<FieldSourceLabel label={label} source={sources?.[field]} />}>
             <Input
                 key={`${field}:${parameters[field].join(",")}`}
                 defaultValue={parameters[field].join(", ")}
@@ -634,13 +785,20 @@ function GenerationCapabilityEditor({
                         允许自定义时长
                     </Checkbox>
                 ) : null}
+                {Object.keys(sources || {}).length ? (
+                    <span className="ml-auto flex flex-wrap gap-1">
+                        {Array.from(new Set(Object.values(sources || {}).filter((source): source is ModelMetadataSource => Boolean(source)))).map((source) => (
+                            <SourceTag key={source} source={source} />
+                        ))}
+                    </span>
+                ) : null}
             </div>
             {(capability === "image" || capability === "video") && (
                 <>
-                    <LabeledControl label="最大参考图片数">
+                    <LabeledControl label={<FieldSourceLabel label="最大参考图片数" source={sources?.maxReferenceImages} />}>
                         <InputNumber className="w-full" min={1} precision={0} value={parameters.maxReferenceImages} onChange={(value) => onUpdate({ maxReferenceImages: value ? Number(value) : undefined })} />
                     </LabeledControl>
-                    <LabeledControl label="最大批量数量">
+                    <LabeledControl label={<FieldSourceLabel label="最大批量数量" source={sources?.maxBatchSize} />}>
                         <InputNumber className="w-full" min={1} precision={0} value={parameters.maxBatchSize} onChange={(value) => onUpdate({ maxBatchSize: value ? Number(value) : undefined })} />
                     </LabeledControl>
                     {parameters.supportsCustomBatchSize ? (
@@ -673,7 +831,7 @@ function GenerationCapabilityEditor({
             {capability === "video" && (
                 <>
                     {listInput("视频清晰度（逗号分隔）", "resolutions", "720, 1080")}
-                    <LabeledControl label="时长模式">
+                    <LabeledControl label={<FieldSourceLabel label="时长模式" source={sources?.durationMode} />}>
                         <Select
                             className="w-full"
                             value={parameters.durationMode}
@@ -686,7 +844,7 @@ function GenerationCapabilityEditor({
                         />
                     </LabeledControl>
                     {parameters.durationMode === "discrete" ? (
-                        <LabeledControl label="可选秒数（逗号分隔）">
+                        <LabeledControl label={<FieldSourceLabel label="可选秒数（逗号分隔）" source={sources?.durationSeconds} />}>
                             <Input
                                 key={parameters.durationSeconds.join(",")}
                                 defaultValue={parameters.durationSeconds.join(", ")}
@@ -698,7 +856,7 @@ function GenerationCapabilityEditor({
                     ) : null}
                     {parameters.durationMode === "discrete" && parameters.supportsCustomDuration ? (
                         <>
-                            <LabeledControl label="自定义时长下限（秒）">
+                            <LabeledControl label={<FieldSourceLabel label="自定义时长下限（秒）" source={sources?.customDurationRange} />}>
                                 <InputNumber
                                     className="w-full"
                                     min={0.01}
@@ -706,7 +864,7 @@ function GenerationCapabilityEditor({
                                     onChange={(value) => onUpdate({ customDurationRange: { min: Number(value), max: parameters.customDurationRange?.max || Number(value) } })}
                                 />
                             </LabeledControl>
-                            <LabeledControl label="自定义时长上限（秒）">
+                            <LabeledControl label={<FieldSourceLabel label="自定义时长上限（秒）" source={sources?.customDurationRange} />}>
                                 <InputNumber
                                     className="w-full"
                                     min={0.01}
@@ -718,15 +876,15 @@ function GenerationCapabilityEditor({
                     ) : null}
                     {parameters.durationMode === "range" ? (
                         <>
-                            <LabeledControl label="最短时长（秒）">
+                            <LabeledControl label={<FieldSourceLabel label="最短时长（秒）" source={sources?.durationRange} />}>
                                 <InputNumber className="w-full" min={0.01} value={parameters.durationRange?.min} onChange={(value) => onUpdate({ durationRange: { min: Number(value), max: parameters.durationRange?.max || Number(value) } })} />
                             </LabeledControl>
-                            <LabeledControl label="最长时长（秒）">
+                            <LabeledControl label={<FieldSourceLabel label="最长时长（秒）" source={sources?.durationRange} />}>
                                 <InputNumber className="w-full" min={0.01} value={parameters.durationRange?.max} onChange={(value) => onUpdate({ durationRange: { min: parameters.durationRange?.min || Number(value), max: Number(value) } })} />
                             </LabeledControl>
                         </>
                     ) : null}
-                    <LabeledControl label="视频参考方式">
+                    <LabeledControl label={<FieldSourceLabel label="视频参考方式" source={sources?.videoReferenceModes} />}>
                         <Checkbox.Group
                             className="flex flex-wrap gap-2"
                             value={parameters.videoReferenceModes}
@@ -811,6 +969,10 @@ function cloneLogicalBinding(binding: LogicalModelBinding): LogicalModelBinding 
     return {
         ...binding,
         capabilityProfile: binding.capabilityProfile ? { ...binding.capabilityProfile } : undefined,
+        generationParameterSources: binding.generationParameterSources ? { ...binding.generationParameterSources } : undefined,
+        capabilityDrifts: binding.capabilityDrifts?.map((drift) => ({ ...drift, local: structuredClone(drift.local), upstream: structuredClone(drift.upstream) })),
+        descriptionEvidenceMissing: binding.descriptionEvidenceMissing ? [...binding.descriptionEvidenceMissing] : undefined,
+        upstreamMetadata: binding.upstreamMetadata ? structuredClone(binding.upstreamMetadata) : undefined,
         generationParameters: binding.generationParameters
             ? {
                   ...binding.generationParameters,
@@ -830,6 +992,131 @@ function cloneLogicalBinding(binding: LogicalModelBinding): LogicalModelBinding 
               }
             : undefined,
     };
+}
+
+function markParameterSources(current: LogicalModelGenerationParameterSources | undefined, patch: Partial<LogicalModelGenerationParameters>, source: ModelMetadataSource) {
+    return { ...(current || {}), ...Object.fromEntries(Object.keys(patch).map((field) => [field, source])) } as LogicalModelGenerationParameterSources;
+}
+
+function sourcesForParameters(parameters: LogicalModelGenerationParameters | undefined, source: ModelMetadataSource) {
+    return parameters ? (Object.fromEntries(Object.keys(parameters).map((field) => [field, source])) as LogicalModelGenerationParameterSources) : undefined;
+}
+
+function SourceTag({ source, evidence, evidenceMissing }: { source: ModelMetadataSource | undefined; evidence?: string; evidenceMissing?: boolean }) {
+    if (!source) return null;
+    const label = source === "upstream" ? "上游" : source === "description" ? "描述识别" : source === "preset" ? "DFLOP 预设" : source === "manual" ? "手动" : "默认";
+    const color = source === "upstream" ? "blue" : source === "description" ? "cyan" : source === "preset" ? "purple" : source === "manual" ? "gold" : "default";
+    const tag = (
+        <Tag className="m-0" color={color}>
+            {label}
+            {evidenceMissing ? " · 证据已缺失" : ""}
+        </Tag>
+    );
+    return evidence || evidenceMissing ? (
+        <Tooltip
+            title={
+                <div className="max-w-72 text-xs">
+                    来源：DFLOP description
+                    {evidence ? (
+                        <>
+                            <br />
+                            识别文本：“{evidence}”
+                        </>
+                    ) : null}
+                    {evidenceMissing ? (
+                        <>
+                            <br />
+                            本次说明未再出现该证据，已保留上次识别值。
+                        </>
+                    ) : null}
+                </div>
+            }
+        >
+            {tag}
+        </Tooltip>
+    ) : (
+        tag
+    );
+}
+
+function FieldSourceLabel({ label, source }: { label: string; source: ModelMetadataSource | undefined }) {
+    return (
+        <span className="flex flex-wrap items-center gap-1">
+            <span>{label}</span>
+            <SourceTag source={source} />
+        </span>
+    );
+}
+
+function DflopDescriptionCapabilityAudit({ binding }: { binding: LogicalModelBinding }) {
+    const snapshot = binding.upstreamMetadata?.descriptionCapabilities;
+    if (!snapshot) return null;
+    const rows = (Object.entries(snapshot.values) as Array<[DflopDescriptionCapabilityField, boolean | number | null]>).filter(([, value]) => value !== null);
+    if (!rows.length) return null;
+    const missing = new Set(snapshot.evidenceMissing || []);
+    return (
+        <div className="mb-3 rounded-md border border-cyan-200 bg-cyan-50/70 p-2.5 text-[11px] text-cyan-950 dark:border-cyan-900/70 dark:bg-cyan-950/25 dark:text-cyan-100">
+            <div className="mb-2 flex flex-wrap items-center gap-2 font-medium">
+                <span>DFLOP 能力识别</span>
+                {binding.upstreamMetadata?.metadataConflicts?.length ? <Tag color="orange">结构化信息优先 · {binding.upstreamMetadata.metadataConflicts.length} 项冲突</Tag> : null}
+            </div>
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                {rows.map(([field, value]) => (
+                    <div key={field} className="flex min-w-0 items-center gap-1.5">
+                        <span className="shrink-0 text-stone-600 dark:text-stone-300">{dflopCapabilityLabel(field)}</span>
+                        <span className="min-w-0 truncate font-medium">{typeof value === "boolean" ? (value ? "✓" : "不支持") : value}</span>
+                        <SourceTag source={snapshot.sources?.[field]} evidence={snapshot.evidence?.[field]} evidenceMissing={missing.has(field)} />
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function dflopCapabilityLabel(field: DflopDescriptionCapabilityField) {
+    return {
+        referenceImage: "参考图片",
+        maxReferenceImages: "最大参考图片数",
+        referenceVideo: "参考视频",
+        maxReferenceVideos: "最大参考视频数",
+        referenceAudio: "参考音频",
+        maxReferenceAudios: "最大参考音频数",
+        firstFrame: "首帧",
+        lastFrame: "尾帧",
+        firstLastFrame: "首尾帧",
+        textToVideo: "文生视频",
+        imageToVideo: "图生视频",
+        videoToVideo: "视频编辑",
+        generateAudio: "生成音频",
+        fps: "帧率",
+        maxReferenceVideoDuration: "单个参考视频上限（秒）",
+        maxTotalReferenceVideoDuration: "参考视频总时长上限（秒）",
+    }[field];
+}
+
+function generationFieldLabel(field: string) {
+    return (
+        (
+            {
+                referenceInputs: "参考素材",
+                maxReferenceImages: "最大参考图片数",
+                aspectRatios: "支持比例",
+                resolutions: "视频清晰度",
+                durationMode: "时长模式",
+                durationRange: "时长范围",
+                supportsCustomDuration: "允许自定义时长",
+                customDurationRange: "自定义时长范围",
+                videoReferenceModes: "视频参考方式",
+            } as Record<string, string>
+        )[field] || field
+    );
+}
+
+function metadataSummary(metadata: Record<string, unknown> | undefined) {
+    if (!metadata || !Object.keys(metadata).length) return "暂无";
+    return Object.entries(metadata)
+        .map(([key, value]) => `${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+        .join(" · ");
 }
 
 function physicalBindingKey(binding: Pick<LogicalModelBinding, "channelId" | "upstreamModel">) {

@@ -17,6 +17,7 @@ export type ChannelProtocolDefinition = {
     modelCatalogPaths: string[];
     capabilities: LogicalModelCapability[];
     operations: Partial<Record<LogicalModelCapability, ProtocolOperation>>;
+    modelOperationOverrides?: Readonly<Record<string, ProtocolOperation>>;
     builtInModels?: ReadonlyArray<{ id: string; label: string; capability: LogicalModelCapability; operation?: ProtocolOperation }>;
     strict?: boolean;
     advanced?: boolean;
@@ -45,6 +46,49 @@ const openAiOperations: ChannelProtocolDefinition["operations"] = {
         supportsReferenceImage: true,
     },
     audio: { capability: "audio", createPath: "/audio/speech", requestTemplate: '{"model":"{{model}}","input":"{{prompt}}","voice":"alloy","response_format":"mp3"}', resultField: "binary" },
+};
+
+const dflopVoiceCloneOperation: ProtocolOperation = {
+    capability: "audio",
+    createPath: "/audio/voices",
+    queryPath: "/audio/voices/:task_id",
+    catalogPath: "/audio/voices",
+    deletePath: "/audio/voices/:voice_id",
+    requestTemplate: '{"name":"{{name}}","audio_url":"{{audio_url}}","async":true}',
+    resultField: "id",
+    statusField: "status",
+};
+
+const dflopOperations: ChannelProtocolDefinition["operations"] = {
+    text: openAiOperations.text,
+    image: {
+        capability: "image",
+        createPath: "/images/generations",
+        editPath: "/images/edits",
+        requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","size":"{{size}}","n":"{{n}}"}',
+        resultField: "data[].url / data[].b64_json",
+        referenceRule: "参考图使用 /images/edits multipart/form-data；完整保留 data 数组中的结果。",
+        supportsReferenceImage: true,
+    },
+    video: {
+        capability: "video",
+        createPath: "/videos/generations",
+        imageToVideoPath: "/videos/generations",
+        queryPath: "/videos/generations/:task_id",
+        requestTemplate: '{"model":"{{model}}","content":"{{content}}","duration":"{{duration}}","ratio":"{{ratio}}","resolution":"{{resolution}}"}',
+        resultField: "content.video_url / video_url",
+        statusField: "status",
+        referenceRule: "首帧图片使用无 role 的 image_url；普通参考图使用 reference_image。",
+        supportsReferenceImage: true,
+    },
+    audio: {
+        capability: "audio",
+        createPath: "/audio/speech",
+        queryPath: "/audio/speech/:task_id",
+        requestTemplate: '{"model":"{{model}}","input":"{{input}}","voice":"{{voice}}","speed":"{{speed}}","async":true}',
+        resultField: "audio_url",
+        statusField: "status",
+    },
 };
 
 const geminiVideoOperation: ProtocolOperation = {
@@ -129,6 +173,19 @@ export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] =
         modelCatalogPaths: ["/v1/models"],
         capabilities: ["text", "image", "video", "audio"],
         operations: openAiOperations,
+        strict: true,
+    },
+    {
+        id: "dflop",
+        label: "DFLOP",
+        description: "DFLOP 官方接口，支持文本、图片、视频、语音合成与声音克隆。",
+        apiFormat: "openai",
+        authMode: "bearer",
+        defaultBaseUrl: "https://api.dflop.top/v1",
+        modelCatalogPaths: ["/v1/models"],
+        capabilities: ["text", "image", "video", "audio"],
+        operations: dflopOperations,
+        modelOperationOverrides: { "voice-clone-pro": dflopVoiceCloneOperation },
         strict: true,
     },
     {
@@ -317,7 +374,8 @@ export function protocolCatalogCapability(protocol: SystemChannelProtocol): Logi
 export function protocolModelConfig(protocol: SystemChannelProtocol, capability: LogicalModelCapability, model?: string): SystemChannelModelConfig | undefined {
     const definition = channelProtocolDefinition(protocol);
     const builtIn = model ? definition.builtInModels?.find((item) => normalizeModelId(item.id) === normalizeModelId(model)) : undefined;
-    const operation = builtIn?.capability === capability && builtIn.operation ? builtIn.operation : definition.operations[capability];
+    const override = model ? definition.modelOperationOverrides?.[normalizeModelId(model)] : undefined;
+    const operation = override?.capability === capability ? override : builtIn?.capability === capability && builtIn.operation ? builtIn.operation : definition.operations[capability];
     if (!operation) return undefined;
     return { ...operation, capability, source: "manual", protocol, apiFormat: definition.apiFormat };
 }
@@ -354,8 +412,8 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
     const advanced = channel.advancedConfig || emptyAdvancedConfig();
     const builtInModels = definition.builtInModels?.map((item) => item.id) || [];
     const models = builtInModels.length ? builtInModels : channel.models;
-    const modelConfigs = { ...(advanced.modelConfigs || {}) };
-    const modelCapabilities = { ...(advanced.modelCapabilities || {}) };
+    const modelConfigs = { ...(protocol === "dflop" && advanced.protocol !== "dflop" ? {} : advanced.modelConfigs || {}) };
+    const modelCapabilities = { ...(protocol === "dflop" && advanced.protocol !== "dflop" ? {} : advanced.modelCapabilities || {}) };
     const operationConfigs = definition.strict
         ? Object.fromEntries(definition.capabilities.flatMap((capability) => (protocolModelConfig(protocol, capability) ? [[capability, protocolModelConfig(protocol, capability)!] as const] : [])))
         : protocol === "custom"
@@ -363,6 +421,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
           : {};
     for (const model of models) {
         const key = normalizeModelId(model);
+        if (protocol === "dflop" && !modelCapabilities[key] && !modelConfigs[key]?.capability) continue;
         const builtIn = definition.builtInModels?.find((item) => normalizeModelId(item.id) === key);
         const capability = builtIn?.capability || protocolCatalogCapability(protocol) || modelConfigs[key]?.capability || modelCapabilities[key] || inferModelCapability(model);
         const strict = protocolModelConfig(protocol, capability, model);
@@ -373,7 +432,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
     const primaryAdvanced = primary ? Object.fromEntries(Object.entries(primary).filter(([key]) => key !== "capability")) : {};
     return {
         ...channel,
-        baseUrl: protocol === "yumeng" ? normalizeYumengModelCenterBaseUrl(channel.baseUrl) : channel.baseUrl.trim() || definition.defaultBaseUrl || "",
+        baseUrl: protocol === "yumeng" ? normalizeYumengModelCenterBaseUrl(channel.baseUrl) : protocol === "dflop" ? normalizeDflopBaseUrl(channel.baseUrl) : channel.baseUrl.trim() || definition.defaultBaseUrl || "",
         apiFormat: definition.apiFormat,
         models,
         advancedConfig: {
@@ -429,6 +488,7 @@ export function channelProtocolValidationErrors(channel: SystemModelChannel) {
     if (advanced.authMode === "custom-header" && !isSafeAuthHeaderName(advanced.authHeader)) errors.push(`${channel.name || "渠道"} 的自定义鉴权请求头名称无效`);
     for (const model of channel.models) {
         const key = normalizeModelId(model);
+        if (advanced.protocol === "dflop" && advanced.modelDiscovery?.[key]?.routable === false) continue;
         const config = resolveChannelModelConfig(advanced, model);
         const protocol = config?.protocol || advanced.protocol;
         const definition = channelProtocolDefinition(protocol);
@@ -439,6 +499,10 @@ export function channelProtocolValidationErrors(channel: SystemModelChannel) {
             continue;
         }
         if (!definition.strict) continue;
+        if (protocol === "dflop" && !advanced.modelCapabilities?.[key]) {
+            errors.push(`${model} 缺少 DFLOP 模型能力，请手动指定`);
+            continue;
+        }
         const capability = config?.capability || advanced.modelCapabilities?.[key] || inferModelCapability(model);
         const expected = protocolModelConfig(protocol, capability, model);
         if (!expected) {
@@ -456,6 +520,8 @@ export function channelProtocolValidationErrors(channel: SystemModelChannel) {
         if ((config.editPath || "") !== (expected.editPath || "")) errors.push(`${model} 的图生图路径必须为 ${expected.editPath || "空"}`);
         if ((config.imageToVideoPath || "") !== (expected.imageToVideoPath || "")) errors.push(`${model} 的图生视频路径必须为 ${expected.imageToVideoPath || "空"}`);
         if ((config.queryPath || "") !== (expected.queryPath || "")) errors.push(`${model} 的查询路径必须为 ${expected.queryPath || "空"}`);
+        if ((config.catalogPath || "") !== (expected.catalogPath || "")) errors.push(`${model} 的目录路径必须为 ${expected.catalogPath || "空"}`);
+        if ((config.deletePath || "") !== (expected.deletePath || "")) errors.push(`${model} 的删除路径必须为 ${expected.deletePath || "空"}`);
         if ((config.requestTemplate || "") !== (expected.requestTemplate || "")) errors.push(`${model} 的请求参数必须使用 ${definition.label} 协议预设`);
         if ((config.resultField || "") !== (expected.resultField || "")) errors.push(`${model} 的结果字段必须使用 ${definition.label} 协议预设`);
         if ((config.statusField || "") !== (expected.statusField || "")) errors.push(`${model} 的状态字段必须使用 ${definition.label} 协议预设`);
@@ -464,6 +530,11 @@ export function channelProtocolValidationErrors(channel: SystemModelChannel) {
         if (Boolean(config.supportsReferenceAudio) !== Boolean(expected.supportsReferenceAudio)) errors.push(`${model} 的参考音频能力必须使用 ${definition.label} 协议预设`);
     }
     return errors;
+}
+
+export function normalizeDflopBaseUrl(value: string) {
+    const base = value.trim().replace(/\/+$/, "") || "https://api.dflop.top";
+    return /\/v1$/i.test(base) ? base : `${base}/v1`;
 }
 
 function isSafeAuthHeaderName(value: string | undefined) {

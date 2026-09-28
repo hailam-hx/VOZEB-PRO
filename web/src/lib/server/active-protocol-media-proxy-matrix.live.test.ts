@@ -73,7 +73,7 @@ describe("active protocols through persisted admin settings and the system proxy
         const admin = await createFirstAdmin({ username: "proxy-user", password: "password123", installToken: INSTALL_TOKEN });
         proxyUserId = admin.id;
         await creditWalletBalance({ userId: proxyUserId, businessId: "protocol-matrix-opening-balance", amount: "100", description: "协议矩阵测试初始余额" });
-        fixture = createProtocolFixtureServer();
+        fixture = createProtocolFixtureServer({ dflop: true });
         await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
         const address = fixture.server.address();
         if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
@@ -265,6 +265,7 @@ function protocolAdvancedConfig(protocol: SystemChannelProtocol, operation: Syst
         ...operation,
         protocol,
         modelConfigs: { [normalizeModel(model)]: operation },
+        ...(protocol === "dflop" ? { modelCapabilities: { [normalizeModel(model)]: operation.capability } } : {}),
     };
 }
 

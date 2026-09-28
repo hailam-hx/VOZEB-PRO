@@ -7,7 +7,7 @@ import { createAudioTaskUpstreamStep, markAudioTaskFailed, persistAudioTaskResul
 import { getAudioTask, updateAudioTask, type AudioTask } from "@/lib/server/audio-task-store";
 import { createVoiceCloneUpstreamStep, markVoiceCloneFailed, queryVoiceCloneUpstreamStep } from "@/lib/server/voice-clone-runtime";
 import { getVoiceCloneTask } from "@/lib/server/voice-profile-store";
-import { createImageTaskUpstreamStep, markImageTaskFailed, persistImageTaskResult, queryCancelledImageTaskUpstreamStep, queryImageTaskUpstreamStep } from "@/lib/server/image-task-runtime";
+import { createImageTaskUpstreamStep, markImageTaskFailed, markImageTaskPersistenceFailed, persistImageTaskResult, queryCancelledImageTaskUpstreamStep, queryImageTaskUpstreamStep } from "@/lib/server/image-task-runtime";
 import { getImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
 import { closeTextTaskAttempt, getTextTask, updateTextTask, type TextTask } from "@/lib/server/text-task-store";
 import { markTextTaskFailed, queryCancelledTextTaskUpstreamStep, runTextTaskStep } from "@/lib/server/text-task-runtime";
@@ -24,11 +24,11 @@ import { refundAudioTask } from "@/lib/server/audio-task-refund";
 import { refundImageTask } from "@/lib/server/image-task-refund";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
-import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
+import { imagePersistenceFailure, toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { getAuthSettings, getFreshAuthSettings } from "@/lib/auth/store";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { toSystemGenerationChannel } from "@/lib/server/generation-channel";
-import { resolveAudioGenerationCandidates, resolveImageGenerationCandidates } from "@/lib/server/capability-constraints";
+import { resolveAudioGenerationCandidates, resolveBindingImageGenerationCandidates } from "@/lib/server/capability-constraints";
 import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
 import { finalizeUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
 import { textTaskBillingBusinessId } from "./generation-usage-context";
@@ -552,7 +552,8 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
             : await createImageTaskUpstreamStep(currentTask, origin, publicOrigin, cookie, cookie ? "" : currentTask.userId);
         const now = Date.now();
         if (step.state === "failed") {
-            await markImageTaskFailed(task, step.error);
+            if (step.failure) await markImageTaskFailed(task, step.error, step.failure);
+            else await markImageTaskFailed(task, step.error);
             await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
             return "failed";
         }
@@ -618,6 +619,16 @@ async function persistImageLease(task: ImageTask, lease: GenerationTaskLease, wo
         return "completed";
     } catch (error) {
         const count = errorCount(lease.lastUpstreamStatus) + 1;
+        const now = Date.now();
+        const persistenceStartedAt = lease.submittedAt || task.updatedAt || task.createdAt;
+        if (now - persistenceStartedAt >= resolveModelRequestTimeoutMs(task.config, "image")) {
+            const raw = safeFailureReason(error, "图片结果保存超时");
+            const failure = imagePersistenceFailure(raw);
+            await markImageTaskPersistenceFailed(task, failure);
+            await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: "persist_failed" });
+            console.warn("Image result persistence exhausted", { taskId: task.id, error: safeError(error) });
+            return "failed";
+        }
         await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "persisting", nextPollAt: generationTaskNextPollAt({ consecutiveErrors: count }), lastUpstreamStatus: `persist_error:${count}` });
         console.warn("Image result persistence deferred", { taskId: task.id, error: safeError(error) });
         return "deferred";
@@ -772,8 +783,18 @@ async function refreshImageTaskCandidates(task: ImageTask): Promise<{ task: Imag
     const logicalModel = task.config.logicalModel?.trim();
     if (!logicalModel) return { error: "没有兼容当前生成参数的图片渠道：任务缺少稳定逻辑模型" };
     const settings = await getFreshAuthSettings();
-    const routed = resolveLogicalModelCandidates(settings, "image", logicalModel).map((candidate) => toSystemGenerationChannel(candidate));
-    const resolved = resolveImageGenerationCandidates(routed, task.config as Record<string, unknown>, settings.generationDefaults, task.references.length, Boolean(task.mask));
+    const routed = resolveLogicalModelCandidates(settings, "image", logicalModel);
+    const intent = task.imageQualityIntent;
+    const requestConfig = intent
+        ? {
+              ...(intent.value ? { quality: intent.value } : {}),
+              ...(intent.logicalProfileRevision ? { qualityProfileRevision: intent.logicalProfileRevision } : {}),
+              ...(intent.optionRevision ? { qualityOptionRevision: intent.optionRevision } : {}),
+              ...(intent.requestedSize ? { size: intent.requestedSize } : intent.requestedAspectRatio ? { size: intent.requestedAspectRatio } : {}),
+              ...(task.config.count ? { count: task.config.count } : {}),
+          }
+        : (task.config as Record<string, unknown>);
+    const resolved = resolveBindingImageGenerationCandidates(routed, requestConfig, settings.generationDefaults, task.references.length, Boolean(task.mask), task.prompt, (candidate) => toSystemGenerationChannel(candidate));
     const candidates = resolved.candidates.filter((config) => {
         try {
             assertReferenceCapabilities(config.advancedConfig, [...task.references.map(() => ({ type: "image" })), ...(task.mask ? [{ type: "image" }] : [])]);
@@ -877,7 +898,7 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
                 lastPollAt: now,
                 lastUpstreamStatus: step.status,
                 queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
-                resultPayload: { url: step.resultUrl },
+                resultPayload: { url: step.resultUrl, ...(step.providerResponse === undefined ? {} : { providerResponse: step.providerResponse }) },
             });
             return "result_ready";
         }
@@ -914,7 +935,7 @@ async function persistVideoLease(task: VideoTask, lease: GenerationTaskLease, wo
     }
     await scheduleGenerationTask("video", task.id, { executionPhase: "persisting", nextPollAt: lease.nextPollAt });
     try {
-        const completed = await persistVideoTaskResult(task, resultUrl, origin, cookie, cookie ? "" : task.userId);
+        const completed = await persistVideoTaskResult(task, resultUrl, origin, cookie, cookie ? "" : task.userId, lease.resultPayload?.providerResponse);
         if (!completed || completed.status !== "success") throw new Error("视频结果保存后未进入成功状态");
         await releaseGenerationTaskLease("video", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
         return "completed";

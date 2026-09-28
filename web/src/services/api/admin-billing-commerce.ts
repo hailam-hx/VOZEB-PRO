@@ -2,6 +2,8 @@ import type { AdminBillingSummary, AdminProviderUsageAttempt, AdminRecoveryItem,
 import type { LogicalModel } from "@/lib/auth/store";
 import type { ProviderCostUnit } from "@/lib/billing/money";
 import type { PricingRateCardInputV1 } from "@/lib/billing/pricing";
+import type { ModelEstimatorCoverage } from "@/lib/billing/creative-sale-estimator";
+import type { SystemPricingPolicy } from "@/lib/billing/pricing-policy";
 import type { TopUpOrder, TopUpOrderStatus, TopUpPreset } from "./billing";
 
 type PageResult<T, K extends string> = Record<K, T[]> & { total: number; page: number; pageSize: number };
@@ -60,11 +62,38 @@ export function saveAdminTopUpConfig(input: AdminTopUpConfig) {
 }
 
 export function getAdminModelPricing() {
-    return requestCommerce<{ models: LogicalModel[] }>("/api/admin/billing/model-pricing");
+    return requestCommerce<{ models: LogicalModel[]; pricingPolicy: SystemPricingPolicy; estimatorCoverage: ModelEstimatorCoverage }>("/api/admin/billing/model-pricing");
 }
 
 export function saveAdminModelPricing(input: { modelId: string; saleRateCard: PricingRateCardInputV1 | null; bindings: Array<{ bindingId: string; costRateCard: PricingRateCardInputV1 | null; providerCostUnit: ProviderCostUnit | null }> }) {
     return requestCommerce<{ model: LogicalModel }>("/api/admin/billing/model-pricing", jsonRequest("PATCH", input));
+}
+
+export function updateAdminProviderPricingDimension(input: {
+    modelId: string;
+    dimensionCommand: { action: "set_manual"; bindingId: string; dimensionId: string; effectiveValue: string } | { action: "restore_upstream"; bindingId: string; dimensionId: string };
+}) {
+    return requestCommerce<{ model: LogicalModel }>("/api/admin/billing/model-pricing", jsonRequest("PATCH", input));
+}
+
+export function applyAdminSuggestedSalePrices(input: { modelIds: string[]; suggestedRevisions: Record<string, string | undefined>; pricingPolicyVersion: string }) {
+    return requestCommerce<{
+        applied: Array<{ modelId: string; oldSaleRateCardRevision?: string; newSaleRateCardRevision: string }>;
+        skipped: Array<{ modelId: string; code: string; reason: string }>;
+        batchOperationId: string;
+        models: LogicalModel[];
+    }>("/api/admin/billing/model-pricing", jsonRequest("POST", input));
+}
+
+export function probeAdminDflopModelCapability(input: { modelId: string; bindingId: string }) {
+    return requestCommerce<{ model: LogicalModel; probe: import("@/lib/billing/provider-capability-probe").CapabilityProbeResult }>("/api/admin/billing/model-pricing/probe", jsonRequest("POST", input));
+}
+
+export async function saveAdminPricingPolicy(input: Pick<SystemPricingPolicy, "cnyToUsd" | "hotxUsdPerCredit" | "markupMultiplier" | "minimumMarginRate" | "costBasis" | "autoApplySalePrice">) {
+    const response = await fetch("/api/admin/settings", jsonRequest("PATCH", { pricingPolicy: input }));
+    const payload = (await response.json().catch(() => null)) as { settings?: { pricingPolicy?: SystemPricingPolicy }; error?: string } | null;
+    if (!response.ok || !payload?.settings?.pricingPolicy) throw new Error(payload?.error || "保存定价策略失败");
+    return payload.settings.pricingPolicy;
 }
 
 export function getAdminUsageAudit(input: { page?: number; pageSize?: number; recoveryPage?: number; recoveryPageSize?: number } = {}) {

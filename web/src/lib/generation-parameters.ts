@@ -102,12 +102,14 @@ export function normalizeGenerationParameters(value: unknown): LogicalModelGener
         supportsClonedVoices: input.supportsClonedVoices === true || undefined,
         speedAppliesTo: input.speedAppliesTo === "all" || input.speedAppliesTo === "cloned" ? input.speedAppliesTo : undefined,
         referenceInputs: normalizeEnumList(input.referenceInputs, ["image", "video", "audio"]) || [],
+        minReferenceImages: positiveInteger(input.minReferenceImages),
         maxReferenceImages: positiveInteger(input.maxReferenceImages),
         aspectRatios: normalizeAspectRatios(input.aspectRatios) || [],
         pixelSizes: normalizePixelSizes(input.pixelSizes) || [],
         supportsCustomSize: input.supportsCustomSize === true,
+        supportsAutoSize: input.supportsAutoSize === false ? false : undefined,
         qualities: normalizeStringList(input.qualities) || [],
-        resolutions: normalizeStringList(input.resolutions) || [],
+        resolutions: normalizeVideoResolutions(input.resolutions) || [],
         durationMode,
         durationSeconds: durationMode === "discrete" ? discreteDurations : [],
         durationRange: durationMode === "range" ? durationRange : undefined,
@@ -147,11 +149,13 @@ export function generationParametersCompatible(parameters: LogicalModelGeneratio
     const profile = normalizeGenerationParameters(parameters);
     if (!profile) return hasConcreteRequest(request) ? { compatible: false, field: "generationParameters" } : { compatible: true };
     if (request.referenceInputs?.some((input) => !profile.referenceInputs?.includes(input))) return incompatible("referenceInputs");
+    const referenceCount = request.referenceCount || 0;
+    if (profile.minReferenceImages && referenceCount < profile.minReferenceImages) return incompatible("referenceCount");
     if (request.referenceCount !== undefined && (!profile.maxReferenceImages || !positiveInteger(request.referenceCount) || request.referenceCount > profile.maxReferenceImages)) return incompatible("referenceCount");
     if (request.aspectRatio !== undefined && !profile.aspectRatios?.includes(request.aspectRatio.trim())) return incompatible("aspectRatio");
     if (request.pixelSize !== undefined && !pixelSizeCompatible(profile, request.pixelSize)) return incompatible("pixelSize");
     if (request.quality !== undefined && !profile.qualities?.includes(request.quality.trim())) return incompatible("quality");
-    if (request.resolution !== undefined && !profile.resolutions?.includes(request.resolution.trim())) return incompatible("resolution");
+    if (request.resolution !== undefined && !profile.resolutions?.includes(normalizeVideoResolution(request.resolution))) return incompatible("resolution");
     if (request.durationSeconds !== undefined && !durationCompatible(profile, request.durationSeconds)) return incompatible("durationSeconds");
     if (request.batchSize !== undefined && !batchSizeCompatible(profile, request.batchSize)) return incompatible("batchSize");
     if (request.videoReferenceMode !== undefined && !profile.videoReferenceModes?.includes(request.videoReferenceMode)) return incompatible("videoReferenceMode");
@@ -171,10 +175,12 @@ function unionProfiles(profiles: LogicalModelGenerationParameters[]) {
         supportsClonedVoices: profiles.some((profile) => profile.supportsClonedVoices) || undefined,
         speedAppliesTo: unionSpeedAppliesTo(profiles),
         referenceInputs: unionList(profiles, "referenceInputs"),
+        minReferenceImages: minimum(profiles, "minReferenceImages"),
         maxReferenceImages: maximum(profiles, "maxReferenceImages"),
         aspectRatios: unionList(profiles, "aspectRatios"),
         pixelSizes: unionList(profiles, "pixelSizes"),
         supportsCustomSize: profiles.some((profile) => profile.supportsCustomSize),
+        supportsAutoSize: profiles.some((profile) => profile.supportsAutoSize !== false) ? undefined : false,
         qualities: unionList(profiles, "qualities"),
         resolutions: unionList(profiles, "resolutions"),
         ...duration,
@@ -197,10 +203,12 @@ function intersectProfiles(profiles: LogicalModelGenerationParameters[]) {
         supportsClonedVoices: profiles.every((profile) => profile.supportsClonedVoices) || undefined,
         speedAppliesTo: intersectSpeedAppliesTo(profiles),
         referenceInputs: intersectList(profiles, "referenceInputs"),
+        minReferenceImages: maximum(profiles, "minReferenceImages"),
         maxReferenceImages: minimum(profiles, "maxReferenceImages"),
         aspectRatios: intersectList(profiles, "aspectRatios"),
         pixelSizes: intersectList(profiles, "pixelSizes"),
         supportsCustomSize: profiles.every((profile) => profile.supportsCustomSize),
+        supportsAutoSize: profiles.every((profile) => profile.supportsAutoSize !== false) ? undefined : false,
         qualities: intersectList(profiles, "qualities"),
         resolutions: intersectList(profiles, "resolutions"),
         ...duration,
@@ -365,6 +373,18 @@ function uniqueNumbers(values: number[]) {
     return Array.from(new Set(values));
 }
 
+export function normalizeVideoResolution(value: unknown) {
+    const text = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+    const pixels = text.match(/^(\d+)p$/i);
+    if (pixels) return pixels[1];
+    return /^\d+k$/i.test(text) ? text.toLowerCase() : text;
+}
+
+function normalizeVideoResolutions(value: unknown) {
+    const resolutions = normalizeStringList(value);
+    return resolutions ? uniqueStrings(resolutions.map(normalizeVideoResolution).filter(Boolean)) : undefined;
+}
+
 function unionList<K extends "referenceInputs" | "aspectRatios" | "pixelSizes" | "qualities" | "resolutions" | "videoReferenceModes" | "voices" | "formats">(profiles: LogicalModelGenerationParameters[], key: K) {
     return uniqueStrings(profiles.flatMap((profile) => profile[key] || []) as string[]);
 }
@@ -374,12 +394,12 @@ function intersectList<K extends "referenceInputs" | "aspectRatios" | "pixelSize
     return values.filter((value) => profiles.every((profile) => ((profile[key] || []) as string[]).includes(value)));
 }
 
-function maximum<K extends "maxReferenceImages" | "maxBatchSize" | "maxCharacters">(profiles: LogicalModelGenerationParameters[], key: K) {
+function maximum<K extends "minReferenceImages" | "maxReferenceImages" | "maxBatchSize" | "maxCharacters">(profiles: LogicalModelGenerationParameters[], key: K) {
     const values = profiles.map((profile) => profile[key]).filter((value): value is number => value !== undefined);
     return values.length ? Math.max(...values) : undefined;
 }
 
-function minimum<K extends "maxReferenceImages" | "maxBatchSize" | "maxCharacters">(profiles: LogicalModelGenerationParameters[], key: K) {
+function minimum<K extends "minReferenceImages" | "maxReferenceImages" | "maxBatchSize" | "maxCharacters">(profiles: LogicalModelGenerationParameters[], key: K) {
     const values = profiles.map((profile) => profile[key]);
     return values.every((value): value is number => value !== undefined) ? Math.min(...values) : undefined;
 }

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     withGenerationConcurrencyLimit: vi.fn(),
     getStoredGenerationTaskByRequest: vi.fn(),
     transitionAudioTask: vi.fn(),
+    getAgentRun: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -48,6 +49,7 @@ vi.mock("@/lib/server/audio-task-store", () => ({
     transitionAudioTask: mocks.transitionAudioTask,
     updateAudioTask: vi.fn(),
 }));
+vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 
 import { POST } from "./route";
@@ -58,6 +60,7 @@ describe("audio task model routing", () => {
         mocks.checkGenerationRateLimit.mockResolvedValue({ allowed: true, remaining: 19, resetAt: Date.now() + 60_000 });
         mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
         mocks.getStoredGenerationTaskByRequest.mockResolvedValue(null);
+        mocks.getAgentRun.mockResolvedValue(undefined);
         mocks.transitionAudioTask.mockImplementation(async (task, _statuses, patch) => ({ ...task, ...patch }));
     });
 
@@ -159,6 +162,30 @@ describe("audio task model routing", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.createAudioTask).toHaveBeenCalledWith(expect.objectContaining({ prompt }));
+    });
+    it("persists exact manual speech text when enhancement is off and keeps Smart speech behavior", async () => {
+        mocks.getAuthSettings.mockResolvedValue(audioSettings([generationParameters({ voices: ["nova"] }), generationParameters({ voices: ["nova"] })]));
+        mocks.createAudioTask.mockImplementation(async (input) => ({ ...input, id: "audio-task", status: "pending", createdAt: Date.now(), updatedAt: Date.now() }));
+        const originalPrompt = "  你好，请慢慢说。  ";
+        mocks.getAgentRun.mockResolvedValue({ id: "run-one", userId: "user", prompt: originalPrompt.trim(), originalPrompt, requestedModelIds: ["audio"], manualPromptEnhancementEnabled: false });
+
+        const manual = await POST(audioRequest({ model: "audio", voiceSelection: { type: "preset", voiceId: "nova" }, format: "auto" }, originalPrompt.trim(), { runId: "run-one" }));
+        expect(manual.status).toBe(200);
+        expect(mocks.createAudioTask).toHaveBeenLastCalledWith(
+            expect.objectContaining({ prompt: originalPrompt, config: expect.objectContaining({ promptEnhancementDisabled: true, promptAudit: expect.objectContaining({ originalPrompt, manualPromptEnhancementEnabled: false }) }) }),
+        );
+
+        mocks.getAgentRun.mockResolvedValue({ id: "run-one", userId: "user", prompt: originalPrompt.trim(), originalPrompt, requestedModelIds: ["audio"], manualPromptEnhancementEnabled: true });
+        const enabled = await POST(audioRequest({ model: "audio", voiceSelection: { type: "preset", voiceId: "nova" }, format: "auto" }, originalPrompt, { runId: "run-one" }));
+        expect(enabled.status).toBe(200);
+        expect(mocks.createAudioTask).toHaveBeenLastCalledWith(
+            expect.objectContaining({ prompt: originalPrompt.trim(), config: expect.objectContaining({ promptEnhancementDisabled: false, promptAudit: expect.objectContaining({ manualPromptEnhancementEnabled: true }) }) }),
+        );
+
+        mocks.getAgentRun.mockResolvedValue({ id: "run-one", userId: "user", prompt: originalPrompt.trim(), originalPrompt, requestedModelIds: [], manualPromptEnhancementEnabled: false });
+        const smart = await POST(audioRequest({ model: "audio", voiceSelection: { type: "preset", voiceId: "nova" }, format: "auto" }, "规划后的朗读文本", { runId: "run-one" }));
+        expect(smart.status).toBe(200);
+        expect(mocks.createAudioTask).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: "规划后的朗读文本", config: expect.objectContaining({ promptEnhancementDisabled: false }) }));
     });
 
     it("enforces the existing audio generation rate limit before task creation", async () => {

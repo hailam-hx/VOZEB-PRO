@@ -12,6 +12,18 @@ const textRateCard: PricingRateCardV1 = {
 };
 
 describe("pricing", () => {
+    it("prices only components belonging to the persisted operation scope", () => {
+        const rateCard: PricingRateCardV1 = {
+            version: 1,
+            components: [
+                { id: "text", dimension: "inputTokens", unitPrice: "1", operationScope: "text_generation" },
+                { id: "image", dimension: "count", unitPrice: "10", operationScope: "standalone_image_generation" },
+            ],
+        };
+
+        expect(calculateNormalizedUsagePrice({ rateCard, usage: normalizeBillableUsage({ capability: "text", operationScope: "text_generation", source: "actual", inputTokens: 2, count: 3 }) })).toBe("2");
+        expect(calculateNormalizedUsagePrice({ rateCard, usage: normalizeBillableUsage({ capability: "image", operationScope: "standalone_image_generation", source: "actual", inputTokens: 2, count: 3 }) })).toBe("30");
+    });
     it("reserves text from measured input and the requested maximum output", () => {
         const reserve = calculatePricingReserve({
             rateCard: textRateCard,

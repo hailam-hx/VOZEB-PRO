@@ -7,6 +7,7 @@ import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { scheduleGenerationTask, type GenerationTaskExecutionPhase } from "@/lib/server/generation-task-scheduler";
 import type { GenerationTaskType } from "@/lib/server/generation-task-store";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { VIDEO_VALIDATION_ITEM_HEADER } from "@/lib/video-validation";
 
 export type CancellableGenerationTaskType = Extract<GenerationTaskType, "text" | "image" | "video" | "audio">;
 
@@ -53,13 +54,19 @@ export function scheduleCancelledGenerationTask(target: GenerationCancellationTa
     return scheduleGenerationTask(target.type, target.taskId, cancellationExecutionPatch(target), { cancellation: true });
 }
 
-export async function requestUpstreamGenerationCancellation(target: GenerationCancellationTarget, origin: string, cookie = "", workerUserId = ""): Promise<UpstreamCancellationResult> {
+export async function requestUpstreamGenerationCancellation(
+    target: GenerationCancellationTarget,
+    origin: string,
+    cookie = "",
+    workerUserId = "",
+    execution?: { mode?: "generation" | "validation"; validationItemId?: string },
+): Promise<UpstreamCancellationResult> {
     const upstreamTaskId = cancellableUpstreamTaskId(target.upstreamTaskId);
     if (!upstreamTaskId) return "not_submitted";
     const attempt = cancellationAttempt(target, upstreamTaskId);
     if (!attempt) return "unsupported";
     try {
-        const response = await cancellationFetch(target, origin, cookie, workerUserId, attempt.path, attempt.method);
+        const response = await cancellationFetch(target, origin, cookie, workerUserId, attempt.path, attempt.method, execution);
         await response.body?.cancel().catch(() => undefined);
         if (response.ok) return "accepted";
         return [404, 405, 501].includes(response.status) ? "unsupported" : "deferred";
@@ -77,14 +84,15 @@ function cancellationAttempt(target: GenerationCancellationTarget, upstreamTaskI
     };
 }
 
-async function cancellationFetch(target: GenerationCancellationTarget, origin: string, cookie: string, workerUserId: string, path: string, method: "POST" | "DELETE") {
+async function cancellationFetch(target: GenerationCancellationTarget, origin: string, cookie: string, workerUserId: string, path: string, method: "POST" | "DELETE", execution?: { mode?: "generation" | "validation"; validationItemId?: string }) {
     const internal = isInternalApiBaseUrl(target.config.baseUrl);
     const url = `${internal ? `${origin}${target.config.baseUrl}` : target.config.baseUrl}`.replace(/\/+$/, "") + (path.startsWith("/") ? path : `/${path}`);
     const headers = new Headers();
     if (internal) {
         if (workerUserId) Object.entries(maintenanceWorkerHeaders(workerUserId)).forEach(([key, value]) => headers.set(key, value));
         else if (cookie) headers.set("cookie", cookie);
-        Object.entries(systemAiBillingHeaders(target.config.logicalModel || target.config.model, undefined, target.config.model)).forEach(([key, value]) => headers.set(key, value));
+        if (execution?.mode === "validation" && execution.validationItemId) headers.set(VIDEO_VALIDATION_ITEM_HEADER, execution.validationItemId);
+        if (execution?.mode !== "validation") Object.entries(systemAiBillingHeaders(target.config.logicalModel || target.config.model, undefined, target.config.model)).forEach(([key, value]) => headers.set(key, value));
         return fetchInternalApi(url, { method, headers, cache: "no-store", signal: AbortSignal.timeout(10_000) });
     }
     Object.entries(protocolAuthHeaders(target.config.apiKey, target.config.advancedConfig, target.config.apiFormat)).forEach(([key, value]) => headers.set(key, value));

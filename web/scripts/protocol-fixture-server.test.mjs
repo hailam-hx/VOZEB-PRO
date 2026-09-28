@@ -25,6 +25,52 @@ afterEach(async () => {
 });
 
 describe("protocol fixture server", () => {
+    it("models DFLOP callable metadata, paid errors, and idempotent video replay", async () => {
+        await new Promise((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
+        fixture = createProtocolFixtureServer({ dflop: true });
+        await new Promise((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        origin = `http://127.0.0.1:${address.port}`;
+        const scoped = await fetch(`${origin}/v1/models`, { headers: { authorization: "Bearer fixture-key" } }).then((response) => response.json());
+        const publicCatalog = await fetch(`${origin}/api/v1/models/public`).then((response) => response.json());
+        const currency = await fetch(`${origin}/api/v1/config/currency`).then((response) => response.json());
+        expect(scoped.data).toHaveLength(7);
+        expect(publicCatalog.models.find((model) => model.id === "placeholder")).toMatchObject({ callable: false });
+        expect(publicCatalog.models.find((model) => model.id === "mock-video")).toMatchObject({ price_per_video_second: "224.532", video_price_tiers: { "720p": "90.72" } });
+        expect(currency).toMatchObject({ unit: "points", points_per_cny: 60 });
+
+        const stream = await fetch(`${origin}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: "Bearer fixture-key" },
+            body: JSON.stringify({ model: "mock-text", stream: true, messages: [{ role: "user", content: "fixture" }] }),
+        });
+        expect(stream.headers.get("content-type")).toContain("text/event-stream");
+        expect(await stream.text()).toContain("data: [DONE]");
+
+        for (const status of [402, 429, 503]) {
+            const rejected = await fetch(`${origin}/v1/videos/generations`, {
+                method: "POST",
+                headers: { "content-type": "application/json", "x-fixture-status": String(status) },
+                body: JSON.stringify({ model: "mock-video", content: [{ type: "text", text: "fixture" }] }),
+            });
+            expect(rejected.status).toBe(status);
+            expect((await rejected.json()).error.code).toBe("fixture_error");
+        }
+        const submit = () =>
+            fetch(`${origin}/v1/videos/generations`, {
+                method: "POST",
+                headers: { "content-type": "application/json", "idempotency-key": "fixture-video-intent" },
+                body: JSON.stringify({ model: "mock-video", content: [{ type: "text", text: "fixture" }] }),
+            });
+        const first = await submit();
+        const firstPayload = await first.json();
+        const replay = await submit();
+        expect(await replay.json()).toMatchObject({ id: firstPayload.id });
+        expect(replay.headers.get("idempotency-replayed")).toBe("true");
+        expect(Array.from(fixture.tasks.values()).filter((task) => task.kind === "dflop-video")).toHaveLength(1);
+        fixture.tasks.set(firstPayload.id, { ...fixture.tasks.get(firstPayload.id), status: "failed" });
+        expect(await fetch(`${origin}/v1/videos/generations/${firstPayload.id}`).then((response) => response.json())).toMatchObject({ status: "failed", error: { message: "fixture video failure" } });
+    });
     it("serves a categorized model catalog and structured text tools", async () => {
         const catalog = await fetch(`${origin}/v1/models`).then((response) => response.json());
         expect(catalog.data.map((model) => model.capability)).toEqual(["text", "image", "video", "audio"]);

@@ -1,4 +1,4 @@
-import type { ImageTask } from "@/lib/server/image-task-store";
+import { imageTaskEffectivePrompt, imageTaskRequestParameters, type ImageTask } from "@/lib/server/image-task-store";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
 import { buildYumengImageRequest, resolveYumengImageResolution } from "@/lib/yumeng-model-center";
@@ -43,7 +43,7 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
     const quality = config.quality?.trim().toLowerCase() === "auto" ? undefined : config.quality;
     const values = {
         model: config.model,
-        prompt: withSystemPrompt(config, task.prompt),
+        prompt: withSystemPrompt(config, imageTaskEffectivePrompt(task)),
         size,
         aspect_ratio: imageRequestAspectRatio(config.size || "auto"),
         resolution: advanced.protocol === "yumeng" && quality ? resolveYumengImageResolution(config.model, quality) : quality,
@@ -54,10 +54,11 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         image: images[0] || "",
         images,
     };
-    const payload =
+    const templatedPayload =
         advanced.protocol === "yumeng"
             ? buildYumengImageRequest({ model: config.model, prompt: values.prompt, images, aspectRatio: values.aspect_ratio, resolution: values.resolution, size })
             : buildProviderRequest(advanced.requestTemplate, values, values);
+    const payload = { ...templatedPayload, ...imageTaskRequestParameters(task) };
     const url = taskUrl(config, task.kind === "edit" ? advanced.editPath || advanced.createPath : advanced.createPath, origin);
     const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId);
     headers.set("content-type", "application/json");

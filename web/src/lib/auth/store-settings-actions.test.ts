@@ -8,17 +8,22 @@ const mocks = vi.hoisted(() => ({
     readPostgresAuthSettings: vi.fn(),
     updatePostgresAuthSettings: vi.fn(),
     mutatePostgresAuthLogicalModels: vi.fn(),
+    mutatePostgresAuthLogicalModelsWithAudit: vi.fn(),
 }));
 
 vi.mock("@/lib/server/database", () => ({ isPostgresDatabaseEnabled: vi.fn(() => mocks.postgresEnabled) }));
-vi.mock("./postgres-auth-settings-service", () => ({ updatePostgresAuthSettings: mocks.updatePostgresAuthSettings, mutatePostgresAuthLogicalModels: mocks.mutatePostgresAuthLogicalModels }));
+vi.mock("./postgres-auth-settings-service", () => ({
+    updatePostgresAuthSettings: mocks.updatePostgresAuthSettings,
+    mutatePostgresAuthLogicalModels: mocks.mutatePostgresAuthLogicalModels,
+    mutatePostgresAuthLogicalModelsWithAudit: mocks.mutatePostgresAuthLogicalModelsWithAudit,
+}));
 vi.mock("./store-repository", () => ({
     mutateAuthDb: vi.fn(),
     readAuthDb: mocks.readAuthDb,
     readPostgresAuthSettings: mocks.readPostgresAuthSettings,
 }));
 
-import { getAuthSettings, getFreshAuthSettings, mutateAuthLogicalModels } from "./store-settings-actions";
+import { getAuthSettings, getFreshAuthSettings, mutateAuthLogicalModels, mutateAuthLogicalModelsWithAudit } from "./store-settings-actions";
 
 describe("auth settings cache", () => {
     beforeEach(() => {
@@ -52,6 +57,19 @@ describe("auth settings cache", () => {
         await expect(getFreshAuthSettings()).resolves.toEqual(cached);
         await expect(mutateAuthLogicalModels((models) => models)).resolves.toEqual(saved);
         await expect(getAuthSettings()).resolves.toEqual(saved);
+        expect(mocks.readPostgresAuthSettings).toHaveBeenCalledOnce();
+    });
+
+    it("refreshes the runtime cache immediately after the audited approval transaction", async () => {
+        const cached = structuredClone(DEFAULT_SETTINGS);
+        const approved = structuredClone(DEFAULT_SETTINGS);
+        approved.logicalModels = [{ id: "video", name: "Video", capability: "video", enabled: true, saleRateCard: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "2" }] }, salePriceSource: "approved", bindings: [] }];
+        mocks.readPostgresAuthSettings.mockResolvedValue(cached);
+        mocks.mutatePostgresAuthLogicalModelsWithAudit.mockResolvedValue({ settings: approved, result: { applied: 1 } });
+
+        await getFreshAuthSettings();
+        await expect(mutateAuthLogicalModelsWithAudit(() => ({ models: approved.logicalModels, auditLogs: [], result: { applied: 1 } }))).resolves.toEqual({ settings: approved, result: { applied: 1 } });
+        await expect(getAuthSettings()).resolves.toEqual(approved);
         expect(mocks.readPostgresAuthSettings).toHaveBeenCalledOnce();
     });
 });

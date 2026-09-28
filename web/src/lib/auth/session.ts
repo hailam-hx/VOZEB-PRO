@@ -6,6 +6,7 @@ import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
 import { parseSessionCookie } from "./store-normalizers";
 import { normalizeGenerationParameters } from "@/lib/generation-parameters";
+import { publicLogicalImageQualityProfile } from "@/lib/image-quality-profile";
 
 const SESSION_COOKIE_NAME = "vozeb_pro_session";
 
@@ -135,23 +136,28 @@ export function serializePublicSettings(settings: AuthSettings) {
         defaultModels: { ...settings.defaultModels },
         logicalModels: settings.logicalModels
             .filter((model) => model.enabled)
-            .map((model) => ({
-                id: model.id,
-                name: model.name,
-                capability: model.capability,
-                enabled: true,
-                ...(model.saleRateCard ? { saleRateCard: model.saleRateCard } : {}),
-                bindings: model.bindings
-                    .filter((binding) => binding.enabled)
-                    .map((binding) => ({
-                        id: binding.id,
-                        channelId: binding.channelId,
-                        upstreamModel: binding.upstreamModel,
-                        enabled: true,
-                        priority: binding.priority,
-                        ...(normalizeGenerationParameters(binding.generationParameters) ? { generationParameters: normalizeGenerationParameters(binding.generationParameters) } : {}),
-                    })),
-            })),
+            .map((model) => {
+                const imageQualityProfile = model.capability === "image" ? publicLogicalImageQualityProfile(model.bindings.filter((binding) => binding.enabled)) : undefined;
+                return {
+                    id: model.id,
+                    name: model.name,
+                    capability: model.capability,
+                    enabled: true,
+                    ...(imageQualityProfile ? { imageQualityProfile } : {}),
+                    ...(model.saleRateCard ? { saleRateCard: model.saleRateCard } : {}),
+                    bindings: model.bindings
+                        .filter((binding) => binding.enabled)
+                        .map((binding) => ({
+                            id: binding.id,
+                            channelId: binding.channelId,
+                            upstreamModel: binding.upstreamModel,
+                            enabled: true,
+                            priority: binding.priority,
+                            ...(binding.capabilityProfile?.maxOutputTokens ? { maxOutputTokens: binding.capabilityProfile.maxOutputTokens } : {}),
+                            ...(normalizeGenerationParameters(binding.generationParameters) ? { generationParameters: normalizeGenerationParameters(binding.generationParameters) } : {}),
+                        })),
+                };
+            }),
         systemChannels: settings.systemChannels
             .filter((channel) => channel.enabled)
             .map((channel) => ({

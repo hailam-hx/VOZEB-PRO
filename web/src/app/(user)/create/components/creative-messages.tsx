@@ -161,7 +161,26 @@ export function CreativeMessages({
                               .filter(Boolean)
                               .join("\n\n")
                         : "";
-                const displayContent = streamedText || (item.status === "failed" && !hasConversationReply ? t("creationTaskFailed") : formatMessage(item.content));
+                const runFailureReason =
+                    run?.failure?.errorCode === "INSUFFICIENT_BALANCE"
+                        ? t("createInsufficientBalance")
+                        : run?.failure?.errorCode === "PLANNING_UNAVAILABLE"
+                          ? t("createPlanningUnavailable")
+                          : run?.failure?.errorCode === "REQUEST_TIMEOUT"
+                            ? t("upstreamTimeout")
+                            : run?.failure?.errorCode === "NETWORK_ERROR"
+                              ? t("createNetworkError")
+                              : run?.failure?.errorCode === "UPSTREAM_UNAVAILABLE"
+                                ? t("upstreamUnavailable")
+                                : undefined;
+                const displayContent =
+                    streamedText ||
+                    runFailureReason ||
+                    (item.status === "failed" && item.runId && !run
+                        ? t("createRunDetailsUnavailable")
+                        : item.status === "failed" && !hasConversationReply && item.metadata.publicSubmissionError !== true
+                          ? t("creationTaskFailed")
+                          : formatMessage(item.content));
                 const textAssetContent = itemAssets
                     .filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim())
                     .map((asset) => formatAgentArtifactText(asset.textContent!))
@@ -191,6 +210,11 @@ export function CreativeMessages({
                                     {item.role === "assistant" && item.status === "completed" ? <AgentMarkdown>{displayContent}</AgentMarkdown> : <span className="whitespace-pre-wrap">{displayContent}</span>}
                                 </div>
                             )}
+                            {item.role === "assistant" && item.metadata.publicSubmissionError === true && item.metadata.submissionRetryable === false ? (
+                                <p className="mt-1 text-sm text-[#b42318] dark:text-[#ffb4b5]">
+                                    {t(item.metadata.submissionAction === "reupload" ? "createReuploadHint" : item.metadata.submissionAction === "add_balance" ? "createAddBalanceHint" : "createChangeInputHint")}
+                                </p>
+                            ) : null}
                             {item.role === "user" ? <CreativeUserMessageMeta message={item} /> : null}
                             {item.role !== "user" && itemAssets.length ? <CreativeAssetResults assets={itemAssets} messageText={displayContent} selectedAssetIds={selectedAssetIds} onToggleAsset={onToggleAsset} /> : null}
                             {handoff ? (
@@ -202,7 +226,12 @@ export function CreativeMessages({
                                     onMaterialize={() => void onMaterializeProject(handoff).catch(() => undefined)}
                                 />
                             ) : null}
-                            {item.role === "assistant" && failedRound ? (
+                            {item.role === "assistant" &&
+                            failedRound &&
+                            (!item.runId || run) &&
+                            item.metadata.submissionRetryable !== false &&
+                            run?.failure?.retryable !== false &&
+                            (!failedTasks.length || failedTasks.some((task) => task.retryable !== false)) ? (
                                 <RetryAction onRetry={() => onRetryMessage(failedRound.assistant, failedRound.run)} detail={failedTasks.length ? t("failedGenerationCount", { count: failedTasks.length }) : undefined} />
                             ) : null}
                             {item.role !== "user" && item.status !== "running" ? <AgentMessageActions text={textAssetContent || (downloads.length ? "" : displayContent)} downloads={downloads.length ? [] : downloads} /> : null}
@@ -248,7 +277,7 @@ function CreativeMediaRound({
     const t = useTranslations("create");
     const { formatMessage } = useAgentMessageFormatter();
     const siteLogoUrl = usePublicSessionStore((state) => state.payload?.settings?.site?.logoUrl || DEFAULT_SITE_LOGO_URL);
-    const displayContent = assistantMessage.status === "failed" ? t("creationTaskFailed") : formatMessage(assistantMessage.content);
+    const displayContent = assistantMessage.status === "failed" ? (assistantMessage.runId && !run ? t("createRunDetailsUnavailable") : t("creationTaskFailed")) : formatMessage(assistantMessage.content);
     const handoff = isCreativeProjectHandoff(assistantMessage.metadata.projectHandoff) ? assistantMessage.metadata.projectHandoff : null;
     const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
     const mediaOutputs = outputAssets.filter((asset) => asset.type !== "text" && assetUrl(asset));
@@ -295,8 +324,13 @@ function CreativeMediaRound({
                             {hasTextSnapshots && !textOutputs.length ? <CreativeTextTaskResults run={run!} /> : null}
                             {isFailedMediaRound ? (
                                 <CreativeGenerationFailure
-                                    message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent}
+                                    message={failedTasks.length === 1 ? failedTasks[0]?.error : undefined}
                                     errorCode={failedTasks.length === 1 ? failedTasks[0]?.errorCode : undefined}
+                                    retryable={Boolean(run) && run?.failure?.retryable !== false && (!failedTasks.length || failedTasks.some((task) => task.retryable !== false))}
+                                    runFailureCode={run?.failure?.errorCode}
+                                    runDetailsUnavailable={Boolean(assistantMessage.runId && !run)}
+                                    model={failedTasks.length === 1 ? failedTasks[0]?.model : undefined}
+                                    failures={failedTasks.length > 1 ? failedTasks : undefined}
                                     onRetry={() => onRetryMessage(assistantMessage, run)}
                                 />
                             ) : assistantMessage.status === "running" ? (
@@ -343,7 +377,16 @@ function CreativeMediaRound({
                                 onMaterialize={() => void onMaterializeProject(handoff).catch(() => undefined)}
                             />
                         ) : null}
-                        {!isFailedMediaRound && failedTasks.length ? <RetryAction onRetry={() => onRetryMessage(assistantMessage, run)} detail={t("failedGenerationCount", { count: failedTasks.length })} /> : null}
+                        {!isFailedMediaRound && failedTasks.length ? (
+                            <div className="mt-3 max-w-[620px] space-y-1" data-testid="creative-partial-failures">
+                                {failedTasks.map((task) => (
+                                    <CreativePartialFailure key={task.id} task={task} />
+                                ))}
+                                {failedTasks.some((task) => task.retryable !== false) ? (
+                                    <RetryAction onRetry={() => onRetryMessage(assistantMessage, run)} detail={t("failedGenerationCount", { count: failedTasks.filter((task) => task.retryable !== false).length })} />
+                                ) : null}
+                            </div>
+                        ) : null}
                     </div>
                 </div>
             </div>
@@ -622,29 +665,128 @@ function assetsForAssistant(message: CreativeMessage, assetsByMessage: Map<strin
     return [...(assetsByMessage.get(message.id) || []), ...(message.runId ? assetsByMessage.get(message.runId) || [] : [])].filter((asset, index, list) => list.findIndex((current) => current.id === asset.id) === index);
 }
 
-function CreativeGenerationFailure({ errorCode, onRetry }: { message: string; errorCode?: string; onRetry: () => Promise<boolean | void> }) {
+function useCreativeFailureReason(_message?: string, errorCode?: string, model?: string) {
     const t = useTranslations("create");
-    const displayMessage =
-        errorCode === "video_input_copyright_restricted"
-            ? t("videoInputCopyrightRestricted")
-            : errorCode === "video_reference_duration_exceeded"
-              ? t("videoReferenceDurationExceeded")
-              : t("creationTaskFailed");
+    return errorCode === "video_input_copyright_restricted"
+        ? t("videoInputCopyrightRestricted")
+        : errorCode === "video_reference_duration_exceeded"
+          ? t("videoReferenceDurationExceeded")
+          : errorCode === "video_reference_aspect_ratio_unsupported"
+            ? t("videoReferenceAspectRatioUnsupported")
+            : errorCode === "video_output_sensitive_content"
+              ? t("videoOutputSensitiveContent")
+              : errorCode === "video_text_too_long"
+                ? t("videoTextTooLong")
+                : errorCode === "manual_model_unavailable_or_incompatible"
+                  ? t("manualModelUnavailableOrIncompatible", { model: model?.trim() || "-" })
+                  : errorCode === "image_size_below_provider_minimum"
+                    ? t("imageSizeBelowProviderMinimum")
+                    : errorCode === "PLANNING_UNAVAILABLE"
+                      ? t("createPlanningUnavailable")
+                      : errorCode === "REFERENCE_IMAGE_REQUIRED"
+                        ? t("referenceImageRequired")
+                        : errorCode === "UPSTREAM_BAD_REQUEST"
+                          ? t("upstreamBadRequest")
+                          : errorCode === "UPSTREAM_GATEWAY_ERROR"
+                            ? t("upstreamGatewayError")
+                            : errorCode === "SUBMISSION_UNKNOWN"
+                              ? t("submissionUnknown")
+                              : errorCode === "MEDIA_DOWNLOAD_TIMEOUT" || errorCode === "PERSIST_FAILED"
+                                ? t("mediaPersistenceFailed")
+                                : errorCode?.startsWith("QUALITY_")
+                                  ? t("unsupportedImageQualityOrSize")
+                                  : errorCode === "INSUFFICIENT_BALANCE"
+                                    ? t("createInsufficientBalance")
+                                    : errorCode === "REFERENCE_ASSET_UNAVAILABLE"
+                                      ? t("referenceAssetUnavailable")
+                                      : errorCode === "INVALID_ASSET"
+                                        ? t("invalidCreationAsset")
+                                        : errorCode === "UNSUPPORTED_CAPABILITY"
+                                          ? t("unsupportedCreationCapability")
+                                          : errorCode === "RATE_LIMIT"
+                                            ? t("createRateLimited")
+                                            : errorCode === "REQUEST_TIMEOUT"
+                                              ? t("upstreamTimeout")
+                                              : errorCode === "NETWORK_ERROR"
+                                                ? t("createNetworkError")
+                                                : errorCode === "UPSTREAM_UNAVAILABLE"
+                                                  ? t("upstreamUnavailable")
+                                                  : undefined;
+}
+
+function CreativePartialFailure({ task }: { task: CreativeAgentRun["tasks"][number] }) {
+    const t = useTranslations("create");
+    const reason = useCreativeFailureReason(task.error, task.errorCode, task.model);
+    return (
+        <p className="max-w-[620px] whitespace-pre-wrap break-words text-sm leading-6 text-[#b42318] dark:text-[#ffb4b5]">
+            {task.title}：{reason || t("creationTaskFailed")}
+            {task.retryable === false
+                ? `。${t(task.errorCode === "INSUFFICIENT_BALANCE" ? "createAddBalanceHint" : task.errorCode === "INVALID_ASSET" || task.errorCode === "REFERENCE_ASSET_UNAVAILABLE" ? "createReuploadHint" : "createChangeInputHint")}`
+                : ""}
+        </p>
+    );
+}
+
+function CreativeGenerationFailure({
+    message,
+    errorCode,
+    runFailureCode,
+    runDetailsUnavailable,
+    retryable,
+    model,
+    failures,
+    onRetry,
+}: {
+    message?: string;
+    errorCode?: string;
+    runFailureCode?: string;
+    runDetailsUnavailable?: boolean;
+    retryable?: boolean;
+    model?: string;
+    failures?: CreativeAgentRun["tasks"];
+    onRetry: () => Promise<boolean | void>;
+}) {
+    const t = useTranslations("create");
+    const failureReason = useCreativeFailureReason(message, runFailureCode || errorCode, model);
+    const showFailureReason = failureReason && failureReason !== t("creationTaskFailed") && failureReason !== "生成任务失败";
     const [retrying, setRetrying] = useState(false);
     return (
         <div data-testid="creative-generation-failure" className="max-w-[620px] py-1">
             <div className="min-w-0">
-                <p className="break-words text-[17px] font-medium leading-7 text-[#ef2b2d] dark:text-[#ff8b8d]">{displayMessage}</p>
-                <Button
-                    type="default"
-                    className="!mt-3 !h-9 !rounded-[10px] !border-[#ffd4d5] !bg-white !px-4 !text-sm !font-medium !text-[#e22b2e] hover:!border-[#ffb7b8] hover:!bg-[#fff8f8] hover:!text-[#c51f22] dark:!border-[#6b3438] dark:!bg-transparent dark:!text-[#ff9a9c] dark:hover:!border-[#9a4a4e] dark:hover:!bg-[#321e20]"
-                    icon={<RotateCw className="size-4" />}
-                    loading={retrying}
-                    onClick={() => void runRetry(onRetry, setRetrying)}
-                    aria-label={t("retryThisCreation")}
-                >
-                    {t("retryDirectly")}
-                </Button>
+                <p className="break-words text-[17px] font-medium leading-7 text-[#ef2b2d] dark:text-[#ff8b8d]">{t("creationTaskFailed")}</p>
+                {runDetailsUnavailable || showFailureReason ? (
+                    <p className="mt-1 max-w-[620px] whitespace-pre-wrap break-words text-sm leading-6 text-[#b42318] dark:text-[#ffb4b5]">{runDetailsUnavailable ? t("createRunDetailsUnavailable") : failureReason}</p>
+                ) : null}
+                {retryable === false && !runDetailsUnavailable && !failures?.length ? (
+                    <p className="mt-1 text-sm text-[#b42318] dark:text-[#ffb4b5]">
+                        {t(
+                            runFailureCode === "INSUFFICIENT_BALANCE" || errorCode === "INSUFFICIENT_BALANCE"
+                                ? "createAddBalanceHint"
+                                : errorCode === "INVALID_ASSET" || errorCode === "REFERENCE_ASSET_UNAVAILABLE"
+                                  ? "createReuploadHint"
+                                  : "createChangeInputHint",
+                        )}
+                    </p>
+                ) : null}
+                {failures?.length ? (
+                    <div className="mt-1 space-y-1">
+                        {failures.map((task) => (
+                            <CreativePartialFailure key={task.id} task={task} />
+                        ))}
+                    </div>
+                ) : null}
+                {retryable !== false ? (
+                    <Button
+                        type="default"
+                        className="!mt-3 !h-9 !rounded-[10px] !border-[#ffd4d5] !bg-white !px-4 !text-sm !font-medium !text-[#e22b2e] hover:!border-[#ffb7b8] hover:!bg-[#fff8f8] hover:!text-[#c51f22] dark:!border-[#6b3438] dark:!bg-transparent dark:!text-[#ff9a9c] dark:hover:!border-[#9a4a4e] dark:hover:!bg-[#321e20]"
+                        icon={<RotateCw className="size-4" />}
+                        loading={retrying}
+                        onClick={() => void runRetry(onRetry, setRetrying)}
+                        aria-label={t("retryThisCreation")}
+                    >
+                        {t("retryDirectly")}
+                    </Button>
+                ) : null}
             </div>
         </div>
     );

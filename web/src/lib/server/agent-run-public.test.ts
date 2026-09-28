@@ -4,6 +4,149 @@ import { publicAgentRun, publicAgentRunEvent } from "./agent-run-public";
 import { AGENT_PLAN_SCHEMA_VERSION } from "./agent-run-audit";
 
 describe("publicAgentRun", () => {
+    it("never includes an unknown upstream diagnostic in a public task", () => {
+        const raw = "Authorization: Bearer provider-secret; SQL SELECT * FROM users at /srv/private/provider.ts";
+        const run = publicAgentRun({
+            id: "unsafe-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "生成语音",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "audio", title: "语音", type: "audio", prompt: "生成语音", count: 1, dependencies: [], status: "failed", attempts: 1, error: raw }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        expect(run.tasks[0]).toMatchObject({ error: "生成任务失败" });
+        expect(JSON.stringify(run)).not.toContain("provider-secret");
+        const event = publicAgentRunEvent({ id: "unsafe-event", runId: "unsafe-run", type: "task.failed", data: { taskId: "audio", error: raw, providerResponse: { authorization: "provider-secret" } }, createdAt: 2 });
+        expect(JSON.stringify(event)).not.toContain("provider-secret");
+        const waiting = publicAgentRunEvent({ id: "waiting-event", runId: "unsafe-run", type: "task.waiting", data: { taskId: "audio", error: raw }, createdAt: 2 });
+        expect(JSON.stringify(waiting)).not.toContain("provider-secret");
+    });
+
+    it("classifies insufficient balance as permanent without exposing billing diagnostics", () => {
+        const run = publicAgentRun({
+            id: "balance-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "生成图片",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "image", title: "图片", type: "image", prompt: "生成图片", count: 1, dependencies: [], status: "failed", attempts: 1, error: "积分不足；ledger /srv/private/billing.ts" }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        expect(run.tasks[0]).toMatchObject({ errorCode: "INSUFFICIENT_BALANCE", retryable: false });
+        expect(JSON.stringify(run)).not.toContain("/srv/private");
+    });
+
+    it("marks a planning failure caused by insufficient balance as non-retryable", () => {
+        const run = publicAgentRun({
+            id: "planner-balance",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "生成视频",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [],
+            plannerFailure: { message: "积分不足；ledger /srv/private/billing.ts", failedAt: 2 },
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        expect(run).toMatchObject({ failure: { errorCode: "INSUFFICIENT_BALANCE", retryable: false } });
+        expect(JSON.stringify(run)).not.toContain("/srv/private");
+    });
+    it("classifies planner timeouts without exposing diagnostics", () => {
+        const run = publicAgentRun({
+            id: "planner-timeout",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "生成语音",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [],
+            plannerFailure: { message: "provider timeout; Bearer private-token at /srv/private/planner.ts", failedAt: 2 },
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        expect(run).toMatchObject({ failure: { errorCode: "REQUEST_TIMEOUT", retryable: true } });
+        expect(JSON.stringify(run)).not.toContain("private-token");
+    });
+    it.each([
+        ["reference_url_not_public", "REFERENCE_ASSET_UNAVAILABLE", false],
+        ["INVALID_ASSET", "INVALID_ASSET", false],
+        ["UNSUPPORTED_CAPABILITY", "UNSUPPORTED_CAPABILITY", false],
+        ["UPSTREAM_BAD_REQUEST", "UPSTREAM_BAD_REQUEST", false],
+        ["RATE_LIMIT", "RATE_LIMIT", true],
+        ["UPSTREAM_UNAVAILABLE", "UPSTREAM_UNAVAILABLE", true],
+        ["NETWORK_ERROR", "NETWORK_ERROR", true],
+    ] as const)("publishes %s as %s with retryable=%s", (errorCode, expectedCode, retryable) => {
+        const run = publicAgentRun({
+            id: "failure-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "生成语音",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "audio", title: "语音", type: "audio", prompt: "生成语音", count: 1, dependencies: [], status: "failed", attempts: 1, errorCode, error: "provider Bearer private-token at /srv/private/provider.ts" }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        expect(run.tasks[0]).toMatchObject({ errorCode: expectedCode, retryable });
+        expect(JSON.stringify(run)).not.toContain("private-token");
+        expect(JSON.stringify(run)).not.toContain("/srv/private");
+    });
+    it("keeps a permanent submission outcome non-retryable even when its diagnostic mentions a timeout", () => {
+        const run = publicAgentRun({
+            id: "unknown-submit",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "生成图片",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "image", title: "图片", type: "image", prompt: "生成图片", count: 1, dependencies: [], status: "failed", attempts: 1, errorCode: "SUBMISSION_UNKNOWN", error: "provider timeout with unknown billing outcome" }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        expect(run.tasks[0]).toMatchObject({ errorCode: "SUBMISSION_UNKNOWN", retryable: false });
+    });
     it("exposes only user-facing Run and task fields", () => {
         const publicRun = publicAgentRun({
             id: "run",
@@ -141,6 +284,76 @@ describe("publicAgentRun", () => {
         expect(JSON.stringify(event)).not.toContain("private-request-id");
     });
 
+    it("sanitizes unknown task failure errors in public SSE events", () => {
+        const event = publicAgentRunEvent({
+            id: "unknown-image-failure",
+            runId: "run",
+            type: "task.failed",
+            data: {
+                taskId: "image",
+                status: "failed",
+                error: "POST http://localhost:3000/internal/provider failed with request private-request-id",
+            },
+            createdAt: 1,
+        });
+
+        expect(event.data).toMatchObject({ taskId: "image", status: "failed", error: "生成渠道暂时无法连接，请稍后重试或联系管理员。" });
+        expect(JSON.stringify(event)).not.toContain("localhost");
+        expect(JSON.stringify(event)).not.toContain("private-request-id");
+    });
+
+    it("classifies persisted manual-model compatibility failures for client localization", () => {
+        const raw = "手动选择的模型「gpt-image-2.5-flare」当前不可用或不支持已保存的生成参数";
+        const run = publicAgentRun({
+            id: "manual-model-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "generate an image",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "image", title: "Image", type: "image", model: "gpt-image-2.5-flare", prompt: "generate an image", count: 1, dependencies: [], status: "failed", attempts: 1, error: raw }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        const event = publicAgentRunEvent({ id: "manual-model-event", runId: "manual-model-run", type: "task.failed", data: { taskId: "image", error: raw }, createdAt: 2 });
+
+        expect(run.tasks[0]).toMatchObject({ error: "生成任务失败", errorCode: "manual_model_unavailable_or_incompatible" });
+        expect(event.data).toMatchObject({ error: "生成任务失败", errorCode: "manual_model_unavailable_or_incompatible" });
+        expect(JSON.stringify(run)).not.toContain("手动选择的模型");
+        expect(JSON.stringify(event)).not.toContain("手动选择的模型");
+    });
+
+    it("classifies a provider minimum image-size rejection without exposing its request id", () => {
+        const raw = "The parameter `size` specified in the request is not valid: image size must be at least 3686400 pixels. Request id: private-image-size-request";
+        const run = publicAgentRun({
+            id: "image-size-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "generate an image",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "image", title: "Image", type: "image", model: "doubao-seedream-5-0-260128", prompt: "generate an image", count: 1, dependencies: [], status: "failed", attempts: 1, error: raw }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+
+        expect(run.tasks[0]).toMatchObject({ error: "生成任务失败", errorCode: "image_size_below_provider_minimum" });
+        expect(JSON.stringify(run)).not.toContain("3686400");
+        expect(JSON.stringify(run)).not.toContain("private-image-size-request");
+    });
+
     it("derives a safe duration code for an already-persisted video rejection", () => {
         const raw =
             "The parameter `content[1]` specified in the request is not valid: the parameter video duration (seconds) specified in the request must be less than or equal to 30.2 for model doubao-seedance-2-5 in r2v. Request id: private-duration-request";
@@ -176,6 +389,91 @@ describe("publicAgentRun", () => {
 
         expect(run.tasks[0]).toMatchObject({ errorCode: "video_reference_duration_exceeded", error: "生成任务失败" });
         expect(JSON.stringify(run)).not.toContain("private-duration-request");
+    });
+
+    it("restores a safe aspect-ratio code for an already-persisted video rejection", () => {
+        const raw = "Error while downloading image, error: expected the aspect ratio to be between 0.39 and 2.50, but received image with aspect ratio: 2.65 instead Request id: private-aspect-request";
+        const run = publicAgentRun({
+            id: "aspect-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "make a video from this image",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "video", title: "Video", type: "video", prompt: "make a video", count: 1, dependencies: [], status: "failed", attempts: 1, error: raw }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+
+        expect(run.tasks[0]).toMatchObject({ errorCode: "video_reference_aspect_ratio_unsupported", error: "生成任务失败" });
+        expect(JSON.stringify(run)).not.toContain("private-aspect-request");
+        const event = publicAgentRunEvent({ id: "aspect-event", runId: "aspect-run", type: "task.dispatch.failed", data: { taskId: "video", error: raw }, createdAt: 2 });
+        expect(event.data).toMatchObject({ errorCode: "video_reference_aspect_ratio_unsupported", error: "生成任务失败" });
+        expect(JSON.stringify(event)).not.toContain("private-aspect-request");
+    });
+
+    it("restores a safe output-content code and removes provider request IDs from terminal events", () => {
+        const raw = "The request failed because the output video may contain sensitive information. Request id: private-output-request";
+        const run = publicAgentRun({
+            id: "output-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "make a video",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "video", title: "Video", type: "video", prompt: "make a video", count: 1, dependencies: [], status: "failed", attempts: 1, error: raw }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+
+        expect(run.tasks[0]).toMatchObject({ errorCode: "video_output_sensitive_content", error: "生成任务失败" });
+        expect(JSON.stringify(run)).not.toContain("private-output-request");
+        for (const type of ["task.failed", "task.child.failed"] as const) {
+            const event = publicAgentRunEvent({ id: type, runId: "output-run", type, data: { taskId: "video", error: raw }, createdAt: 2 });
+            expect(event.data).toMatchObject({ errorCode: "video_output_sensitive_content", error: "生成任务失败" });
+            expect(JSON.stringify(event)).not.toContain("private-output-request");
+        }
+    });
+
+    it("restores a safe overlong-text code for persisted video failures and terminal events", () => {
+        const raw = "task failed with status: FAIL, message: create gen_video task failed. ret:-2,msg:invalid params, content[0].text too long: 13836 > 7000 characters (2013)";
+        const run = publicAgentRun({
+            id: "long-text-run",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "make a video",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [{ id: "video", title: "Video", type: "video", prompt: "make a video", count: 1, dependencies: [], status: "failed", attempts: 1, error: raw }],
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+
+        expect(run.tasks[0]).toMatchObject({ errorCode: "video_text_too_long", error: "生成任务失败" });
+        expect(JSON.stringify(run)).not.toContain("13836");
+        for (const type of ["task.failed", "task.child.failed"] as const) {
+            const event = publicAgentRunEvent({ id: type, runId: "long-text-run", type, data: { taskId: "video", error: raw }, createdAt: 2 });
+            expect(event.data).toMatchObject({ errorCode: "video_text_too_long", error: "生成任务失败" });
+            expect(JSON.stringify(event)).not.toContain("13836");
+        }
     });
 
     it("removes review details and internal Canvas planning nodes from SSE events", () => {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     claim: vi.fn(),
+    attachAuthoritativeUsage: vi.fn(),
     complete: vi.fn(),
     fail: vi.fn(),
     fetchInternalApi: vi.fn(),
@@ -30,7 +31,10 @@ vi.mock("@/lib/server/video-task-store", () => ({
     updateVideoTask: mocks.update,
 }));
 vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: vi.fn(() => ({ "x-media-auth": "signed" })) }));
-vi.mock("@/lib/server/usage-billing-runtime", () => ({ finalizeUsageBillingForBusiness: mocks.finalizeBilling }));
+vi.mock("@/lib/server/usage-billing-runtime", () => ({
+    attachAuthoritativeVideoUsageForBusiness: mocks.attachAuthoritativeUsage,
+    finalizeUsageBillingForBusiness: mocks.finalizeBilling,
+}));
 
 import { queryVideoTaskUpstream, refreshVideoTaskFromUpstream } from "./video-task-runtime";
 import type { VideoTask } from "./video-task-store";
@@ -42,6 +46,7 @@ describe("video task upstream reconciliation", () => {
         mocks.normalize.mockResolvedValue({ url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 });
         mocks.register.mockResolvedValue(undefined);
         mocks.finalizeBilling.mockResolvedValue({ state: "settled" });
+        mocks.attachAuthoritativeUsage.mockResolvedValue({ state: "attached" });
         mocks.update.mockResolvedValue(undefined);
         mocks.writeLog.mockResolvedValue({});
     });
@@ -78,9 +83,70 @@ describe("video task upstream reconciliation", () => {
         expect(result).toEqual(completed);
         expect(mocks.normalize).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining("/_media?url="), requestedDurationSeconds: 5 }));
         expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/result.mp4" }));
+        expect(mocks.attachAuthoritativeUsage).toHaveBeenCalledWith({
+            userId: task.userId,
+            businessId: `video-task:${task.id}`,
+            upstreamTaskId: task.upstream.id,
+            payload: expect.objectContaining({ status: "completed", video_url: "https://cdn.example.com/result.mp4" }),
+        });
         expect(mocks.finalizeBilling).toHaveBeenCalledWith({ userId: task.userId, businessId: `video-task:${task.id}` });
         expect(mocks.register).toHaveBeenCalledOnce();
         expect(mocks.refund).not.toHaveBeenCalled();
+    });
+
+    it("persists terminal DFLOP usage before settling the completed task", async () => {
+        const task = videoTask();
+        const completed = { ...task, status: "success" as const, result: { url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
+        const terminal = {
+            id: task.upstream.id,
+            status: "completed",
+            video_url: "https://cdn.example.com/result.mp4",
+            usage: { completion_tokens: 411300, total_tokens: 411300, duration_sec: "5" },
+        };
+        mocks.claim.mockResolvedValue(task);
+        mocks.get.mockResolvedValue(task);
+        mocks.fetchInternalApi.mockResolvedValue(json(terminal));
+        mocks.complete.mockResolvedValue(completed);
+
+        await expect(refreshVideoTaskFromUpstream(task, "http://localhost", "session=test")).resolves.toEqual(completed);
+
+        expect(mocks.attachAuthoritativeUsage).toHaveBeenCalledWith({
+            userId: task.userId,
+            businessId: `video-task:${task.id}`,
+            upstreamTaskId: task.upstream.id,
+            payload: terminal,
+        });
+        expect(mocks.attachAuthoritativeUsage.mock.invocationCallOrder[0]).toBeLessThan(mocks.finalizeBilling.mock.invocationCallOrder[0]!);
+    });
+
+    it("keeps the completed media and hold for review when authoritative usage is missing", async () => {
+        const task = videoTask();
+        const completed = { ...task, status: "success" as const, result: { url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
+        mocks.claim.mockResolvedValue(task);
+        mocks.get.mockResolvedValue(task);
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: task.upstream.id, status: "completed", video_url: "https://cdn.example.com/result.mp4" }));
+        mocks.complete.mockResolvedValue(completed);
+        mocks.attachAuthoritativeUsage.mockResolvedValue({ state: "needs_review", code: "AUTHORITATIVE_USAGE_MISSING" });
+
+        await expect(refreshVideoTaskFromUpstream(task, "http://localhost", "session=test")).resolves.toEqual(completed);
+
+        expect(mocks.finalizeBilling).not.toHaveBeenCalled();
+        expect(mocks.register).toHaveBeenCalledOnce();
+    });
+
+    it("replays terminal usage idempotently after media persistence won a previous race", async () => {
+        const task = videoTask();
+        const completed = { ...task, status: "success" as const, result: { url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
+        const terminal = { id: task.upstream.id, status: "completed", video_url: "https://cdn.example.com/result.mp4", usage: { completion_tokens: 411300 } };
+        mocks.claim.mockResolvedValue(task);
+        mocks.get.mockResolvedValueOnce(task).mockResolvedValueOnce(completed);
+        mocks.fetchInternalApi.mockResolvedValue(json(terminal));
+        mocks.complete.mockResolvedValue(null);
+
+        await expect(refreshVideoTaskFromUpstream(task, "http://localhost", "session=test")).resolves.toEqual(completed);
+
+        expect(mocks.attachAuthoritativeUsage).toHaveBeenCalledWith(expect.objectContaining({ payload: terminal }));
+        expect(mocks.finalizeBilling).toHaveBeenCalledOnce();
     });
 
     it("polls and completes through a live Seedance-compatible fixture", async () => {
@@ -204,7 +270,7 @@ describe("video task upstream reconciliation", () => {
             return json({ error: { message: "not implemented" } }, 501);
         });
 
-        await expect(queryVideoTaskUpstream(task, "http://localhost", "session=test")).resolves.toEqual({
+        await expect(queryVideoTaskUpstream(task, "http://localhost", "session=test")).resolves.toMatchObject({
             state: "result_ready",
             status: "completed",
             resultUrl: `/v1/videos/${task.upstream.id}/content`,

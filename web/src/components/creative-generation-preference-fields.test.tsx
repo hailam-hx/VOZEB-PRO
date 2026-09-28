@@ -11,6 +11,7 @@ import { CreativeGenerationControls, type CreativeModelOption } from "@/app/(use
 import { CreativeGenerationPreferences } from "@/components/creative-generation-preferences";
 import { loadMessages } from "@/i18n/messages";
 import type { LogicalModelGenerationParameters } from "@/lib/auth/store-types";
+import type { PublicLogicalImageQualityProfile } from "@/lib/image-quality-profile";
 
 import { SuggestedPositiveIntegerField, VideoQualityField } from "./creative-generation-preference-fields";
 
@@ -37,6 +38,63 @@ afterEach(() => {
 });
 
 describe("capability-aware generation preference components", () => {
+    it("renders only authoritative explicit image quality options and submits their revisions", async () => {
+        const user = userEvent.setup();
+        const onChange = vi.fn();
+        const imageQualityProfile: PublicLogicalImageQualityProfile = {
+            supported: true,
+            controlType: "prompt_flag",
+            selectionMode: "explicit",
+            profileRevision: "profile-v1",
+            defaultValue: "standard",
+            options: [
+                { value: "standard", label: "标准", optionRevision: "standard-v1", effect: { type: "prompt_flag", promptSuffix: "--sd" } },
+                { value: "high", label: "高清", optionRevision: "high-v1", effect: { type: "prompt_flag", promptSuffix: "--hd" } },
+            ],
+        };
+        renderInteractive(
+            <CreativeGenerationPreferences
+                capability="image"
+                preferences={{ image: { quality: "standard" } }}
+                imageQualityProfile={imageQualityProfile}
+                generationParameters={profile()}
+                capabilityReason="unsupported"
+                triggerAriaLabel="打开图片参数"
+                onChange={onChange}
+            />,
+        );
+        await user.click(screen.getByRole("button", { name: "打开图片参数" }));
+        await user.click(await screen.findByRole("tab", { name: "输出" }));
+        expect(screen.queryByRole("button", { name: /高画质|中画质|低画质/ })).toBeNull();
+        await user.click(screen.getByRole("button", { name: "选择图片画质 高清" }));
+        expect(onChange).toHaveBeenCalledWith({ quality: "high", qualityProfileRevision: "profile-v1", qualityOptionRevision: "high-v1" });
+    });
+
+    it("does not offer Smart size when the authoritative profile requires an exact executable size", async () => {
+        const user = userEvent.setup();
+        renderInteractive(
+            <CreativeGenerationPreferences
+                capability="image"
+                preferences={{ image: {} }}
+                imageQualityProfile={{
+                    supported: true,
+                    controlType: "resolution_tier",
+                    selectionMode: "explicit",
+                    profileRevision: "profile-v1",
+                    defaultValue: "1k",
+                    options: [{ value: "1k", label: "1K", optionRevision: "1k-v1", effect: { type: "resolution_tier", resolutionTier: "1k", exactSizes: ["1024x1024"], sizeByAspectRatio: { "1:1": "1024x1024" } } }],
+                }}
+                generationParameters={profile({ aspectRatios: ["1:1"] })}
+                capabilityReason="unsupported"
+                triggerAriaLabel="打开图片参数"
+                onChange={() => undefined}
+            />,
+        );
+        await user.click(screen.getByRole("button", { name: "打开图片参数" }));
+        expect(screen.queryByRole("button", { name: "选择图片比例 智能" })).toBeNull();
+        expect(screen.getByRole("button", { name: "选择图片比例 1:1" })).toBeTruthy();
+    });
+
     it("opens the disabled button tooltip by focus and touch-compatible click", async () => {
         const user = userEvent.setup();
         renderInteractive(
@@ -159,6 +217,46 @@ describe("capability-aware generation preference components", () => {
         expect(screen.queryByRole("textbox", { name: "输入自定义视频清晰度" })).toBeNull();
     });
 
+    it("enables canonical create resolutions when a provider advertises values with a p suffix", async () => {
+        const user = userEvent.setup();
+        const onChange = vi.fn();
+        renderInteractive(<CreativeGenerationPreferences capability="video" preferences={{}} generationParameters={profile({ resolutions: ["480p", "720p", "1080p"] })} capabilityReason="unsupported" triggerAriaLabel="打开视频参数" onChange={onChange} />);
+
+        await user.click(screen.getByRole("button", { name: "打开视频参数" }));
+        await user.click(await screen.findByRole("tab", { name: "输出" }));
+        for (const label of ["480P", "720P", "1080P"]) expect((screen.getByRole("button", { name: `选择视频清晰度 ${label}` }) as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.queryByRole("button", { name: "选择视频清晰度 2K" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "选择视频清晰度 4K" })).toBeNull();
+        await user.click(screen.getByRole("button", { name: "选择视频清晰度 720P" }));
+        expect(onChange).toHaveBeenCalledWith({ quality: "720" });
+    });
+
+    it("hides video resolution controls when the capability profile has no configured resolutions", async () => {
+        const user = userEvent.setup();
+        renderInteractive(<CreativeGenerationPreferences capability="video" preferences={{}} generationParameters={profile()} capabilityReason="unsupported" triggerAriaLabel="打开视频参数" onChange={() => undefined} />);
+
+        await user.click(screen.getByRole("button", { name: "打开视频参数" }));
+        await user.click(await screen.findByRole("tab", { name: "输出" }));
+
+        expect(screen.queryByRole("button", { name: /选择视频清晰度/ })).toBeNull();
+    });
+
+    it("hides unconfigured generation counts and only renders configured fixed values", async () => {
+        const user = userEvent.setup();
+        const view = renderInteractive(<CreativeGenerationPreferences capability="video" preferences={{}} generationParameters={profile()} capabilityReason="unsupported" triggerAriaLabel="打开视频参数" onChange={() => undefined} />);
+
+        await user.click(screen.getByRole("button", { name: "打开视频参数" }));
+        await user.click(await screen.findByRole("tab", { name: "输出" }));
+        expect(screen.queryByRole("group", { name: "选择视频生成数量" })).toBeNull();
+
+        view.rerender(withProviders(<CreativeGenerationPreferences capability="video" preferences={{}} generationParameters={profile({ maxBatchSize: 2 })} capabilityReason="unsupported" triggerAriaLabel="打开视频参数" onChange={() => undefined} />));
+        expect(screen.getByRole("button", { name: "选择视频生成数量 1 份" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "选择视频生成数量 2 份" })).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "选择视频生成数量 3 份" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "选择视频生成数量 4 份" })).toBeNull();
+        expect(screen.queryByRole("textbox", { name: "自定义生成数量" })).toBeNull();
+    });
+
     it("keeps configured extra video resolutions available on shared settings surfaces", async () => {
         const user = userEvent.setup();
         renderInteractive(<CreativeGenerationPreferences capability="video" preferences={{}} generationParameters={profile({ resolutions: ["1440"] })} capabilityReason="unsupported" triggerAriaLabel="打开视频参数" onChange={() => undefined} />);
@@ -186,10 +284,8 @@ describe("capability-aware generation preference components", () => {
 
         await user.click(screen.getByRole("button", { name: "打开图片参数" }));
         const listed = screen.getByRole("button", { name: "选择图片比例 1024×1024" });
-        const custom = screen.getByRole("button", { name: "打开图片自定义像素尺寸" });
         expect(listed.getAttribute("aria-pressed")).toBe("true");
-        expect((custom as HTMLButtonElement).disabled).toBe(true);
-        expect(custom.getAttribute("aria-pressed")).toBe("false");
+        expect(screen.queryByRole("button", { name: "打开图片自定义像素尺寸" })).toBeNull();
     });
 
     it("keeps video audio and watermark as compact switches outside binding capabilities", async () => {
@@ -232,6 +328,37 @@ describe("capability-aware generation preference components", () => {
         expect((screen.getByRole("button", { name: "选择视频参考方式 智能参考" }) as HTMLButtonElement).disabled).toBe(false);
         expect((screen.getByRole("button", { name: "选择视频参考方式 首帧" }) as HTMLButtonElement).disabled).toBe(false);
         expect((screen.getByRole("button", { name: "选择视频参考方式 首尾帧" }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("hides an unconfigured canvas section and only renders configured canvas values", async () => {
+        const user = userEvent.setup();
+        const view = renderInteractive(<CreativeGenerationPreferences capability="video" preferences={{}} generationParameters={profile()} capabilityReason="unsupported" triggerAriaLabel="打开视频参数" onChange={() => undefined} />);
+
+        await user.click(screen.getByRole("button", { name: "打开视频参数" }));
+        expect(screen.queryByRole("tab", { name: "画面" })).toBeNull();
+        expect(screen.queryByRole("group", { name: "选择视频参考方式" })).toBeNull();
+        expect(screen.queryByRole("button", { name: /选择视频比例/ })).toBeNull();
+        expect(screen.queryByRole("button", { name: "打开视频自定义像素尺寸" })).toBeNull();
+
+        view.rerender(
+            withProviders(
+                <CreativeGenerationPreferences
+                    capability="video"
+                    preferences={{}}
+                    generationParameters={profile({ aspectRatios: ["16:9"], videoReferenceModes: ["first_frame"] })}
+                    capabilityReason="unsupported"
+                    triggerAriaLabel="打开视频参数"
+                    onChange={() => undefined}
+                />,
+            ),
+        );
+        await user.click(screen.getByRole("tab", { name: "画面" }));
+        expect(screen.getByRole("button", { name: "选择视频参考方式 首帧" })).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "选择视频参考方式 智能参考" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "选择视频参考方式 首尾帧" })).toBeNull();
+        expect(screen.getByRole("button", { name: "选择视频比例 16:9" })).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "选择视频比例 21:9" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "打开视频自定义像素尺寸" })).toBeNull();
     });
 
     it("keeps fixed count and duration buttons while enabling configured custom ranges", async () => {

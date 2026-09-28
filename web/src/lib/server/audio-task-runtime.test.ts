@@ -27,7 +27,7 @@ vi.mock("@/lib/server/voice-profile-store", () => ({ getVoiceProfileForUser: moc
 
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 import { GenerationSubmissionUncertainError } from "./generation-submission-error";
-import { createAudioTaskUpstreamStep, persistAudioTaskResult } from "./audio-task-runtime";
+import { createAudioTaskUpstreamStep, persistAudioTaskResult, queryAudioTaskUpstreamStep } from "./audio-task-runtime";
 import type { AudioTask } from "./audio-task-store";
 import { emptyAdvancedConfig, protocolModelConfig, registeredChannelProtocolDefinitions } from "@/lib/channel-protocol-registry";
 
@@ -196,6 +196,79 @@ describe("audio task runtime submission safety", () => {
             expect(fixture.requests[0]?.headers["x-client-request-id"]).toBe("audio-task:audio-one:attempt:1");
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("submits DFLOP speech asynchronously and reads its task result over TCP", async () => {
+        const fixture = createProtocolFixtureServer({ dflop: true });
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        state = { ...audioTask(), config: { ...audioTask().config, baseUrl: `${origin}/v1`, apiKey: "fixture-key", model: "voice-tts-pro", advancedConfig: { ...emptyAdvancedConfig(), ...protocolModelConfig("dflop", "audio") } }, candidateConfigs: [] };
+        try {
+            await expect(createAudioTaskUpstreamStep(state, "http://internal")).resolves.toMatchObject({ state: "pending", upstreamTaskId: expect.stringMatching(/^fixture-dflop-speech-/) });
+            expect(JSON.parse(fixture.requests[0].body.toString("utf8"))).toMatchObject({ model: "voice-tts-pro", async: true });
+            expect(fixture.requests[0].headers["idempotency-key"]).toBe("audio-task:audio-one:attempt:1");
+            await expect(queryAudioTaskUpstreamStep(state, "http://internal")).resolves.toMatchObject({ state: "result_ready", resultUrl: `${origin}/media/fixture.wav` });
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+    it("sends exact manual speech text to DFLOP with voice options in separate fields", async () => {
+        const fixture = createProtocolFixtureServer({ dflop: true });
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const originalPrompt = "  你好，请慢慢说。  ";
+        state = {
+            ...audioTask(),
+            prompt: originalPrompt,
+            config: {
+                ...audioTask().config,
+                baseUrl: `${origin}/v1`,
+                apiKey: "fixture-key",
+                model: "voice-tts-pro",
+                advancedConfig: { ...emptyAdvancedConfig(), ...protocolModelConfig("dflop", "audio") },
+                promptEnhancementDisabled: true,
+                promptAudit: { originalPrompt, executionPrompt: originalPrompt.trim(), manualPromptEnhancementEnabled: false },
+            },
+            candidateConfigs: [],
+        };
+        try {
+            await expect(createAudioTaskUpstreamStep(state, "http://internal")).resolves.toMatchObject({ state: "pending" });
+            const payload = JSON.parse(fixture.requests[0].body.toString("utf8"));
+            expect(payload.input).toBe(originalPrompt);
+            expect(payload.voice).toBe("alloy");
+            expect(JSON.stringify(payload.input)).not.toContain("alloy");
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+    it("blocks a custom speech template that appends to the manual prompt before network submission", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const originalPrompt = "  你好，请慢慢说。  ";
+        state = {
+            ...audioTask(),
+            prompt: originalPrompt,
+            config: {
+                ...audioTask().config,
+                baseUrl: `http://127.0.0.1:${address.port}`,
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "custom", createPath: "/custom/audio", requestTemplate: '{"input":"{{prompt}} 保持语气自然"}' },
+                promptEnhancementDisabled: true,
+                promptAudit: { originalPrompt, executionPrompt: originalPrompt.trim(), manualPromptEnhancementEnabled: false },
+            },
+            candidateConfigs: [],
+        };
+        try {
+            await expect(createAudioTaskUpstreamStep(state, "http://internal")).resolves.toMatchObject({ state: "failed", error: expect.stringContaining("Prompt 与用户原文不一致") });
+            expect(fixture.requests).toHaveLength(0);
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }
     });
 

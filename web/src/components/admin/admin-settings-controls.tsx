@@ -10,7 +10,7 @@ export function SectionTitle({ icon, title }: { icon: ReactNode; title: string }
     );
 }
 
-export function LabeledControl({ label, children }: { label: string; children: ReactNode }) {
+export function LabeledControl({ label, children }: { label: ReactNode; children: ReactNode }) {
     return (
         <label className="block min-w-0">
             <span className="mb-1.5 block text-xs font-medium text-stone-500 dark:text-stone-400">{label}</span>

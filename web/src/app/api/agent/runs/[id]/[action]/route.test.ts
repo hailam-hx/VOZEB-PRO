@@ -117,6 +117,13 @@ describe("Agent Run resume concurrency", () => {
         expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
     });
 
+    it("rejects a whole-run retry for a permanent planning billing failure", async () => {
+        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "failed", tasks: [], plannerFailure: { message: "积分不足", failedAt: 2 } });
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "retry" }) });
+        expect(response.status).toBe(409);
+        expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
+    });
+
     it("retries planner settlement in the same run without clearing its persisted plan", async () => {
         const task = { id: "script", title: "短剧本", type: "text", model: "planner", prompt: "写完整短剧本", count: 1, dependencies: [], status: "ready", attempts: 0 };
         const finalization = { planningCycle: 1, status: "failed", holdId: "planner-hold", attemptNumber: 2, requestFingerprint: "a".repeat(64), errorCode: "ECONNRESET", retryable: true, updatedAt: 20 };

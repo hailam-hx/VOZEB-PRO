@@ -8,12 +8,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { allowedAdminBillingTabs, hasAdminPermission, type AdminBillingTab } from "@/lib/admin-permissions";
 import type { AdminBillingSummary, AdminProviderUsageAttempt, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
-import type { LogicalModel } from "@/lib/auth/store";
+import type { LogicalModel, LogicalModelBinding } from "@/lib/auth/store";
 import { formatVndAmount as formatVnd, type ProviderCostUnit } from "@/lib/billing/money";
-import type { PricingComponent, PricingConditionDimension, PricingDimension } from "@/lib/billing/pricing";
+import type { ModelEstimatorCoverage } from "@/lib/billing/creative-sale-estimator";
+import type { PricingBasis, PricingComponent, PricingConditionDimension, PricingDimension } from "@/lib/billing/pricing";
+import type { SystemPricingPolicy } from "@/lib/billing/pricing-policy";
+import { providerPricingNonExecutableFields, type ProviderPricingProfile } from "@/lib/billing/provider-pricing";
+import { hasApprovedSalePriceDrift } from "@/lib/billing/suggested-sale-approval";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import {
+    applyAdminSuggestedSalePrices,
     closeAdminTopUpOrder,
     deleteAdminTopUpPreset,
     getAdminModelPricing,
@@ -25,10 +30,13 @@ import {
     listAdminTopUpPresets,
     recoverAdminUsageHolds,
     receiveAdminTopUpOrder,
+    probeAdminDflopModelCapability,
     refundAdminTopUpOrder,
     saveAdminTopUpConfig,
     saveAdminModelPricing,
+    saveAdminPricingPolicy,
     saveAdminTopUpPreset,
+    updateAdminProviderPricingDimension,
     type AdminTopUpOrder,
 } from "@/services/api/admin-billing-commerce";
 import type { TopUpOrder, TopUpOrderStatus, TopUpPreset } from "@/services/api/billing";
@@ -68,6 +76,7 @@ type BindingPricingForm = {
     usdPerUnit?: string;
 };
 type ModelPricingForm = { modelId: string; saleComponents: PricingComponentForm[]; bindings: BindingPricingForm[] };
+type PricingPolicyForm = Pick<SystemPricingPolicy, "cnyToUsd" | "hotxUsdPerCredit" | "markupMultiplier" | "minimumMarginRate" | "costBasis" | "autoApplySalePrice">;
 
 export function BillingOperations({ initialTab = "orders", initialPaymentConfig, embedded = false, hideTabs = false }: { initialTab?: AdminBillingTab; initialPaymentConfig?: PaymentConfigSummary; embedded?: boolean; hideTabs?: boolean }) {
     const currentUser = useUserStore((state) => state.user);
@@ -436,26 +445,43 @@ function PresetsPanel() {
 }
 
 function PricingPanel() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
+    const canProbeUpstream = useUserStore((state) => hasAdminPermission(state.user, "billing.manage") && hasAdminPermission(state.user, "upstream.manage"));
     const [form] = Form.useForm<AdminTopUpConfig>();
     const [pricingForm] = Form.useForm<ModelPricingForm>();
+    const [policyForm] = Form.useForm<PricingPolicyForm>();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [pricingSaving, setPricingSaving] = useState(false);
+    const [probingBindingId, setProbingBindingId] = useState("");
     const [editingModel, setEditingModel] = useState<LogicalModel>();
     const [models, setModels] = useState<LogicalModel[]>([]);
+    const [pricingPolicy, setPricingPolicy] = useState<SystemPricingPolicy>();
+    const [estimatorCoverage, setEstimatorCoverage] = useState<ModelEstimatorCoverage>();
+    const [selectedPricingModelIds, setSelectedPricingModelIds] = useState<string[]>([]);
+    const [approvalPreview, setApprovalPreview] = useState<LogicalModel[]>();
+    const [approvalSaving, setApprovalSaving] = useState(false);
+    const [priceCoverageFilter, setPriceCoverageFilter] = useState<"all" | "missing">("all");
+    const [approvalReadinessFilter, setApprovalReadinessFilter] = useState<"all" | "ready">("all");
+    const visiblePricingModels = useMemo(
+        () => models.filter((model) => (priceCoverageFilter === "missing" ? !model.saleRateCard : true) && (approvalReadinessFilter === "ready" ? suggestedSaleApprovalReady(model, pricingPolicy?.version) : true)),
+        [approvalReadinessFilter, models, priceCoverageFilter, pricingPolicy?.version],
+    );
     const load = useCallback(async () => {
         setLoading(true);
         try {
             const [topUp, pricing] = await Promise.all([getAdminTopUpConfig(), getAdminModelPricing()]);
             if (topUp.config) form.setFieldsValue(topUp.config);
             setModels(pricing.models);
+            setPricingPolicy(pricing.pricingPolicy);
+            setEstimatorCoverage(pricing.estimatorCoverage);
+            policyForm.setFieldsValue(pricing.pricingPolicy);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "加载定价配置失败");
         } finally {
             setLoading(false);
         }
-    }, [form, message]);
+    }, [form, message, policyForm]);
     useEffect(() => {
         void load();
     }, [load]);
@@ -496,15 +522,17 @@ function PricingPanel() {
             await saveAdminModelPricing({
                 modelId: value.modelId,
                 saleRateCard: { version: 1, components: value.saleComponents.map(cleanPricingComponent) },
-                bindings: value.bindings.map((binding) => {
-                    const costRateCard = binding.costComponents.length ? { version: 1 as const, components: binding.costComponents.map(cleanPricingComponent) } : null;
-                    const providerCostUnit: ProviderCostUnit | null = !costRateCard
-                        ? null
-                        : binding.unitKind === "provider-native"
-                          ? { kind: "provider-native", provider: binding.provider || "", unit: binding.unit || "", usdConversion: { version: binding.conversionVersion || "", usdPerUnit: binding.usdPerUnit || "" } }
-                          : { kind: "fiat", currency: "USD" };
-                    return { bindingId: binding.bindingId, costRateCard, providerCostUnit };
-                }),
+                bindings: value.bindings
+                    .filter((_, index) => !editingModel?.bindings[index]?.providerPricingProfile)
+                    .map((binding) => {
+                        const costRateCard = binding.costComponents.length ? { version: 1 as const, components: binding.costComponents.map(cleanPricingComponent) } : null;
+                        const providerCostUnit: ProviderCostUnit | null = !costRateCard
+                            ? null
+                            : binding.unitKind === "provider-native"
+                              ? { kind: "provider-native", provider: binding.provider || "", unit: binding.unit || "", usdConversion: { version: binding.conversionVersion || "", usdPerUnit: binding.usdPerUnit || "" } }
+                              : { kind: "fiat", currency: "USD" };
+                        return { bindingId: binding.bindingId, costRateCard, providerCostUnit };
+                    }),
             });
             message.success("模型售价、绑定成本与单位换算已保存");
             setEditingModel(undefined);
@@ -515,15 +543,99 @@ function PricingPanel() {
             setPricingSaving(false);
         }
     };
+    const savePolicy = async () => {
+        setPricingSaving(true);
+        try {
+            const policy = await saveAdminPricingPolicy(await policyForm.validateFields());
+            setPricingPolicy(policy);
+            message.success("DFLOP 成本换算与建议售价策略已保存");
+            await load();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存定价策略失败");
+        } finally {
+            setPricingSaving(false);
+        }
+    };
+    const updateProviderDimension = async (modelId: string, bindingId: string, dimensionId: string, effectiveValue?: string) => {
+        setPricingSaving(true);
+        try {
+            const result = await updateAdminProviderPricingDimension({
+                modelId,
+                dimensionCommand: effectiveValue === undefined ? { action: "restore_upstream", bindingId, dimensionId } : { action: "set_manual", bindingId, dimensionId, effectiveValue },
+            });
+            setModels((current) => current.map((model) => (model.id === result.model.id ? result.model : model)));
+            setEditingModel(result.model);
+            message.success(effectiveValue === undefined ? "已恢复上游价格" : "人工成本价格已保存");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "更新价格维度失败");
+        } finally {
+            setPricingSaving(false);
+        }
+    };
+    const probeProviderCapability = (modelId: string, binding: LogicalModelBinding) => {
+        const qwen = binding.upstreamModel.toLowerCase() === "qwen-image-3.0-pro";
+        modal.confirm({
+            title: "重新验证 DFLOP 能力与计价契约？",
+            content: qwen ? "将按顺序提交 7 个最小图片探测请求并读取 DFLOP 调用日志；请求可能产生上游费用。" : "将提交 1 个最小 Responses image_generation 探测请求并读取 DFLOP 调用日志；请求可能产生上游费用。",
+            okText: "开始验证",
+            onOk: async () => {
+                setProbingBindingId(binding.id);
+                try {
+                    const result = await probeAdminDflopModelCapability({ modelId, bindingId: binding.id });
+                    setModels((current) => current.map((model) => (model.id === result.model.id ? result.model : model)));
+                    setEditingModel(result.model);
+                    message.success(`能力验证完成：${result.probe.outcome}`);
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "能力验证失败");
+                    throw error;
+                } finally {
+                    setProbingBindingId("");
+                }
+            },
+        });
+    };
+    const openSuggestedApproval = (modelIds: string[]) => {
+        const selected = modelIds.flatMap((modelId) => models.find((model) => model.id === modelId) || []);
+        if (!selected.length) return message.warning("请选择需要应用建议售价的逻辑模型");
+        setApprovalPreview(selected);
+    };
+    const applySuggestedApproval = async () => {
+        if (!approvalPreview?.length || !pricingPolicy) return;
+        setApprovalSaving(true);
+        try {
+            const result = await applyAdminSuggestedSalePrices({
+                modelIds: approvalPreview.map((model) => model.id),
+                suggestedRevisions: Object.fromEntries(approvalPreview.flatMap((model) => (model.suggestedSaleRateCard ? [[model.id, model.suggestedSaleRateCard.rateCard.revision]] : []))),
+                pricingPolicyVersion: pricingPolicy.version,
+            });
+            if (result.skipped.length) message.warning(`已应用 ${result.applied.length} 个，跳过 ${result.skipped.length} 个：${result.skipped.map((item) => `${item.modelId}（${item.reason}）`).join("、")}`);
+            else message.success(`已应用 ${result.applied.length} 个建议售价`);
+            setApprovalPreview(undefined);
+            setSelectedPricingModelIds([]);
+            await load();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "应用建议售价失败");
+        } finally {
+            setApprovalSaving(false);
+        }
+    };
     return (
         <>
             <Panel
                 title="客户汇率与模型计价"
                 description="客户充值汇率、逻辑模型售价、绑定成本价和供应商原生单位换算分开管理；成本与毛利仅管理员可见。"
                 action={
-                    <Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void save()}>
-                        保存汇率
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                        <Button icon={<Save className="size-4" />} loading={pricingSaving} onClick={() => void savePolicy()}>
+                            保存成本策略
+                        </Button>
+                        <Button icon={<CircleDollarSign className="size-4" />} disabled={!selectedPricingModelIds.length} onClick={() => openSuggestedApproval(selectedPricingModelIds)}>
+                            批量应用建议售价
+                        </Button>
+                        <Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void save()}>
+                            保存充值汇率
+                        </Button>
+                    </div>
                 }
             >
                 <Form form={form} layout="vertical">
@@ -539,8 +651,126 @@ function PricingPanel() {
                         </Form.Item>
                     </div>
                 </Form>
+                <div className="mt-4 rounded-xl border border-stone-200 p-3 dark:border-stone-800">
+                    <div className="mb-1 text-sm font-semibold">DFLOP 成本换算与建议售价</div>
+                    <div className="mb-3 text-xs text-stone-500">markupMultiplier=1 仅表示盈亏平衡成本基准；默认不会覆盖正式销售价格。</div>
+                    <Form form={policyForm} layout="vertical">
+                        <div className="grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">
+                            <Form.Item label={`DFLOP credits/CNY${pricingPolicy ? `（${pricingPolicy.dflopCreditsPerCnySource}）` : ""}`}>
+                                <Input value={pricingPolicy?.dflopCreditsPerCny} disabled />
+                            </Form.Item>
+                            <Form.Item label="CNY → USD" name="cnyToUsd" rules={[{ required: true }]}>
+                                <Input inputMode="decimal" />
+                            </Form.Item>
+                            <Form.Item label="1 HOTX credit 对应 USD" name="hotxUsdPerCredit" rules={[{ required: true }]}>
+                                <Input inputMode="decimal" />
+                            </Form.Item>
+                            <Form.Item label="建议售价加价系数" name="markupMultiplier" rules={[{ required: true }]}>
+                                <Input inputMode="decimal" />
+                            </Form.Item>
+                            <Form.Item label="最低毛利率（可空）" name="minimumMarginRate">
+                                <Input inputMode="decimal" placeholder="暂不强制" />
+                            </Form.Item>
+                            <Form.Item label="建议价成本基准" name="costBasis">
+                                <Select
+                                    options={[
+                                        { value: "max_active_binding_cost", label: "最高启用 Binding 成本" },
+                                        { value: "primary_binding_cost", label: "主 Binding 成本" },
+                                    ]}
+                                />
+                            </Form.Item>
+                            <Form.Item label="自动应用正式售价" name="autoApplySalePrice" valuePropName="checked">
+                                <Switch disabled aria-label="自动应用正式售价（暂未开放）" />
+                            </Form.Item>
+                            <Form.Item label="策略版本">
+                                <Input value={pricingPolicy?.version} disabled />
+                            </Form.Item>
+                        </div>
+                    </Form>
+                </div>
+                {estimatorCoverage ? (
+                    <div className="mt-4 rounded-xl border border-stone-200 p-3 dark:border-stone-800">
+                        <div className="text-sm font-semibold">预计积分覆盖率</div>
+                        <div className="mt-1 text-xs text-stone-500">按当前可路由逻辑模型与正式售价统计；无法安全估算的模型保留明确原因。</div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                            {[
+                                ["可路由模型", estimatorCoverage.totalRoutableModels],
+                                ["已配置正式售价", estimatorCoverage.officialPriceConfigured],
+                                ["精确估算", estimatorCoverage.exactEstimate],
+                                ["保守估算", estimatorCoverage.conservativeEstimate],
+                                ["缺少正式售价", estimatorCoverage.missingOfficialSalePrice],
+                                ["计价基准不支持", estimatorCoverage.unsupportedPricingBasis],
+                                ["缺少用量输入", estimatorCoverage.usageInputMissing],
+                            ].map(([label, value]) => (
+                                <div key={label} className="rounded-lg bg-stone-50 px-3 py-2 dark:bg-stone-900/60">
+                                    <div className="text-[11px] text-stone-500">{label}</div>
+                                    <div className="mt-0.5 text-lg font-semibold tabular-nums">{value}</div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-stone-600 dark:text-stone-300">
+                            {(
+                                [
+                                    ["文本", "text"],
+                                    ["图片", "image"],
+                                    ["视频", "video"],
+                                    ["音频", "audio"],
+                                    ["音乐", "music"],
+                                    ["数字人", "avatar"],
+                                    ["其他", "other"],
+                                ] as const
+                            ).map(([label, key]) => (
+                                <span key={key} className="rounded-full border border-stone-200 px-2 py-1 dark:border-stone-700">
+                                    {label} {estimatorCoverage.byCategory[key].total} · 精确 {estimatorCoverage.byCategory[key].exact} · 保守 {estimatorCoverage.byCategory[key].conservative} · 缺价 {estimatorCoverage.byCategory[key].missingOfficialPrice}
+                                </span>
+                            ))}
+                        </div>
+                        <div className="mt-2 text-xs text-stone-500">
+                            原因：
+                            {Object.entries(estimatorCoverage.reasonBreakdown)
+                                .map(([reason, count]) => `${reason} ${count}`)
+                                .join(" · ") || "无"}
+                        </div>
+                    </div>
+                ) : null}
+                <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-stone-50 p-3 dark:bg-stone-900/45">
+                    <div>
+                        <div className="mb-1 text-[11px] text-stone-500">正式售价</div>
+                        <Segmented
+                            size="small"
+                            value={priceCoverageFilter}
+                            onChange={(value) => setPriceCoverageFilter(value as "all" | "missing")}
+                            options={[
+                                { value: "all", label: "全部" },
+                                { value: "missing", label: "缺少正式售价" },
+                            ]}
+                        />
+                    </div>
+                    <div>
+                        <div className="mb-1 text-[11px] text-stone-500">审批资格</div>
+                        <Segmented
+                            size="small"
+                            value={approvalReadinessFilter}
+                            onChange={(value) => setApprovalReadinessFilter(value as "all" | "ready")}
+                            options={[
+                                { value: "all", label: "全部" },
+                                { value: "ready", label: "可安全审批" },
+                            ]}
+                        />
+                    </div>
+                    <span className="text-xs text-stone-500">当前显示 {visiblePricingModels.length} 个模型</span>
+                </div>
                 <div className="mt-4 overflow-x-auto">
-                    <Table rowKey="id" size="small" loading={loading} pagination={false} scroll={{ x: 980 }} dataSource={models} columns={pricingColumns(editPricing)} />
+                    <Table
+                        rowKey="id"
+                        size="small"
+                        loading={loading}
+                        pagination={false}
+                        scroll={{ x: 1320 }}
+                        dataSource={visiblePricingModels}
+                        columns={pricingColumns(editPricing, (model) => openSuggestedApproval([model.id]), pricingPolicy?.version)}
+                        rowSelection={{ selectedRowKeys: selectedPricingModelIds, onChange: (keys) => setSelectedPricingModelIds(keys.map(String)) }}
+                    />
                 </div>
             </Panel>
             <Modal
@@ -571,6 +801,17 @@ function PricingPanel() {
                                                 <Input />
                                             </Form.Item>
                                             <RateComponentsEditor name={[field.name, "costComponents"]} title="绑定成本价格卡" />
+                                            {binding?.providerPricingProfile ? (
+                                                <ProviderPricingDimensions
+                                                    modelId={editingModel!.id}
+                                                    binding={binding}
+                                                    saving={pricingSaving}
+                                                    probing={probingBindingId === binding.id}
+                                                    canProbe={canProbeUpstream}
+                                                    onProbe={probeProviderCapability}
+                                                    onSave={updateProviderDimension}
+                                                />
+                                            ) : null}
                                             <div className="mt-3 grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">
                                                 <Form.Item label="成本单位类型" name={[field.name, "unitKind"]}>
                                                     <Select
@@ -609,11 +850,64 @@ function PricingPanel() {
                     </Form.List>
                 </Form>
             </Modal>
+            <Modal
+                title="确认应用建议售价"
+                open={Boolean(approvalPreview)}
+                width="min(860px, calc(100vw - 24px))"
+                styles={{ body: { maxHeight: "min(72dvh, 720px)", overflowY: "auto" } }}
+                okText="确认应用"
+                cancelText="取消"
+                confirmLoading={approvalSaving}
+                okButtonProps={{ disabled: !approvalPreview?.some((model) => suggestedSaleApprovalReady(model, pricingPolicy?.version)) }}
+                onOk={() => void applySuggestedApproval()}
+                onCancel={() => (approvalSaving ? undefined : setApprovalPreview(undefined))}
+            >
+                <div className="space-y-3 pt-3">
+                    <div className="text-xs text-stone-500">仅应用当前价格状态为 READY 的模型。保存时服务端会重新校验建议价 revision、策略版本和 binding 状态。</div>
+                    <div className="flex gap-2 text-xs">
+                        <Tag color="green">可应用 {approvalPreview?.filter((model) => suggestedSaleApprovalReady(model, pricingPolicy?.version)).length || 0}</Tag>
+                        <Tag color="orange">跳过 {approvalPreview?.filter((model) => !suggestedSaleApprovalReady(model, pricingPolicy?.version)).length || 0}</Tag>
+                    </div>
+                    {approvalPreview?.map((model) => {
+                        const readiness = suggestedSaleApprovalReadiness(model, pricingPolicy?.version);
+                        const diff = buildSuggestedSalePriceDiff(model.saleRateCard, model.suggestedSaleRateCard?.rateCard);
+                        return (
+                            <section key={model.id} className="rounded-xl border border-stone-200 p-3 dark:border-stone-800">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                        <b>{model.name}</b>
+                                        <div className="text-xs text-stone-500">{model.id}</div>
+                                    </div>
+                                    <Tag color={readiness.ready ? "green" : "orange"}>{readiness.label}</Tag>
+                                </div>
+                                {model.suggestedSaleRateCard ? (
+                                    <div className="mt-2 text-xs text-stone-500">
+                                        策略：{model.suggestedSaleRateCard.pricingPolicyVersion} · 成本基准：{model.suggestedSaleRateCard.costBasis} · 计算时间：{model.suggestedSaleRateCard.calculatedAt}
+                                    </div>
+                                ) : null}
+                                <div className="mt-3 space-y-1 text-xs">
+                                    {diff.length ? (
+                                        diff.map((item) => (
+                                            <div key={item.key} className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2">
+                                                <span className="truncate">{item.label}</span>
+                                                <span className="text-stone-500">{item.oldValue ?? "未配置"}</span>
+                                                <span>→ {item.newValue ?? "删除"}</span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="text-stone-500">没有可预览的建议售价维度</div>
+                                    )}
+                                </div>
+                            </section>
+                        );
+                    })}
+                </div>
+            </Modal>
         </>
     );
 }
 
-function pricingColumns(onEdit: (model: LogicalModel) => void): TableColumnsType<LogicalModel> {
+function pricingColumns(onEdit: (model: LogicalModel) => void, onApplySuggestion: (model: LogicalModel) => void, pricingPolicyVersion?: string): TableColumnsType<LogicalModel> {
     return [
         {
             title: "逻辑模型",
@@ -627,7 +921,40 @@ function pricingColumns(onEdit: (model: LogicalModel) => void): TableColumnsType
                 </div>
             ),
         },
-        { title: "销售价格卡", width: 300, render: (_, model) => <RateCard value={model.saleRateCard} priceUnit="积分" /> },
+        {
+            title: "销售价格",
+            width: 340,
+            render: (_, model) => (
+                <div className="space-y-2">
+                    <div>
+                        <span className="text-xs text-stone-500">正式售价{model.salePriceSource ? ` · ${model.salePriceSource}` : ""}</span>
+                        {hasApprovedSalePriceDrift(model) ? (
+                            <Tag className="ml-2" color="orange">
+                                价格漂移
+                            </Tag>
+                        ) : null}
+                        <RateCard value={model.saleRateCard} priceUnit="积分" />
+                    </div>
+                    <div>
+                        <span className="text-xs text-stone-500">建议售价 · {model.suggestedSaleRateCard?.costBasis || "未计算"}</span>
+                        <RateCard value={model.suggestedSaleRateCard?.rateCard} priceUnit="积分" />
+                        {model.suggestedSaleRateCard ? (
+                            <div className="mt-1 break-all text-[11px] text-stone-500">
+                                策略 {model.suggestedSaleRateCard.pricingPolicyVersion} · 加价 {model.suggestedSaleRateCard.markupMultiplier} · revision {model.suggestedSaleRateCard.rateCard.revision}
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            ),
+        },
+        {
+            title: "审批状态",
+            width: 150,
+            render: (_, model) => {
+                const readiness = suggestedSaleApprovalReadiness(model, pricingPolicyVersion);
+                return <Tag color={readiness.ready ? "green" : "orange"}>{readiness.label}</Tag>;
+            },
+        },
         {
             title: "绑定成本与单位换算",
             width: 360,
@@ -652,14 +979,183 @@ function pricingColumns(onEdit: (model: LogicalModel) => void): TableColumnsType
         {
             title: "操作",
             fixed: "right",
-            width: 100,
+            width: 150,
             render: (_, model) => (
-                <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => onEdit(model)}>
-                    编辑计价
-                </Button>
+                <div className="flex flex-col gap-1">
+                    <Button size="small" icon={<CircleDollarSign className="size-3.5" />} disabled={!model.suggestedSaleRateCard} onClick={() => onApplySuggestion(model)}>
+                        应用建议售价
+                    </Button>
+                    <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => onEdit(model)}>
+                        编辑计价
+                    </Button>
+                </div>
             ),
         },
     ];
+}
+
+function ProviderPricingDimensions({
+    modelId,
+    binding,
+    saving,
+    probing,
+    canProbe,
+    onProbe,
+    onSave,
+}: {
+    modelId: string;
+    binding: LogicalModelBinding;
+    saving: boolean;
+    probing: boolean;
+    canProbe: boolean;
+    onProbe: (modelId: string, binding: LogicalModelBinding) => void;
+    onSave: (modelId: string, bindingId: string, dimensionId: string, effectiveValue?: string) => Promise<void>;
+}) {
+    const profile = binding.providerPricingProfile!;
+    const statusReasons = providerPricingStatusReasons(profile);
+    const nonExecutable = new Set(providerPricingNonExecutableFields(profile));
+    const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(profile.dimensions.map((dimension) => [dimension.id, dimension.effectiveValue])));
+    useEffect(() => setValues(Object.fromEntries(profile.dimensions.map((dimension) => [dimension.id, dimension.effectiveValue]))), [profile]);
+    return (
+        <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3 dark:border-blue-900/70 dark:bg-blue-950/20">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-semibold">DFLOP Provider Pricing Profile</div>
+                <div className="flex items-center gap-2">
+                    {canProbe && ["gpt-6", "gpt-6-astra", "qwen-image-3.0-pro"].includes(binding.upstreamModel.toLowerCase()) ? (
+                        <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={probing} onClick={() => onProbe(modelId, binding)}>
+                            重新验证能力
+                        </Button>
+                    ) : null}
+                    <Tag color={profile.status === "READY" ? "green" : profile.status === "STALE" ? "orange" : "gold"}>{profile.status}</Tag>
+                </div>
+            </div>
+            <div className="mt-1 text-[11px] text-stone-500">
+                同步：{profile.syncedAt} · {profile.conversion ? `换算策略 ${profile.conversion.pricingPolicyVersion}` : "尚未换算"}
+            </div>
+            {providerPricingExecutionSummary(profile).length ? <div className="mt-1 text-[11px] text-stone-600 dark:text-stone-300">{providerPricingExecutionSummary(profile).join(" · ")}</div> : null}
+            {providerCapabilityProbeSummary(profile).map((summary) => (
+                <div key={summary} className="mt-1 text-[11px] text-stone-500">
+                    {summary}
+                </div>
+            ))}
+            {statusReasons.length ? <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{statusReasons.join("；")}</div> : null}
+            <div className="mt-2 space-y-2">
+                {profile.dimensions.map((dimension) => (
+                    <div
+                        key={`${dimension.id}:${dimension.unit}`}
+                        className="grid gap-2 rounded-lg border border-blue-100 bg-white p-2 sm:grid-cols-[minmax(150px,1.2fr)_minmax(100px,.7fr)_minmax(130px,.8fr)_auto] sm:items-end dark:border-blue-900/60 dark:bg-stone-950"
+                    >
+                        <div className="min-w-0 text-[11px]">
+                            <b className="break-all">{dimension.id}</b>
+                            <div className="text-stone-500">
+                                scope: {dimension.operationScope || "other"} · upstream: {dimension.key || "—"} · usage: {providerPricingUsageSource(dimension.kind)} · executable: {nonExecutable.has(dimension.key || dimension.id) ? "no" : "yes"} ·
+                                syncedAt: {dimension.syncedAt}
+                            </div>
+                            <div className="text-stone-500">
+                                {dimension.unit} · override: {dimension.source === "manual" ? "manual" : "none"}
+                                {dimension.conditions
+                                    ? ` · ${Object.entries(dimension.conditions)
+                                          .map(([key, value]) => `${key}=${value}`)
+                                          .join(", ")}`
+                                    : ""}
+                            </div>
+                        </div>
+                        <div className="text-[11px]">
+                            <span className="text-stone-500">上游</span>
+                            <div>{dimension.upstreamValue ?? "缺失"} DFLOP credits</div>
+                        </div>
+                        <div>
+                            <div className="mb-1 flex items-center gap-1 text-[11px]">
+                                <Tag className="m-0" color={dimension.source === "manual" ? "gold" : "blue"}>
+                                    {dimension.source}
+                                </Tag>
+                                <span className="text-stone-500">HOTX {dimension.providerCostHotxCredits ?? "待换算"}</span>
+                            </div>
+                            <Input size="small" value={values[dimension.id]} inputMode="decimal" onChange={(event) => setValues((current) => ({ ...current, [dimension.id]: event.target.value }))} />
+                        </div>
+                        <div className="flex gap-1">
+                            <Button size="small" loading={saving} onClick={() => void onSave(modelId, binding.id, dimension.id, values[dimension.id])}>
+                                保存
+                            </Button>
+                            <Button size="small" disabled={dimension.upstreamValue === undefined} onClick={() => void onSave(modelId, binding.id, dimension.id)}>
+                                恢复上游
+                            </Button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function providerPricingUsageSource(kind: ProviderPricingProfile["dimensions"][number]["kind"]) {
+    if (kind === "CACHE_CREATION") return "usage.cache_creation_input_tokens";
+    if (kind === "SERVER_TOOL_CALL") return "usage.num_server_side_tools_used";
+    if (kind === "IMAGE_INPUT") return "server request reference count";
+    if (kind === "IMAGE_OUTPUT" || kind === "IMAGE_LARGE") return "server result count + canonical size";
+    if (kind === "TOKEN_INPUT" || kind === "TOKEN_CACHED_INPUT" || kind === "TOKEN_OUTPUT") return "authoritative token usage";
+    if (kind === "VIDEO_TOKEN") return "usage.completion_tokens";
+    if (kind === "VIDEO_SECOND" || kind === "VIDEO_SECOND_STAGE") return "delivered duration";
+    return "normalized server usage";
+}
+
+export function providerPricingStatusReasons(profile: ProviderPricingProfile) {
+    return [...new Set([...profile.warnings.map((warning) => `${warning.code}: ${warning.message}`), ...providerPricingNonExecutableFields(profile).map((field) => `未进入可执行成本模型：${field}`)])];
+}
+
+export function providerPricingExecutionSummary(profile: ProviderPricingProfile) {
+    if (profile.operationPricingStatus) {
+        const labels: Partial<Record<keyof typeof profile.operationPricingStatus, string>> = {
+            text_generation: "Text pricing",
+            builtin_image_generation: "Built-in image pricing",
+            standalone_image_generation: "Standalone image pricing",
+            image_edit: "Image edit pricing",
+            video_generation: "Video pricing",
+            tts: "TTS pricing",
+            voice_clone: "Voice clone pricing",
+            music_generation: "Music pricing",
+            avatar: "Avatar pricing",
+            other: "Other pricing",
+        };
+        return Object.entries(profile.operationPricingStatus).map(([scope, value]) => `${labels[scope as keyof typeof labels] || scope}: ${value.status === "READY" ? "Executable" : value.status}`);
+    }
+    if (profile.metadata?.category !== "text") return [];
+    const nonExecutable = new Set(providerPricingNonExecutableFields(profile));
+    const textKinds = new Set(["TOKEN_INPUT", "TOKEN_CACHED_INPUT", "TOKEN_OUTPUT", "CACHE_CREATION", "SERVER_TOOL_CALL"]);
+    const textDimensions = profile.dimensions.filter((dimension) => textKinds.has(dimension.kind) && dimension.effectiveValue !== "0");
+    const crossModalDimensions = profile.dimensions.filter((dimension) => dimension.kind === "IMAGE_OUTPUT" && dimension.effectiveValue !== "0");
+    const isExecutable = (dimension: ProviderPricingProfile["dimensions"][number]) => !nonExecutable.has(dimension.key || dimension.id);
+    return [
+        ...(textDimensions.length ? [`Text pricing: ${textDimensions.every(isExecutable) ? "Executable" : "Partial"}`] : []),
+        ...(crossModalDimensions.length ? [`Cross-modal pricing: ${crossModalDimensions.every(isExecutable) ? "Executable" : "Partial"}`] : []),
+    ];
+}
+
+export function providerCapabilityProbeSummary(profile: ProviderPricingProfile) {
+    const probes = profile.metadata?.capabilityProbes;
+    if (!probes || typeof probes !== "object" || Array.isArray(probes)) return ["Probe verified: no"];
+    const summaries = Object.entries(probes as Record<string, unknown>).flatMap(([scope, value]) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const probe = value as Record<string, unknown>;
+        const evidence = probe.billingEvidence && typeof probe.billingEvidence === "object" && !Array.isArray(probe.billingEvidence) ? (probe.billingEvidence as Record<string, unknown>) : {};
+        const cases = Array.isArray(probe.cases) ? probe.cases : [];
+        return [
+            `${scope} · Probe verified: yes · Last verified at: ${String(probe.probedAt || "—")} · Tier/Billing source: ${String(evidence.source || "none")} · Billing basis: ${String(evidence.basis || "unresolved")} · Result: ${String(probe.outcome || "inconclusive")} · Usage: ${probe.usageSeen === true ? "yes" : "no"} · Image output: ${probe.imageOutputSeen === true ? "yes" : "no"}${evidence.providerCost !== undefined ? ` · Provider cost: ${String(evidence.providerCost)}` : ""}${probe.requestId ? ` · Request ID: ${String(probe.requestId)}` : ""}`,
+            ...cases.flatMap((item) => {
+                if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+                const current = item as Record<string, unknown>;
+                const actualSize = current.actualWidth && current.actualHeight ? `${current.actualWidth}x${current.actualHeight}` : "—";
+                return [
+                    `Probe case ${String(current.requestSize || "—")} → response ${String(current.responseSize || "—")} · actual ${actualSize} · HTTP ${String(current.statusCode || "—")} · billed ${String(current.billingAmount ?? "—")} ${String(current.billingUnit ?? "")} · tier ${String(current.billedTier || "—")} · request ${String(current.requestId || "—")} · task ${String(current.taskId || "—")} · usage record ${String(current.providerUsageRecordId || "—")}`,
+                ];
+            }),
+        ];
+    });
+    const rawPrices = profile.metadata?.unscopedProviderPrices;
+    const hasScopedImagePrice = profile.dimensions.some((dimension) => dimension.key === "price_per_image");
+    if (!hasScopedImagePrice && rawPrices && typeof rawPrices === "object" && !Array.isArray(rawPrices) && (rawPrices as Record<string, unknown>).price_per_image !== undefined)
+        summaries.push(`price_per_image: ${(rawPrices as Record<string, unknown>).price_per_image}（仅保留为 Raw provider metadata）`);
+    return summaries;
 }
 
 function RateComponentsEditor({ name, title, required = false }: { name: string | Array<string | number>; title: string; required?: boolean }) {
@@ -667,7 +1163,10 @@ function RateComponentsEditor({ name, title, required = false }: { name: string 
         { value: "request", label: "请求次数" },
         { value: "inputTokens", label: "输入 Token" },
         { value: "cachedInputTokens", label: "缓存输入 Token" },
+        { value: "cacheCreationTokens", label: "缓存写入 Token" },
         { value: "outputTokens", label: "输出 Token" },
+        { value: "serverToolCalls", label: "服务端工具调用" },
+        { value: "inputImageCount", label: "输入参考图" },
         { value: "count", label: "生成数量" },
         { value: "megapixels", label: "总百万像素" },
         { value: "characters", label: "字符数" },
@@ -676,6 +1175,30 @@ function RateComponentsEditor({ name, title, required = false }: { name: string 
         { value: "resolution", label: "分辨率" },
         { value: "format", label: "格式" },
     ];
+    const bases: Array<{ value: PricingBasis; label: string }> = [
+        "TOKEN_INPUT",
+        "TOKEN_CACHED_INPUT",
+        "TOKEN_OUTPUT",
+        "CACHE_CREATION",
+        "SERVER_TOOL_CALL",
+        "IMAGE_OUTPUT",
+        "IMAGE_INPUT",
+        "IMAGE_LARGE",
+        "VIDEO_SECOND",
+        "VIDEO_INPUT_SECOND",
+        "VIDEO_TOKEN",
+        "VIDEO_SECOND_STAGE",
+        "TTS_CHARACTER",
+        "VOICE_CLONE_CALL",
+        "MUSIC_GENERATION",
+        "AVATAR_CREATE",
+        "AVATAR_SECOND",
+        "TRANSCRIPT_CALL",
+        "PER_GENERATION",
+        "PER_CALL",
+        "PER_CHARACTER",
+        "PER_SECOND",
+    ].map((value) => ({ value: value as PricingBasis, label: value }));
     return (
         <div className="rounded-xl bg-stone-50/70 p-3 dark:bg-stone-900/45">
             <div className="mb-2 text-xs font-semibold text-stone-700 dark:text-stone-200">{title}</div>
@@ -684,12 +1207,15 @@ function RateComponentsEditor({ name, title, required = false }: { name: string 
                     <div className="space-y-2">
                         {fields.map((field) => (
                             <div key={field.key} className="min-w-0 rounded-lg border border-stone-200 bg-white p-2 dark:border-stone-800 dark:bg-stone-950">
-                                <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
+                                <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_auto]">
                                     <Form.Item className="mb-0" label="组件 ID" name={[field.name, "id"]} rules={[{ required: true }]}>
                                         <Input />
                                     </Form.Item>
                                     <Form.Item className="mb-0" label="计价维度" name={[field.name, "dimension"]} rules={[{ required: true }]}>
                                         <Select options={dimensions} />
+                                    </Form.Item>
+                                    <Form.Item className="mb-0" label="计价基准" name={[field.name, "basis"]}>
+                                        <Select allowClear showSearch options={bases} placeholder="按维度推断" />
                                     </Form.Item>
                                     <Form.Item className="mb-0" label="单价" name={[field.name, "unitPrice"]} rules={[{ required: true, pattern: /^(?:0|[1-9]\d*)(?:\.\d+)?$/ }]}>
                                         <Input inputMode="decimal" />
@@ -702,7 +1228,7 @@ function RateComponentsEditor({ name, title, required = false }: { name: string 
                                     </Form.Item>
                                     <Button className="self-end" danger aria-label="删除价格组件" icon={<Trash2 className="size-3.5" />} onClick={() => remove(field.name)} />
                                 </div>
-                                <div className="mt-2 grid gap-2 border-t border-dashed border-stone-200 pt-2 sm:grid-cols-3 dark:border-stone-800">
+                                <div className="mt-2 grid gap-2 border-t border-dashed border-stone-200 pt-2 sm:grid-cols-2 lg:grid-cols-4 dark:border-stone-800">
                                     <Form.Item className="mb-0" label="条件：分辨率" name={[field.name, "when", "resolution"]}>
                                         <Input placeholder="例如 1920x1080" />
                                     </Form.Item>
@@ -711,6 +1237,15 @@ function RateComponentsEditor({ name, title, required = false }: { name: string 
                                     </Form.Item>
                                     <Form.Item className="mb-0" label="条件：格式" name={[field.name, "when", "format"]}>
                                         <Input placeholder="例如 mp4" />
+                                    </Form.Item>
+                                    <Form.Item className="mb-0" label="条件：计费基准" name={[field.name, "when", "billingBasis"]}>
+                                        <Select
+                                            allowClear
+                                            options={[
+                                                { value: "default", label: "默认" },
+                                                { value: "with_video_input", label: "含参考视频" },
+                                            ]}
+                                        />
                                     </Form.Item>
                                 </div>
                             </div>
@@ -735,12 +1270,20 @@ function defaultPricingComponent(capability: LogicalModel["capability"]): Pricin
 function cleanPricingComponent(component: PricingComponentForm): PricingComponent {
     const per = component.per?.trim();
     const match = component.match?.trim();
-    const when = (["quality", "resolution", "format"] as PricingConditionDimension[]).reduce<NonNullable<PricingComponent["when"]>>((result, dimension) => {
+    const when = (["quality", "resolution", "format", "billingBasis"] as PricingConditionDimension[]).reduce<NonNullable<PricingComponent["when"]>>((result, dimension) => {
         const value = component.when?.[dimension]?.trim();
         if (value) result[dimension] = value;
         return result;
     }, {});
-    return { id: component.id.trim(), dimension: component.dimension, unitPrice: component.unitPrice.trim(), ...(per ? { per } : {}), ...(match ? { match } : {}), ...(Object.keys(when).length ? { when } : {}) };
+    return {
+        id: component.id.trim(),
+        dimension: component.dimension,
+        ...(component.basis ? { basis: component.basis } : {}),
+        unitPrice: component.unitPrice.trim(),
+        ...(per ? { per } : {}),
+        ...(match ? { match } : {}),
+        ...(Object.keys(when).length ? { when } : {}),
+    };
 }
 
 function UsagePanel({ mode }: { mode: "usage" | "recovery" }) {
@@ -995,7 +1538,10 @@ const pricingDimensionLabels: Record<PricingDimension, { label: string; unit: st
     request: { label: "请求次数", unit: "次" },
     inputTokens: { label: "输入 Token", unit: "Token" },
     cachedInputTokens: { label: "缓存输入 Token", unit: "Token" },
+    cacheCreationTokens: { label: "缓存写入 Token", unit: "Token" },
     outputTokens: { label: "输出 Token", unit: "Token" },
+    serverToolCalls: { label: "服务端工具调用", unit: "次" },
+    inputImageCount: { label: "输入参考图", unit: "张" },
     count: { label: "生成数量", unit: "个" },
     megapixels: { label: "总百万像素", unit: "MP" },
     characters: { label: "字符数", unit: "字符" },
@@ -1004,8 +1550,8 @@ const pricingDimensionLabels: Record<PricingDimension, { label: string; unit: st
     resolution: { label: "分辨率", unit: "个" },
     format: { label: "格式", unit: "个" },
 };
-const pricingConditionLabels: Record<PricingConditionDimension, string> = { quality: "质量", resolution: "分辨率", format: "格式" };
-const pricingConditionOrder: PricingConditionDimension[] = ["quality", "resolution", "format"];
+const pricingConditionLabels: Record<PricingConditionDimension, string> = { quality: "质量", resolution: "分辨率", format: "格式", billingBasis: "计费基准", contextTier: "上下文档位", megapixelTier: "像素档位" };
+const pricingConditionOrder: PricingConditionDimension[] = ["quality", "resolution", "format", "billingBasis", "contextTier", "megapixelTier"];
 
 export function formatPricingRateCardForAdmin(value: LogicalModel["saleRateCard"] | undefined, priceUnit: string) {
     if (!value?.components?.length) return { versionLabel: "", componentLabels: ["未配置"] };
@@ -1024,6 +1570,50 @@ export function formatProviderCostUnitForAdmin(value: LogicalModel["bindings"][n
     if (!value) return { priceUnit: "成本单位", conversionLabel: "未配置" };
     if (value.kind === "fiat") return { priceUnit: value.currency, conversionLabel: value.currency };
     return { priceUnit: value.unit, conversionLabel: `${value.provider} · 1 ${value.unit} = ${value.usdConversion.usdPerUnit} USD · ${value.usdConversion.version}` };
+}
+
+export function buildSuggestedSalePriceDiff(current: LogicalModel["saleRateCard"] | undefined, suggested: LogicalModel["saleRateCard"] | undefined) {
+    const currentByDimension = new Map((current?.components || []).map((component) => [pricingComponentIdentity(component), component]));
+    const suggestedByDimension = new Map((suggested?.components || []).map((component) => [pricingComponentIdentity(component), component]));
+    return Array.from(new Set([...currentByDimension.keys(), ...suggestedByDimension.keys()]))
+        .sort()
+        .map((key) => {
+            const oldComponent = currentByDimension.get(key);
+            const newComponent = suggestedByDimension.get(key);
+            const component = newComponent || oldComponent!;
+            const dimension = pricingDimensionLabels[component.dimension];
+            const conditions = pricingConditionOrder.flatMap((condition) => (component.when?.[condition] ? [`${pricingConditionLabels[condition]} ${component.when[condition]}`] : []));
+            return {
+                key,
+                label: `${component.match ? `${dimension.label} ${component.match}` : dimension.label}${conditions.length ? `（${conditions.join(" · ")}）` : ""}`,
+                ...(oldComponent ? { oldValue: oldComponent.unitPrice } : {}),
+                ...(newComponent ? { newValue: newComponent.unitPrice } : {}),
+                status: !oldComponent ? ("added" as const) : !newComponent ? ("removed" as const) : oldComponent.unitPrice === newComponent.unitPrice ? ("unchanged" as const) : ("changed" as const),
+            };
+        });
+}
+
+function pricingComponentIdentity(component: PricingComponent) {
+    return JSON.stringify([component.dimension, component.per || "1", component.match || "", Object.entries(component.when || {}).sort(([left], [right]) => left.localeCompare(right))]);
+}
+
+function suggestedSaleApprovalReady(model: LogicalModel, pricingPolicyVersion?: string) {
+    return suggestedSaleApprovalReadiness(model, pricingPolicyVersion).ready;
+}
+
+function suggestedSaleApprovalReadiness(model: LogicalModel, pricingPolicyVersion?: string): { ready: boolean; label: string } {
+    const suggestion = model.suggestedSaleRateCard;
+    if (!suggestion) return { ready: false, label: "无建议售价" };
+    if (!suggestion.bindingInputs.length) return { ready: false, label: "无计价 Binding" };
+    const currentInputs = suggestion.bindingInputs.flatMap((input) => {
+        const binding = model.bindings.find((candidate) => candidate.id === input.bindingId);
+        return binding?.enabled ? [{ ...input, pricingStatus: binding.providerPricingProfile?.status || input.pricingStatus }] : [];
+    });
+    if (!model.enabled || currentInputs.length !== suggestion.bindingInputs.length) return { ready: false, label: "无计价 Binding" };
+    const blocked = ["STALE", "PARTIAL", "NEEDS_REVIEW"].find((status) => currentInputs.some((input) => input.pricingStatus === status));
+    if (blocked) return { ready: false, label: `跳过 · ${blocked}` };
+    if (pricingPolicyVersion && suggestion.pricingPolicyVersion !== pricingPolicyVersion) return { ready: false, label: "跳过 · POLICY_CHANGED" };
+    return { ready: true, label: "READY" };
 }
 
 function providerUnitText(value: LogicalModel["bindings"][number]["providerCostUnit"]) {

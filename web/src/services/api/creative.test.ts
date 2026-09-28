@@ -14,7 +14,7 @@ vi.mock("@/services/api/session-expiration", () => {
     };
 });
 
-import { controlCreativeAgentRun, createCreativeAgentRun, listCreativeAgentRuns, listCreativeConversationPage, listCreativeMessages, retryCreativeAgentTask, watchCreativeAgentRun } from "./creative";
+import { CreativeApiError, controlCreativeAgentRun, createCreativeAgentRun, listCreativeAgentRuns, listCreativeConversationPage, listCreativeMessages, retryCreativeAgentTask, watchCreativeAgentRun } from "./creative";
 import type { CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
 
 class FakeEventSource extends EventTarget {
@@ -481,5 +481,17 @@ describe("创作会话来源", () => {
         );
 
         await expect(createCreativeAgentRun({ clientRequestId: `request-${status}`, surface: "chat", prompt: "生成一张图片", assetIds: [], skillIds: [], modelIds: [] })).rejects.toThrow(message);
+    });
+
+    it("preserves typed image quality revision errors", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => Response.json({ code: 409, data: { errorCode: "QUALITY_PROFILE_CHANGED", currentProfileRevision: "profile-current" }, msg: "模型画质配置已更新，请重新确认后提交" }, { status: 409 })),
+        );
+
+        const error = await createCreativeAgentRun({ clientRequestId: "request-stale-quality", surface: "chat", prompt: "生成一张图片", assetIds: [], skillIds: [], modelIds: [] }).catch((reason) => reason);
+
+        expect(error).toBeInstanceOf(CreativeApiError);
+        expect(error).toMatchObject({ status: 409, errorCode: "QUALITY_PROFILE_CHANGED", currentProfileRevision: "profile-current" });
     });
 });

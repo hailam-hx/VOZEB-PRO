@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 
 import type { CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import type { LogicalModelGenerationParameters } from "@/lib/auth/store-types";
+import type { PublicLogicalImageQualityProfile } from "@/lib/image-quality-profile";
 import { resolveCreativeGenerationCapability, sanitizeCreativeGenerationPreferences } from "@/lib/creative-generation-capabilities";
 import { VOZEB_VIDEO_RESOLUTIONS } from "@/lib/generation-parameters";
 import { cn } from "@/lib/utils";
@@ -15,7 +16,7 @@ import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement 
 import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
 import { CreativeGenerationPreferences as GenerationPreferencesControl, type CreativeGenerationPreferencePatch, type MediaCapability } from "@/components/creative-generation-preferences";
 
-export type CreativeModelOption = { id: string; name: string; capability: MediaCapability; generationParameters?: LogicalModelGenerationParameters };
+export type CreativeModelOption = { id: string; name: string; capability: MediaCapability; generationParameters?: LogicalModelGenerationParameters; imageQualityProfile?: PublicLogicalImageQualityProfile };
 
 const createVideoResolutionValues = new Set<string>(VOZEB_VIDEO_RESOLUTIONS);
 
@@ -52,7 +53,7 @@ export function CreativeGenerationControls({
     const modelCapabilities = creationMode === "agent" ? (["image", "video", "audio"] as const).filter((capability) => models.some((model) => model.capability === capability)) : [creationMode];
     const activeCapability = creationMode === "agent" ? (modelCapabilities.includes(preferredCapability) ? preferredCapability : selectedModels[0]?.capability || modelCapabilities[0] || "image") : creationMode;
     const preferenceCapabilities = creationMode === "agent" ? (modelCapabilities.length ? modelCapabilities : [activeCapability]) : [creationMode];
-    const capabilitySignature = JSON.stringify({ smartPlanning, models: models.map((model) => [model.id, model.capability, model.generationParameters]), selected: selectedModels.map((model) => model.id) });
+    const capabilitySignature = JSON.stringify({ smartPlanning, models: models.map((model) => [model.id, model.capability, model.generationParameters, model.imageQualityProfile]), selected: selectedModels.map((model) => model.id) });
     const capabilityStates = useMemo(
         () =>
             Object.fromEntries((["image", "video", "audio"] as const).map((capability) => [capability, resolveCreativeGenerationCapability({ models, selectedModels, capability, smartPlanning })])) as Record<
@@ -64,17 +65,46 @@ export function CreativeGenerationControls({
         [capabilitySignature],
     );
     const activeCapabilityState = capabilityStates[activeCapability];
+    const activeImageQualityProfile = !smartPlanning && selectedModels.length === 1 && selectedModels[0].capability === "image" ? selectedModels[0].imageQualityProfile : undefined;
     const capabilityLabel = (capability: MediaCapability) => t(capability === "image" ? "imageCapability" : capability === "video" ? "videoCapability" : "audioCapability");
     const modelSummary = selectedModels.length === 0 ? (smartPlanning ? t("smartModel") : t("selectModel")) : selectedModels.length === 1 ? selectedModels[0].name : `${selectedModels[0].name} +${selectedModels.length - 1}`;
 
     useEffect(() => {
         const sanitized = (["image", "video", "audio"] as const).reduce((current, capability) => {
             const parameters = capabilityStates[capability].parameters;
-            const selectableParameters = capability === "video" && parameters ? { ...parameters, resolutions: parameters.resolutions.filter((value) => createVideoResolutionValues.has(value)) } : parameters;
+            const selectableParameters =
+                capability === "video" && parameters
+                    ? { ...parameters, resolutions: parameters.resolutions.filter((value) => createVideoResolutionValues.has(value)) }
+                    : capability === "image" && parameters && activeImageQualityProfile
+                      ? { ...parameters, qualities: activeImageQualityProfile.options.map((option) => option.value) }
+                      : parameters;
             return sanitizeCreativeGenerationPreferences(current, capability, selectableParameters);
         }, generationPreferences);
         if (JSON.stringify(sanitized) !== JSON.stringify(generationPreferences)) onReplaceGenerationPreferences(sanitized);
-    }, [capabilityStates, generationPreferences, onReplaceGenerationPreferences]);
+    }, [activeImageQualityProfile, capabilityStates, generationPreferences, onReplaceGenerationPreferences]);
+
+    useEffect(() => {
+        if (activeCapability !== "image" || smartPlanning || selectedModels.length !== 1) return;
+        const current = generationPreferences.image || {};
+        const requiresExactSize = activeImageQualityProfile?.controlType === "resolution_tier" || activeImageQualityProfile?.controlType === "pixel_tier";
+        const currentSize = current.size?.trim().toLowerCase();
+        const defaultExactSize = requiresExactSize && (!currentSize || currentSize === "auto") ? activeCapabilityState.parameters?.aspectRatios[0] || activeCapabilityState.parameters?.pixelSizes[0] : undefined;
+        const sizedCurrent = defaultExactSize ? { ...current, size: defaultExactSize } : current;
+        if (!activeImageQualityProfile || activeImageQualityProfile.selectionMode !== "explicit" || activeImageQualityProfile.options.length < 2) {
+            if (defaultExactSize || current.qualityProfileRevision || current.qualityOptionRevision || (activeImageQualityProfile && current.quality)) {
+                onReplaceGenerationPreferences({ ...generationPreferences, image: { ...sizedCurrent, quality: undefined, qualityProfileRevision: undefined, qualityOptionRevision: undefined } });
+            }
+            return;
+        }
+        const selected = activeImageQualityProfile.options.find((option) => option.value === current.quality) || activeImageQualityProfile.options.find((option) => option.value === activeImageQualityProfile.defaultValue);
+        if (!selected) return;
+        if (defaultExactSize || current.quality !== selected.value || current.qualityProfileRevision !== activeImageQualityProfile.profileRevision || current.qualityOptionRevision !== selected.optionRevision) {
+            onReplaceGenerationPreferences({
+                ...generationPreferences,
+                image: { ...sizedCurrent, quality: selected.value, qualityProfileRevision: activeImageQualityProfile.profileRevision, qualityOptionRevision: selected.optionRevision },
+            });
+        }
+    }, [activeCapability, activeCapabilityState.parameters, activeImageQualityProfile, generationPreferences, onReplaceGenerationPreferences, selectedModels.length, smartPlanning]);
 
     return (
         <>
@@ -199,6 +229,7 @@ export function CreativeGenerationControls({
                 capabilities={preferenceCapabilities}
                 preferences={generationPreferences}
                 generationParameters={activeCapabilityState.parameters}
+                imageQualityProfile={activeImageQualityProfile}
                 capabilityReason={activeCapabilityState.reason}
                 showCustomVideoResolution={false}
                 triggerLabel={creationMode === "agent" ? t("generationParameters") : undefined}

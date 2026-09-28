@@ -12,6 +12,8 @@ type Props = {
     items: CreativeConversation[];
     activeId?: string;
     loading: boolean;
+    error?: string;
+    onRetryLoad?: () => void;
     onNew: () => void;
     onOpen: (id: string) => void;
     onRename: (id: string, title: string) => Promise<void>;
@@ -21,7 +23,7 @@ type Props = {
     onLoadMore?: () => void;
 };
 
-export function CreativeConversationList({ items, activeId, loading, onNew, onOpen, onRename, onDelete, hasMore, loadingMore, onLoadMore }: Props) {
+export function CreativeConversationList({ items, activeId, loading, error, onRetryLoad, onNew, onOpen, onRename, onDelete, hasMore, loadingMore, onLoadMore }: Props) {
     const t = useTranslations("create");
     const format = useFormatter();
     const [managing, setManaging] = useState(false);
@@ -103,7 +105,17 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
 
             <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
                 {loading ? <div className="py-10 text-center text-sm text-stone-400">{t("loading")}</div> : null}
-                {!loading && !items.length ? <div className="py-10 text-center text-sm text-stone-400">{t("noCreativeConversations")}</div> : null}
+                {!loading && error ? (
+                    <div role="alert" className="px-2 py-3 text-sm text-red-700 dark:text-red-300">
+                        {error}{" "}
+                        {onRetryLoad ? (
+                            <button type="button" className="rounded px-1 underline hover:bg-red-50 hover:text-red-900 focus-visible:outline-2 focus-visible:outline-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-100" onClick={onRetryLoad}>
+                                {t("retryDirectly")}
+                            </button>
+                        ) : null}
+                    </div>
+                ) : null}
+                {!loading && !error && !items.length ? <div className="py-10 text-center text-sm text-stone-400">{t("noCreativeConversations")}</div> : null}
                 <div className="space-y-1.5">
                     {items.map((item) => {
                         const checked = selected.has(item.id);

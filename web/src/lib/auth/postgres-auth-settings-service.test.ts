@@ -9,17 +9,18 @@ const mocks = vi.hoisted(() => ({
     upsertSystemModelChannel: vi.fn(),
     deleteSystemModelChannelsNotIn: vi.fn(),
     readSettings: vi.fn(),
+    createAuditLog: vi.fn(),
 }));
 
 vi.mock("@/lib/server/database", () => ({
-    createPostgresRepositories: vi.fn(() => ({ settings: mocks })),
+    createPostgresRepositories: vi.fn(() => ({ settings: mocks, auditLogs: { create: mocks.createAuditLog } })),
     ensurePostgresSchema: vi.fn(),
     withPostgresTransaction: vi.fn(async (handler: (client: unknown) => Promise<unknown>) => handler({})),
 }));
 
 vi.mock("./store-repository", () => ({ readPostgresAuthSettings: mocks.readSettings }));
 
-import { updatePostgresAuthSettings } from "./postgres-auth-settings-service";
+import { mutatePostgresAuthLogicalModelsWithAudit, updatePostgresAuthSettings } from "./postgres-auth-settings-service";
 
 describe("updatePostgresAuthSettings", () => {
     beforeEach(() => {
@@ -85,5 +86,37 @@ describe("updatePostgresAuthSettings", () => {
         await updatePostgresAuthSettings({ logicalModels });
 
         expect(mocks.updateSettings).toHaveBeenCalledWith({ logicalModels: expect.arrayContaining([expect.objectContaining({ bindings: [expect.objectContaining({ generationParameters: expect.objectContaining({ qualities: ["ultra"] }) })] })]) });
+    });
+
+    it("writes approved logical models and their audit rows through the same transaction executor", async () => {
+        const audit = {
+            id: "audit-1",
+            action: "admin.billing.model_pricing.apply_suggested_sale_price",
+            status: "success" as const,
+            actorUserId: "admin-1",
+            targetType: "logical_model",
+            targetId: "video",
+            metadata: { operation: "APPLY_SUGGESTED_SALE_PRICE" },
+            createdAt: "2026-09-24T10:00:00.000Z",
+        };
+
+        const result = await mutatePostgresAuthLogicalModelsWithAudit((models) => ({ models, auditLogs: [audit], result: "applied" }));
+
+        expect(mocks.lock).toHaveBeenCalledOnce();
+        expect(mocks.updateSettings).toHaveBeenCalledWith({ logicalModels: expect.any(Array) });
+        expect(mocks.createAuditLog).toHaveBeenCalledWith(audit);
+        expect(result.result).toBe("applied");
+    });
+
+    it("surfaces an audit insert failure so the enclosing transaction rolls back the model update", async () => {
+        mocks.createAuditLog.mockRejectedValueOnce(new Error("audit unavailable"));
+
+        await expect(
+            mutatePostgresAuthLogicalModelsWithAudit((models) => ({
+                models,
+                auditLogs: [{ id: "audit-1", action: "approval", status: "success", createdAt: "2026-09-24T10:00:00.000Z" }],
+                result: null,
+            })),
+        ).rejects.toThrow("audit unavailable");
     });
 });

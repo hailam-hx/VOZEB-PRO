@@ -1,8 +1,13 @@
 import type { LogicalModelGenerationParameters } from "@/lib/auth/store";
+import { resolveDflopImageExecutionSize } from "@/lib/dflop-image-quality-profile";
 import { generationParametersCompatible, type NormalizedGenerationRequest } from "@/lib/generation-parameters";
+import type { ImageQualityIntent } from "@/lib/image-quality-profile";
+import { ImageQualityResolutionError, resolveImageQualityForBinding } from "./image-quality-resolver";
+import type { ResolvedLogicalModel } from "./logical-model-router";
 
 type GenerationCandidate = { id?: unknown; generationParameters?: unknown };
 type GenerationReference = { type?: unknown; role?: unknown };
+const legacyImageQualityTelemetry = new Set<string>();
 
 export function assertCapabilityConstraints(parameters: LogicalModelGenerationParameters | undefined, request: NormalizedGenerationRequest) {
     const compatibility = generationParametersCompatible(parameters, request);
@@ -31,8 +36,8 @@ export function resolveImageGenerationCandidates<T extends GenerationCandidate>(
         const parameters = candidate.generationParameters as LogicalModelGenerationParameters | undefined;
         const size = resolveSize(config.size, defaults.imageSize, parameters);
         const quality = resolveText(config.quality, defaults.imageQuality, parameters, parameters?.qualities, (value) => ({ quality: value }));
-        const explicitCount = positiveInteger(config.count);
-        const defaultCount = positiveInteger(defaults.imageCount);
+        const explicitCount = executableBatchSize(config.count, parameters);
+        const defaultCount = executableBatchSize(defaults.imageCount, parameters);
         const count =
             explicitCount ||
             (defaultCount ? compatibleDefault(parameters, { batchSize: defaultCount }, defaultCount) : undefined) ||
@@ -40,6 +45,75 @@ export function resolveImageGenerationCandidates<T extends GenerationCandidate>(
         const resolved = { ...candidate, ...(size ? { size } : {}), ...(quality ? { quality } : {}), ...(count ? { count } : {}) };
         return { candidate: resolved, request: imageGenerationRequest(resolved as Record<string, unknown>, referenceCount, hasMask) };
     });
+}
+
+export function resolveBindingImageGenerationCandidates<T extends GenerationCandidate>(
+    candidates: readonly ResolvedLogicalModel[],
+    config: Record<string, unknown>,
+    defaults: { imageSize: string; imageQuality: string; imageCount?: number | "auto" },
+    referenceCount: number,
+    hasMask: boolean,
+    userPrompt: string,
+    toConfig: (candidate: ResolvedLogicalModel) => T,
+) {
+    const resolvedCandidates: Array<T & { imageQualityContext?: ReturnType<typeof resolveImageQualityForBinding> }> = [];
+    let error: Error | undefined;
+    for (const candidate of candidates) {
+        const profile = candidate.binding.imageQualityProfile;
+        if (!profile) {
+            if (candidate.channel.advancedConfig?.protocol === "dflop") {
+                error ||= new ImageQualityResolutionError("QUALITY_CONTEXT_UNRESOLVABLE", "DFLOP 图片 binding 尚未同步可执行画质档案");
+                continue;
+            }
+            const telemetryKey = `${candidate.channelId}:${candidate.binding.id}`;
+            if (!legacyImageQualityTelemetry.has(telemetryKey)) {
+                legacyImageQualityTelemetry.add(telemetryKey);
+                console.debug("Image quality legacy adapter", { channelId: candidate.channelId, bindingId: candidate.binding.id, upstreamProtocol: candidate.channel.advancedConfig?.protocol || "compatible" });
+            }
+            const legacy = resolveImageGenerationCandidates([toConfig(candidate)], config, defaults, referenceCount, hasMask);
+            if (legacy.candidates[0]) resolvedCandidates.push(legacy.candidates[0]);
+            error ||= legacy.error;
+            continue;
+        }
+        try {
+            const explicitSize = concreteText(config.size);
+            const fallbackSize = explicitSize || resolveSize(config.size, defaults.imageSize, candidate.generationParameters);
+            const providerSize = candidate.channel.advancedConfig?.protocol === "dflop" && profile.controlType !== "resolution_tier" && fallbackSize ? resolveDflopImageExecutionSize(candidate.upstreamModel, fallbackSize) : undefined;
+            const requestedSize = fallbackSize && pixelSize(fallbackSize) ? pixelSize(fallbackSize) : providerSize;
+            const requestedAspectRatio = fallbackSize && !requestedSize ? fallbackSize : undefined;
+            const count = resolveImageCount(config.count, defaults.imageCount, candidate.generationParameters);
+            const intent: ImageQualityIntent = {
+                ...(concreteText(config.quality) ? { value: concreteText(config.quality) } : {}),
+                ...(concreteText(config.qualityProfileRevision) ? { logicalProfileRevision: concreteText(config.qualityProfileRevision) } : {}),
+                ...(concreteText(config.qualityOptionRevision) ? { optionRevision: concreteText(config.qualityOptionRevision) } : {}),
+                ...(requestedSize ? { requestedSize } : {}),
+                ...(requestedAspectRatio ? { requestedAspectRatio } : {}),
+            };
+            const imageQualityContext = resolveImageQualityForBinding({ logicalModel: candidate.logicalModel, binding: candidate.binding, channel: candidate.channel, userPrompt, intent, requestedSize, requestedAspectRatio, requestCount: count });
+            const routedCandidate = candidates.find((item) => item.binding.id === imageQualityContext.bindingId) || candidate;
+            const base = toConfig(routedCandidate);
+            const resolved = {
+                ...base,
+                ...(imageQualityContext.resolvedSize ? { size: imageQualityContext.resolvedSize } : fallbackSize ? { size: fallbackSize } : {}),
+                ...(count ? { count } : {}),
+                imageQualityContext,
+            };
+            const capabilityRequest = imageGenerationRequest(
+                {
+                    ...resolved,
+                    ...(fallbackSize && !pixelSize(fallbackSize) && imageQualityContext.resolvedSize ? { size: fallbackSize } : {}),
+                } as Record<string, unknown>,
+                referenceCount,
+                hasMask,
+            );
+            const compatibility = generationParametersCompatible(routedCandidate.generationParameters, capabilityRequest);
+            if (compatibility.compatible) resolvedCandidates.push(resolved);
+            else error ||= capabilityError(compatibility.field, capabilityRequest);
+        } catch (candidateError) {
+            error ||= candidateError instanceof Error ? candidateError : new Error("画质参数无法解析");
+        }
+    }
+    return { candidates: resolvedCandidates, error };
 }
 
 export function resolveAudioGenerationCandidates<T extends GenerationCandidate>(candidates: readonly T[], config: Record<string, unknown> | undefined, defaults: { audioVoice: string; audioFormat: string }) {
@@ -71,7 +145,7 @@ export function resolveVideoGenerationCandidates<T extends GenerationCandidate>(
             explicitDuration ||
             compatibleDefault(parameters, { durationSeconds: defaults.videoSeconds }, defaults.videoSeconds) ||
             (parameters?.durationMode === "discrete" ? parameters.durationSeconds[0] : parameters?.durationMode === "range" ? parameters.durationRange?.min : parameters?.supportsCustomDuration ? parameters.customDurationRange?.min : undefined);
-        const count = positiveInteger(config.count);
+        const count = executableBatchSize(config.count, parameters);
         const generateAudio = concreteBoolean(config.videoGenerateAudio);
         const watermark = concreteBoolean(config.videoWatermark);
         const resolved = {
@@ -164,6 +238,13 @@ function positiveInteger(value: unknown) {
     return Number.isSafeInteger(number) && number > 0 ? number : undefined;
 }
 
+function executableBatchSize(value: unknown, parameters: LogicalModelGenerationParameters | undefined) {
+    const count = positiveInteger(value);
+    if (count !== 1) return count;
+    const declaresBatchCapability = positiveInteger(parameters?.maxBatchSize) !== undefined || parameters?.supportsCustomBatchSize === true;
+    return declaresBatchCapability ? count : undefined;
+}
+
 function positiveNumber(value: unknown) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : undefined;
@@ -189,6 +270,7 @@ function resolveCandidates<T extends GenerationCandidate, R extends T>(candidate
 }
 
 function resolveSize(value: unknown, fallback: string, parameters: LogicalModelGenerationParameters | undefined) {
+    if (typeof value === "string" && value.trim().toLowerCase() === "auto") return undefined;
     const explicit = concreteText(value);
     if (explicit) return explicit;
     const defaultValue = concreteText(fallback);
@@ -209,4 +291,14 @@ function resolveText(value: unknown, fallback: unknown, parameters: LogicalModel
 
 function compatibleDefault<T>(parameters: LogicalModelGenerationParameters | undefined, request: NormalizedGenerationRequest, value: T) {
     return generationParametersCompatible(parameters, request).compatible ? value : undefined;
+}
+
+function resolveImageCount(value: unknown, fallback: number | "auto" | undefined, parameters: LogicalModelGenerationParameters | undefined) {
+    const explicit = executableBatchSize(value, parameters);
+    const defaultCount = executableBatchSize(fallback, parameters);
+    return (
+        explicit ||
+        (defaultCount ? compatibleDefault(parameters, { batchSize: defaultCount }, defaultCount) : undefined) ||
+        (parameters?.maxBatchSize ? 1 : parameters?.supportsCustomBatchSize ? positiveInteger(parameters.customBatchSizeRange?.min) : undefined)
+    );
 }

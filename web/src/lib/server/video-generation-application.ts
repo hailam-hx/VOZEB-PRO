@@ -1,6 +1,8 @@
 import { after, NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
+import { getAgentRun } from "@/lib/server/agent-run-store";
+import { auditGenerationPrompt } from "@/lib/server/generation-prompt-audit";
 import { getAuthSettings, isAuthInputError, refundUserPoints } from "@/lib/auth/store";
 import { generationModelId, toSystemGenerationChannel } from "@/lib/server/generation-channel";
 import { finishGenerationAttempt, startGenerationAttempt, type GenerationAttempt } from "@/lib/server/generation-attempt";
@@ -20,7 +22,17 @@ import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy"
 import { mediaTaskSource } from "@/lib/media-management-contract";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
-import { VIDEO_PROVIDER_MEDIA_KEYS, classifyVideoProviderPublicError, parseVideoProviderJson, readVideoProviderFailureDiagnostic, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl, type VideoProviderFailureDiagnostic } from "@/lib/server/video-provider-response";
+import {
+    VIDEO_PROVIDER_MEDIA_KEYS,
+    classifyVideoProviderPublicError,
+    VIDEO_REFERENCE_ASPECT_RATIO_UNSUPPORTED,
+    parseVideoProviderJson,
+    readVideoProviderFailureDiagnostic,
+    readVideoProviderHttpError,
+    readVideoProviderId,
+    readVideoProviderUrl,
+    type VideoProviderFailureDiagnostic,
+} from "@/lib/server/video-provider-response";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
 import { assertGeminiVideoReferences, buildGeminiVideoRequest, geminiVideoCreatePath, parseGeminiVideoCreateResponse } from "@/lib/server/gemini-video-provider";
@@ -33,8 +45,36 @@ import { attachSystemAiUsageUpstreamTask, finalizeUsageBillingForBusiness } from
 import { buildOpenAiVideoFormData } from "@/app/api/video-generation-tasks/video-task-openai";
 import { normalizeVideoGenerationReferences, regularVideoReferences, videoFrameReferences, type VideoGenerationReference } from "@/lib/video-reference-contract";
 import { assertYumengVideoReferences, buildYumengVideoRequest } from "@/lib/yumeng-model-center";
+import { trustedVideoBillingContext } from "@/lib/server/video-billing-context";
+import { VIDEO_VALIDATION_ITEM_HEADER } from "@/lib/video-validation";
+import { createHash } from "node:crypto";
 
 const CREATE_PATHS = ["/video/generations", "/videos/generations", "/videos/videos", "/videos"];
+class VideoValidationRequestCaptured extends Error {
+    constructor(readonly digest: string) {
+        super("validation request captured");
+    }
+}
+
+export async function captureVideoValidationRequest(input: {
+    channel: NonNullable<ReturnType<typeof toSystemGenerationChannel>>;
+    raw: Record<string, unknown>;
+    references: VideoGenerationReference[];
+    multipliers: Awaited<ReturnType<typeof getAuthSettings>>["generationPointMultipliers"];
+    idempotencyKey: string;
+}) {
+    try {
+        await createUpstream("video-validation-preview", "http://localhost", "", input.channel, "A simple static scene with gentle natural motion.", input.raw, input.references, input.multipliers, "validation-preview", "", 1, "", {
+            mode: "validation",
+            idempotencyKey: input.idempotencyKey,
+            capturePreparedRequest: true,
+        });
+    } catch (error) {
+        if (error instanceof VideoValidationRequestCaptured) return error.digest;
+        throw error;
+    }
+    throw new Error("验收请求无法生成可验证的 payload digest");
+}
 type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: VideoGenerationReference[]; source?: string; context?: GenerationTaskContext };
 
 export async function POST(request: Request) {
@@ -61,10 +101,12 @@ export async function POST(request: Request) {
     }
     if (headerRequestId) body.context = { ...(body.context || {}), clientRequestId: headerRequestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
     const settings = await getAuthSettings();
+    const sourceRun = body.context?.runId ? await getAgentRun(body.context.runId) : undefined;
+    const strictManualPrompt = sourceRun?.userId === user.id && Boolean(sourceRun.requestedModelIds?.length) && sourceRun.manualPromptEnhancementEnabled === false;
     const response = await withGenerationConcurrencyLimit(user.id, "video", 30 * 60_000, settings.generationConcurrency.video, async () => {
         const requestedModel = typeof body.config?.model === "string" && body.config.model.trim() ? body.config.model : settings.defaultModels.videoModel;
         const routedChannels = resolveLogicalModelCandidates(settings, "video", requestedModel).map(toSystemGenerationChannel);
-        const prompt = String(body.prompt || "").trim();
+        const prompt = strictManualPrompt ? sourceRun!.originalPrompt || sourceRun!.prompt : String(body.prompt || "").trim();
         if (!routedChannels.length || !prompt) return NextResponse.json({ error: "视频任务参数不完整或渠道不支持" }, { status: 400 });
         const publicOrigin = requestPublicOrigin(request);
         let references: VideoGenerationReference[];
@@ -77,7 +119,7 @@ export async function POST(request: Request) {
         const capability = resolveVideoGenerationCandidates(routedChannels, body.config || {}, settings.generationDefaults, references);
         if (!capability.candidates.length) return NextResponse.json({ error: capability.error?.message || "当前模型不支持所选生成参数" }, { status: 400 });
         const channels = capability.candidates;
-        const providerPrompt = withVideoReferenceFidelity(prompt, references);
+        const providerPrompt = strictManualPrompt ? prompt : withVideoReferenceFidelity(prompt, references);
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = requestRuntimeCredential(request, user.id);
         const billingRequestId = clean(body.context?.clientRequestId) || clean(request.headers.get("x-vozeb-pro-client-request-id")) || `video-request:${user.id}:${Date.now()}`;
@@ -88,7 +130,15 @@ export async function POST(request: Request) {
         for (let index = 0; index < channels.length; index += 1) {
             const candidate = channels[index];
             const videoEditParameters = resolveSeedanceVideoEditParameters({ model: candidate.model, ratio: candidate.size, duration: candidate.videoSeconds, references });
-            const channel = { ...candidate, size: videoEditParameters.ratio, videoSeconds: videoEditParameters.duration };
+            const channel = {
+                ...candidate,
+                size: videoEditParameters.ratio,
+                videoSeconds: videoEditParameters.duration,
+                promptEnhancementDisabled: strictManualPrompt,
+                ...(sourceRun?.userId === user.id
+                    ? { promptAudit: { originalPrompt: sourceRun.originalPrompt || sourceRun.prompt, executionPrompt: body.prompt || "", manualPromptEnhancementEnabled: sourceRun.manualPromptEnhancementEnabled !== false } }
+                    : {}),
+            };
             const parameters = { ...body.config, size: channel.size, vquality: channel.vquality, videoSeconds: channel.videoSeconds };
             const geminiVideo = isGeminiVideoChannel(channel);
             try {
@@ -197,10 +247,7 @@ export async function POST(request: Request) {
             });
             await finalizeUsageBillingForBusiness({ userId: user.id, businessId: `video-task:${localTask.id}` });
             await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: failure.outcome === "unknown" ? "submission_outcome_unknown" : "create_failed" });
-            return NextResponse.json(
-                { error: failure.message, errorCode: failure.errorCode, outcome: failure.outcome, canRetry: failure.retryable },
-                { status: failure.status },
-            );
+            return NextResponse.json({ error: failure.message, errorCode: failure.errorCode, outcome: failure.outcome, canRetry: failure.retryable }, { status: failure.status });
         }
         return NextResponse.json({ error: "视频任务创建失败", outcome: "unknown", canRetry: true }, { status: 502 });
     });
@@ -272,10 +319,12 @@ export async function createUpstream(
     taskId = "",
     attemptNumber = 1,
     agentRunId = "",
+    execution?: { mode?: "generation" | "validation"; idempotencyKey?: string; validationItemId?: string; capturePreparedRequest?: boolean; expectedPayloadDigest?: string },
 ) {
     let lastError: string | VideoSubmissionFailure = "";
-    const regularReferences = regularVideoReferences(references);
-    const { firstFrame, lastFrame } = videoFrameReferences(references);
+    const upstreamReferences = references.map(({ assetId: _assetId, trustedDurationMs: _trustedDurationMs, durationSource: _durationSource, ...reference }) => reference);
+    const regularReferences = regularVideoReferences(upstreamReferences);
+    const { firstFrame, lastFrame } = videoFrameReferences(upstreamReferences);
     const images = referenceUrls(regularReferences, "image");
     const videos = referenceUrls(regularReferences, "video");
     const audios = referenceUrls(regularReferences, "audio");
@@ -288,7 +337,8 @@ export async function createUpstream(
     const generateAudio = optionalBoolean(raw.videoGenerateAudio);
     const watermark = optionalBoolean(raw.videoWatermark);
     if (isGeminiVideoChannel(channel)) {
-        return createGeminiVideoUpstream({ userId, origin, cookie, channel, prompt, raw, references, generateAudio, multipliers, billingRequestId, taskId, attemptNumber, agentRunId });
+        if (execution?.capturePreparedRequest) throw new Error("Gemini 请求尚无无网络验收描述器");
+        return createGeminiVideoUpstream({ userId, origin, cookie, channel, prompt, raw, references, generateAudio, multipliers, billingRequestId, taskId, attemptNumber, agentRunId, execution });
     }
     const values = {
         model: channel.model,
@@ -309,8 +359,8 @@ export async function createUpstream(
         image: requestImage,
         video: videos[0] || "",
         audio: audios[0] || "",
-        references,
-        content: videoReferenceContent(prompt, references),
+        references: upstreamReferences,
+        content: videoReferenceContent(prompt, upstreamReferences, channel.advancedConfig?.protocol),
         first_frame: firstFrameUrl,
         first_frame_url: firstFrameUrl,
         last_frame: lastFrameUrl,
@@ -328,7 +378,7 @@ export async function createUpstream(
         ...(requestImages.length ? { images: requestImages, image_urls: requestImages, reference_images: requestImages } : {}),
         ...(videos.length ? { video: videos[0], videos, reference_videos: videos } : {}),
         ...(audios.length ? { audio: audios[0], audios, reference_audios: audios } : {}),
-        ...(references.length ? { ref_assets: references.map((item) => ({ type: item.type, url: item.url, role: item.role || "reference" })) } : {}),
+        ...(upstreamReferences.length ? { ref_assets: upstreamReferences.map((item) => ({ type: item.type, url: item.url, role: item.role || "reference" })) } : {}),
         ...(firstFrameUrl ? { first_frame: firstFrameUrl, first_frame_url: firstFrameUrl } : {}),
         ...(lastFrameUrl ? { last_frame: lastFrameUrl, last_frame_url: lastFrameUrl } : {}),
     };
@@ -352,10 +402,11 @@ export async function createUpstream(
             ? buildSeedanceSpecialRequest({
                   model: channel.model,
                   prompt,
+                  preservePrompt: channel.promptEnhancementDisabled,
                   duration: values.duration as number | undefined,
                   ratio: values.ratio as string | undefined,
                   generateAudio,
-                  references,
+                  references: upstreamReferences,
               })
             : channel.advancedConfig?.protocol === "yumeng"
               ? buildYumengVideoRequest({
@@ -387,21 +438,33 @@ export async function createUpstream(
                       lastFrame: lastFrameUrl || undefined,
                   })
                 : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
+    if (multipart && execution?.capturePreparedRequest) throw new Error("multipart 请求尚无无网络验收描述器");
     const requestBody = multipart
         ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number | undefined, width: dimensions?.width, height: dimensions?.height, imageUrls: firstFrameUrl ? [firstFrameUrl] : images, origin, cookie })
         : JSON.stringify(payload);
     const imageToVideoPath = images.length || firstFrameUrl ? channel.advancedConfig?.imageToVideoPath?.trim() : "";
     const createPaths = globalPreset ? [globalPreset.createPath] : imageToVideoPath ? [imageToVideoPath] : resolvedProviderCreatePaths(channel.advancedConfig, "video", CREATE_PATHS);
-    const providerIdempotencyKey = taskId ? `video-task:${taskId}:attempt:${attemptNumber}` : `video-request:${billingRequestId}`;
+    const validation = execution?.mode === "validation";
+    const providerIdempotencyKey = execution?.idempotencyKey || (taskId ? `video-task:${taskId}:attempt:${attemptNumber}` : `video-request:${billingRequestId}`);
+    if (validation) {
+        if (typeof requestBody !== "string") throw new Error("验收请求缺少可验证的 JSON payload");
+        const digest = createHash("sha256")
+            .update(JSON.stringify({ method: "POST", createPaths, requestBody }))
+            .digest("hex");
+        if (execution?.capturePreparedRequest) throw new VideoValidationRequestCaptured(digest);
+        if (!execution?.expectedPayloadDigest || execution.expectedPayloadDigest !== digest) throw new Error("VALIDATION_EXECUTION_SNAPSHOT_CHANGED");
+    }
     for (const path of createPaths) {
+        auditGenerationPrompt({ audit: channel.promptAudit, strict: channel.promptEnhancementDisabled, body: requestBody, capability: "video", channelId: channel.channelId, model: channel.model });
         const response = await proxyFetch(origin, channel.baseUrl, path, cookie, {
             method: "POST",
             headers: {
                 ...(multipart ? {} : { "Content-Type": "application/json" }),
                 "Idempotency-Key": providerIdempotencyKey,
                 "X-Client-Request-Id": providerIdempotencyKey,
+                ...(validation && execution?.validationItemId ? { [VIDEO_VALIDATION_ITEM_HEADER]: execution.validationItemId } : {}),
                 ...generationDiagnosticHeaders(taskId, agentRunId),
-                ...systemAiBillingHeaders(generationModelId(channel), generationSystemAiUsageContext(channel, "video", providerIdempotencyKey, userId) || providerIdempotencyKey, channel.model),
+                ...(!validation ? systemAiBillingHeaders(generationModelId(channel), videoSystemAiUsageContext(channel, providerIdempotencyKey, userId, references) || providerIdempotencyKey, channel.model) : {}),
             },
             body: requestBody,
             signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(channel, "video")),
@@ -418,14 +481,14 @@ export async function createUpstream(
         try {
             data = parseVideoProviderJson(text);
         } catch (error) {
-            const pointsCost = billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
+            const pointsCost = validation ? undefined : billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
             const pointsRecordId = response.headers.get("x-vozeb-pro-points-record-id") || undefined;
             if (pointsCost !== undefined && pointsRecordId) await refundUserPoints(userId, generationModelId(channel), pointsCost, "video", videoUnits(raw, multipliers), undefined, pointsRecordId);
             throw error instanceof Error ? error : new Error("视频接口返回了无效 JSON");
         }
         const providerError = readProviderError(data);
         if (isProviderBusinessError(data)) {
-            const pointsCost = billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
+            const pointsCost = validation ? undefined : billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
             const pointsRecordId = response.headers.get("x-vozeb-pro-points-record-id") || undefined;
             if (pointsCost !== undefined && pointsRecordId) await refundUserPoints(userId, generationModelId(channel), pointsCost, "video", videoUnits(raw, multipliers), undefined, pointsRecordId);
             throw new SafeCandidateFailure(providerError || "视频接口请求失败");
@@ -433,12 +496,12 @@ export async function createUpstream(
         const resultUrl = readVideoProviderUrl(data, channel.advancedConfig?.resultField);
         const id = readVideoProviderId(data) || (resultUrl ? `direct:${Date.now()}` : "");
         if (!id) {
-            const pointsCost = billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
+            const pointsCost = validation ? undefined : billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
             const pointsRecordId = response.headers.get("x-vozeb-pro-points-record-id") || undefined;
             if (pointsCost !== undefined && pointsRecordId) await refundUserPoints(userId, generationModelId(channel), pointsCost, "video", videoUnits(raw, multipliers), undefined, pointsRecordId);
             throw new Error(providerError || "视频接口没有返回任务 ID");
         }
-        await attachSystemAiUsageUpstreamTask(response.headers, id);
+        if (!validation) await attachSystemAiUsageUpstreamTask(response.headers, id);
         return {
             id,
             provider: "generation" as const,
@@ -446,9 +509,9 @@ export async function createUpstream(
             pollPath: path,
             queryPath: undefined,
             resultUrl: resultUrl || undefined,
-            pointsCost: billedPointsCost(response.headers.get("x-vozeb-pro-points-cost")),
+            pointsCost: validation ? undefined : billedPointsCost(response.headers.get("x-vozeb-pro-points-cost")),
             pointsUnits: videoUnits(raw, multipliers),
-            pointsRecordId: response.headers.get("x-vozeb-pro-points-record-id") || undefined,
+            pointsRecordId: validation ? undefined : response.headers.get("x-vozeb-pro-points-record-id") || undefined,
         };
     }
     throw lastError instanceof VideoSubmissionFailure ? lastError : new VideoSubmissionFailure(lastError || "没有可用的视频创建接口", { allowCandidateFailover: true });
@@ -468,27 +531,33 @@ async function createGeminiVideoUpstream(input: {
     taskId?: string;
     attemptNumber?: number;
     agentRunId?: string;
+    execution?: { mode?: "generation" | "validation"; idempotencyKey?: string; validationItemId?: string };
 }) {
+    const upstreamReferences = input.references.map(({ assetId: _assetId, trustedDurationMs: _trustedDurationMs, durationSource: _durationSource, ...reference }) => reference);
     const payload = await buildGeminiVideoRequest({
         prompt: input.prompt,
+        preservePrompt: input.channel.promptEnhancementDisabled,
         durationSeconds: input.raw.videoSeconds,
         aspectRatio: input.raw.size,
         resolution: input.raw.vquality,
         generateAudio: input.generateAudio,
-        references: input.references,
+        references: upstreamReferences,
         origin: input.origin,
         cookie: input.cookie,
     });
     const path = geminiVideoCreatePath(input.channel.model);
-    const providerIdempotencyKey = input.taskId ? `video-task:${input.taskId}:attempt:${input.attemptNumber || 1}` : `video-request:${input.billingRequestId}`;
+    const validation = input.execution?.mode === "validation";
+    const providerIdempotencyKey = input.execution?.idempotencyKey || (input.taskId ? `video-task:${input.taskId}:attempt:${input.attemptNumber || 1}` : `video-request:${input.billingRequestId}`);
+    auditGenerationPrompt({ audit: input.channel.promptAudit, strict: input.channel.promptEnhancementDisabled, body: JSON.stringify(payload), capability: "video", channelId: input.channel.channelId, model: input.channel.model });
     const response = await proxyFetch(input.origin, input.channel.baseUrl, path, input.cookie, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             "Idempotency-Key": providerIdempotencyKey,
             "X-Client-Request-Id": providerIdempotencyKey,
+            ...(validation && input.execution?.validationItemId ? { [VIDEO_VALIDATION_ITEM_HEADER]: input.execution.validationItemId } : {}),
             ...generationDiagnosticHeaders(input.taskId, input.agentRunId),
-            ...systemAiBillingHeaders(generationModelId(input.channel), generationSystemAiUsageContext(input.channel, "video", providerIdempotencyKey, input.userId) || providerIdempotencyKey, input.channel.model),
+            ...(!validation ? systemAiBillingHeaders(generationModelId(input.channel), videoSystemAiUsageContext(input.channel, providerIdempotencyKey, input.userId, input.references) || providerIdempotencyKey, input.channel.model) : {}),
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(input.channel, "video")),
@@ -506,8 +575,8 @@ async function createGeminiVideoUpstream(input: {
         throw error instanceof Error ? error : new Error("Gemini Veo 返回了无效 JSON");
     }
     const created = parseGeminiVideoCreateResponse(data, input.channel.model);
-    const pointsCost = billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
-    const pointsRecordId = response.headers.get("x-vozeb-pro-points-record-id") || undefined;
+    const pointsCost = validation ? undefined : billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
+    const pointsRecordId = validation ? undefined : response.headers.get("x-vozeb-pro-points-record-id") || undefined;
     if (created.error) {
         if (pointsCost !== undefined && pointsRecordId) {
             await refundUserPoints(input.userId, generationModelId(input.channel), pointsCost, "video", videoUnits(input.raw, input.multipliers), undefined, pointsRecordId);
@@ -515,7 +584,7 @@ async function createGeminiVideoUpstream(input: {
         throw new SafeCandidateFailure(created.error);
     }
     if (!created.id) throw new Error("Gemini Veo 没有返回 operation ID");
-    await attachSystemAiUsageUpstreamTask(response.headers, created.id);
+    if (!validation) await attachSystemAiUsageUpstreamTask(response.headers, created.id);
     return {
         id: created.id,
         provider: "generation" as const,
@@ -544,6 +613,12 @@ function proxyFetch(origin: string, baseUrl: string, path: string, cookie: strin
     if (workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (cookie) headers.set("cookie", cookie);
     return fetchInternalApi(`${origin}${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`, { ...init, headers });
+}
+
+function videoSystemAiUsageContext(channel: NonNullable<ReturnType<typeof toSystemGenerationChannel>>, providerIdempotencyKey: string, userId: string, references: readonly VideoGenerationReference[]) {
+    const context = generationSystemAiUsageContext(channel, "video", providerIdempotencyKey, userId);
+    if (!context) return undefined;
+    return { ...context, videoBillingContext: trustedVideoBillingContext(references) };
 }
 function generationDiagnosticHeaders(taskId?: string, agentRunId?: string) {
     return {
@@ -632,12 +707,14 @@ function referenceUrls(items: readonly VideoGenerationReference[], type: VideoGe
     return unique(items.filter((item) => item.type === type).map((item) => clean(item.url)));
 }
 
-function videoReferenceContent(prompt: string, references: readonly VideoGenerationReference[]) {
+function videoReferenceContent(prompt: string, references: readonly VideoGenerationReference[], protocol?: string) {
     return [
         { type: "text", text: prompt },
         ...references.map((reference) =>
             reference.type === "image"
-                ? { type: "image_url", role: reference.role === "first_frame" || reference.role === "last_frame" ? reference.role : "reference_image", image_url: { url: reference.url } }
+                ? protocol === "dflop" && reference.role === "first_frame"
+                    ? { type: "image_url", image_url: { url: reference.url } }
+                    : { type: "image_url", role: reference.role === "first_frame" || reference.role === "last_frame" ? reference.role : "reference_image", image_url: { url: reference.url } }
                 : reference.type === "video"
                   ? { type: "video_url", role: "reference_video", video_url: { url: reference.url } }
                   : { type: "audio_url", role: "reference_audio", audio_url: { url: reference.url } },
@@ -698,10 +775,13 @@ class SafeCandidateFailure extends VideoSubmissionFailure {
 function providerHttpFailure(diagnostic: VideoProviderFailureDiagnostic) {
     const publicErrorCode = classifyVideoProviderPublicError(diagnostic);
     if (publicErrorCode) {
+        const canTryAnotherRoute = publicErrorCode === VIDEO_REFERENCE_ASPECT_RATIO_UNSUPPORTED;
         return new VideoSubmissionFailure(diagnostic.message, {
             status: diagnostic.status,
             outcome: "rejected",
             retryable: false,
+            allowCandidateFailover: canTryAnotherRoute,
+            allowPathFailover: canTryAnotherRoute,
             errorCode: publicErrorCode,
             providerError: diagnostic,
         });

@@ -28,8 +28,8 @@ export async function POST(request: Request) {
         const asset = await uploadAssetForUser(user.id, conversationId, file);
         return NextResponse.json({ code: 0, data: { asset }, msg: "素材已上传" });
     } catch (error) {
-        if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ code: error.status, data: null, msg: "上传请求不能超过 200MB" }, { status: error.status });
-        if (error instanceof CreativeRuntimeServiceError) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
+        if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ code: error.status, data: { publicMessage: "上传请求不能超过 200MB" }, msg: "上传请求不能超过 200MB" }, { status: error.status });
+        if (error instanceof CreativeRuntimeServiceError) return NextResponse.json({ code: error.status, data: { publicMessage: error.message }, msg: error.message }, { status: error.status });
         throw error;
     }
 }

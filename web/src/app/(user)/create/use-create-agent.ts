@@ -21,14 +21,17 @@ import {
     updateCreativeConversation,
     uploadCreativeAsset,
     watchCreativeAgentRun,
+    CreativeApiError,
     type CreativeAgentRun,
 } from "@/services/api/creative";
 import { getMaterializedCreativeProject, materializeCreativeProjectHandoff, type MaterializedCreativeProject } from "@/services/creative-project-handoff";
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 import type { AppLocale } from "@/i18n/config";
+import { loadPublicSession } from "@/stores/use-public-session-store";
 
 import { createConversationIdFromSearch, latestResumableAgentRun } from "./create-conversation-navigation";
 import { getCreateDraftAttachment, useCreateDraftAttachmentsStore } from "./use-create-draft-attachments-store";
+import { createErrorPresentation } from "./create-error-ux";
 
 type PendingCreateSubmission = {
     clientRequestId: string;
@@ -36,6 +39,7 @@ type PendingCreateSubmission = {
     conversationId?: string;
     content: string;
     executionPrompt: string;
+    originalPrompt: string;
     assetIds: string[];
     skillIds: string[];
     modelIds: string[];
@@ -56,6 +60,8 @@ const MESSAGE_PAGE_SIZE = 50;
 
 export function useCreateAgent() {
     const t = useTranslations("create");
+    const translateRef = useRef(t);
+    translateRef.current = t;
     const locale = useLocale() as AppLocale;
     const streamRef = useRef<(() => void) | null>(null);
     const conversationGenerationRef = useRef(0);
@@ -71,6 +77,7 @@ export function useCreateAgent() {
     const [activeRunStatus, setActiveRunStatus] = useState<CreativeAgentRun["status"]>();
     const [runDetails, setRunDetails] = useState<Record<string, CreativeAgentRun>>({});
     const [historyLoading, setHistoryLoading] = useState(true);
+    const [historyError, setHistoryError] = useState("");
     const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
     const [historyHasMore, setHistoryHasMore] = useState(false);
     const [conversationLoading, setConversationLoading] = useState(false);
@@ -119,6 +126,11 @@ export function useCreateAgent() {
             const page = await listCreativeConversationPage({ source: "agent" });
             setConversations(page.conversations);
             setHistoryHasMore(page.hasMore);
+            setHistoryError("");
+        } catch (error) {
+            const presentation = createErrorPresentation(error, "operation");
+            setHistoryError(presentation.detail || translateRef.current(presentation.messageKey));
+            throw error;
         } finally {
             setHistoryLoading(false);
         }
@@ -165,6 +177,11 @@ export function useCreateAgent() {
             const page = await listCreativeConversationPage({ source: "agent", offset: conversations.length });
             setConversations((current) => Array.from(new Map([...current, ...page.conversations].map((item) => [item.id, item])).values()));
             setHistoryHasMore(page.hasMore);
+            setHistoryError("");
+        } catch (error) {
+            const presentation = createErrorPresentation(error, "operation");
+            setHistoryError(presentation.detail || translateRef.current(presentation.messageKey));
+            throw error;
         } finally {
             setHistoryLoadingMore(false);
         }
@@ -369,7 +386,7 @@ export function useCreateAgent() {
                         setActiveRunId(undefined);
                         setActiveRunStatus(undefined);
                         streamRef.current = null;
-                        void Promise.all([refreshConversation(run.conversationId, generation), refreshConversations()]);
+                        void Promise.all([refreshConversation(run.conversationId, generation), refreshConversations()]).catch(() => undefined);
                     },
                     onConnectionError: (text) => {
                         if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
@@ -411,6 +428,7 @@ export function useCreateAgent() {
                     surface: "chat",
                     conversationId: snapshot.conversationId,
                     prompt: snapshot.executionPrompt,
+                    originalPrompt: snapshot.originalPrompt,
                     publicPrompt: snapshot.content,
                     assetIds: snapshot.assetIds,
                     skillIds: snapshot.skillIds,
@@ -418,7 +436,7 @@ export function useCreateAgent() {
                     preferences: snapshot.preferences,
                 });
                 const run = created.run;
-                void refreshConversations();
+                void refreshConversations().catch(() => undefined);
                 const belongsToSubmission = !snapshot.conversationId || snapshot.conversationId === run.conversationId;
                 const canClaimCurrentView = snapshot.generation === conversationGenerationRef.current && belongsToSubmission && (!activeConversationRef.current || activeConversationRef.current === run.conversationId);
                 if (!canClaimCurrentView) return true;
@@ -437,8 +455,19 @@ export function useCreateAgent() {
                 return true;
             } catch (error) {
                 if (!isCurrentConversation(snapshot.conversationId, snapshot.generation)) return false;
-                failedSubmissionsRef.current.set(snapshot.temporaryAssistantId, snapshot);
-                updateAssistant(snapshot.temporaryAssistantId, t("creationRequestFailed"), "failed");
+                const presentation = createErrorPresentation(error, "submit");
+                if (error instanceof CreativeApiError && error.errorCode?.startsWith("QUALITY_")) {
+                    failedSubmissionsRef.current.delete(snapshot.temporaryAssistantId);
+                    await loadPublicSession({ force: true }).catch(() => undefined);
+                    updateAssistant(snapshot.temporaryAssistantId, presentation.detail || t(presentation.messageKey), "failed");
+                } else {
+                    if (presentation.retryable) failedSubmissionsRef.current.set(snapshot.temporaryAssistantId, snapshot);
+                    else failedSubmissionsRef.current.delete(snapshot.temporaryAssistantId);
+                    updateAssistant(snapshot.temporaryAssistantId, presentation.detail || t(presentation.messageKey), "failed");
+                }
+                setMessages((current) =>
+                    current.map((item) => (item.id === snapshot.temporaryAssistantId ? { ...item, metadata: { ...item.metadata, publicSubmissionError: true, submissionRetryable: presentation.retryable, submissionAction: presentation.action } } : item)),
+                );
                 setSending(false);
                 submittingRef.current = false;
                 return false;
@@ -482,6 +511,7 @@ export function useCreateAgent() {
                 conversationId: submittedConversationId,
                 content,
                 executionPrompt,
+                originalPrompt: prompt,
                 assetIds,
                 skillIds: options?.skillIds || [],
                 modelIds: options?.modelIds || [],
@@ -623,8 +653,10 @@ export function useCreateAgent() {
         activeRunStatus,
         runDetails,
         historyLoading,
+        historyError,
         historyLoadingMore,
         historyHasMore,
+        refreshConversations,
         loadMoreConversations,
         conversationLoading,
         olderMessagesLoading,

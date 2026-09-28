@@ -36,6 +36,7 @@ const settings = (generationDefaults = {}) => ({
     defaultModels: { imageModel: "image", videoModel: "video", textModel: "", audioModel: "audio", voiceCloneModel: "" },
     generationDefaults: {
         agentModeEnabled: true,
+        manualPromptEnhancementEnabled: true,
         createPromptMaxLength: 4000,
         canvasImageCount: 1,
         imageCount: 1,

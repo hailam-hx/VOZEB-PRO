@@ -659,7 +659,18 @@ test("creative composer displays the shared PAYG estimate before submission", as
                 enabled: true,
                 bindings: [{ id: "e2e-image-primary", channelId: "e2e-primary", upstreamModel: "e2e-image", enabled: true, priority: 1 }],
             }),
-            saleRateCard: { version: 1, components: [{ id: "request", dimension: "request", unitPrice: "2.5" }] },
+            saleRateCard: { version: 1, components: [{ id: "count", dimension: "count", unitPrice: "2.5" }] },
+            imageQualityProfile: {
+                supported: true,
+                controlType: "prompt_flag",
+                selectionMode: "explicit",
+                profileRevision: "e2e-image-quality-v1",
+                defaultValue: "standard",
+                options: [
+                    { value: "standard", label: "标准", optionRevision: "e2e-standard-v1", effect: { type: "prompt_flag", promptSuffix: "--sd" } },
+                    { value: "high", label: "高清", optionRevision: "e2e-high-v1", effect: { type: "prompt_flag", promptSuffix: "--hd" } },
+                ],
+            },
         };
         if (payload.settings) payload.settings.logicalModels = [...models.filter((model) => model.id !== "e2e-image"), priced];
         await route.fulfill({ response, json: payload });
@@ -670,20 +681,30 @@ test("creative composer displays the shared PAYG estimate before submission", as
     const estimate = page.getByTestId("creative-credit-estimate");
     await expect(estimate).toHaveAttribute("aria-label", "预计积分：智能规划后确定");
 
+    const modeTrigger = page.getByRole("button", { name: /当前创作类型：/ });
+    const modePopover = page.locator(".ant-popover").filter({ hasText: "创作类型" }).last();
+    await openComposerPopover(modeTrigger, modePopover);
+    await modePopover.getByRole("button", { name: /^图片生成/ }).click();
+
     const modelTrigger = page.getByRole("button", { name: "生成模型：智能模型" });
     const modelPopover = page.locator(".ant-popover").filter({ hasText: "选择模型" }).last();
     await openComposerPopover(modelTrigger, modelPopover);
     await modelPopover.getByRole("button", { name: /^e2e-image 图片模型/ }).click();
-    await expect(estimate).toHaveAccessibleName("预计消耗 2.5 积分");
-    await expect(estimate).not.toContainText(/预计消耗|积分/);
+    await expect(estimate).toHaveAccessibleName("预计积分：约 2.5");
+    await expect(estimate).toContainText("约 2.5");
 
-    const preferenceTrigger = page.getByRole("button", { name: "生成参数：生成参数" });
+    const preferenceTrigger = page.getByRole("button", { name: /^生成参数：/ });
     const preferencePopover = page.locator(".ant-popover").last();
     await openComposerPopover(preferenceTrigger, preferencePopover);
     await preferencePopover.getByRole("tab", { name: "输出" }).click();
-    await preferencePopover.getByRole("button", { name: "选择图片生成数量 3 份" }).click();
-    await expect(estimate).toHaveAccessibleName("预计消耗 7.5 积分");
-    await expect(estimate).not.toContainText(/预计消耗|积分/);
+    await expect(preferencePopover.getByRole("button", { name: "选择图片画质 标准" })).toBeVisible();
+    await expect(preferencePopover.getByRole("button", { name: "选择图片画质 高清" })).toBeVisible();
+    await expect(preferencePopover.getByRole("button", { name: "选择图片画质 高", exact: true })).toHaveCount(0);
+    await expect(preferencePopover.getByRole("button", { name: "选择图片画质 中", exact: true })).toHaveCount(0);
+    await expect(preferencePopover.getByRole("button", { name: "选择图片画质 低", exact: true })).toHaveCount(0);
+    await preferencePopover.getByRole("button", { name: "选择图片画质 高清" }).click();
+    await expect(estimate).toHaveAccessibleName("预计积分：约 2.5");
+    await expect(estimate).toContainText("约 2.5");
     await expectNoHorizontalOverflow(page, `${test.info().project.name} creative credit estimate`);
     const [indicatorRect, sendRect] = await Promise.all([estimate.evaluate((element) => element.getBoundingClientRect().toJSON()), page.getByRole("button", { name: "发送" }).evaluate((element) => element.getBoundingClientRect().toJSON())]);
     expect(indicatorRect.right).toBeLessThanOrEqual(sendRect.left);

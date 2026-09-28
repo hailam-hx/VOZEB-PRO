@@ -414,7 +414,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
     await expect(page.getByText("单位换算：fal · 1 render = 0.03 USD · provider-fx-v2", { exact: true })).toBeVisible();
     await page.getByLabel("客户汇率版本").fill("fx-v8");
     await page.getByLabel("1 VND 对应 USD").fill("0.000041");
-    await page.getByRole("button", { name: "保存汇率" }).click();
+    await page.getByRole("button", { name: "保存充值汇率" }).click();
     await expect.poll(() => topUpPatches.at(-1)).toEqual({ pricingVersion: "payg-v3", customerFxVersion: "fx-v8", usdPerVnd: "0.000041" });
     await expect(page.getByLabel("客户汇率版本")).toHaveValue("fx-v8");
 
@@ -460,6 +460,130 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
     await expect(page.getByText("任务终态待复核", { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page, `admin PAYG ${testInfo.project.name}`);
     await expectVisibleControlsWithinViewport(page, `admin PAYG controls ${testInfo.project.name}`);
+});
+
+test("DFLOP pricing dimensions support independent manual override and restore across release viewports", async ({ page }, testInfo) => {
+    const policy = {
+        version: "pricing-policy-v1:e2e",
+        dflopCreditsPerCny: "60",
+        dflopCreditsPerCnySource: "upstream",
+        dflopCurrencyConfigVersion: "dflop-currency-v1:e2e",
+        cnyToUsd: "0.15",
+        hotxUsdPerCredit: "1",
+        markupMultiplier: "1",
+        minimumMarginRate: null,
+        costBasis: "max_active_binding_cost",
+        autoApplySalePrice: false,
+    };
+    const dimension = (id: string, resolution: string, value: string, hotx: string) => ({
+        id,
+        kind: "VIDEO_SECOND",
+        key: "video_price_tiers",
+        unit: "DFLOP credits/second",
+        source: "upstream",
+        upstreamValue: value,
+        effectiveValue: value,
+        syncedAt: TIMESTAMP,
+        conditions: { resolution },
+        providerCostHotxCredits: hotx,
+    });
+    let model = {
+        id: "seedance-2.5",
+        name: "Seedance 2.5",
+        capability: "video",
+        enabled: true,
+        suggestedSaleRateCard: {
+            rateCard: {
+                version: 1,
+                components: [
+                    { id: "suggested-720", dimension: "durationSeconds", unitPrice: "0.2268", per: "1", when: { resolution: "720p" } },
+                    { id: "suggested-1080", dimension: "durationSeconds", unitPrice: "0.56133", per: "1", when: { resolution: "1080p" } },
+                ],
+            },
+            pricingPolicyVersion: policy.version,
+            calculatedAt: TIMESTAMP,
+            costBasis: "max_active_binding_cost",
+            markupMultiplier: "1",
+            bindingInputs: [],
+            conversionInputs: [],
+        },
+        bindings: [
+            {
+                id: "seedance:dflop",
+                channelId: "dflop",
+                upstreamModel: "doubao-seedance-2.5",
+                enabled: true,
+                priority: 1,
+                costRateCard: {
+                    version: 1,
+                    components: [
+                        { id: "video-second:resolution=720p", dimension: "durationSeconds", unitPrice: "0.2268", per: "1", when: { resolution: "720p" } },
+                        { id: "video-second:resolution=1080p", dimension: "durationSeconds", unitPrice: "0.56133", per: "1", when: { resolution: "1080p" } },
+                    ],
+                },
+                providerCostUnit: { kind: "provider-native", provider: "hotx", unit: "credit", usdConversion: { version: policy.version, usdPerUnit: "1" } },
+                providerPricingProfile: {
+                    provider: "dflop",
+                    modelId: "doubao-seedance-2.5",
+                    status: "READY",
+                    syncedAt: TIMESTAMP,
+                    raw: { video_price_tiers: { "720p": "90.72", "1080p": "224.532" } },
+                    dimensions: [dimension("video-second:resolution=720p", "720p", "90.72", "0.2268"), dimension("video-second:resolution=1080p", "1080p", "224.532", "0.56133")],
+                    unknownFields: [],
+                    missingFields: [],
+                    warnings: [],
+                    conversion: {
+                        pricingPolicyVersion: policy.version,
+                        dflopCreditsPerCny: "60",
+                        dflopCreditsPerCnySource: "upstream",
+                        dflopCurrencyConfigVersion: "dflop-currency-v1:e2e",
+                        cnyToUsd: "0.15",
+                        hotxUsdPerCredit: "1",
+                        calculatedAt: TIMESTAMP,
+                    },
+                },
+            },
+        ],
+    };
+    const patches: Array<{ dimensionCommand?: { action: "set_manual" | "restore_upstream"; bindingId: string; dimensionId: string; effectiveValue?: string } }> = [];
+    await page.route(/\/api\/admin\/billing\/model-pricing$/, async (route) => {
+        if (route.request().method() === "PATCH") {
+            const body = route.request().postDataJSON() as { dimensionCommand: { action: "set_manual" | "restore_upstream"; bindingId: string; dimensionId: string; effectiveValue?: string } };
+            patches.push(body);
+            const command = body.dimensionCommand;
+            const profile = model.bindings[0].providerPricingProfile;
+            const dimensions = profile.dimensions.map((item) =>
+                item.id !== command.dimensionId
+                    ? item
+                    : command.action === "restore_upstream"
+                      ? { ...item, source: "upstream", effectiveValue: item.upstreamValue }
+                      : { ...item, source: "manual", effectiveValue: command.effectiveValue || item.effectiveValue },
+            );
+            model = { ...model, bindings: [{ ...model.bindings[0], providerPricingProfile: { ...profile, dimensions } }] };
+            await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { model }, msg: "OK" }) });
+            return;
+        }
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { models: [model], pricingPolicy: policy }, msg: "OK" }) });
+    });
+
+    await page.goto("/admin/billing?tab=pricing", { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("markupMultiplier=1 仅表示盈亏平衡成本基准；默认不会覆盖正式销售价格。")).toBeVisible();
+    await expect(page.getByText(/建议售价 · max_active_binding_cost/)).toBeVisible();
+    await page.getByRole("button", { name: "编辑计价" }).click();
+    const dialog = page.getByRole("dialog", { name: "编辑 Seedance 2.5 计价" });
+    await expect(dialog.getByText(new RegExp(`换算策略 ${policy.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))).toBeVisible();
+    const row720 = dialog.getByText("video-second:resolution=720p", { exact: true }).locator("xpath=ancestor::div[contains(@class,'grid')][1]");
+    const row1080 = dialog.getByText("video-second:resolution=1080p", { exact: true }).locator("xpath=ancestor::div[contains(@class,'grid')][1]");
+    await expect(row720.getByText("90.72 DFLOP credits", { exact: true })).toBeVisible();
+    await expect(row1080.getByText("224.532 DFLOP credits", { exact: true })).toBeVisible();
+    await row720.getByRole("textbox").fill("100");
+    await row720.getByRole("button", { name: /保\s*存/ }).click();
+    await expect.poll(() => patches.at(-1)?.dimensionCommand).toEqual({ action: "set_manual", bindingId: "seedance:dflop", dimensionId: "video-second:resolution=720p", effectiveValue: "100" });
+    await expect(row720.getByText("manual", { exact: true })).toBeVisible();
+    await expect(row1080.getByText("upstream", { exact: true })).toBeVisible();
+    await row720.getByRole("button", { name: "恢复上游" }).click();
+    await expect.poll(() => patches.at(-1)?.dimensionCommand).toEqual({ action: "restore_upstream", bindingId: "seedance:dflop", dimensionId: "video-second:resolution=720p" });
+    await expectNoHorizontalOverflow(page, `DFLOP pricing ${testInfo.project.name}`);
 });
 
 test("referral progress and credit rewards retain separate server pages", async ({ page }) => {

@@ -1,0 +1,5 @@
+# Validation Fixture Pack
+
+This pack is intentionally unprovisioned. Set each `publicUrl` to a stable public HTTPS object URL, then record its exact MIME type, SHA-256, probed duration and dimensions. Use licensed media showing a talking face for `talking-video`, spoken driving audio, a motion source, and portrait references. Add `annotationEvidence` for speech and face count after human review, and `reachabilityEvidence` identifying a successful external-network fetch. The server downloads each object and verifies its hash, MIME, duration, dimensions and audio stream before making it eligible for validation. Missing data keeps the corresponding model blocked.
+
+Avoid localhost, private hosts, expiring signed URLs and redirects. The deployment needs `ffprobe` to verify media metadata. Provider reachability still requires a separate external fetch check; local verification alone does not establish it. This directory does not contain media or valid public URLs yet, and its manifest must not be treated as a ready fixture pack.

@@ -112,6 +112,14 @@ describe("creative generation capabilities", () => {
         expect(sanitizeCreativeGenerationPreferences({ mode: "image", image: { size: "auto", quality: "auto" } }, "image", parameters)).toEqual({ mode: "image" });
     });
 
+    it("preserves an explicit image ratio together with its authoritative quality revisions", () => {
+        const preferences: CreativeGenerationPreferences = {
+            mode: "image",
+            image: { size: "1:1", quality: "1k", qualityProfileRevision: "profile-r1", qualityOptionRevision: "option-r1", count: 1 },
+        };
+        expect(sanitizeCreativeGenerationPreferences(preferences, "image", profile({ aspectRatios: ["1:1"], qualities: ["1k"], maxBatchSize: 1 }))).toEqual(preferences);
+    });
+
     it("drops video frame roles only when their reference mode becomes invalid", () => {
         const preferences: CreativeGenerationPreferences = {
             mode: "video",
@@ -208,6 +216,12 @@ describe("creative generation capabilities", () => {
             ]),
         ).toEqual({ reason: "intersection", field: "count", type: "image", maxReferenceImages: 1 });
         expect(selected.map((asset) => asset.id)).toEqual(["stable-video", "stable-image"]);
+    });
+
+    it("reports a missing required reference before submission", () => {
+        const state = { reason: "unsupported" as const, parameters: profile({ referenceInputs: ["image"], minReferenceImages: 1, maxReferenceImages: 1 }) };
+        expect(creativeReferenceCapabilityViolation(state, [])).toEqual({ reason: "unsupported", field: "count", type: "image", minReferenceImages: 1 });
+        expect(creativeReferenceCapabilityViolation(state, [{ id: "reference", type: "image" }])).toBeUndefined();
     });
 
     it("maps upload and paste MIME types to canonical reference inputs", () => {

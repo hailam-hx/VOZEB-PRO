@@ -56,6 +56,7 @@ describe("POST /api/creative/assets", () => {
         const response = await POST(request("", new File(["video"], "clip.mp4", { type: "video/mp4" })));
 
         expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ data: { publicMessage: "创作会话不能为空" } });
         expect(mocks.uploadAssetForUser).not.toHaveBeenCalled();
     });
 

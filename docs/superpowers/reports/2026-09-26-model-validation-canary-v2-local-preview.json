@@ -1,0 +1,877 @@
+{
+  "generatedAt": "2026-09-26T07:41:45.267Z",
+  "models": 68,
+  "bindings": 68,
+  "contractFamilies": 10,
+  "contractFingerprints": 68,
+  "validationCases": 81,
+  "plannedLiveCanaries": 50,
+  "estimatedCredits": "13.6269",
+  "estimatedProviderCosts": [
+    {
+      "amount": "5450.76",
+      "currency": "DFLOP_CREDITS",
+      "unit": "task"
+    }
+  ],
+  "providerCostCoveredCases": 50,
+  "skipReasons": {
+    "BUDGET_BOUND_UNAVAILABLE": 9,
+    "COST_NOT_ESTIMATABLE": 8,
+    "PRICING_NEEDS_REVIEW": 1,
+    "PRICING_NOT_READY": 7,
+    "REFERENCE_FIXTURE_UNAVAILABLE": 6
+  },
+  "selected": [
+    {
+      "fingerprintHash": "ee6f2359a3bdb207ee305494cc844bcb0e2870a316c09d1c77e73dfee50cb7f6",
+      "caseId": "text-to-video",
+      "modelId": "happyhorse-1.0-i2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.0-i2v",
+      "estimatedCredits": "1.06155",
+      "estimatedProviderCost": {
+        "amount": "424.62",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "50b3a39727047bfacb30186bf442c5bdf8ef441a28498d198137699d88f14fc8",
+      "caseId": "text-to-video",
+      "modelId": "happyhorse-1.0-r2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.0-r2v",
+      "estimatedCredits": "1.06155",
+      "estimatedProviderCost": {
+        "amount": "424.62",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "77cfe3b2e201d03516493cc399074420704c1075d3ade34447be8a8c72eacb3c",
+      "caseId": "text-to-video",
+      "modelId": "happyhorse-1.0-video-edit",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.0-video-edit",
+      "estimatedCredits": "1.06155",
+      "estimatedProviderCost": {
+        "amount": "424.62",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "1994ad305241acd83b1f00f3f3e12c492d87ed4b2fcd855234d8441b27fa59a1",
+      "caseId": "text-to-video",
+      "modelId": "happyhorse-1.1-i2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.1-i2v",
+      "estimatedCredits": "0.945",
+      "estimatedProviderCost": {
+        "amount": "378",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "404202505dee72bac639c9cb20b66f12e8ca72c65bb083f0722bd42d44ab6d7b",
+      "caseId": "text-to-video",
+      "modelId": "happyhorse-1.1-r2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.1-r2v",
+      "estimatedCredits": "0.945",
+      "estimatedProviderCost": {
+        "amount": "378",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "82ab28b813dc71f368e498fe6589f280268a4e9cd1790efa8e98e340c688ee5b",
+      "caseId": "text-to-video",
+      "modelId": "happyhorse-1.1-t2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.1-t2v",
+      "estimatedCredits": "0.945",
+      "estimatedProviderCost": {
+        "amount": "378",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "4b87a85968d4112b1e61357a13e92120a09d449f1baff9435fc1062f85dd1586",
+      "caseId": "text-to-video",
+      "modelId": "tvod-hailuo-02",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-hailuo-02",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "4d77003cc7afe141a1d4dcece65140b0a2a89eb53a54b6e88c46041229544661",
+      "caseId": "text-to-video",
+      "modelId": "tvod-hailuo-2.3",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-hailuo-2.3",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "12b2838407430465f2137a9fa2822269433634cdefe37371ee792e68b2c5a516",
+      "caseId": "text-to-video",
+      "modelId": "tvod-hailuo-2.3-fast",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-hailuo-2.3-fast",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "5e0f1715037b1a032ef6e77832141c7d7f4229484cad5a7ba7e1037196cd3e9e",
+      "caseId": "text-to-video",
+      "modelId": "tvod-hailuo-h3",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-hailuo-h3",
+      "estimatedCredits": "1.2",
+      "estimatedProviderCost": {
+        "amount": "480",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "9be1e5b4b9859c1fb851e685b8157c87a2c29a4734659abc07bcafc5f9bfc273",
+      "caseId": "text-to-video",
+      "modelId": "tvod-hunyuan-video-1.0",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-hunyuan-video-1.0",
+      "estimatedCredits": "0.13143",
+      "estimatedProviderCost": {
+        "amount": "52.572",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "39ce0f5102f0de922cc5f4f449985673a9e8c01da5583b129e56432010b0bb8e",
+      "caseId": "text-to-video",
+      "modelId": "tvod-hunyuan-video-1.1",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-hunyuan-video-1.1",
+      "estimatedCredits": "0.13143",
+      "estimatedProviderCost": {
+        "amount": "52.572",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "918dfb7671fcd086890594de5ac48cc928f206520ee1fc84609b1c0fee12f338",
+      "caseId": "text-to-video",
+      "modelId": "tvod-jimeng-1.0-lite-i2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-jimeng-1.0-lite-i2v",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "d1111fd50bb50c201d5fa2e4aede9d66994086278b3228af8490c4ddff74736c",
+      "caseId": "text-to-video",
+      "modelId": "tvod-jimeng-1.0-pro",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-jimeng-1.0-pro",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "d88c3993e3e3f14e97b8916592d887f95c29cdfcd4d0a2ff9a5f84203d7532b8",
+      "caseId": "text-to-video",
+      "modelId": "tvod-jimeng-1.0-pro-fast",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-jimeng-1.0-pro-fast",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "ba248940dedcc58dbd18dfa4f2cc90bf2834e1c3c527665556d72befc87cd36b",
+      "caseId": "text-to-video",
+      "modelId": "tvod-jimeng-1.5-pro",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-jimeng-1.5-pro",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "cf7673755a908732e93eb465f2298259d6118206af2efe6576bfa814896604a0",
+      "caseId": "text-to-video",
+      "modelId": "tvod-jimeng-3.0",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-jimeng-3.0",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "022ec77786a795ca2d9258bf1cc1854a6d47315a17c0374972ad263d2acb1252",
+      "caseId": "text-to-video",
+      "modelId": "tvod-jimeng-3.0-pro",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-jimeng-3.0-pro",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "09971665202a550d2e33b61a064d580597a65e23c55a715c0a481741ff54cde6",
+      "caseId": "text-to-video",
+      "modelId": "tvod-jimeng-4.0",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-jimeng-4.0",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "2b387694a96d367ee8c19330242302c1c9eda1e8f514b9c69b0a916f5de2eeaa",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-1.6",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-1.6",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "b4b809c6156871ec9b84fc7e4c2bf9103580afb95fc1197afb6b7fe5b8a39c03",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-2.0",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-2.0",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "ca62e780051e30f3ea527a569332311ff56770ff4eed721f0cc71db8fa3f7396",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-2.1",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-2.1",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "10147af63d26cbbd4e132a95de7a69c1780e5c706d269f75c354aa5bcdce4ae1",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-2.5-turbo",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-2.5-turbo",
+      "estimatedCredits": "0.08088",
+      "estimatedProviderCost": {
+        "amount": "32.352",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "5c48458c3e5a701ae7a0fa1422e729d05e7ee0c1f64b654b67c11d82979c7f73",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-2.6",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-2.6",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "bd7b235d6e2499b44be6850f57b8a5fdebcacb6ed05187a6ded233ba0cf946a2",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-3.0",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-3.0",
+      "estimatedCredits": "0.13143",
+      "estimatedProviderCost": {
+        "amount": "52.572",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "8bd4f34a4fd1d5857e77bb705c0cd8077f6b138ac73bfe40faa2ee9902f1c2d8",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-3.0-omni",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-3.0-omni",
+      "estimatedCredits": "0.13143",
+      "estimatedProviderCost": {
+        "amount": "52.572",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "c0469d1b6983475ad05f723da4865f0cbf505c3e403ca2534f9ddb5fb5fbcd3c",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-master",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-master",
+      "estimatedCredits": "0.2022",
+      "estimatedProviderCost": {
+        "amount": "80.88",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "9e78ace13a074a1db4de8235adfa03a3b92ddcbb0c56a93a801dca30844b5a9f",
+      "caseId": "text-to-video",
+      "modelId": "tvod-kling-video-o1",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-kling-video-o1",
+      "estimatedCredits": "0.08088",
+      "estimatedProviderCost": {
+        "amount": "32.352",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "72dfcf985c0699155d742b4cbefbafa5b942505b2422838466f8d659fc112e21",
+      "caseId": "text-to-video",
+      "modelId": "tvod-pixverse-c1",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-pixverse-c1",
+      "estimatedCredits": "0.11121",
+      "estimatedProviderCost": {
+        "amount": "44.484",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "c6089d04203bdc1f249bc865d18270e7c578f382df2f4b92fb1403992194ed46",
+      "caseId": "text-to-video",
+      "modelId": "tvod-pixverse-v5.6",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-pixverse-v5.6",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "9faa53deddce6bb23d13ea07cdb28b0f4f3fe6edd085dbf045a665dd14ca053b",
+      "caseId": "text-to-video",
+      "modelId": "tvod-pixverse-v6",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-pixverse-v6",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "e5a715b0a2a17d628d5025ca9afab1c9be5e4ec69c246f374669ac5e1845a468",
+      "caseId": "text-to-video",
+      "modelId": "tvod-sora-2",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-sora-2",
+      "estimatedCredits": "0.4044",
+      "estimatedProviderCost": {
+        "amount": "161.76",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "5b7c4cd0937068f3f97b60cc576d65a34fb24b8e3838f97090b83109c89daf82",
+      "caseId": "text-to-video",
+      "modelId": "tvod-veo-3.1",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-veo-3.1",
+      "estimatedCredits": "0.16176",
+      "estimatedProviderCost": {
+        "amount": "64.704",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "625947512fa8d450063afd72721d3621ffef4f35a37888158cc4bf5c38a5a75f",
+      "caseId": "text-to-video",
+      "modelId": "tvod-veo-3.1-fast",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-veo-3.1-fast",
+      "estimatedCredits": "0.11121",
+      "estimatedProviderCost": {
+        "amount": "44.484",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "66406fece4d516c07f17bb97326faef1c4be13f0e3cde963a8e24574252c8932",
+      "caseId": "text-to-video",
+      "modelId": "tvod-veo-3.1-lite",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-veo-3.1-lite",
+      "estimatedCredits": "0.11121",
+      "estimatedProviderCost": {
+        "amount": "44.484",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "394a40ea3c1f5d16e650e9de83392e6965a676198014cc2ef422d9d63b9fa896",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-2.0",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-2.0",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "22069fd887e20b09b107bc504ce4b69aeb21db42d7dc265144b32aefc9b55f64",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q1",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q1",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "acd5c03a18991ce599ba287d004b3efa88c81e0ff9b578dcf3a9fd4dfb243ee3",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q1-classic",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q1-classic",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "44f8a2a3b04b618e008d1d9611b2ffe3b3970cda04e9608978d4d44d9298384c",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q2",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q2",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "2f7871019a63cf477f9b2d0ab6abea8f0927bc233d1224b9fbcd7c1e576a7de9",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q2-pro",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q2-pro",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "c4de5c406d9697b6f09b02a10484bfba165521f4a2a360b1d63442aa5429835c",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q2-pro-fast",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q2-pro-fast",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "f36757d4bb17591e2036089793f62ae0a1dee9099dfc4a490895e281d458ff50",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q2-turbo",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q2-turbo",
+      "estimatedCredits": "0.1011",
+      "estimatedProviderCost": {
+        "amount": "40.44",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "e7587f21cc0c20720660a5fb374a0ab9ac5869e67c35b8c8b8b11d13236025cb",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q3",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q3",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "367fa3e3f055e773ebac603cb9386b30f7536783989603d9230251ed6858e678",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q3-ad",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q3-ad",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "1da0ca74fd6723f50b380a783762b54599894aae1f5cb58752adeaa90a14d28b",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q3-drama",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q3-drama",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "5e14b4318b4078559407c90595964070c7b8d93521052b350b6dd2e39e3f1d85",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q3-pro",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q3-pro",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "8f58d57d2e2dcb1b2397cf946af7d6277950cb0dfa744f227fa943bf30737f97",
+      "caseId": "text-to-video",
+      "modelId": "tvod-vidu-video-q3-turbo",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-vidu-video-q3-turbo",
+      "estimatedCredits": "0.116265",
+      "estimatedProviderCost": {
+        "amount": "46.506",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "096594f961602c8cd8fdf4e0cc3704357a16439cd43c100e4babc4ac43ba1306",
+      "caseId": "text-to-video",
+      "modelId": "wan2.7-t2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:wan2.7-t2v",
+      "estimatedCredits": "0.48",
+      "estimatedProviderCost": {
+        "amount": "192",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "c715bfe967273059075f3f68708ca0d9561069c6d34a7cae2cab2c9ed976fe51",
+      "caseId": "text-to-video",
+      "modelId": "wan3.0-video",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:wan3.0-video",
+      "estimatedCredits": "0.45",
+      "estimatedProviderCost": {
+        "amount": "180",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    },
+    {
+      "fingerprintHash": "66d8c2ba71c3ad5ee3a254a9e6e0abf4f10333c3712baad6eafe26b8ad25f5d9",
+      "caseId": "text-to-video",
+      "modelId": "wan3.0-video-prime",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:wan3.0-video-prime",
+      "estimatedCredits": "0.675",
+      "estimatedProviderCost": {
+        "amount": "270",
+        "currency": "DFLOP_CREDITS",
+        "unit": "task"
+      }
+    }
+  ],
+  "skipped": [
+    {
+      "fingerprintHash": "819fa1e069ad0ce98b0f5fa7b377e782739337047142bd5dc88425cb678c9c0f",
+      "caseId": "text-to-video",
+      "modelId": "doubao-seedance-2.5",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.5",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "819fa1e069ad0ce98b0f5fa7b377e782739337047142bd5dc88425cb678c9c0f",
+      "caseId": "image-to-video",
+      "modelId": "doubao-seedance-2.5",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.5",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "819fa1e069ad0ce98b0f5fa7b377e782739337047142bd5dc88425cb678c9c0f",
+      "caseId": "first-frame",
+      "modelId": "doubao-seedance-2.5",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.5",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "819fa1e069ad0ce98b0f5fa7b377e782739337047142bd5dc88425cb678c9c0f",
+      "caseId": "first-last-frame",
+      "modelId": "doubao-seedance-2.5",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.5",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "20c4b509dc1dce2fb5173ff6a1c719e81609d9bdefb0ca1fd344908d3ab88e83",
+      "caseId": "text-to-video",
+      "modelId": "doubao-seedance-2.0-fast",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.0-fast",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "4669ada62ffd40f680e9f693c8c5cdc5c109ee84239588b5d9270bea05ddacf6",
+      "caseId": "text-to-video",
+      "modelId": "doubao-seedance-2.0-fast-lite",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.0-fast-lite",
+      "reason": "PRICING_NOT_READY",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "3f8ea0dfbb473d177ca61bca29ff2e911974b4d1ac1e0154d6667478199445ea",
+      "caseId": "text-to-video",
+      "modelId": "doubao-seedance-2.0-lite",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.0-lite",
+      "reason": "PRICING_NOT_READY",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "739711c1e206243b31595e3e581fcfea2ddcb72e99687d2a66b8b73a5babce69",
+      "caseId": "text-to-video",
+      "modelId": "doubao-seedance-2.0-mini",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.0-mini",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "c9d10cd67471b10e3a619b6477f5357ef99934e60c62611cceb8696b54de48de",
+      "caseId": "text-to-video",
+      "modelId": "doubao-seedance-2.0-mini-lite",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.0-mini-lite",
+      "reason": "PRICING_NOT_READY",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "e17751f0f88d334b2010a6a2ed81ba5091365618bcc666da5d42c026c331ee17",
+      "caseId": "text-to-video",
+      "modelId": "doubao-seedance-2.5-lite",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.5-lite",
+      "reason": "PRICING_NOT_READY",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "e17751f0f88d334b2010a6a2ed81ba5091365618bcc666da5d42c026c331ee17",
+      "caseId": "image-to-video",
+      "modelId": "doubao-seedance-2.5-lite",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.5-lite",
+      "reason": "PRICING_NOT_READY",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "e17751f0f88d334b2010a6a2ed81ba5091365618bcc666da5d42c026c331ee17",
+      "caseId": "first-frame",
+      "modelId": "doubao-seedance-2.5-lite",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.5-lite",
+      "reason": "PRICING_NOT_READY",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "e17751f0f88d334b2010a6a2ed81ba5091365618bcc666da5d42c026c331ee17",
+      "caseId": "first-last-frame",
+      "modelId": "doubao-seedance-2.5-lite",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.5-lite",
+      "reason": "PRICING_NOT_READY",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "30e3bd1a30490389b0392f927b402aa495bd9ba28fc7394b211bc3d0d380c78a",
+      "caseId": "text-to-video",
+      "modelId": "grok-imagine-video",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:grok-imagine-video",
+      "reason": "COST_NOT_ESTIMATABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "c8d105b6f6d0ca32c2ef34b752b239c576175d7bb5984c288771fade86ba6561",
+      "caseId": "text-to-video",
+      "modelId": "grok-imagine-video-1.5-preview",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:grok-imagine-video-1.5-preview",
+      "reason": "COST_NOT_ESTIMATABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "ee6f2359a3bdb207ee305494cc844bcb0e2870a316c09d1c77e73dfee50cb7f6",
+      "caseId": "first-frame",
+      "modelId": "happyhorse-1.0-i2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.0-i2v",
+      "reason": "REFERENCE_FIXTURE_UNAVAILABLE",
+      "estimatedCredits": "1.06155"
+    },
+    {
+      "fingerprintHash": "77dafa6bfb953dcd621679f650342a3da716910ebab9fcb447e6ba24f4e79a27",
+      "caseId": "text-to-video",
+      "modelId": "happyhorse-1.0-t2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.0-t2v",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "77dafa6bfb953dcd621679f650342a3da716910ebab9fcb447e6ba24f4e79a27",
+      "caseId": "first-frame",
+      "modelId": "happyhorse-1.0-t2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.0-t2v",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "1994ad305241acd83b1f00f3f3e12c492d87ed4b2fcd855234d8441b27fa59a1",
+      "caseId": "first-frame",
+      "modelId": "happyhorse-1.1-i2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.1-i2v",
+      "reason": "REFERENCE_FIXTURE_UNAVAILABLE",
+      "estimatedCredits": "0.945"
+    },
+    {
+      "fingerprintHash": "82ab28b813dc71f368e498fe6589f280268a4e9cd1790efa8e98e340c688ee5b",
+      "caseId": "first-frame",
+      "modelId": "happyhorse-1.1-t2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:happyhorse-1.1-t2v",
+      "reason": "REFERENCE_FIXTURE_UNAVAILABLE",
+      "estimatedCredits": "0.945"
+    },
+    {
+      "fingerprintHash": "5e0f1715037b1a032ef6e77832141c7d7f4229484cad5a7ba7e1037196cd3e9e",
+      "caseId": "first-frame",
+      "modelId": "tvod-hailuo-h3",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-hailuo-h3",
+      "reason": "REFERENCE_FIXTURE_UNAVAILABLE",
+      "estimatedCredits": "1.2"
+    },
+    {
+      "fingerprintHash": "096594f961602c8cd8fdf4e0cc3704357a16439cd43c100e4babc4ac43ba1306",
+      "caseId": "first-frame",
+      "modelId": "wan2.7-t2v",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:wan2.7-t2v",
+      "reason": "REFERENCE_FIXTURE_UNAVAILABLE",
+      "estimatedCredits": "0.48"
+    },
+    {
+      "fingerprintHash": "c715bfe967273059075f3f68708ca0d9561069c6d34a7cae2cab2c9ed976fe51",
+      "caseId": "first-frame",
+      "modelId": "wan3.0-video",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:wan3.0-video",
+      "reason": "REFERENCE_FIXTURE_UNAVAILABLE",
+      "estimatedCredits": "0.45"
+    },
+    {
+      "fingerprintHash": "2c6ae58906d5a756c63f30c0442b060a687e2a03c6b301043bef01cec2238648",
+      "caseId": "text-to-video",
+      "modelId": "doubao-seedance-2.0",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:doubao-seedance-2.0",
+      "reason": "BUDGET_BOUND_UNAVAILABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "8536ff4e4aa752bb01ba45a486743d2446566a0c6feba3a2d2b353ee80d91bab",
+      "caseId": "text-to-video",
+      "modelId": "dh-avatar",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:dh-avatar",
+      "reason": "COST_NOT_ESTIMATABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "b65bf46024317bccbabd8ee0d203c7b6ca22ff2ece599946995f9fbd5a41af65",
+      "caseId": "text-to-video",
+      "modelId": "dh-lipsync",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:dh-lipsync",
+      "reason": "COST_NOT_ESTIMATABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "60431664d39ebadd1f38a38d4f045d8aab062e07bff8424b89c7d2a10f136fbf",
+      "caseId": "text-to-video",
+      "modelId": "dh-lipsync-max",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:dh-lipsync-max",
+      "reason": "COST_NOT_ESTIMATABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "1a6b0a3bd247514510690ca14057166d8ba80593373f5c4ec2facf1f0aac47d4",
+      "caseId": "text-to-video",
+      "modelId": "dh-lipsync-pro",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:dh-lipsync-pro",
+      "reason": "COST_NOT_ESTIMATABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "af3230b3c73d87c837ef38fa92521b269035c8576dadcb3fbd90b6f97c2e6ca4",
+      "caseId": "text-to-video",
+      "modelId": "dh-motion",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:dh-motion",
+      "reason": "COST_NOT_ESTIMATABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "39fd2f867be162da81e556aff7a42a867c8f3f30e2ec88a7485e31db4485efc6",
+      "caseId": "text-to-video",
+      "modelId": "tvod-subtitle-soft",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:tvod-subtitle-soft",
+      "reason": "COST_NOT_ESTIMATABLE",
+      "estimatedCredits": "0"
+    },
+    {
+      "fingerprintHash": "bb579cfc370756022a1a73020f227636e41f2a917a1425bef1fd286faa7e9a59",
+      "caseId": "text-to-video",
+      "modelId": "clip-compose",
+      "bindingId": "t_-YRte2seJyaCR6Aq_WP:clip-compose",
+      "reason": "PRICING_NEEDS_REVIEW",
+      "estimatedCredits": "0"
+    }
+  ]
+}

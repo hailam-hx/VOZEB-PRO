@@ -161,6 +161,10 @@ export function CreativeComposer({
     const referenceAliasAssets = useMemo(() => Array.from(new Map([...referenceAssets, ...attachments].map((asset) => [asset.id, asset])).values()), [attachments, referenceAssets]);
     const mentionCandidates = useMemo(() => creativeAssetMentionCandidates(referenceAliasAssets, mentionQuery || ""), [mentionQuery, referenceAliasAssets]);
     const referenceAssetsById = useMemo(() => new Map(referenceAliasAssets.map((asset) => [asset.id, asset])), [referenceAliasAssets]);
+    const estimateReferenceAssets = useMemo(
+        () => Array.from(new Map([...attachments, ...selectedAssetIds.flatMap((id) => referenceAssetsById.get(id) || [])].map((asset) => [asset.id, asset])).values()),
+        [attachments, referenceAssetsById, selectedAssetIds],
+    );
     const referenceAliases = useMemo(() => creativeAssetReferenceAliases(referenceAliasAssets, selectedAssetIds), [referenceAliasAssets, selectedAssetIds]);
     const mentionSegments = useMemo(() => creativeAssetMentionSegments(value, referenceAliases), [referenceAliases, value]);
     const hasMentionReferences = mentionSegments.some((segment) => segment.referenced);
@@ -168,7 +172,7 @@ export function CreativeComposer({
     const visibleAttachments = attachments.filter((asset) => !showVideoFrames || !frameAssetIds.has(asset.id));
     const mediaAttachments = visibleAttachments.filter((asset) => (asset.type === "image" || asset.type === "video") && Boolean(asset.serverUrl || asset.remoteUrl));
     const otherAttachments = visibleAttachments.filter((asset) => !mediaAttachments.some((media) => media.id === asset.id));
-    const creditEstimate = estimateCreativeCredits({ config, prompt: value, smartPlanning, selectedModels, preferences: generationPreferences });
+    const creditEstimate = estimateCreativeCredits({ config, prompt: value, smartPlanning, selectedModels, preferences: generationPreferences, referenceAssets: estimateReferenceAssets });
     const referenceAvailabilities = (["image", "video", "audio"] as const).map((type) => creativeReferenceAdditionAvailability(referenceCapabilityState, attachments, type));
     const referenceDisabledReason = referenceAvailabilities.some((availability) => availability.supported)
         ? undefined

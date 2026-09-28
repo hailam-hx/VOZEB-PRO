@@ -1,5 +1,6 @@
 import { isPostgresDatabaseEnabled } from "@/lib/server/database";
-import { mutatePostgresAuthLogicalModels, updatePostgresAuthSettings } from "./postgres-auth-settings-service";
+import type { AuditLogRecord } from "@/lib/server/database/repository-types";
+import { mutatePostgresAuthLogicalModels, mutatePostgresAuthLogicalModelsWithAudit, updatePostgresAuthSettings } from "./postgres-auth-settings-service";
 import { normalizeSettings } from "./store-normalizers";
 import { mutateAuthDb, readAuthDb, readPostgresAuthSettings } from "./store-repository";
 import { preserveLogicalModelPricing } from "./store-settings-merge";
@@ -62,6 +63,13 @@ export async function mutateAuthLogicalModels(mutator: (models: LogicalModel[]) 
           });
     updatePostgresCache(settings);
     return settings;
+}
+
+export async function mutateAuthLogicalModelsWithAudit<T>(mutator: (models: LogicalModel[], pricingPolicy: AuthSettings["pricingPolicy"]) => { models: LogicalModel[]; auditLogs: AuditLogRecord[]; result: T }) {
+    if (!isPostgresDatabaseEnabled()) throw new Error("建议售价审批需要 PostgreSQL 事务支持");
+    const transaction = await mutatePostgresAuthLogicalModelsWithAudit(mutator);
+    updatePostgresCache(transaction.settings);
+    return transaction;
 }
 
 function updatePostgresCache(settings: AuthSettings) {

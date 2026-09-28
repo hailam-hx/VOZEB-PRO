@@ -114,8 +114,10 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         if (!(await canContinue(run.id, executionId))) return;
         if (claimed.requestedModelIds?.length) {
             const selectedModels = validateManualAgentModels(allModels, claimed.requestedModelIds, generationRequest);
+            const enhanceManualPrompt = claimed.manualPromptEnhancementEnabled !== false;
+            const sourcePrompt = enhanceManualPrompt ? claimed.prompt : claimed.originalPrompt || claimed.prompt;
             const plan = directAgentPlan(selectedModels, claimed.prompt, claimed.referencedAssetIds);
-            const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize, claimed.generationPreferences).map((task) => {
+            const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, sourcePrompt, claimed.surface, explicitAssets, claimed.requestedImageSize, claimed.generationPreferences, enhanceManualPrompt).map((task) => {
                 if (task.type === "text" || !task.model) return task;
                 const resolved = resolveAgentTaskBinding(allModels, task, task.model, settings.generationDefaults);
                 if (resolved) return resolved;

@@ -1,0 +1,920 @@
+{
+  "runId": "video-validation-37a134f9-6a79-4564-a303-d9704c76a0d5",
+  "testLevel": "CONTRACT_ONLY_NO_GENERATION",
+  "testedAt": "2026-09-26T08:28:16.669Z",
+  "modelCount": 68,
+  "caseCount": 81,
+  "caseStatuses": {
+    "passed": 50,
+    "skipped": 31
+  },
+  "modelOutcomes": {
+    "CONTRACT_BLOCKED": 18,
+    "CONTRACT_PARTIAL": 6,
+    "CONTRACT_PASS_ALL": 44
+  },
+  "blockReasons": {
+    "BUDGET_BOUND_UNAVAILABLE": 9,
+    "COST_NOT_ESTIMATABLE": 8,
+    "PRICING_NEEDS_REVIEW": 1,
+    "PRICING_NOT_READY": 7,
+    "REFERENCE_FIXTURE_UNAVAILABLE": 6
+  },
+  "liveHistoryCases": 0,
+  "models": [
+    {
+      "modelId": "clip-compose",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "PRICING_NEEDS_REVIEW",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "dh-avatar",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "COST_NOT_ESTIMATABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "dh-lipsync",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "COST_NOT_ESTIMATABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "dh-lipsync-max",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "COST_NOT_ESTIMATABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "dh-lipsync-pro",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "COST_NOT_ESTIMATABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "dh-motion",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "COST_NOT_ESTIMATABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "doubao-seedance-2.0-2",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "doubao-seedance-2.0-fast",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "doubao-seedance-2.0-fast-lite",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "PRICING_NOT_READY",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "doubao-seedance-2.0-lite",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "PRICING_NOT_READY",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "doubao-seedance-2.0-mini",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "doubao-seedance-2.0-mini-lite",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "PRICING_NOT_READY",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "doubao-seedance-2.5",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "first-last-frame",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "image-to-video",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "doubao-seedance-2.5-lite",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "PRICING_NOT_READY",
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "PRICING_NOT_READY",
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "first-last-frame",
+          "status": "skipped",
+          "reasonCode": "PRICING_NOT_READY",
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "image-to-video",
+          "status": "skipped",
+          "reasonCode": "PRICING_NOT_READY",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "grok-imagine-video",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "COST_NOT_ESTIMATABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "grok-imagine-video-1.5-preview",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "COST_NOT_ESTIMATABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "happyhorse-1.0-i2v",
+      "outcome": "CONTRACT_PARTIAL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "REFERENCE_FIXTURE_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "happyhorse-1.0-r2v",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "happyhorse-1.0-t2v",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "BUDGET_BOUND_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "happyhorse-1.0-video-edit",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "happyhorse-1.1-i2v",
+      "outcome": "CONTRACT_PARTIAL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "REFERENCE_FIXTURE_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "happyhorse-1.1-r2v",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "happyhorse-1.1-t2v",
+      "outcome": "CONTRACT_PARTIAL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "REFERENCE_FIXTURE_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-hailuo-02",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-hailuo-2.3",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-hailuo-2.3-fast",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-hailuo-h3",
+      "outcome": "CONTRACT_PARTIAL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "REFERENCE_FIXTURE_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-hunyuan-video-1.0",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-hunyuan-video-1.1",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-jimeng-1.0-lite-i2v",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-jimeng-1.0-pro",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-jimeng-1.0-pro-fast",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-jimeng-1.5-pro",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-jimeng-3.0",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-jimeng-3.0-pro",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-jimeng-4.0",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-1.6",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-2.0",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-2.1",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-2.5-turbo",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-2.6",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-3.0",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-3.0-omni",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-master",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-kling-video-o1",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-pixverse-c1",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-pixverse-v5.6",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-pixverse-v6",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-sora-2",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-subtitle-soft",
+      "outcome": "CONTRACT_BLOCKED",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "skipped",
+          "reasonCode": "COST_NOT_ESTIMATABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-veo-3.1",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-veo-3.1-fast",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-veo-3.1-lite",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-2.0",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q1",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q1-classic",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q2",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q2-pro",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q2-pro-fast",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q2-turbo",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q3",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q3-ad",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q3-drama",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q3-pro",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "tvod-vidu-video-q3-turbo",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "wan2.7-t2v",
+      "outcome": "CONTRACT_PARTIAL",
+      "cases": [
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "REFERENCE_FIXTURE_UNAVAILABLE",
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "wan3.0-video",
+      "outcome": "CONTRACT_PARTIAL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        },
+        {
+          "caseId": "first-frame",
+          "status": "skipped",
+          "reasonCode": "REFERENCE_FIXTURE_UNAVAILABLE",
+          "priorLiveStatus": null
+        }
+      ]
+    },
+    {
+      "modelId": "wan3.0-video-prime",
+      "outcome": "CONTRACT_PASS_ALL",
+      "cases": [
+        {
+          "caseId": "text-to-video",
+          "status": "passed",
+          "reasonCode": null,
+          "priorLiveStatus": null
+        }
+      ]
+    }
+  ]
+}

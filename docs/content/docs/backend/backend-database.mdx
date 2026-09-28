@@ -38,7 +38,7 @@ HOTX AI 的 PostgreSQL 真实表名继续使用兼容前缀 `vozeb_pro_`。业�
 ## 核心表
 
 - `vozeb_pro_schema_migrations`：已应用的数据库结构版本。
-- `vozeb_pro_app_settings`：站点、注册、邮箱、积分、生成、支付配置、逻辑模型目录、渠道绑定和默认模型等全局设置；`logical_models` JSONB 保存用户可见模型、上游模型、渠道、启用状态和优先级，每条绑定的 `generationParameters` 保存图片、视频或音频的声明式生成能力，包括固定数量/时长和可选的自定义数量/时长 min-max 范围；`capabilityProfile` 只保存超时、并发、幂等和成本等私有运行信息。当前版本直接使用 JSONB 新结构，不新增表或兼容旧媒体能力字段；公开 Session 仅输出 `generationParameters` 白名单。`generation_cost_control` JSONB 保存管理员配置的单任务、单用户日消费和全站日消费积分成本上限，三个值为 `0` 时均表示不限制；`data_lifecycle` JSONB 保存四类技术到期清理开关和单类批次大小，不承载对话、支付、审计等长期业务数据的法律保留期限。
+- `vozeb_pro_app_settings`：站点、注册、邮箱、积分、生成、支付配置、逻辑模型目录、渠道绑定和默认模型等全局设置；`pricing_policy` JSONB 保存 DFLOP credits/CNY、HOTX 业务 CNY/USD 汇率、HOTX USD/credit、加价系数、最低毛利、成本基准与自动应用开关，并保存稳定策略版本。`logical_models` JSONB 保存用户可见模型、上游模型、渠道、启用状态和优先级；binding 级 `providerPricingProfile` 保存上游原始价格、逐维来源/覆盖、换算快照和状态，`costRateCard` 只保存可由现有 usage contract 安全执行的成本投影；logical model 级 `suggestedSaleRateCard` 保存建议售价及策略/成本基准快照，正式 `saleRateCard` 独立保存且默认不会被同步覆盖。价格变更历史写入 `audit_logs`，现有 hold、settlement、refund 与 usage snapshot 继续按任务快照结算。每条绑定的 `generationParameters` 保存图片、视频或音频的声明式生成能力，包括固定数量/时长和可选的自定义数量/时长 min-max 范围；`capabilityProfile` 只保存超时、并发、幂等和成本等私有运行信息。当前版本直接使用 JSONB 新结构，不新增表或兼容旧媒体能力字段；公开 Session 仅输出 `generationParameters` 白名单。`generation_cost_control` JSONB 保存管理员配置的单任务、单用户日消费和全站日消费积分成本上限，三个值为 `0` 时均表示不限制；`data_lifecycle` JSONB 保存四类技术到期清理开关和单类批次大小，不承载对话、支付、审计等长期业务数据的法律保留期限。
 
   `app_settings.site` 仍是一个 JSONB 对象（文件 Provider 保存相同对象），其中首页 SEO 的当前形状为：
 
@@ -263,3 +263,18 @@ Chat 规划可以返回 Canvas 或短剧 `projectHandoff`。服务端使用 `han
 后台 Agent Skill 保存在 `app_settings.agent_skills` JSONB 字段中，包含名称、用途、执行规则、启用状态和触发关键词。系统默认内置并启用“电商生图”Skill，管理员可在模型渠道设置页修改、停用、删除或新增 Skill。
 
 Skill 还可记录 `sourceUrl`、`sourceVersion` 和 `license`。默认电商生图 Skill 来源为 `buluslan/gpt-image2-ecommerce` v0.1.0（MIT），项目仅适配其工作流与模板匹配规则，不使用其 Codex CLI/Shell 执行链。
+
+## 低成本视频验收
+
+`video_validation_runs` 保存管理员验收批次、预览与定价版本、NUMERIC 硬预算、活动预留积分、累计结算积分、成本上界违约标志与发生时间和生命周期。`video_validation_items` 保存 binding/case、版本化运行合同指纹、不可变执行快照与请求 payload digest、独立尝试及幂等键、费用上界证据、实际成本可用性及依据、上游原币成本和 HOTX 积分及其来源、逐项预留与结算金额、预留状态、租约和脱敏结果；数据库触发器阻止已存执行身份被修改。未知提交不能自动重放，预留保留至有可核对证据；取消响应不等于免费。`model_validation_verifications` 是不可修改的终态指纹历史，按 binding/case 的最新结果判断复用与 drift。
+
+预算预留会锁定 run 行，并用 PostgreSQL `numeric` 在同一语句中比较和累加。并发 worker 通过 `FOR UPDATE SKIP LOCKED` 领取到期 item；只有预算预留成功的 item 才能调用真实视频创建接口。Run 创建及其审计日志在同一事务中提交。
+
+表内禁止保存 API Key、Authorization、长效签名 URL 和未过滤的上游响应。验收 worker 通过独立 worker token 与数据库中的 item/channel/model/task 绑定授权访问系统代理，不创建用户作品、会话、钱包 hold、settlement、refund 或 usage snapshot，也不修改 `saleRateCard`。
+
+参考素材 canary 需要配置公开 HTTPS 测试素材：
+
+```bash
+VOZEB_PRO_VIDEO_VALIDATION_IMAGE_FIXTURE_URL=https://example.test/fixtures/video-validation.png
+VOZEB_PRO_VIDEO_VALIDATION_VIDEO_FIXTURE_URL=https://example.test/fixtures/video-validation.mp4
+```

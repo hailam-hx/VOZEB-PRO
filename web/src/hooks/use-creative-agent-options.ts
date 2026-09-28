@@ -20,7 +20,7 @@ export function creativeAgentModelsFromConfig(config: AiConfig, capabilities: Cr
         selectableModelsByCapability(config, capability).map((id) => {
             const logicalModel = config.logicalModels.find((model) => model.enabled && model.id === id && model.capability === capability);
             const generationParameters = logicalModel ? unionGenerationParameters(logicalModel) : undefined;
-            return { id, name: modelOptionLabel(config, id), capability, ...(generationParameters ? { generationParameters } : {}) };
+            return { id, name: modelOptionLabel(config, id), capability, ...(generationParameters ? { generationParameters } : {}), ...(logicalModel?.imageQualityProfile ? { imageQualityProfile: logicalModel.imageQualityProfile } : {}) };
         }),
     );
 }

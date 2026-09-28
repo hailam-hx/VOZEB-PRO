@@ -3,5 +3,6 @@ export { createPostgresRepositories } from "./repositories";
 export { WorkPublicationRepository } from "./work-publication-repository";
 export { WorkCommunityRepository } from "./work-community-repository";
 export { TopUpRepository, mapTopUpOrderRow, mapTopUpPresetRow } from "./top-up-repository";
+export { VideoValidationRepository } from "./video-validation-repository";
 export type { QueryExecutor } from "./postgres";
 export type * from "./repositories";

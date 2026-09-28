@@ -4,6 +4,7 @@ vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: vi.fn(), sy
 vi.mock("@/stores/use-config-store", () => ({ resolveModelRequestConfig: vi.fn((config: Record<string, unknown>, model: string) => ({ ...config, model })) }));
 
 import { ImageGenerationTaskTerminalError, createImageGenerationTask, waitForImageGenerationTask } from "./image";
+import { GenerationTaskRequestError } from "./generation-task-request-error";
 import type { AiConfig } from "@/stores/use-config-store";
 
 describe("图片任务轮询", () => {
@@ -38,6 +39,18 @@ describe("图片任务轮询", () => {
         expect(headers.get("x-vozeb-pro-client-request-id")).toBe("image-workbench:conversation:slot");
         expect(headers.get("x-vozeb-pro-attempt-no")).toBe("3");
         expect(body.context).toMatchObject({ clientRequestId: "image-workbench:conversation:slot", attemptNo: 3 });
+    });
+
+    it("preserves typed image quality revision errors", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => Response.json({ error: "模型画质配置已更新，请重新确认后提交", errorCode: "QUALITY_PROFILE_CHANGED", currentProfileRevision: "profile-current" }, { status: 409 })),
+        );
+
+        const error = await createImageGenerationTask({ apiSource: "system", model: "image-model", imageModel: "image-model" } as AiConfig, "生成图片").catch((reason) => reason);
+
+        expect(error).toBeInstanceOf(GenerationTaskRequestError);
+        expect(error).toMatchObject({ status: 409, errorCode: "QUALITY_PROFILE_CHANGED", currentProfileRevision: "profile-current" });
     });
 
     it("reuses a permanent server reference without downloading it before task creation", async () => {

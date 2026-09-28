@@ -187,6 +187,70 @@ test("admin can hide Agent mode from the create page and the setting survives re
     }
 });
 
+test("admin channel deletion remains deleted after API reread and reload", async ({ page, request }) => {
+    type SettingsSnapshot = {
+        systemChannels: Array<Record<string, unknown> & { id: string; name: string; enabled: boolean; models: string[] }>;
+        logicalModels: Array<Record<string, unknown> & { id: string; name: string; capability: string; bindings: Array<Record<string, unknown> & { id: string; channelId: string }> }>;
+        defaultModels: Record<string, string>;
+    };
+
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: SettingsSnapshot }).settings;
+    const channelTemplate = before.systemChannels[0];
+    const modelTemplate = before.logicalModels.find((model) => model.capability === "audio");
+    expect(channelTemplate).toBeTruthy();
+    expect(modelTemplate?.bindings[0]).toBeTruthy();
+    const channelId = "e2e-delete-channel";
+    const modelId = "e2e-delete-audio";
+    const channelName = "E2E 待删除渠道";
+    const seeded = {
+        systemChannels: [...before.systemChannels.filter((channel) => channel.id !== channelId), { ...channelTemplate, id: channelId, name: channelName, enabled: false, models: [modelId] }],
+        logicalModels: [
+            ...before.logicalModels.filter((model) => model.id !== modelId),
+            {
+                ...modelTemplate!,
+                id: modelId,
+                name: "E2E 待删除音频模型",
+                bindings: [{ ...modelTemplate!.bindings[0], id: `${modelId}:${channelId}`, channelId }],
+            },
+        ],
+        defaultModels: { ...before.defaultModels, audioModel: modelId },
+    };
+
+    try {
+        const seededResponse = await request.patch("/api/admin/settings", { data: seeded });
+        expect(seededResponse.ok(), await seededResponse.text()).toBe(true);
+        await page.goto("/admin?section=channels", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        const channelRow = page.getByRole("row").filter({ hasText: channelName });
+        await expect(channelRow).toBeVisible();
+
+        await channelRow.getByRole("button", { name: `删除 ${channelName}` }).click();
+        await expect(page.getByText("删除这个渠道？", { exact: true })).toBeVisible();
+        await page
+            .getByRole("button", { name: /删\s*除/ })
+            .last()
+            .click();
+        await expect(page.getByText("渠道已删除", { exact: true })).toBeVisible();
+        await expect(channelRow).toHaveCount(0);
+
+        const persistedResponse = await request.get("/api/admin/settings");
+        expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
+        const persisted = ((await persistedResponse.json()) as { settings: SettingsSnapshot }).settings;
+        expect(persisted.systemChannels.some((channel) => channel.id === channelId)).toBe(false);
+        expect(persisted.logicalModels.some((model) => model.id === modelId)).toBe(false);
+        expect(persisted.defaultModels.audioModel).toBe(before.defaultModels.audioModel);
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await expect(page.getByRole("row").filter({ hasText: channelName })).toHaveCount(0);
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: before });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
 test("admin saves and reloads logical model generation capability", async ({ page, request }) => {
     type SettingsSnapshot = {
         logicalModels: Array<{

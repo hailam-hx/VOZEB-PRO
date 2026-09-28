@@ -3,7 +3,8 @@ import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
-import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { imageTaskReferencePrompt, imageTaskRequestParameters } from "@/lib/server/image-task-store";
+import { auditGenerationPrompt } from "@/lib/server/generation-prompt-audit";
 import { dedupeImageResults } from "@/lib/image-result-dedupe";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
@@ -26,6 +27,7 @@ import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { generationSystemAiUsageContext } from "@/lib/server/generation-usage-context";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { MAX_MEDIA_PROXY_BYTES } from "@/lib/server/media-response-limit";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { attachSystemAiUsageUpstreamTask } from "@/lib/server/usage-billing-runtime";
@@ -266,6 +268,7 @@ export function taskFetch(config: ImageTaskConfig, url: string, init: RequestIni
 }
 
 export async function imageSubmissionFetch(config: ImageTaskConfig, url: string, init: RequestInit) {
+    auditGenerationPrompt({ audit: config.promptAudit, strict: config.promptEnhancementDisabled, body: init.body, capability: "image", channelId: config.channelId, model: config.model });
     try {
         return await taskFetch(config, url, init);
     } catch (error) {
@@ -312,6 +315,7 @@ export function geminiApiUrl(config: ImageTaskConfig, action: "generateContent",
 }
 
 export function withSystemPrompt(config: ImageTaskConfig, prompt: string) {
+    if (config.promptEnhancementDisabled) return prompt;
     const systemPrompt = (config.systemPrompt || "").trim();
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
 }
@@ -498,7 +502,9 @@ export function isPendingImageStatus(status?: string) {
 export function imageTaskPollUrls(config: ImageTaskConfig, requestUrl: string, taskId: string, explicitPollUrl = "") {
     const cleanUrl = requestUrl.split("?")[0].replace(/\/+$/, "");
     const encodedTaskId = encodeURIComponent(taskId);
-    const declared = [configuredImageTaskPollUrl(config, taskId, requestUrl), explicitPollUrl].filter(Boolean);
+    const protocol = resolveChannelModelConfig(config.advancedConfig, config.model)?.protocol || config.advancedConfig?.protocol;
+    const dflopPollUrl = protocol === "dflop" && /\/images\/(?:generations|edits)$/i.test(cleanUrl) ? `${cleanUrl}/${encodedTaskId}` : "";
+    const declared = [configuredImageTaskPollUrl(config, taskId, requestUrl), explicitPollUrl, dflopPollUrl].filter(Boolean);
     if (declared.length || !allowsImageProtocolFallback(config)) return Array.from(new Set(declared));
     const pollUrls = [`${cleanUrl}/${encodedTaskId}`];
     const generationsUrl = cleanUrl.replace(/\/images\/(?:generations|edits)$/i, "/images/generations");
@@ -552,7 +558,7 @@ export async function inlineRemoteImageResult(value: string, origin: string, coo
     if (!isRemoteMediaUrl(fetchUrl)) return { dataUrl: url, remoteUrl: fallbackUrl };
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), INLINE_IMAGE_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), resolveModelRequestTimeoutMs(undefined, "image"));
     try {
         const workerHeaders = maintenanceWorkerContextHeaders(cookie);
         const headers = new Headers(workerHeaders || (cookie ? { cookie } : undefined));
@@ -564,9 +570,9 @@ export async function inlineRemoteImageResult(value: string, origin: string, coo
         });
         if (!response.ok || !response.body) return { dataUrl: url, remoteUrl: fallbackUrl };
         const contentLength = Number(response.headers.get("content-length") || 0);
-        if (contentLength > MAX_INLINE_IMAGE_BYTES) return { dataUrl: url, remoteUrl: fallbackUrl };
+        if (contentLength > MAX_MEDIA_PROXY_BYTES) return { dataUrl: url, remoteUrl: fallbackUrl };
         const bytes = Buffer.from(await response.arrayBuffer());
-        if (bytes.length > MAX_INLINE_IMAGE_BYTES) return { dataUrl: url, remoteUrl: fallbackUrl };
+        if (bytes.length > MAX_MEDIA_PROXY_BYTES) return { dataUrl: url, remoteUrl: fallbackUrl };
         const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || "image/png";
         if (!mimeType.startsWith("image/")) return { dataUrl: url, remoteUrl: fallbackUrl };
         return { dataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`, remoteUrl: fallbackUrl };
@@ -678,16 +684,17 @@ export function toGeminiImagePart(dataUrl: string, fallbackType?: string): Gemin
 export async function buildImageEditFormData(task: ImageTask, quality: string | undefined, requestSize: string | undefined, origin: string, cookie: string, responseFormat: (typeof IMAGE_RESPONSE_FORMATS)[number], includeCompatibilityFields = true) {
     const formData = new FormData();
     formData.set("model", task.config.model);
-    formData.set("prompt", withSystemPrompt(task.config, buildImageReferencePromptText(task.prompt, task.references)));
+    formData.set("prompt", withSystemPrompt(task.config, imageTaskReferencePrompt(task)));
     if (task.config.count) formData.set("n", String(task.config.count));
     if (includeCompatibilityFields) {
         formData.set("response_format", responseFormat);
         formData.set("output_format", IMAGE_OUTPUT_FORMAT);
     }
-    if (quality) formData.set("quality", quality);
+    if (quality && task.config.advancedConfig?.protocol !== "dflop") formData.set("quality", quality);
     if (requestSize) formData.set("size", requestSize);
+    for (const [name, value] of Object.entries(imageTaskRequestParameters(task))) formData.set(name, String(value));
     const referenceFiles = await Promise.all(task.references.map((reference, index) => imageReferenceToFile(reference, reference.name || `reference-${index + 1}.png`, origin, cookie)));
-    referenceFiles.forEach((file) => formData.append("image", file));
+    referenceFiles.forEach((file) => formData.append(task.config.advancedConfig?.protocol === "dflop" && referenceFiles.length > 1 ? "image[]" : "image", file));
     if (task.mask) formData.set("mask", await imageReferenceToFile(task.mask, task.mask.name || "mask.png", origin, cookie));
     return formData;
 }

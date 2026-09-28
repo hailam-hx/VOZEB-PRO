@@ -33,7 +33,7 @@ export async function GET(request: Request, context: RouteContext) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin: requestPublicOrigin(request), cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id] }));
     }
-    const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error");
+    const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error" && task.failure?.category !== "persistence");
     const settledTask = shouldRefund ? await refundImageTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : currentUser;
 
@@ -46,6 +46,10 @@ export async function GET(request: Request, context: RouteContext) {
                 model: generationModelId(settledTask.config),
                 result: settledTask.result,
                 error: settledTask.error,
+                errorCode: settledTask.failure?.code,
+                errorCategory: settledTask.failure?.category,
+                publicMessage: settledTask.failure?.publicMessage,
+                actionHint: settledTask.failure?.actionHint,
                 canRetry: settledTask.retryable === true,
                 executionPhase,
             },

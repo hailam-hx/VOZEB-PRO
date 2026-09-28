@@ -22,6 +22,7 @@ export type CreativeReferenceCapabilityViolation = {
     field: "input" | "count";
     type: CreativeReferenceInput;
     maxReferenceImages?: number;
+    minReferenceImages?: number;
 };
 
 export type CreativeGenerationField = "imageSize" | "imageQuality" | "imageCount" | "videoSize" | "videoResolution" | "videoDuration" | "videoCount" | "videoReferenceMode" | "audioVoice" | "audioFormat" | "audioSpeed";
@@ -83,6 +84,8 @@ export function sanitizeCreativeGenerationPreferences(preferences: CreativeGener
         return replacePreference(preferences, "image", {
             ...(creativeGenerationValueSupported(parameters, "imageSize", image.size) && concreteText(image.size) ? { size: image.size } : {}),
             ...(creativeGenerationValueSupported(parameters, "imageQuality", image.quality) && concreteText(image.quality) ? { quality: image.quality } : {}),
+            ...(image.qualityProfileRevision ? { qualityProfileRevision: image.qualityProfileRevision } : {}),
+            ...(image.qualityOptionRevision ? { qualityOptionRevision: image.qualityOptionRevision } : {}),
             ...(creativeGenerationValueSupported(parameters, "imageCount", image.count) && image.count !== undefined ? { count: image.count } : {}),
         });
     }
@@ -129,6 +132,9 @@ export function creativeReferenceCapabilityViolation(state: CreativeGenerationCa
     const unsupported = selectedAssets.find((asset): asset is CreativeReferenceAsset & { type: CreativeReferenceInput } => asset.type !== "text" && !profile?.referenceInputs.includes(asset.type));
     if (unsupported) return { reason: state.reason, field: "input", type: unsupported.type };
     const imageCount = selectedAssets.filter((asset) => asset.type === "image").length;
+    if (profile?.minReferenceImages && imageCount < profile.minReferenceImages) {
+        return { reason: state.reason, field: "count", type: "image", minReferenceImages: profile.minReferenceImages };
+    }
     if (imageCount && (!profile?.maxReferenceImages || imageCount > profile.maxReferenceImages)) {
         return { reason: state.reason, field: "count", type: "image", ...(profile?.maxReferenceImages ? { maxReferenceImages: profile.maxReferenceImages } : {}) };
     }

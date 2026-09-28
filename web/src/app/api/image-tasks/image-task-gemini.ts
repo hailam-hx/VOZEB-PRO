@@ -3,7 +3,6 @@ import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
-import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
@@ -12,7 +11,19 @@ import { generationModelId, toSystemGenerationChannel } from "@/lib/server/gener
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
-import { countActiveImageTasksForUser, createImageTask, getImageTask, touchImageTask, transitionImageTask, type ImageTask, type ImageTaskConfig, type ImageTaskReference, updateImageTask } from "@/lib/server/image-task-store";
+import {
+    countActiveImageTasksForUser,
+    createImageTask,
+    getImageTask,
+    imageTaskReferencePrompt,
+    imageTaskRequestParameters,
+    touchImageTask,
+    transitionImageTask,
+    type ImageTask,
+    type ImageTaskConfig,
+    type ImageTaskReference,
+    updateImageTask,
+} from "@/lib/server/image-task-store";
 import { isGenerationSource, recordGenerationLog } from "@/lib/server/generation-log-store";
 import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
 import { resolveImageTaskOptions } from "@/lib/server/image-task-config";
@@ -123,14 +134,14 @@ import {
 export async function runGeminiImageTask(task: ImageTask, origin: string, cookie: string): Promise<ImageTaskRunResult> {
     if (task.mask) throw new GenerationSubmissionSafeFailure("Gemini 暂不支持蒙版编辑");
     const config = task.config;
-    const parts: GeminiPart[] = [{ text: withSystemPrompt(config, buildImageReferencePromptText(task.prompt, task.references)) }];
+    const parts: GeminiPart[] = [{ text: withSystemPrompt(config, imageTaskReferencePrompt(task)) }];
     task.references.forEach((reference) => parts.push(toGeminiImagePart(referenceRequestUrl(reference, origin), reference.type)));
     const response = await imageSubmissionFetch(config, `${geminiApiUrl(config, "generateContent", origin)}`, {
         method: "POST",
         headers: geminiHeaders(config, cookie, imagePointsIdempotencyKey(task), task.userId),
         body: JSON.stringify({
             contents: [{ role: "user", parts }],
-            generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+            generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...imageTaskRequestParameters(task) },
         }),
         cache: "no-store",
     });

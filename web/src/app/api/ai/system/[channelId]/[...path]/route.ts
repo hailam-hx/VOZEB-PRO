@@ -26,13 +26,19 @@ import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-aut
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
 import { meteredTextResponseBody } from "@/lib/server/system-ai-metered-text-stream";
 import { sanitizeDiagnosticText } from "@/lib/server/system-ai-diagnostics";
-import { deriveProxyBillableUsage, normalizeProxyBillableRequest } from "@/lib/server/usage-billing-adapter";
+import { deriveProxyBillableUsage, normalizeProxyBillableRequest, validateSignedImageQualityRequest, videoTokenBillingRequestContext } from "@/lib/server/usage-billing-adapter";
+import { normalizeImageQualityProfile } from "@/lib/image-quality-profile";
+import { validatePricingRateCard } from "@/lib/billing/pricing";
+import { resolveSeedanceModelFamily, safeSeedanceFrame } from "@/lib/billing/seedance-usage";
 import { attachUsageProviderEvidence, finishUsageProviderAttempt, recordUsageProviderAttempt, reserveUsageBilling, reuseExistingUsageBilling, type UsageBilling } from "@/lib/server/usage-billing-runtime";
 import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
+import { systemMediaTimeoutMs } from "@/lib/server/system-media-timeout";
 import { usageRecoveryIdentity } from "@/lib/server/generation-usage-context";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
 import { getVoiceProfileSourceDurationForBilling, userOwnsVoiceProfileProviderVoice } from "@/lib/server/voice-profile-store";
+import { authorizeVideoValidationProxyRequest } from "@/lib/server/video-validation-service";
+import { VIDEO_VALIDATION_ITEM_HEADER } from "@/lib/video-validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +54,6 @@ type ProxyRequestBody = { body?: BodyInit; pointsPayload?: ArrayBuffer | Record<
 const MAX_PROXY_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_PROXY_MULTIPART_BYTES = 25 * 1024 * 1024;
 const MAX_UPSTREAM_DIAGNOSTIC_BODY_CHARS = 64 * 1024;
-const SYSTEM_MEDIA_TIMEOUT_MS = 30 * 1000;
 const MAX_SYSTEM_MEDIA_REDIRECTS = 4;
 
 export async function GET(request: Request, context: RouteContext) {
@@ -153,8 +158,22 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         },
     });
     if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+    const validationItemId = workerUserId ? request.headers.get(VIDEO_VALIDATION_ITEM_HEADER)?.trim() || "" : "";
+    const validationRequest = Boolean(
+        validationItemId &&
+        access.capability === "video" &&
+        (access.operation === "create" || access.operation === "query" || access.operation === "cancel") &&
+        (await authorizeVideoValidationProxyRequest({
+            itemId: validationItemId,
+            channelId: channel.id,
+            upstreamModelId: upstreamModel,
+            operation: access.operation,
+            ...(access.operation !== "create" ? { providerTaskId: access.upstreamTaskId } : {}),
+        })),
+    );
+    if (validationItemId && !validationRequest) return NextResponse.json({ error: "视频验收任务授权已失效" }, { status: 403 });
     if (access.operation === "query" || access.operation === "cancel") {
-        const owned = await userOwnsGenerationUpstreamTask({ userId, capability: access.capability, channelId: channel.id, upstreamModel, upstreamTaskId: access.upstreamTaskId });
+        const owned = validationRequest || (await userOwnsGenerationUpstreamTask({ userId, capability: access.capability, channelId: channel.id, upstreamModel, upstreamTaskId: access.upstreamTaskId }));
         if (!owned) return NextResponse.json({ error: "任务不存在或无权访问" }, { status: 404 });
     }
     if (access.operation === "delete_voice" && !(await userOwnsVoiceProfileProviderVoice(userId, channel.id, access.providerVoiceId))) return NextResponse.json({ error: "声音档案不存在或无权访问" }, { status: 404 });
@@ -182,11 +201,11 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
                   bodyDigest: requestBody.bodyDigest,
               })
             : undefined;
-    if (access.operation === "create" && !usageContext) return NextResponse.json({ error: "生成请求缺少有效的用量预留签名" }, { status: 401 });
+    if (access.operation === "create" && !usageContext && !validationRequest) return NextResponse.json({ error: "生成请求缺少有效的用量预留签名" }, { status: 401 });
     if (usageContext?.providerIdempotencySupported) {
         headers.set("idempotency-key", usageContext.providerIdempotencyKey!);
         headers.set("x-client-request-id", usageContext.providerIdempotencyKey!);
-    } else if (access.operation === "create") {
+    } else if (access.operation === "create" && !validationRequest) {
         headers.delete("idempotency-key");
         headers.delete("x-client-request-id");
     }
@@ -204,15 +223,36 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
                 if (!logicalModel.saleRateCard) return NextResponse.json({ error: "逻辑模型缺少完整售卖价格快照" }, { status: 400 });
                 const billablePayload = await voiceCloneBillablePayload(userId, binding.generationParameters?.audioOperation, readRequestBody(contentType, requestBody.pointsPayload));
                 const maxDurationSeconds = inheritedVideoBillingDuration(access.capability, billablePayload, binding.generationParameters);
+                const seedanceModelFamily = access.capability === "video" ? resolveSeedanceModelFamily(upstreamModel) : undefined;
+                const safeVideoFrame = seedanceModelFamily && usageContext.videoBillingContext?.hasReferenceVideo ? safeSeedanceFrame(videoBillingResolution(billablePayload), binding.generationParameters?.aspectRatios || []) : undefined;
                 const inputLimits =
-                    capabilityProfile || maxDurationSeconds
+                    capabilityProfile || maxDurationSeconds || seedanceModelFamily
                         ? {
                               maxInputTokens: capabilityProfile?.maxInputTokens ? String(capabilityProfile.maxInputTokens) : undefined,
                               maxOutputTokens: capabilityProfile?.maxOutputTokens ? String(capabilityProfile.maxOutputTokens) : undefined,
                               maxDurationSeconds,
+                              seedanceModelFamily,
+                              safeVideoFrame,
+                              videoBillingContext: usageContext.videoBillingContext,
                           }
                         : undefined;
-                const requestUsage = normalizeProxyBillableRequest({ capability: access.capability, payload: billablePayload, rateCard: logicalModel.saleRateCard, inputLimits });
+                let requestUsage = normalizeProxyBillableRequest({ capability: access.capability, payload: billablePayload, rateCard: logicalModel.saleRateCard, inputLimits });
+                if (usageContext.imageQualityContext) {
+                    if (access.capability !== "image") return NextResponse.json({ error: "画质签名与当前能力不匹配" }, { status: 400 });
+                    const currentProfile = logicalModel.bindings
+                        .filter((candidate) => candidate.enabled)
+                        .map((candidate) => normalizeImageQualityProfile(candidate.imageQualityProfile))
+                        .find((profile) => profile?.profileRevision === usageContext.imageQualityContext?.qualityProfileRevision);
+                    if (!currentProfile) return NextResponse.json({ error: "画质配置已更新，请重新提交" }, { status: 409 });
+                    requestUsage = validateSignedImageQualityRequest({
+                        usage: requestUsage,
+                        payload: billablePayload,
+                        context: usageContext.imageQualityContext,
+                        profile: currentProfile,
+                        saleRateCardRevision: validatePricingRateCard(logicalModel.saleRateCard).revision,
+                    });
+                }
+                const billingRequestContext = videoTokenBillingRequestContext({ usage: requestUsage, rateCard: logicalModel.saleRateCard, inputLimits });
                 usageBilling = await reserveUsageBilling({
                     userId,
                     businessId: usageContext.businessRequestId,
@@ -220,8 +260,10 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
                     logicalModelId: logicalModel.id,
                     saleRateSnapshot: logicalModel.saleRateCard,
                     requestUsage,
+                    imageQualityContext: usageContext.imageQualityContext,
                     description: `${logicalModel.name}用量预留`,
                     inputLimits,
+                    billingRequestContext,
                     providerIdempotency: { supported: usageContext.providerIdempotencySupported, key: usageContext.providerIdempotencyKey },
                     recovery: usageRecoveryIdentity(usageContext.businessRequestId),
                     expiresAt: new Date(now.getTime() + resolveModelRequestTimeoutMs({ capabilityProfile }, access.capability)),
@@ -263,6 +305,12 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             }
         } catch (error) {
             if (isQuotaExceededError(error) || isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+            console.error("System API usage reservation failed", {
+                channelId: channel.id,
+                model: upstreamModel,
+                capability: access.capability,
+                error: error instanceof Error ? error.message : String(error),
+            });
             return NextResponse.json({ error: error instanceof Error ? error.message : "用量预留失败" }, { status: 400 });
         }
     }
@@ -422,14 +470,15 @@ async function proxySystemMediaRequest(request: Request, channel: SystemMediaCha
         Object.entries(protocolAuthHeaders(channel.apiKey, channel.advancedConfig, isGlobalAiOpcChannel(channel.advancedConfig) ? "openai" : channel.apiFormat)).forEach(([key, value]) => headers.set(key, value));
     }
 
-    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(SYSTEM_MEDIA_TIMEOUT_MS)]);
+    const mediaTimeoutMs = systemMediaTimeoutMs(request, { userId, channelId: channel.id, url: rawUrl });
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(mediaTimeoutMs)]);
     try {
         const maxBytes = range ? MAX_MEDIA_PROXY_RANGE_BYTES : MAX_MEDIA_PROXY_BYTES;
         const media = await fetchSafeUpstreamMedia({
             method: request.method,
             range,
             maxBytes,
-            timeoutMs: SYSTEM_MEDIA_TIMEOUT_MS,
+            timeoutMs: mediaTimeoutMs,
             fetcher: (nextMethod, nextRange) => {
                 const requestHeaders = new Headers(headers);
                 if (nextRange) requestHeaders.set("range", nextRange);
@@ -750,6 +799,15 @@ function inheritedVideoBillingDuration(capability: string, payload: Record<strin
     if (Number(requested) !== -1) return undefined;
     const candidates = [...parameters.durationSeconds, parameters.durationRange?.max, parameters.customDurationRange?.max].filter((value): value is number => Number.isFinite(value) && Number(value) > 0);
     return candidates.length ? String(Math.max(...candidates)) : undefined;
+}
+
+function videoBillingResolution(payload: Record<string, unknown>) {
+    const nested = payload.parameters && typeof payload.parameters === "object" && !Array.isArray(payload.parameters) ? (payload.parameters as Record<string, unknown>) : {};
+    for (const value of [payload.resolution_name, payload.resolution, payload.vquality, nested.resolution_name, nested.resolution, nested.vquality]) {
+        const match = /^(480|720|1080)p?$/i.exec(String(value || "").trim());
+        if (match) return `${match[1]}p`;
+    }
+    return undefined;
 }
 
 function dflopSeedanceVideoEditBody(input: { target: string; capability: string; upstreamModel: string; contentType: string | null; body?: BodyInit; payload?: ArrayBuffer | Record<string, unknown> }) {

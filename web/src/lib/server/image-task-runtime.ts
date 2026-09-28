@@ -16,9 +16,13 @@ import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } f
 import { getImageTask, transitionImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import { releaseUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
+import { imageSubmissionFailure, type GenerationFailure } from "@/lib/server/generation-errors";
 
 export type ImageUpstreamStep =
-    { state: "pending"; upstream: NonNullable<ImageTask["upstream"]>; status: string } | { state: "result_ready"; resultUrl: string; status: string } | { state: "completed" } | { state: "failed"; error: string; status: string };
+    | { state: "pending"; upstream: NonNullable<ImageTask["upstream"]>; status: string }
+    | { state: "result_ready"; resultUrl: string; status: string }
+    | { state: "completed" }
+    | { state: "failed"; error: string; status: string; failure?: GenerationFailure };
 
 const INLINE_IMAGE_RESULT_REFERENCE = "inline://image-task-result";
 
@@ -33,6 +37,7 @@ export async function createImageTaskUpstreamStep(task: ImageTask, origin: strin
     const candidates = [running.config, ...(running.candidateConfigs || [])];
     let attempts = running.attempts || [];
     let latestError = "没有可用的图片渠道";
+    let latestFailure: GenerationFailure | undefined;
     for (const [index, config] of candidates.entries()) {
         const started = startGenerationAttempt(attempts, { channelId: config.channelId, model: generationModelId(config), capability: "image" });
         attempts = started.attempts;
@@ -56,15 +61,17 @@ export async function createImageTaskUpstreamStep(task: ImageTask, origin: strin
             if (error instanceof ImageQueryContractError) return failImageTaskTerminally(candidate, error.message, "query_contract_invalid");
             if (!(error instanceof GenerationSubmissionSafeFailure)) {
                 const uncertain = generationSubmissionUncertainError(error, "图片任务创建结果未知");
-                return failImageTaskTerminally(candidate, `图片任务创建结果未知：${uncertain.message}`, "submission_outcome_unknown");
+                const message = `图片任务创建结果未知：${uncertain.message}`;
+                return failImageTaskTerminally(candidate, message, "submission_outcome_unknown", imageSubmissionFailure(undefined, message));
             }
             latestError = error.message;
+            latestFailure = imageSubmissionFailure(error.status, latestError);
             attempts = finishGenerationAttempt(attempts, candidate.attemptNo, { status: "failed", error: latestError });
             await refundImageCandidate(candidate);
             await updateImageTask(task.id, { attempts, attemptNo: candidate.attemptNo, upstream: undefined, billing: undefined });
         }
     }
-    return { state: "failed", error: latestError, status: "failed" };
+    return { state: "failed", error: latestError, status: "failed", ...(latestFailure ? { failure: latestFailure } : {}) };
 }
 
 export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string, cookie = "", workerUserId = ""): Promise<ImageUpstreamStep> {
@@ -109,7 +116,7 @@ export async function persistImageTaskResult(task: ImageTask, origin: string, re
     return completeImageResult(task, { ...normalizedResults[0], results: normalizedResults, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
 }
 
-export async function markImageTaskFailed(task: ImageTask, error: string) {
+export async function markImageTaskFailed(task: ImageTask, error: string, failure?: GenerationFailure) {
     const current = (await getImageTask(task.id)) || task;
     if (current.status === "success" || current.status === "cancelled") return current;
     if (current.billing?.pointsRecordId && !current.billing.refunded) {
@@ -132,20 +139,35 @@ export async function markImageTaskFailed(task: ImageTask, error: string) {
         pointsRecordId: current.billing?.pointsRecordId,
     });
     await updateImageTask(current.id, { attempts, candidateConfigs: [], attemptNo: attempts.at(-1)?.attemptNo });
-    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500), retryable: true });
+    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500), ...(failure ? { failure } : {}), retryable: failure?.retryable ?? true });
     await releaseUsageBillingForBusiness(current.userId, `image-task:${current.id}`, error);
     await writeImageGenerationLog({ ...current, retryable: true }, "failed", "", Date.now() - current.createdAt, error).catch((logError) => console.error("Image generation failure log write failed", logError));
     return failed;
 }
 
-async function failImageTaskTerminally(task: ImageTask, error: string, status: string): Promise<ImageUpstreamStep> {
-    await markImageTaskFailed(task, error);
+export async function markImageTaskPersistenceFailed(task: ImageTask, failure: GenerationFailure) {
+    const current = (await getImageTask(task.id)) || task;
+    if (current.status === "success" || current.status === "cancelled") return current;
+    const attempts = finishGenerationAttempt(current.attempts || [], current.attemptNo || current.attempts?.at(-1)?.attemptNo || 1, {
+        status: "failed",
+        error: failure.message,
+        pointsCost: current.billing?.pointsCost,
+        pointsRecordId: current.billing?.pointsRecordId,
+    });
+    await updateImageTask(current.id, { attempts, candidateConfigs: [], attemptNo: attempts.at(-1)?.attemptNo, failure });
+    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: failure.message.slice(0, 500), failure, retryable: failure.retryable });
+    await writeImageGenerationLog({ ...current, retryable: failure.retryable }, "failed", "", Date.now() - current.createdAt, failure.message).catch((logError) => console.error("Image persistence failure log write failed", logError));
+    return failed;
+}
+
+async function failImageTaskTerminally(task: ImageTask, error: string, status: string, failure?: GenerationFailure): Promise<ImageUpstreamStep> {
+    await markImageTaskFailed(task, error, failure);
     await scheduleGenerationTask("image", task.id, {
         executionPhase: "completed",
         nextPollAt: undefined,
         lastUpstreamStatus: status,
     });
-    return { state: "failed", error, status };
+    return { state: "failed", error, status, ...(failure ? { failure } : {}) };
 }
 
 async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunResult, origin: string, authContext: string): Promise<ImageUpstreamStep> {

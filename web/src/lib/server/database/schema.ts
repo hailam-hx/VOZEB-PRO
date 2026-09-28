@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
     generation_defaults jsonb NOT NULL DEFAULT '{}'::jsonb,
     payment_config jsonb NOT NULL DEFAULT '{}'::jsonb,
     logical_models jsonb NOT NULL DEFAULT '[]'::jsonb,
+    pricing_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
     default_models jsonb NOT NULL DEFAULT '{}'::jsonb,
     agent_skills jsonb NOT NULL DEFAULT '[{"id":"ecommerce-image","name":"电商生图","description":"为商品主图、场景图和详情页视觉生成结构化方案。","instructions":"识别商品卖点、目标人群、平台与画幅。优先规划白底主图、核心卖点场景图、细节特写和详情页横幅；保持商品外观、材质、颜色、Logo 与包装一致。提示词必须写清主体、构图、光线、背景、镜头、商业质感、尺寸比例与禁止变形要求。","enabled":true,"keywords":["电商","商品","主图","详情页","淘宝","京东","亚马逊"]}]'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -46,6 +47,7 @@ VALUES ('default')
 ON CONFLICT (id) DO NOTHING;
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS agent_skills jsonb NOT NULL DEFAULT '[{"id":"ecommerce-image","name":"电商生图","description":"为商品主图、场景图和详情页视觉生成结构化方案。","instructions":"识别商品卖点、目标人群、平台与画幅。优先规划白底主图、核心卖点场景图、细节特写和详情页横幅；保持商品外观、材质、颜色、Logo 与包装一致。提示词必须写清主体、构图、光线、背景、镜头、商业质感、尺寸比例与禁止变形要求。","enabled":true,"keywords":["电商","商品","主图","详情页","淘宝","京东","亚马逊"]}]'::jsonb;
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS logical_models jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS pricing_policy jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS generation_cost_control jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS data_lifecycle jsonb NOT NULL DEFAULT '{}'::jsonb;
 
@@ -220,6 +222,176 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 );
 
 CREATE INDEX IF NOT EXISTS rate_limits_reset_idx ON rate_limits (reset_at);
+
+CREATE TABLE IF NOT EXISTS video_validation_runs (
+    id text PRIMARY KEY,
+    mode text NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    preview_revision text NOT NULL,
+    registry_revision text NOT NULL,
+    pricing_policy_version text NOT NULL,
+    max_budget_hotx_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    estimated_cost_hotx_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    actual_cost_hotx_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    active_reserved_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    total_settled_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    cost_bound_violated boolean NOT NULL DEFAULT false,
+    budget_violation_at timestamptz,
+    concurrency integer NOT NULL,
+    selected_count integer NOT NULL DEFAULT 0,
+    runnable_count integer NOT NULL DEFAULT 0,
+    skipped_count integer NOT NULL DEFAULT 0,
+    created_by text NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    started_at timestamptz,
+    completed_at timestamptz,
+    cancelled_at timestamptz,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT video_validation_runs_mode CHECK (mode IN ('contract_only', 'family_sample', 'changed_models', 'all_models_minimum')),
+    CONSTRAINT video_validation_runs_status CHECK (status IN ('pending', 'running', 'reconciling', 'completed', 'cancelled', 'failed')),
+    CONSTRAINT video_validation_runs_budget_nonnegative CHECK (max_budget_hotx_credits >= 0 AND estimated_cost_hotx_credits >= 0 AND actual_cost_hotx_credits >= 0),
+    CONSTRAINT video_validation_runs_concurrency_positive CHECK (concurrency > 0)
+);
+
+CREATE TABLE IF NOT EXISTS video_validation_items (
+    id text PRIMARY KEY,
+    run_id text NOT NULL REFERENCES video_validation_runs(id) ON DELETE CASCADE,
+    logical_model_id text NOT NULL,
+    binding_id text NOT NULL,
+    channel_id text NOT NULL,
+    upstream_model_id text NOT NULL,
+    contract_family text NOT NULL,
+    case_id text NOT NULL,
+    test_level text NOT NULL,
+    status text NOT NULL DEFAULT 'queued',
+    probe_status text,
+    reason_code text,
+    normalized_context jsonb,
+    capability_revision text NOT NULL,
+    pricing_revision text NOT NULL,
+    estimated_cost_hotx_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    actual_cost_hotx_credits numeric(30, 8),
+    fingerprint_version integer,
+    fingerprint_hash text,
+    fingerprint_snapshot jsonb,
+    execution_snapshot_hash text,
+    request_payload_digest text,
+    attempt_number integer NOT NULL DEFAULT 1,
+    estimated_provider_cost jsonb,
+    bound_evidence jsonb,
+    actual_cost_capability text,
+    actual_cost_capability_evidence jsonb,
+    actual_provider_cost jsonb,
+    actual_cost_provenance jsonb,
+    estimated_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    actual_credits numeric(30, 8),
+    credit_settlement_source text,
+    reservation_state text NOT NULL DEFAULT 'NONE',
+    reserved_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    settled_credits numeric(30, 8) NOT NULL DEFAULT 0,
+    provider_task_id text,
+    provider_status text,
+    result_summary jsonb,
+    error_code text,
+    error_message text,
+    idempotency_key text NOT NULL,
+    submitted_at timestamptz,
+    submission_started_at timestamptz,
+    tested_at timestamptz,
+    next_attempt_at timestamptz NOT NULL DEFAULT now(),
+    lease_owner text,
+    lease_until timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT video_validation_items_level CHECK (test_level IN ('CONTRACT', 'PROBE', 'FAMILY_CANARY', 'MODEL_SMOKE')),
+    CONSTRAINT video_validation_items_status CHECK (status IN ('queued', 'reserved', 'submitted', 'submission_unknown', 'polling', 'passed', 'failed', 'skipped', 'cancelled', 'reused')),
+    CONSTRAINT video_validation_items_probe_status CHECK (probe_status IS NULL OR probe_status IN ('CONTRACT_READY', 'CAPABILITY_INCOMPLETE', 'PRICING_INCOMPLETE', 'AUTH_UNAVAILABLE', 'NEEDS_REVIEW')),
+    CONSTRAINT video_validation_items_cost_nonnegative CHECK (estimated_cost_hotx_credits >= 0 AND (actual_cost_hotx_credits IS NULL OR actual_cost_hotx_credits >= 0)),
+    CONSTRAINT video_validation_items_identity_unique UNIQUE (run_id, binding_id, test_level, case_id, attempt_number)
+);
+
+ALTER TABLE video_validation_runs ADD COLUMN IF NOT EXISTS active_reserved_credits numeric(30, 8) NOT NULL DEFAULT 0;
+ALTER TABLE video_validation_runs ADD COLUMN IF NOT EXISTS total_settled_credits numeric(30, 8) NOT NULL DEFAULT 0;
+ALTER TABLE video_validation_runs ADD COLUMN IF NOT EXISTS cost_bound_violated boolean NOT NULL DEFAULT false;
+ALTER TABLE video_validation_runs ADD COLUMN IF NOT EXISTS budget_violation_at timestamptz;
+ALTER TABLE video_validation_runs DROP CONSTRAINT IF EXISTS video_validation_runs_mode;
+ALTER TABLE video_validation_runs ADD CONSTRAINT video_validation_runs_mode CHECK (mode IN ('contract_only', 'family_sample', 'changed_models', 'all_models_minimum'));
+ALTER TABLE video_validation_runs DROP CONSTRAINT IF EXISTS video_validation_runs_status;
+ALTER TABLE video_validation_runs ADD CONSTRAINT video_validation_runs_status CHECK (status IN ('pending', 'running', 'reconciling', 'completed', 'cancelled', 'failed'));
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS fingerprint_version integer;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS fingerprint_hash text;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS fingerprint_snapshot jsonb;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS execution_snapshot_hash text;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS request_payload_digest text;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS attempt_number integer NOT NULL DEFAULT 1;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS estimated_provider_cost jsonb;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS bound_evidence jsonb;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS actual_cost_capability text;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS actual_cost_capability_evidence jsonb;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS actual_provider_cost jsonb;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS actual_cost_provenance jsonb;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS estimated_credits numeric(30, 8) NOT NULL DEFAULT 0;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS actual_credits numeric(30, 8);
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS credit_settlement_source text;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS reservation_state text NOT NULL DEFAULT 'NONE';
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS reserved_credits numeric(30, 8) NOT NULL DEFAULT 0;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS settled_credits numeric(30, 8) NOT NULL DEFAULT 0;
+ALTER TABLE video_validation_items ADD COLUMN IF NOT EXISTS submission_started_at timestamptz;
+ALTER TABLE video_validation_items DROP CONSTRAINT IF EXISTS video_validation_items_status;
+ALTER TABLE video_validation_items ADD CONSTRAINT video_validation_items_status CHECK (status IN ('queued', 'reserved', 'submitted', 'submission_unknown', 'polling', 'passed', 'failed', 'skipped', 'cancelled', 'reused'));
+ALTER TABLE video_validation_items DROP CONSTRAINT IF EXISTS video_validation_items_identity_unique;
+ALTER TABLE video_validation_items ADD CONSTRAINT video_validation_items_identity_unique UNIQUE (run_id, binding_id, test_level, case_id, attempt_number);
+ALTER TABLE video_validation_items DROP CONSTRAINT IF EXISTS video_validation_items_reservation_state;
+ALTER TABLE video_validation_items ADD CONSTRAINT video_validation_items_reservation_state CHECK (reservation_state IN ('NONE', 'RESERVED', 'SETTLED', 'RELEASED'));
+ALTER TABLE video_validation_items DROP CONSTRAINT IF EXISTS video_validation_items_settlement_source;
+ALTER TABLE video_validation_items ADD CONSTRAINT video_validation_items_settlement_source CHECK (credit_settlement_source IS NULL OR credit_settlement_source IN ('ACTUAL_PROVIDER_COST', 'PROVIDER_REPORTED_CREDITS', 'ESTIMATED_FALLBACK', 'NO_CHARGE_RELEASE'));
+
+CREATE TABLE IF NOT EXISTS model_validation_verifications (
+    id text PRIMARY KEY,
+    validation_item_id text NOT NULL UNIQUE REFERENCES video_validation_items(id) ON DELETE RESTRICT,
+    validation_run_id text REFERENCES video_validation_runs(id) ON DELETE RESTRICT,
+    binding_id text NOT NULL,
+    case_id text NOT NULL,
+    fingerprint_version integer NOT NULL,
+    fingerprint_hash text NOT NULL,
+    fingerprint_hash_algorithm text NOT NULL DEFAULT 'sha256',
+    fingerprint_snapshot jsonb,
+    status text NOT NULL,
+    reason_code text,
+    verification_mode text,
+    provider_task_id text,
+    actual_provider_cost jsonb,
+    actual_cost_capability text,
+    actual_cost_capability_evidence jsonb,
+    actual_credits numeric(30, 8),
+    actual_cost_provenance jsonb,
+    settled_credits numeric(30, 8),
+    credit_settlement_source text,
+    verified_at timestamptz NOT NULL,
+    CONSTRAINT model_validation_verifications_status CHECK (status IN ('PASSED', 'FAILED', 'UNKNOWN', 'CANCELLED'))
+);
+
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS validation_run_id text REFERENCES video_validation_runs(id) ON DELETE RESTRICT;
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS fingerprint_hash_algorithm text NOT NULL DEFAULT 'sha256';
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS fingerprint_snapshot jsonb;
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS verification_mode text;
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS provider_task_id text;
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS actual_provider_cost jsonb;
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS actual_cost_capability text;
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS actual_cost_capability_evidence jsonb;
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS actual_credits numeric(30, 8);
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS actual_cost_provenance jsonb;
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS settled_credits numeric(30, 8);
+ALTER TABLE model_validation_verifications ADD COLUMN IF NOT EXISTS credit_settlement_source text;
+
+CREATE INDEX IF NOT EXISTS model_validation_verifications_latest_idx ON model_validation_verifications (binding_id, case_id, verified_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS model_validation_verifications_pass_idx ON model_validation_verifications (binding_id, case_id, fingerprint_version, fingerprint_hash, verified_at DESC) WHERE status = 'PASSED';
+
+CREATE INDEX IF NOT EXISTS video_validation_runs_created_idx ON video_validation_runs (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS video_validation_items_run_idx ON video_validation_items (run_id, created_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS video_validation_items_claim_due_idx ON video_validation_items (next_attempt_at, lease_until, id) WHERE status IN ('queued', 'reserved', 'submitted', 'polling');
+CREATE INDEX IF NOT EXISTS video_validation_items_reserved_age_idx ON video_validation_items (updated_at, id) WHERE reservation_state = 'RESERVED';
+CREATE INDEX IF NOT EXISTS video_validation_items_binding_case_unknown_idx ON video_validation_items (binding_id, case_id, updated_at DESC, id DESC) WHERE status = 'submission_unknown';
 
 CREATE TABLE IF NOT EXISTS generation_tasks (
     id text PRIMARY KEY,

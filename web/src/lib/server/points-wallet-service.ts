@@ -160,6 +160,23 @@ export async function listExpiredActiveWalletHolds(input: { now: Date; limit: nu
     );
 }
 
+export async function markWalletHoldNeedsReview(holdId: string, reason: string, now = new Date()) {
+    const normalizedReason = requiredText(reason, "钱包复核原因不能为空");
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        return createPostgresRepositories().pointsWallet.markHoldNeedsReview(holdId, normalizedReason, now.toISOString());
+    }
+    return mutateAuthDb((db) => {
+        const hold = db.walletHolds.find((item) => item.id === holdId);
+        if (!hold) throw new AuthInputError("钱包预留不存在");
+        if (hold.status !== "active") return hold;
+        hold.reviewReason = normalizedReason;
+        hold.recoveryCheckedAt = now.toISOString();
+        hold.updatedAt = now.toISOString();
+        return hold;
+    });
+}
+
 export async function listProviderUsageAttemptsForHold(holdId: string) {
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();

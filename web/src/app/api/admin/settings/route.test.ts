@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
     getFreshAuthSettings: vi.fn(),
     setAuthSettings: vi.fn(),
     safeRecordAuditLog: vi.fn(async () => undefined),
+    fetchSafeOutbound: vi.fn(),
+    isSafeOutboundUrl: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
@@ -13,29 +15,62 @@ vi.mock("@/lib/auth/store", async (importOriginal) => {
     return { ...actual, getFreshAuthSettings: mocks.getFreshAuthSettings, setAuthSettings: mocks.setAuthSettings };
 });
 vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin" })), safeRecordAuditLog: mocks.safeRecordAuditLog }));
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: mocks.fetchSafeOutbound }));
+vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: mocks.isSafeOutboundUrl }));
 
 import { GET, PATCH } from "./route";
+import { normalizeAdminImageQualityProfiles } from "@/lib/server/admin-image-quality-profiles";
 import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
 import { normalizeSiteSettings } from "@/lib/auth/store-normalizers";
+import { DEFAULT_SYSTEM_PRICING_POLICY, normalizeSystemPricingPolicy } from "@/lib/billing/pricing-policy";
 
 const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
     logicalModels: [{ id: "writer", name: "Writer", capability: "text", enabled: true, bindings: [{ id: "binding", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1 }] }],
     defaultModels: { textModel: "writer", imageModel: "", videoModel: "", audioModel: "", voiceCloneModel: "" },
     generationDefaults: { canvasImageCount: "auto", imageCount: "auto", imageSize: "auto", imageQuality: "auto", videoQuality: "auto", videoSeconds: -1, audioVoice: "auto", audioFormat: "auto" },
+    pricingPolicy: DEFAULT_SYSTEM_PRICING_POLICY,
 };
 let persistedSettings = { ...savedSettings, site: DEFAULT_SITE_SETTINGS };
 
 describe("admin settings model routing", () => {
+    it("normalizes manual image quality revisions and rejects malformed effects", () => {
+        const profile = {
+            version: 1 as const,
+            controlType: "request_parameter" as const,
+            selectionMode: "explicit" as const,
+            source: "manual" as const,
+            defaultValue: "high",
+            profileRevision: "forged",
+            options: [{ value: "high", label: "高清", optionRevision: "forged", effect: { type: "request_parameter" as const, requestParameter: { name: "quality", value: "hd" } } }],
+            validation: { status: "VALID" as const, reasons: [], validatedAt: "2026-09-25T00:00:00.000Z" },
+        };
+        const models = [{ id: "image", name: "Image", capability: "image" as const, enabled: true, bindings: [{ id: "binding", channelId: "one", upstreamModel: "vendor/image", enabled: true, priority: 1, imageQualityProfile: profile }] }];
+        const normalized = normalizeAdminImageQualityProfiles(models);
+        expect(normalized[0].bindings[0].imageQualityProfile).toMatchObject({ profileRevision: expect.not.stringMatching(/^forged$/), options: [expect.objectContaining({ optionRevision: expect.not.stringMatching(/^forged$/) })] });
+        expect(() => normalizeAdminImageQualityProfiles([{ ...models[0], bindings: [{ ...models[0].bindings[0], imageQualityProfile: { ...profile, options: [{ ...profile.options[0], effect: { type: "request_parameter" } }] } as never }] }])).toThrow(
+            "图片画质控制配置无效",
+        );
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["system.manage", "billing.manage", "upstream.manage"] });
+        mocks.isSafeOutboundUrl.mockResolvedValue(true);
         persistedSettings = { ...savedSettings, site: DEFAULT_SITE_SETTINGS };
         mocks.getFreshAuthSettings.mockImplementation(async () => persistedSettings);
         mocks.setAuthSettings.mockImplementation(async (patch) => {
             persistedSettings = { ...persistedSettings, ...patch, ...(patch.site ? { site: normalizeSiteSettings(patch.site) } : {}) };
             return persistedSettings;
         });
+    });
+
+    it("persists the manual prompt enhancement toggle and returns it on a fresh read", async () => {
+        const response = await PATCH(request({ generationDefaults: { ...savedSettings.generationDefaults, manualPromptEnhancementEnabled: false } }));
+        expect(response.status).toBe(200);
+        expect(persistedSettings.generationDefaults).toMatchObject({ manualPromptEnhancementEnabled: false });
+        const reread = await GET();
+        expect((await reread.json()).settings.generationDefaults.manualPromptEnhancementEnabled).toBe(false);
     });
 
     it("saves a consistent channel, logical model, and default snapshot", async () => {
@@ -149,6 +184,40 @@ describe("admin settings model routing", () => {
         expect(response.status).toBe(200);
         expect(mocks.setAuthSettings).toHaveBeenCalledWith({ generationCostControl });
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: { fields: ["generationCostControl"] } }));
+    });
+
+    it("updates editable pricing policy fields while rejecting server-managed currency fields", async () => {
+        const response = await PATCH(request({ pricingPolicy: { cnyToUsd: "0.16", markupMultiplier: "1.25", minimumMarginRate: "0.1", costBasis: "max_active_binding_cost", autoApplySalePrice: false } }));
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith({ pricingPolicy: expect.objectContaining({ cnyToUsd: "0.16", markupMultiplier: "1.25", dflopCreditsPerCny: "60" }) });
+        expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: "admin.billing.pricing_policy.update",
+                metadata: expect.objectContaining({ oldVersion: DEFAULT_SYSTEM_PRICING_POLICY.version, newVersion: expect.any(String), changedFields: ["cnyToUsd", "markupMultiplier", "minimumMarginRate"] }),
+            }),
+        );
+
+        const rejected = await PATCH(request({ pricingPolicy: { dflopCreditsPerCny: "1" } }));
+        expect(rejected.status).toBe(400);
+        expect(await rejected.json()).toEqual(expect.objectContaining({ error: expect.stringContaining("不允许") }));
+    });
+
+    it("persists a DFLOP currency draft only after server-side upstream verification", async () => {
+        const dflopChannel = { ...savedSettings.systemChannels[0], baseUrl: "https://api.dflop.top/v1", advancedConfig: { protocol: "dflop" as const } };
+        persistedSettings = { ...persistedSettings, systemChannels: [dflopChannel] };
+        mocks.fetchSafeOutbound.mockResolvedValue(new Response(JSON.stringify({ unit: "points", points_per_cny: 75 }), { status: 200 }));
+        const pricingPolicy = normalizeSystemPricingPolicy({
+            ...DEFAULT_SYSTEM_PRICING_POLICY,
+            dflopCreditsPerCny: "75",
+            dflopCreditsPerCnySource: "upstream",
+            dflopCurrencyConfigVersion: 'dflop-currency-v1:{"points_per_cny":75,"unit":"points"}',
+        });
+
+        const response = await PATCH(request({ pricingPolicy }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ pricingPolicy }));
+        expect(mocks.fetchSafeOutbound).toHaveBeenCalledWith("https://api.dflop.top/api/v1/config/currency", expect.objectContaining({ cache: "no-store" }));
     });
 
     it("accepts Auto generation defaults and persists the binding JSON shape immediately", async () => {

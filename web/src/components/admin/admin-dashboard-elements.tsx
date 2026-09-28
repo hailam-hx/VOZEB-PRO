@@ -6,6 +6,8 @@ import { createDefaultChannelAdvancedConfig } from "@/components/admin/admin-sys
 import { applyChannelProtocol } from "@/lib/channel-protocol-registry";
 import { formatCreditAmount } from "@/constant/credits";
 import type { CreatedCdkCode, PublicCdkCode, SystemChannelAdvancedConfig, SystemModelChannel } from "@/lib/auth/store";
+import type { ProviderPricingProfile } from "@/lib/billing/provider-pricing";
+import type { SystemPricingPolicy } from "@/lib/billing/pricing-policy";
 import { nanoid } from "nanoid";
 import { urlHostMatches, urlPathStartsWith } from "@/lib/url-host";
 
@@ -85,6 +87,27 @@ export type AdminModelsResult = {
     models: string[];
     modelCapabilities?: SystemChannelAdvancedConfig["modelCapabilities"];
     modelConfigs?: SystemChannelAdvancedConfig["modelConfigs"];
+    modelDiscovery?: SystemChannelAdvancedConfig["modelDiscovery"];
+    discoveryStats?: { upstreamModels: number; publicRegistry: number; matched: number; unmatched: number; callable: number; text: number; image: number; video: number; audio: number; other: number; filtered: number };
+    syncStats?: { created: number; updated: number; manualOverridesPreserved: number; capabilityDrifts: number; metadataFallbacks: number };
+    pricingPolicyPatch?: SystemPricingPolicy;
+    pricingSync?: {
+        profiles: Record<string, ProviderPricingProfile>;
+        stats: {
+            models: number;
+            pricingProfiles: number;
+            created: number;
+            updated: number;
+            unchanged: number;
+            priceIncreases: number;
+            priceDecreases: number;
+            missingPricing: number;
+            unknownPricingFields: number;
+            manualOverridesPreserved: number;
+            belowCostWarnings: number;
+        };
+        warnings: Array<{ code: string; message: string; modelId?: string }>;
+    };
     recommendedConfig?: Partial<SystemChannelAdvancedConfig>;
     discoveredCount?: number;
     totalCount?: number;

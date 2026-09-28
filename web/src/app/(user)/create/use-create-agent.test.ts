@@ -2,11 +2,12 @@
 
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useCreateAgent } from "./use-create-agent";
 import { useCreateDraftAttachmentsStore } from "./use-create-draft-attachments-store";
+import { listCreativeConversationPage } from "@/services/api/creative";
 
 vi.mock("next-intl", () => ({ useLocale: () => "zh-CN", useTranslations: () => (key: string) => key }));
 vi.mock("@/services/api/creative", async (importOriginal) => ({
@@ -22,11 +23,82 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    vi.mocked(listCreativeConversationPage).mockReset().mockResolvedValue({ conversations: [], hasMore: false });
     useCreateDraftAttachmentsStore.getState().clear();
     vi.restoreAllMocks();
 });
 
 describe("useCreateAgent submission retry", () => {
+    it("shows a recoverable history load error instead of a false empty state", async () => {
+        vi.mocked(listCreativeConversationPage).mockRejectedValueOnce(new TypeError("private network endpoint"));
+        const { result, unmount } = renderHook(() => useCreateAgent());
+        try {
+            await waitFor(() => expect(result.current.historyError).toBe("createNetworkError"));
+            await act(async () => {
+                await result.current.refreshConversations();
+            });
+            expect(result.current.historyError).toBe("");
+        } finally {
+            unmount();
+        }
+    });
+    it("keeps a safe API validation reason on the failed request visible to the user", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+                if (String(input) === "/api/agent/runs" && init?.method === "POST") return Response.json({ code: 400, data: { publicMessage: "当前模型不支持所选生成参数" }, msg: "当前模型不支持所选生成参数" }, { status: 400 });
+                return Response.json({ code: 0, data: {} });
+            }),
+        );
+        const { result, unmount } = renderHook(() => useCreateAgent());
+        try {
+            await act(async () => {
+                await result.current.submit("生成图片", { modelIds: ["image-one"] });
+            });
+            expect(result.current.messages.at(-1)).toMatchObject({ status: "failed", content: "当前模型不支持所选生成参数", metadata: { publicSubmissionError: true, submissionRetryable: false } });
+        } finally {
+            unmount();
+        }
+    });
+
+    it("hides an unmarked HTTP 400 diagnostic from the failed request", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+                if (String(input) === "/api/agent/runs" && init?.method === "POST") return Response.json({ code: 400, data: null, msg: "Authorization Bearer provider-secret" }, { status: 400 });
+                return Response.json({ code: 0, data: {} });
+            }),
+        );
+        const { result, unmount } = renderHook(() => useCreateAgent());
+        try {
+            await act(async () => {
+                await result.current.submit("生成视频");
+            });
+            expect(result.current.messages.at(-1)?.content).not.toContain("provider-secret");
+        } finally {
+            unmount();
+        }
+    });
+
+    it("does not expose a server failure detail from a failed submission", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+                if (String(input) === "/api/agent/runs" && init?.method === "POST") return Response.json({ code: 503, data: null, msg: "provider-token=private" }, { status: 503 });
+                return Response.json({ code: 0, data: {} });
+            }),
+        );
+        const { result, unmount } = renderHook(() => useCreateAgent());
+        try {
+            await act(async () => {
+                await result.current.submit("生成语音");
+            });
+            expect(result.current.messages.at(-1)).toMatchObject({ status: "failed", content: "createTemporaryFailure" });
+        } finally {
+            unmount();
+        }
+    });
+
     it("clears the permanent Stop state when a completed snapshot follows the final conversation text", async () => {
         class Source extends EventTarget {
             static current: Source;
@@ -178,6 +250,18 @@ describe("useCreateAgent submission retry", () => {
         expect(retrySource).not.toContain("setMessages((current) => [");
     });
 
+    it("forces a public profile refresh and disables direct retry after a typed quality race", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-agent.ts"), "utf8");
+        const executeStart = source.indexOf("const executeSubmission");
+        const submitStart = source.indexOf("const submit =", executeStart);
+        const executeSource = source.slice(executeStart, submitStart);
+
+        expect(executeSource).toContain('error.errorCode?.startsWith("QUALITY_")');
+        expect(executeSource).toContain("await loadPublicSession({ force: true })");
+        expect(executeSource).toContain("failedSubmissionsRef.current.delete(snapshot.temporaryAssistantId)");
+        expect(executeSource).toContain('updateAssistant(snapshot.temporaryAssistantId, presentation.detail || t(presentation.messageKey), "failed")');
+    });
+
     it("retries a failed planning run through the existing server run", async () => {
         const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-agent.ts"), "utf8");
         const retryStart = source.indexOf("const retryRun");
@@ -196,7 +280,7 @@ describe("useCreateAgent submission retry", () => {
 
         expect(retrySource).toContain("agent.retrySubmission(assistantMessage.id)");
         expect(retrySource).toContain("agent.retryTasks(");
-        expect(retrySource).toContain("failedTasks.map((task) => task.id)");
+        expect(retrySource).toContain("retryableCreateTaskIds(run.tasks)");
         expect(retrySource).toContain("agent.retryRun(run.id)");
         expect(retrySource).not.toContain("updatePrompt");
         expect(retrySource).not.toContain("createCreativeAgentRun");

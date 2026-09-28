@@ -8,7 +8,7 @@ import { LabeledControl } from "@/components/admin/admin-settings-controls";
 import { parseChannelExampleConfig } from "@/lib/channel-example-parser";
 import { buildGlobalAiOpcSelection, GLOBAL_AIOPC_PRESETS, globalAiOpcPresetOptions, resolveGlobalAiOpcCatalogPresets, resolveGlobalAiOpcPresets } from "@/lib/globalaiopc-catalog";
 import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
-import { capabilityLabel, channelDetectedCapabilities, channelModelCapability } from "@/lib/model-routing-config";
+import { capabilityLabel, channelDetectedCapabilities, channelModelCapability, channelModelDiscovery, channelModelIsRoutable } from "@/lib/model-routing-config";
 import { normalizeModelId } from "@/lib/model-capability";
 import { revealAdminChannelApiKey } from "@/services/api/admin-settings";
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
@@ -379,7 +379,9 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                         ) : null}
                         <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">
                             {canSyncModels
-                                ? "拉取会合并上游模型、官方目录和已有手工模型，不会覆盖手工配置；混合接口优先使用模型级路由，上方兜底字段只在模型没有专属配置时生效。"
+                                ? advanced.protocol === "dflop"
+                                    ? "拉取以当前 API Key 的可见模型为准，并用 DFLOP 公开 registry 补充分类；已有手工路由配置保持不变。"
+                                    : "拉取会合并上游模型、官方目录和已有手工模型，不会覆盖手工配置；混合接口优先使用模型级路由，上方兜底字段只在模型没有专属配置时生效。"
                                 : hasDocumentedModels
                                   ? "当前协议使用官方新版文档预置模型，不请求未公开的模型目录；真实任务继续使用协议注册表中的 V2 路径。"
                                   : "当前协议未公开模型目录，请在模型列表中手动维护真实模型 ID；任务仍严格使用协议注册表中的 V2 路径。"}
@@ -393,7 +395,7 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
 
 function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: SystemModelChannel; advanced: SystemChannelAdvancedConfig; onChange: (patch: Partial<SystemChannelAdvancedConfig>) => void }) {
     const [selected, setSelected] = useState("");
-    const models = channel.models;
+    const models = channel.models.filter((model) => channelModelIsRoutable(channel, model));
     const selectedModel = models.some((model) => normalizeModelId(model) === normalizeModelId(selected)) ? models.find((model) => normalizeModelId(model) === normalizeModelId(selected)) || "" : models[0] || "";
     const key = normalizeModelId(selectedModel);
     const stored = key ? advanced.modelConfigs?.[key] : undefined;
@@ -563,12 +565,16 @@ function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: Syst
 }
 
 function channelCapabilitySummary(channel: SystemModelChannel) {
-    const counts = channel.models.reduce((result, model) => ({ ...result, [channelModelCapability(channel, model)]: result[channelModelCapability(channel, model)] + 1 }), { text: 0, image: 0, video: 0, audio: 0 } as Record<
-        LogicalModelCapability,
-        number
-    >);
-    return modelCapabilityOptions
+    const counts = channel.models.reduce(
+        (result, model) => {
+            const kind = channelModelDiscovery(channel, model)?.kind || channelModelCapability(channel, model);
+            result[kind] += 1;
+            return result;
+        },
+        { text: 0, image: 0, video: 0, audio: 0, other: 0 } as Record<LogicalModelCapability | "other", number>,
+    );
+    return [...modelCapabilityOptions, { label: "其他", value: "other" as const }]
         .filter(({ value }) => counts[value])
-        .map(({ value }) => `${capabilityLabel(value)} ${counts[value]}`)
+        .map(({ label, value }) => `${label} ${counts[value]}`)
         .join(" · ");
 }

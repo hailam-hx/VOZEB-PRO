@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
     createAgentRun: vi.fn(),
     getAgentRunByClientRequestId: vi.fn(),
     listAgentRuns: vi.fn(),
+    resolveLogicalModelCandidates: vi.fn(),
+    resolveBindingImageGenerationCandidates: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: mocks.after }));
@@ -23,8 +25,11 @@ vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrency
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
 vi.mock("@/lib/server/agent-run-store", () => ({ createAgentRun: mocks.createAgentRun, getAgentRunByClientRequestId: mocks.getAgentRunByClientRequestId, listAgentRuns: mocks.listAgentRuns }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
+vi.mock("@/lib/server/logical-model-router", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/server/logical-model-router")>()), resolveLogicalModelCandidates: mocks.resolveLogicalModelCandidates }));
+vi.mock("@/lib/server/capability-constraints", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/server/capability-constraints")>()), resolveBindingImageGenerationCandidates: mocks.resolveBindingImageGenerationCandidates }));
 
 import { GET, maxDuration, POST } from "./route";
+import { ImageQualityResolutionError } from "@/lib/server/image-quality-resolver";
 
 describe("POST /api/agent/runs", () => {
     beforeEach(() => {
@@ -36,6 +41,8 @@ describe("POST /api/agent/runs", () => {
         mocks.countActiveStoredGenerationTasks.mockResolvedValue(0);
         mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
         mocks.getAgentRunByClientRequestId.mockResolvedValue(null);
+        mocks.resolveLogicalModelCandidates.mockReturnValue([]);
+        mocks.resolveBindingImageGenerationCandidates.mockReturnValue({ candidates: [] });
     });
 
     it("keeps Agent recovery alive while long media children are running", () => {
@@ -51,7 +58,7 @@ describe("POST /api/agent/runs", () => {
     it("enforces chat surface invariants before creating a run", async () => {
         const response = await POST(request({ ...validInput(), projectId: "project" }));
         expect(response.status).toBe(400);
-        expect(await response.json()).toMatchObject({ msg: "普通对话不接受项目或快照" });
+        expect(await response.json()).toMatchObject({ msg: "普通对话不接受项目或快照", data: { publicMessage: "普通对话不接受项目或快照" } });
         expect(mocks.createAgentRun).not.toHaveBeenCalled();
     });
 
@@ -75,6 +82,53 @@ describe("POST /api/agent/runs", () => {
         expect(mocks.createAgentRun).not.toHaveBeenCalled();
     });
 
+    it("returns typed profile revision metadata before creating an Agent run", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationConcurrency: { agent: 2 },
+            generationDefaults: { createPromptMaxLength: 4000 },
+            logicalModels: [{ id: "image-model", name: "Image", capability: "image", enabled: true, bindings: [] }],
+            systemChannels: [],
+        });
+        mocks.resolveLogicalModelCandidates.mockReturnValue([{ logicalModelId: "image-model" }]);
+        mocks.resolveBindingImageGenerationCandidates.mockReturnValue({ candidates: [], error: new ImageQualityResolutionError("QUALITY_PROFILE_CHANGED", "画质配置已更新，请重新确认后提交", "profile-current") });
+
+        const response = await POST(
+            request({
+                ...validInput(),
+                modelIds: ["image-model"],
+                preferences: { mode: "image", image: { quality: "high", qualityProfileRevision: "profile-old", qualityOptionRevision: "option-old" } },
+            }),
+        );
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ code: 409, data: { errorCode: "QUALITY_PROFILE_CHANGED", currentProfileRevision: "profile-current" } });
+        expect(mocks.createAgentRun).not.toHaveBeenCalled();
+    });
+
+    it("validates image bindings with the selected reference asset count", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationConcurrency: { agent: 2 },
+            generationDefaults: { createPromptMaxLength: 4000 },
+            logicalModels: [{ id: "kling-expand", name: "可灵扩图", capability: "image", enabled: true, bindings: [] }],
+            systemChannels: [],
+        });
+        mocks.resolveLogicalModelCandidates.mockReturnValue([{ logicalModelId: "kling-expand" }]);
+        mocks.resolveBindingImageGenerationCandidates.mockReturnValue({ candidates: [{ logicalModelId: "kling-expand" }] });
+        mocks.createAgentRun.mockResolvedValue({ run: { id: "new-run", userId: "user", clientRequestId: "request-one" }, conversation: { id: "conversation" }, created: true });
+
+        const response = await POST(
+            request({
+                ...validInput(),
+                assetIds: ["reference-image"],
+                modelIds: ["kling-expand"],
+                preferences: { mode: "image" },
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.resolveBindingImageGenerationCandidates).toHaveBeenCalledWith(expect.any(Array), {}, expect.any(Object), 1, false, "生成一张图", expect.any(Function));
+    });
+
     it("creates a pre-scheduled run and queues recovery without a second task update", async () => {
         const run = { id: "new-run", userId: "user", clientRequestId: "request-one" };
         mocks.createAgentRun.mockResolvedValue({ run, conversation: { id: "conversation" }, created: true });
@@ -84,6 +138,7 @@ describe("POST /api/agent/runs", () => {
             "user",
             {
                 ...validInput(),
+                originalPrompt: "生成一张图",
                 conversationId: undefined,
                 projectId: undefined,
                 skillIds: [],
@@ -91,6 +146,7 @@ describe("POST /api/agent/runs", () => {
                 snapshot: undefined,
             },
             "vi",
+            undefined,
         );
         expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
     });

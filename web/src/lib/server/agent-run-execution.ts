@@ -31,12 +31,21 @@ import { finishSystemAiTextAttempt, resolveSystemAiTextFailure } from "./usage-b
 import { acceptsMediaReference, mergeTaskReferences, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
 import { getTextTask, retryTextTask } from "./text-task-store";
 import { toSystemGenerationChannel } from "./generation-channel";
+import { publicLogicalImageQualityProfile, type PublicLogicalImageQualityProfile } from "@/lib/image-quality-profile";
 import { createAgentGenerationTask, GenerationApplicationError, readAgentGenerationTask } from "./generation-application-service";
 
 export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
 export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
 
-class AgentChildTaskTerminalError extends Error {}
+class AgentChildTaskTerminalError extends Error {
+    constructor(
+        message: string,
+        readonly errorCode?: string,
+        readonly retryable?: boolean,
+    ) {
+        super(message);
+    }
+}
 class AgentChildTaskDeferredError extends Error {}
 
 export async function canContinue(id: string, executionId: string) {
@@ -197,6 +206,7 @@ export function normalizeTasks(
     referencedAssets: CreativeAsset[],
     requestedImageSize?: string,
     generationPreferences?: CreativeGenerationPreferences,
+    manualPromptEnhancementEnabled = true,
 ): AgentRunTask[] {
     const defaults = Object.assign({}, ...skills.map((skill) => skill.defaultConfig || {})) as Record<string, unknown>;
     const skillInstructions = skills
@@ -214,6 +224,7 @@ export function normalizeTasks(
     const configuredImageSize = agentSurfaceImageSize(surface, snapshot);
     return plan.deliverables.map((item, index) => {
         const optimizedPrompt = item.prompt.trim();
+        const preserveManualPrompt = !manualPromptEnhancementEnabled && (item.type === "image" || item.type === "video" || item.type === "audio");
         const preferredSize = item.type === "image" ? generationPreferences?.image?.size : item.type === "video" ? generationPreferences?.video?.size : undefined;
         const preferredQuality = item.type === "image" ? generationPreferences?.image?.quality : item.type === "video" ? generationPreferences?.video?.quality : undefined;
         const targetNodeId = surface === "canvas" ? resolveCanvasTaskTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
@@ -253,11 +264,12 @@ export function normalizeTasks(
             title: item.title.trim(),
             type: item.type,
             model: resolvePlannedModel(settings, item.type, item.model),
-            optimizedPrompt,
-            prompt:
-                item.type === "audio"
-                    ? optimizedPrompt
-                    : `${withCreativeFoundation(optimizedPrompt, plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${selectedCanvasContext ? `\n\n使用本轮画布引用：\n${selectedCanvasContext}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
+            optimizedPrompt: preserveManualPrompt ? requestPrompt : optimizedPrompt,
+            prompt: preserveManualPrompt
+                ? requestPrompt
+                : item.type === "audio"
+                  ? optimizedPrompt
+                  : `${withCreativeFoundation(optimizedPrompt, plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${selectedCanvasContext ? `\n\n使用本轮画布引用：\n${selectedCanvasContext}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
             count:
                 item.type === "image" || item.type === "video"
                     ? positiveTaskInteger(item.type === "image" ? generationPreferences?.image?.count || item.count : generationPreferences?.video?.count || item.count) ||
@@ -273,6 +285,8 @@ export function normalizeTasks(
                 reference: target || canvasReferences.find((reference) => reference.type === "image") || (selectedAssets[0]?.type === "image" ? selectedAssets[0] : undefined),
             }),
             quality: preferredQuality || item.quality?.trim() || textDefault(item.type === "video" ? defaults.vquality : defaults.quality),
+            qualityProfileRevision: item.type === "image" ? generationPreferences?.image?.qualityProfileRevision : undefined,
+            qualityOptionRevision: item.type === "image" ? generationPreferences?.image?.qualityOptionRevision : undefined,
             seconds: item.type === "video" ? positiveTaskNumber(generationPreferences?.video?.seconds) || positiveTaskNumber(item.seconds) || positiveTaskNumber(defaults.videoSeconds) : undefined,
             voiceSelection:
                 item.type === "audio" ? generationPreferences?.audio?.voiceSelection || (item.voice?.trim() || textDefault(defaults.voice) ? { type: "preset" as const, voiceId: item.voice?.trim() || textDefault(defaults.voice)! } : undefined) : undefined,
@@ -295,6 +309,7 @@ export type AgentModelOption = {
     capabilityProfile?: NonNullable<ReturnType<typeof resolveLogicalModel>>["capabilityProfile"];
     generationParameters?: LogicalModelGenerationParameters;
     generationParameterCandidates?: Array<LogicalModelGenerationParameters | undefined>;
+    imageQualityProfile?: PublicLogicalImageQualityProfile;
 };
 
 export function agentModelOptions(settings: Awaited<ReturnType<typeof getAuthSettings>>): AgentModelOption[] {
@@ -306,6 +321,7 @@ export function agentModelOptions(settings: Awaited<ReturnType<typeof getAuthSet
             enabled: true,
             bindings: candidates.map((candidate) => ({ enabled: true, generationParameters: candidate.generationParameters })),
         });
+        const imageQualityProfile = model.capability === "image" ? publicLogicalImageQualityProfile(model.bindings.filter((binding) => binding.enabled)) : undefined;
         return [
             {
                 id: model.id,
@@ -314,6 +330,7 @@ export function agentModelOptions(settings: Awaited<ReturnType<typeof getAuthSet
                 capabilityProfile: candidates[0].capabilityProfile,
                 ...(generationParameters ? { generationParameters } : {}),
                 generationParameterCandidates: candidates.map((candidate) => candidate.generationParameters),
+                ...(imageQualityProfile ? { imageQualityProfile } : {}),
             },
         ];
     });
@@ -379,6 +396,7 @@ type AgentGenerationCandidateModel = {
     capability: string;
     generationParameters?: AgentGenerationModel["generationParameters"];
     generationParameterCandidates?: AgentGenerationModel["generationParameterCandidates"];
+    imageQualityProfile?: PublicLogicalImageQualityProfile;
 };
 
 function modelGenerationProfiles(model: Omit<AgentGenerationCandidateModel, "id" | "capability">) {
@@ -386,6 +404,13 @@ function modelGenerationProfiles(model: Omit<AgentGenerationCandidateModel, "id"
 }
 
 function modelGenerationCompatibility(model: Omit<AgentGenerationCandidateModel, "id" | "capability">, request: NormalizedGenerationRequest) {
+    if (model.imageQualityProfile && request.quality) {
+        if (model.imageQualityProfile.selectionMode !== "explicit" || !model.imageQualityProfile.options.some((option) => option.value === request.quality)) return { candidates: [], error: new Error("所选模型不支持当前画质") };
+        return filterGenerationCandidates(
+            modelGenerationProfiles(model).map((generationParameters, index) => ({ index, generationParameters })),
+            { ...request, quality: undefined },
+        );
+    }
     return filterGenerationCandidates(
         modelGenerationProfiles(model).map((generationParameters, index) => ({ index, generationParameters })),
         request,
@@ -422,8 +447,21 @@ export function resolveAgentTaskBinding<T extends AgentGenerationCandidateModel>
         .filter((candidate) => task.type !== "audio" || task.voiceSelection?.type !== "profile" || candidate.generationParameters?.supportsClonedVoices === true);
     const references = (task.references || []).map((reference) => ({ type: reference.type, role: reference.role }));
     if (task.type === "image") {
-        const selected = resolveImageGenerationCandidates(candidates, { size: task.ratio, quality: task.quality, count: task.count }, defaults, references.filter((reference) => reference.type === "image").length, false).candidates[0];
-        return selected ? { ...task, model: modelId, ratio: selected.size, quality: selected.quality, count: selected.count || 1 } : undefined;
+        const profile = model.imageQualityProfile;
+        const qualityOption = profile?.selectionMode === "explicit" ? profile.options.find((option) => option.value === task.quality) || profile.options.find((option) => option.value === profile.defaultValue) : undefined;
+        const selected = resolveImageGenerationCandidates(candidates, { size: task.ratio, quality: profile ? undefined : task.quality, count: task.count }, defaults, references.filter((reference) => reference.type === "image").length, false)
+            .candidates[0];
+        return selected
+            ? {
+                  ...task,
+                  model: modelId,
+                  ratio: selected.size || task.ratio,
+                  quality: profile ? qualityOption?.value : selected.quality,
+                  qualityProfileRevision: profile?.profileRevision,
+                  qualityOptionRevision: qualityOption?.optionRevision,
+                  count: selected.count || 1,
+              }
+            : undefined;
     }
     if (task.type === "video") {
         const selected = resolveVideoGenerationCandidates(
@@ -433,7 +471,7 @@ export function resolveAgentTaskBinding<T extends AgentGenerationCandidateModel>
             references,
         ).candidates[0];
         return selected
-            ? { ...task, model: modelId, ratio: selected.size, quality: selected.vquality, seconds: selected.videoSeconds, count: selected.count || 1, generateAudio: selected.videoGenerateAudio, watermark: selected.videoWatermark }
+            ? { ...task, model: modelId, ratio: selected.size || task.ratio, quality: selected.vquality, seconds: selected.videoSeconds, count: selected.count || 1, generateAudio: selected.videoGenerateAudio, watermark: selected.videoWatermark }
             : undefined;
     }
     const selected = resolveAudioGenerationCandidates(candidates, { voiceSelection: task.voiceSelection, format: task.format, speed: task.speed }, defaults).candidates[0];
@@ -900,6 +938,8 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
                 count: resolvedTask.count,
                 ratio: resolvedTask.ratio,
                 quality: resolvedTask.quality,
+                qualityProfileRevision: resolvedTask.qualityProfileRevision,
+                qualityOptionRevision: resolvedTask.qualityOptionRevision,
                 seconds: resolvedTask.seconds,
                 voiceSelection: resolvedTask.voiceSelection,
                 voiceName: resolvedTask.voiceName,
@@ -924,6 +964,8 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
                 status: "completed",
                 result,
                 error: undefined,
+                errorCode: undefined,
+                retryable: undefined,
                 taskId: dispatched.sourceTaskIds.at(-1),
                 taskIds: dispatched.sourceTaskIds,
                 assetIds: registeredAssetIds,
@@ -950,7 +992,8 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
             return "deferred" as const;
         }
         const message = toSafeGenerationErrorMessage(error, "生成任务失败");
-        const errorCode = error instanceof GenerationApplicationError ? error.errorCode : undefined;
+        const errorCode = error instanceof GenerationApplicationError || error instanceof AgentChildTaskTerminalError ? error.errorCode : undefined;
+        const retryable = error instanceof AgentChildTaskTerminalError ? error.retryable : error instanceof GenerationApplicationError ? isRetryableDispatchFailure(error) : undefined;
         if (await canContinue(runId, executionId)) {
             const latest = await getAgentRun(runId);
             const latestTask = latest?.tasks.find((item) => item.id === task.id);
@@ -963,11 +1006,11 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
                 return "deferred" as const;
             }
             if (latestTask && !agentTaskHasSubmittedChild(latestTask) && error instanceof GenerationApplicationError) {
-                await patchTask(runId, task.id, { status: "failed", attempts: Math.max(latestTask.attempts, attempt), error: message, errorCode }, "task.dispatch.failed", executionId);
+                await patchTask(runId, task.id, { status: "failed", attempts: Math.max(latestTask.attempts, attempt), error: message, errorCode, retryable }, "task.dispatch.failed", executionId);
                 await updateAgentRunById(runId, { failureStage: "task_dispatch" }, undefined, ["running"], executionId);
                 return "terminal_dispatch" as const;
             }
-            await patchTask(runId, task.id, { status: "failed", error: message }, "task.failed", executionId);
+            await patchTask(runId, task.id, { status: "failed", error: message, errorCode, retryable }, "task.failed", executionId);
         }
         return "failed" as const;
     }
@@ -1073,7 +1116,7 @@ export async function withDependencyContext(runId: string, task: AgentRunTask): 
         referenceUrl: primaryReference?.url || task.referenceUrl,
         referenceType: primaryReference?.type || task.referenceType,
         references,
-        prompt: context && task.type !== "audio" ? `${task.prompt}\n\n请保持与以下已完成产物一致，并将依赖媒体作为真实生成参考：\n${context}` : task.prompt,
+        prompt: context && task.type !== "audio" && !(run.requestedModelIds?.length && run.manualPromptEnhancementEnabled === false) ? `${task.prompt}\n\n请保持与以下已完成产物一致，并将依赖媒体作为真实生成参考：\n${context}` : task.prompt,
     };
 }
 
@@ -1211,7 +1254,14 @@ function agentTaskSubmissionBody(task: AgentRunTask, settings: Awaited<ReturnTyp
         apiKey: "",
         apiFormat: channel.apiFormat || "openai",
         model,
-        ...(task.type === "image" ? { ...(task.quality ? { quality: task.quality } : {}), ...(task.ratio ? { size: task.ratio } : {}) } : {}),
+        ...(task.type === "image"
+            ? {
+                  ...(task.quality ? { quality: task.quality } : {}),
+                  ...(task.qualityProfileRevision ? { qualityProfileRevision: task.qualityProfileRevision } : {}),
+                  ...(task.qualityOptionRevision ? { qualityOptionRevision: task.qualityOptionRevision } : {}),
+                  ...(task.ratio ? { size: task.ratio } : {}),
+              }
+            : {}),
         ...(task.type === "video"
             ? {
                   ...(task.ratio ? { size: task.ratio } : {}),
@@ -1236,7 +1286,7 @@ function agentTaskSubmissionBody(task: AgentRunTask, settings: Awaited<ReturnTyp
               context,
           }
         : task.type === "video"
-          ? { config, prompt: task.prompt, references: references.map((item) => ({ type: item.type, url: item.url, ...(item.role ? { role: item.role } : {}) })), source, context }
+          ? { config, prompt: task.prompt, references: references.map((item) => ({ type: item.type, url: item.url, ...(item.assetId ? { assetId: item.assetId } : {}), ...(item.role ? { role: item.role } : {}) })), source, context }
           : task.type === "audio"
             ? { config, prompt: task.prompt, source, context }
             : { config, messages: [{ role: "user", content: task.prompt }], context };
@@ -1322,16 +1372,16 @@ export function directCanvasTextContent(task: AgentRunTask) {
 export async function pollTask(origin: string, path: string, taskId: string, cookie: string, runId: string, type: AgentRunTask["type"], executionId: string) {
     void path;
     if (!(await canContinue(runId, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
-    let payload: { task?: { status?: string; result?: unknown; error?: string } };
+    let payload: { task?: { status?: string; result?: unknown; error?: string; errorCode?: string; publicMessage?: string; actionHint?: string; canRetry?: boolean } };
     try {
         payload = await readAgentGenerationTask({ type, taskId, origin, headers: runtimeRequestHeaders(cookie) });
     } catch (error) {
-        if (error instanceof GenerationApplicationError && error.status < 500 && ![408, 425, 429].includes(error.status)) throw new AgentChildTaskTerminalError(error.message);
+        if (error instanceof GenerationApplicationError && error.status < 500 && ![408, 425, 429].includes(error.status)) throw new AgentChildTaskTerminalError(error.message, error.errorCode, false);
         throw new AgentChildTaskDeferredError(error instanceof Error ? error.message : "生成任务查询暂时不可用");
     }
     const terminal = agentChildTaskTerminal(payload.task?.status);
     if (terminal === "success") return payload.task?.result;
-    if (terminal === "error") throw new AgentChildTaskTerminalError(payload.task?.error || "生成任务失败");
+    if (terminal === "error") throw new AgentChildTaskTerminalError(payload.task?.publicMessage || payload.task?.error || "生成任务失败", payload.task?.errorCode, payload.task?.canRetry);
     if (terminal === "cancelled") throw new AgentChildTaskTerminalError(payload.task?.error || "生成任务已取消");
     throw new AgentChildTaskDeferredError("生成任务仍在处理中");
 }

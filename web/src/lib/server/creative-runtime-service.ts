@@ -12,6 +12,7 @@ import {
     updateCreativeConversation,
 } from "@/lib/server/creative-runtime-store";
 import { writePersistentMediaBytes } from "@/lib/server/reference-asset-store";
+import { probeMediaBytes } from "@/lib/server/media-metadata-probe";
 import { deleteCreativeConversationAggregates } from "@/lib/server/creative-entity-deletion-store";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 
@@ -98,11 +99,13 @@ export async function uploadAssetForUser(userId: string, conversationId: string,
     const maxBytes = creativeUploadMaxBytesForMimeType(file.type)!;
     if (file.size > maxBytes) throw new CreativeRuntimeServiceError(`单个${type === "image" ? "图片" : type === "video" ? "视频" : "音频"}素材不能超过 ${maxBytes / 1024 / 1024}MB`, 413);
     const bytes = new Uint8Array(await file.arrayBuffer());
+    const mediaProbe = type === "video" ? await probeMediaBytes(bytes, file.type) : undefined;
     let stored: Awaited<ReturnType<typeof writePersistentMediaBytes>>;
     try {
         stored = await writePersistentMediaBytes(bytes, file.type, type, { ownerUserId: userId, source: "creative-upload", originalName: file.name, conversationId, maxBytes });
     } catch (error) {
-        throw new CreativeRuntimeServiceError(error instanceof Error ? error.message : "素材保存失败", 400);
+        console.error("Creative asset persistence failed", { conversationId, error });
+        throw new CreativeRuntimeServiceError("素材暂时无法保存，请稍后重新上传。", 503);
     }
     const url = stored.url || `/api/reference-assets/${stored.token}`;
     const [asset] = await registerCreativeAssets([
@@ -120,7 +123,10 @@ export async function uploadAssetForUser(userId: string, conversationId: string,
             serverUrl: /^https?:\/\//i.test(url) ? undefined : url,
             mimeType: stored.mimeType,
             bytes: stored.bytes,
-            metadata: { source: "upload", originalName: file.name, storageClass: "permanent" },
+            ...(mediaProbe?.width ? { width: mediaProbe.width } : {}),
+            ...(mediaProbe?.height ? { height: mediaProbe.height } : {}),
+            ...(mediaProbe?.durationMs ? { durationMs: mediaProbe.durationMs } : {}),
+            metadata: { source: "upload", originalName: file.name, storageClass: "permanent", ...(mediaProbe ? { mediaProbe: { status: "verified", source: "ffprobe" } } : {}) },
         },
     ]);
     return asset;

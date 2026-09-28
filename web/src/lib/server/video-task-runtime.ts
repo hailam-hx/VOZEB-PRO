@@ -14,9 +14,10 @@ import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
 import { geminiVideoQueryPath, parseGeminiVideoOperation } from "@/lib/server/gemini-video-provider";
-import { finalizeUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
+import { attachAuthoritativeVideoUsageForBusiness, finalizeUsageBillingForBusiness } from "@/lib/server/usage-billing-runtime";
+import { VIDEO_VALIDATION_ITEM_HEADER } from "@/lib/video-validation";
 
-export type VideoUpstreamStep = { state: "pending"; status: string } | { state: "result_ready"; status: string; resultUrl: string } | { state: "failed"; status: string; error: string };
+export type VideoUpstreamStep = { state: "pending"; status: string } | { state: "result_ready"; status: string; resultUrl: string; providerResponse?: unknown } | { state: "failed"; status: string; error: string };
 
 export async function refreshVideoTaskFromUpstream(task: VideoTask, origin: string, cookie: string) {
     const polling = taskPollingPolicy(task);
@@ -25,28 +26,28 @@ export async function refreshVideoTaskFromUpstream(task: VideoTask, origin: stri
 
     const step = await queryVideoTaskUpstream(claimed, origin, cookie);
     if (step.state === "failed") return failVideoTask(claimed, step.error);
-    if (step.state === "result_ready") return persistVideoTaskResult(claimed, step.resultUrl, origin, cookie);
+    if (step.state === "result_ready") return persistVideoTaskResult(claimed, step.resultUrl, origin, cookie, "", step.providerResponse);
     return getVideoTask(claimed.id);
 }
 
-export async function queryVideoTaskUpstream(task: VideoTask, origin: string, cookie = "", workerUserId = ""): Promise<VideoUpstreamStep> {
+export async function queryVideoTaskUpstream(task: VideoTask, origin: string, cookie = "", workerUserId = "", execution?: { mode?: "generation" | "validation"; validationItemId?: string }): Promise<VideoUpstreamStep> {
     if (task.upstream.resultUrl) return { state: "result_ready", status: "completed", resultUrl: task.upstream.resultUrl };
-    if (isGeminiVideoTask(task)) return queryGeminiVideoUpstream(task, origin, cookie, workerUserId);
-    const data = await queryVideoUpstream(task, origin, cookie, workerUserId);
+    if (isGeminiVideoTask(task)) return queryGeminiVideoUpstream(task, origin, cookie, workerUserId, execution);
+    const data = await queryVideoUpstream(task, origin, cookie, workerUserId, execution);
     const status = readVideoProviderStatus(data, task.config.advancedConfig?.statusField);
     const resultUrl = readVideoProviderUrl(data, task.config.advancedConfig?.resultField);
     if (resultUrl || VIDEO_PROVIDER_SUCCESS.has(status)) {
-        return resultUrl ? { state: "result_ready", status: status || "completed", resultUrl } : { state: "failed", status: status || "completed", error: "视频任务已完成但没有返回视频地址" };
+        return resultUrl ? { state: "result_ready", status: status || "completed", resultUrl, providerResponse: data } : { state: "failed", status: status || "completed", error: "视频任务已完成但没有返回视频地址" };
     }
     if (isProviderBusinessError(data) || VIDEO_PROVIDER_FAILED.has(status)) return { state: "failed", status: status || "failed", error: readProviderError(data) || "视频生成失败" };
     return { state: "pending", status: status || "processing" };
 }
 
-async function queryGeminiVideoUpstream(task: VideoTask, origin: string, cookie: string, workerUserId: string): Promise<VideoUpstreamStep> {
+async function queryGeminiVideoUpstream(task: VideoTask, origin: string, cookie: string, workerUserId: string, execution?: { mode?: "generation" | "validation"; validationItemId?: string }): Promise<VideoUpstreamStep> {
     const path = task.upstream.queryPath || geminiVideoQueryPath(task.config.model, task.upstream.id);
     const url = `${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
     const response = await fetchInternalApi(url, {
-        headers: videoProxyHeaders(task, cookie, workerUserId),
+        headers: videoProxyHeaders(task, cookie, workerUserId, execution),
         cache: "no-store",
         signal: AbortSignal.timeout(Math.min(resolveModelRequestTimeoutMs(task.config, "video"), 60_000)),
     });
@@ -64,8 +65,8 @@ async function queryGeminiVideoUpstream(task: VideoTask, origin: string, cookie:
     return { state: "result_ready", status: operation.status, resultUrl: operation.resultUrl };
 }
 
-export async function persistVideoTaskResult(task: VideoTask, resultUrl: string, origin: string, cookie = "", workerUserId = "") {
-    return completeVideoTask(task, resultUrl, origin, cookie, workerUserId);
+export async function persistVideoTaskResult(task: VideoTask, resultUrl: string, origin: string, cookie = "", workerUserId = "", providerResponse?: unknown) {
+    return completeVideoTask(task, resultUrl, origin, cookie, workerUserId, providerResponse);
 }
 
 export async function failVideoTaskFromWorker(task: VideoTask, error: string, retryable = false) {
@@ -76,7 +77,7 @@ function taskPollingPolicy(task: VideoTask) {
     return videoPollingPolicy(Boolean(globalAiOpcPreset(task)));
 }
 
-async function completeVideoTask(task: VideoTask, resultUrl: string, origin: string, cookie: string, workerUserId = "") {
+async function completeVideoTask(task: VideoTask, resultUrl: string, origin: string, cookie: string, workerUserId = "", providerResponse?: unknown) {
     const beforePersistence = await getVideoTask(task.id);
     if (!beforePersistence || beforePersistence.status === "cancelled") {
         if (beforePersistence?.status === "cancelled") await refundVideoTask(beforePersistence);
@@ -110,13 +111,21 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
               taskId: task.id,
               projectId: task.projectId,
           });
-    const completed = await completeReconciledVideoTask(task.id, result);
+    const reconciled = await completeReconciledVideoTask(task.id, result);
+    let completed = reconciled;
     if (!completed) {
         const latest = await getVideoTask(task.id);
         if (latest?.status === "cancelled") await refundVideoTask(latest);
-        return latest;
+        if (latest?.status !== "success") return latest;
+        completed = latest;
     }
-    await finalizeUsageBillingForBusiness({ userId: completed.userId, businessId: `video-task:${completed.id}` });
+    const usage = await attachAuthoritativeVideoUsageForBusiness({
+        userId: completed.userId,
+        businessId: `video-task:${completed.id}`,
+        upstreamTaskId: task.upstream.id,
+        payload: providerResponse,
+    });
+    if (usage.state !== "needs_review") await finalizeUsageBillingForBusiness({ userId: completed.userId, businessId: `video-task:${completed.id}` });
     await writeVideoGenerationLog(completed, "success");
     await registerVideoAsset(completed);
     return completed;
@@ -145,7 +154,7 @@ async function registerVideoAsset(task: VideoTask) {
     }).catch((error) => console.error("Creative video asset registration failed", error));
 }
 
-async function queryVideoUpstream(task: VideoTask, origin: string, cookie: string, workerUserId = "") {
+async function queryVideoUpstream(task: VideoTask, origin: string, cookie: string, workerUserId = "", execution?: { mode?: "generation" | "validation"; validationItemId?: string }) {
     const createPath = task.upstream.pollPath || "/video/generations";
     const preset = globalAiOpcPreset(task);
     const seedanceSpecial = task.config.advancedConfig?.protocol === "seedance-special";
@@ -161,7 +170,7 @@ async function queryVideoUpstream(task: VideoTask, origin: string, cookie: strin
     let lastError = "";
     for (const path of paths) {
         const response = await fetchInternalApi(`${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`, {
-            headers: videoProxyHeaders(task, cookie, workerUserId),
+            headers: videoProxyHeaders(task, cookie, workerUserId, execution),
             cache: "no-store",
             signal: AbortSignal.timeout(Math.min(resolveModelRequestTimeoutMs(task.config, "video"), 60_000)),
         });
@@ -181,17 +190,17 @@ async function queryVideoUpstream(task: VideoTask, origin: string, cookie: strin
             lastError = "视频查询接口返回了非 JSON 内容";
         }
     }
-    const contentPath = seedanceSpecial ? await readyVideoContentPath(task, origin, cookie, workerUserId) : "";
+    const contentPath = seedanceSpecial ? await readyVideoContentPath(task, origin, cookie, workerUserId, execution) : "";
     if (contentPath) return { status: "completed", video_url: contentPath };
     throw new Error(lastError || "视频任务查询失败");
 }
 
-async function readyVideoContentPath(task: VideoTask, origin: string, cookie: string, workerUserId: string) {
+async function readyVideoContentPath(task: VideoTask, origin: string, cookie: string, workerUserId: string, execution?: { mode?: "generation" | "validation"; validationItemId?: string }) {
     const id = encodeURIComponent(task.upstream.id);
     const paths = [`/v1/videos/${id}/content`, `/videos/${id}/content`];
     for (const path of paths) {
         const url = `${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path}`;
-        const headers = videoProxyHeaders(task, cookie, workerUserId);
+        const headers = videoProxyHeaders(task, cookie, workerUserId, execution);
         const head = await fetchInternalApi(url, { method: "HEAD", headers, cache: "no-store", signal: AbortSignal.timeout(60_000) }).catch(() => null);
         if (head && videoContentReady(head)) return path;
         if (head && ![405, 501].includes(head.status)) continue;
@@ -213,10 +222,11 @@ function videoContentReady(response: Response) {
     return contentType.startsWith("video/") || contentType === "application/octet-stream" || /filename[^;]*\.(?:mp4|webm|mov|m4v)\b/.test(disposition);
 }
 
-function videoProxyHeaders(task: VideoTask, cookie: string, workerUserId: string) {
+function videoProxyHeaders(task: VideoTask, cookie: string, workerUserId: string, execution?: { mode?: "generation" | "validation"; validationItemId?: string }) {
     return {
         ...(workerUserId ? maintenanceWorkerHeaders(workerUserId) : cookie ? { cookie } : {}),
-        ...systemAiBillingHeaders(generationModelId(task.config), undefined, task.config.model),
+        ...(execution?.mode === "validation" && execution.validationItemId ? { [VIDEO_VALIDATION_ITEM_HEADER]: execution.validationItemId } : {}),
+        ...(execution?.mode !== "validation" ? systemAiBillingHeaders(generationModelId(task.config), undefined, task.config.model) : {}),
     };
 }
 

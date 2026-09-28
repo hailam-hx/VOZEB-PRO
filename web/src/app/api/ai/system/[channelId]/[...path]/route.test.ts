@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     finishUsageProviderAttempt: vi.fn(),
     settleUsageBilling: vi.fn(),
     settleCancelledUsageBilling: vi.fn(),
+    validationAccess: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.currentUser }));
@@ -54,6 +55,7 @@ vi.mock("@/lib/server/security", () => ({
     isSafeOutboundUrl: mocks.safeUrl,
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
+vi.mock("@/lib/server/video-validation-service", () => ({ authorizeVideoValidationProxyRequest: mocks.validationAccess }));
 
 import { meteredTextResponseBody } from "@/lib/server/system-ai-metered-text-stream";
 import { sanitizeDiagnosticText } from "@/lib/server/system-ai-diagnostics";
@@ -61,6 +63,8 @@ import { DELETE, GET, maxDuration, POST, PUT } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
 import { readSystemAiUsageBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
+import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
+import { systemMediaTimeoutMs } from "@/lib/server/system-media-timeout";
 
 const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_media"] }) };
 
@@ -99,12 +103,23 @@ describe("system media proxy", () => {
         mocks.finishUsageProviderAttempt.mockReset().mockResolvedValue({});
         mocks.settleUsageBilling.mockReset().mockResolvedValue({});
         mocks.settleCancelledUsageBilling.mockReset().mockResolvedValue({});
+        mocks.validationAccess.mockReset().mockResolvedValue(false);
         mocks.getAuthSettings.mockResolvedValue({
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: [] }],
         });
     });
 
     afterEach(() => vi.unstubAllEnvs());
+
+    it("uses the signed generation capability timeout for slow upstream media", () => {
+        vi.stubEnv("VOZEB_PRO_ENCRYPTION_KEY", "test-encryption-key-that-is-at-least-32-characters");
+        const url = "https://cdn.example.com/result.png";
+        const imageHeaders = generationMediaProxyHeaders({ userId: "user-one", taskType: "image", taskId: "image-one", channelId: "channel-one", upstreamModel: "panorama", url });
+        const videoHeaders = generationMediaProxyHeaders({ userId: "user-one", taskType: "video", taskId: "video-one", channelId: "channel-one", upstreamModel: "video", url });
+
+        expect(systemMediaTimeoutMs(new Request("http://localhost", { headers: imageHeaders }), { userId: "user-one", channelId: "channel-one", url })).toBe(10 * 60_000);
+        expect(systemMediaTimeoutMs(new Request("http://localhost", { headers: videoHeaders }), { userId: "user-one", channelId: "channel-one", url })).toBe(30 * 60_000);
+    });
 
     it("proxies only configured voice catalog reads and owned profile deletion", async () => {
         mocks.getAuthSettings.mockResolvedValue({
@@ -1373,6 +1388,47 @@ describe("configured versioned protocol billing", () => {
             expect.objectContaining({ duration: 5, ratio: "16:9" }),
             expect.objectContaining({ duration: 5, ratio: "9:16", content: expect.arrayContaining([expect.objectContaining({ type: "image_url", role: "reference_image" })]) }),
         ]);
+    });
+
+    it("allows a persisted video validation item through the worker proxy without user billing", async () => {
+        const token = "worker-token-that-is-at-least-32-characters-long";
+        vi.stubEnv("VOZEB_PRO_WORKER_TOKEN", token);
+        mocks.currentUser.mockResolvedValue(null);
+        mocks.validationAccess.mockResolvedValue(true);
+        const modelId = "seedance-validation";
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel(modelId, "video", modelId)],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://api.example.com/v1",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: [modelId],
+                    advancedConfig: { protocol: "custom", createPath: "/videos/generations", queryPath: "/videos/generations/:task_id", requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}"}', resultField: "video_url", statusField: "status" },
+                },
+            ],
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "provider-task", status: "pending" }));
+        const billingCallsBefore = mocks.reserveUsageBilling.mock.calls.length;
+        const body = JSON.stringify({ model: modelId, prompt: "validation" });
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/videos/generations", {
+                method: "POST",
+                headers: { "content-type": "application/json", "x-vozeb-pro-video-validation-item-id": "validation-item", ...maintenanceWorkerHeaders("video-validation-worker") },
+                body,
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["videos", "generations"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.validationAccess).toHaveBeenCalledWith(expect.objectContaining({ itemId: "validation-item", channelId: "channel-one", upstreamModelId: modelId, operation: "create" }));
+        expect(mocks.reserveUsageBilling.mock.calls.length).toBe(billingCallsBefore);
+        expect(fetchMock).toHaveBeenCalledOnce();
+        fetchMock.mockRestore();
+        mocks.currentUser.mockResolvedValue({ id: "user-one", role: "user", pointsBalance: 5 });
     });
 
     it("logs a sanitized non-2xx video diagnostic while returning the original upstream body", async () => {

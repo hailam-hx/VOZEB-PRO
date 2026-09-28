@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
+import { getAgentRun } from "@/lib/server/agent-run-store";
 import { getAuthSettings, isAuthInputError } from "@/lib/auth/store";
 import { mediaTaskSource } from "@/lib/media-management-contract";
 import { createAudioTask, type AudioTask, type AudioTaskConfig } from "@/lib/server/audio-task-store";
@@ -36,8 +37,10 @@ export async function POST(request: Request) {
             if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
             throw error;
         }
+        const sourceRun = body.context?.runId ? await getAgentRun(body.context.runId) : undefined;
+        const strictManualPrompt = sourceRun?.userId === user.id && Boolean(sourceRun.requestedModelIds?.length) && sourceRun.manualPromptEnhancementEnabled === false;
         const channels = resolveLogicalModelCandidates(settings, "audio", body.config?.model || settings.defaultModels.audioModel).map((resolved) => ({ ...toSystemGenerationChannel(resolved), channelId: resolved.channelId }));
-        const prompt = String(body.prompt || "").trim();
+        const prompt = strictManualPrompt ? sourceRun!.originalPrompt || sourceRun!.prompt : String(body.prompt || "").trim();
         const selection = normalizeVoiceSelection(body.config?.voiceSelection);
         const supportedChannels = channels.filter((channel) => channel.apiFormat !== "gemini" && (channel.generationParameters?.audioOperation || "speech") === "speech");
         if (!supportedChannels.length || !prompt) return NextResponse.json({ error: "音频任务参数不完整或渠道不支持" }, { status: 400 });
@@ -58,7 +61,14 @@ export async function POST(request: Request) {
             throw error;
         }
         if (!voiced.length) return NextResponse.json({ error: selection.type === "preset" ? `当前模型不支持音色 ${selection.voiceId}` : "声音档案与当前模型渠道不兼容" }, { status: 400 });
-        const configs: AudioTaskConfig[] = voiced.map((channel) => ({ ...channel, instructions: clean(body.config?.instructions, 2_000) }));
+        const configs: AudioTaskConfig[] = voiced.map((channel) => ({
+            ...channel,
+            instructions: strictManualPrompt ? "" : clean(body.config?.instructions, 2_000),
+            promptEnhancementDisabled: strictManualPrompt,
+            ...(sourceRun?.userId === user.id
+                ? { promptAudit: { originalPrompt: sourceRun.originalPrompt || sourceRun.prompt, executionPrompt: body.prompt || "", manualPromptEnhancementEnabled: sourceRun.manualPromptEnhancementEnabled !== false } }
+                : {}),
+        }));
         const requestId = body.context?.clientRequestId?.trim();
         if (requestId) {
             const existing = await getStoredGenerationTaskByRequest<AudioTask>("audio", user.id, requestId, body.context?.attemptNo);

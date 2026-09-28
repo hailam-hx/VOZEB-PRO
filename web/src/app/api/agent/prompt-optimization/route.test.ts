@@ -18,6 +18,7 @@ vi.mock("@/lib/server/security", () => ({
     rateLimitHeaders: () => new Headers(),
 }));
 
+import { PromptOptimizationError } from "@/lib/server/prompt-optimization-service";
 import { POST } from "./route";
 
 describe("prompt optimization route", () => {
@@ -49,6 +50,13 @@ describe("prompt optimization route", () => {
 
         expect(response.status).toBe(401);
         expect(mocks.checkGenerationRateLimit).not.toHaveBeenCalled();
+    });
+
+    it("does not send provider diagnostics in a failed optimization response", async () => {
+        mocks.optimizeCreativePrompt.mockRejectedValue(new PromptOptimizationError("Bearer provider-secret at http://localhost/internal", 502));
+        const response = await POST(request({ requestId: "request-one", prompt: "原始提示词", mode: "audio" }));
+        expect(response.status).toBe(502);
+        expect(JSON.stringify(await response.json())).not.toContain("provider-secret");
     });
 });
 

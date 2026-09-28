@@ -24,6 +24,7 @@ type SeedanceSpecialReferences = {
 export function buildSeedanceSpecialRequest(input: {
     model: string;
     prompt: string;
+    preservePrompt?: boolean;
     ratio?: string;
     duration?: number;
     generateAudio?: boolean;
@@ -34,7 +35,7 @@ export function buildSeedanceSpecialRequest(input: {
     const model = input.model.trim();
     if (!SEEDANCE_SPECIAL_MODELS.some(([id]) => id === model)) throw new Error("Seedance 2.0 特价版模型不在接口文档允许列表中");
 
-    const prompt = input.prompt.trim();
+    const prompt = input.preservePrompt ? input.prompt : input.prompt.trim();
     assertSeedanceSpecialPrompt(prompt);
     const ratio = input.ratio?.trim();
     if (ratio && !SEEDANCE_SPECIAL_RATIOS.includes(ratio as (typeof SEEDANCE_SPECIAL_RATIOS)[number])) throw new Error(`Seedance 2.0 特价版不支持画幅 ${ratio}`);

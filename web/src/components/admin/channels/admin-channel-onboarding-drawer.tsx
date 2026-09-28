@@ -10,7 +10,7 @@ import { createSystemChannel } from "@/components/admin/admin-dashboard-elements
 import type { LogicalModelCapability, SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
 import { applyChannelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, channelSupportsModelCatalog, protocolModelConfig, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
-import { capabilityLabel, channelModelCapability, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
+import { capabilityLabel, channelModelCapability, channelModelDiscovery, channelModelIsRoutable, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 
 import { defaultModelField, removeChannelFromWorkspace, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
 
@@ -37,7 +37,9 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     const channel = settings.systemChannels.find((item) => item.id === draftId);
     const modelsSynchronized = Boolean(
         channel?.models.length &&
-        channel.models.every((upstreamModel) => settings.logicalModels.some((model) => model.bindings.some((binding) => binding.channelId === channel.id && normalizedUpstreamModel(binding.upstreamModel) === normalizedUpstreamModel(upstreamModel)))),
+        channel.models
+            .filter((upstreamModel) => channelModelIsRoutable(channel, upstreamModel))
+            .every((upstreamModel) => settings.logicalModels.some((model) => model.bindings.some((binding) => binding.channelId === channel.id && normalizedUpstreamModel(binding.upstreamModel) === normalizedUpstreamModel(upstreamModel)))),
     );
 
     useEffect(() => {
@@ -86,7 +88,13 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         if (await onPersist(next, "渠道草稿已保存")) onClose();
     };
     const enableChannel = async () => {
-        if (!channel || !channelConnectionReady(channel) || !modelsSynchronized) return;
+        if (
+            !channel ||
+            !channelConnectionReady(channel) ||
+            !modelsSynchronized ||
+            (channel.advancedConfig?.protocol === "dflop" && !channel.models.filter((model) => channelModelIsRoutable(channel, model)).every((model) => channel.advancedConfig?.modelCapabilities?.[normalizeModelId(model)]))
+        )
+            return;
         const next = { ...settings, systemChannels: settings.systemChannels.map((item) => (item.id === channel.id ? { ...item, enabled: true } : item)) };
         onChange(next);
         if (await onPersist(next, "渠道已启用")) onClose();
@@ -97,8 +105,9 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         const defaultModels = { ...settings.defaultModels };
         if (setAsDefault) {
             channel.models.forEach((upstreamModel) => {
+                if (!channelModelIsRoutable(channel, upstreamModel)) return;
                 const capability = channelModelCapability(channel, upstreamModel);
-                const field = defaultModelField(capability);
+                const field = channel.advancedConfig?.protocol === "dflop" && normalizeModelId(upstreamModel) === "voice-clone-pro" ? "voiceCloneModel" : defaultModelField(capability);
                 if (defaultModels[field]) return;
                 const logical = logicalModels.find((model) => model.bindings.some((binding) => binding.channelId === channel.id && binding.upstreamModel === upstreamModel));
                 if (logical) defaultModels[field] = logical.id;
@@ -117,12 +126,19 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         return <ReviewStep channel={channel} settings={settings} />;
     };
 
-    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) : step === 2 ? !channel?.models.length : step === 3 ? !modelsSynchronized : false;
+    const nextDisabled =
+        step === 1
+            ? !channel?.name.trim() || !channelConnectionReady(channel)
+            : step === 2
+              ? !channel?.models.length || (channel.advancedConfig?.protocol === "dflop" && !channel.models.filter((model) => channelModelIsRoutable(channel, model)).every((model) => channel.advancedConfig?.modelCapabilities?.[normalizeModelId(model)]))
+              : step === 3
+                ? !modelsSynchronized
+                : false;
 
     return (
         <Drawer
             title="接入新渠道"
-            size={736}
+            width="min(736px, 100vw)"
             styles={{ wrapper: { maxWidth: "100vw" } }}
             open={open}
             destroyOnHidden
@@ -346,7 +362,7 @@ function ModelStep({ channel, fetching, onChange, onFetch }: { channel: SystemMo
     const updateCapability = (model: string, capability: LogicalModelCapability) => {
         const advanced = channel.advancedConfig!;
         const key = normalizeModelId(model);
-        const config = protocolModelConfig(advanced.protocol, capability);
+        const config = protocolModelConfig(advanced.protocol, capability, model);
         onChange({
             advancedConfig: {
                 ...advanced,
@@ -361,7 +377,13 @@ function ModelStep({ channel, fetching, onChange, onFetch }: { channel: SystemMo
                 <div>
                     <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">上游模型</div>
                     <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-                        {canSync ? "同步只会合并模型，不删除手工模型。" : hasDocumentedModels ? `已按官方文档预置 ${definition.builtInModels?.length} 个模型，无需目录同步。` : "当前协议没有公开模型目录，请填写上游提供的真实模型 ID。"}
+                        {canSync
+                            ? definition.id === "dflop"
+                                ? "同步会按当前 API Key 可见范围更新完整模型目录，并使用公开 registry 补充分类。"
+                                : "同步只会合并模型，不删除手工模型。"
+                            : hasDocumentedModels
+                              ? `已按官方文档预置 ${definition.builtInModels?.length} 个模型，无需目录同步。`
+                              : "当前协议没有公开模型目录，请填写上游提供的真实模型 ID。"}
                     </div>
                 </div>
                 {canSync ? (
@@ -395,18 +417,33 @@ function ModelStep({ channel, fetching, onChange, onFetch }: { channel: SystemMo
                 />
             </LabeledControl>
             <div className="mt-4 divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
-                {channel.models.map((model) => (
-                    <div key={model} className="flex min-w-0 items-center justify-between gap-3 py-2.5">
-                        <span className="min-w-0 truncate text-sm font-medium text-stone-900 dark:text-stone-100">{model}</span>
-                        {canSync || hasDocumentedModels || manualCapabilityOptions.length <= 1 ? (
-                            <Tag className="m-0">{capabilityLabel(channelModelCapability(channel, model))}</Tag>
-                        ) : (
-                            <div className="w-24 shrink-0">
-                                <Select className="w-full" size="small" value={channelModelCapability(channel, model)} options={manualCapabilityOptions} onChange={(capability: LogicalModelCapability) => updateCapability(model, capability)} />
-                            </div>
-                        )}
-                    </div>
-                ))}
+                {channel.models.map((model) => {
+                    const discovery = channelModelDiscovery(channel, model);
+                    return (
+                        <div key={model} className="flex min-w-0 items-center justify-between gap-3 py-2.5">
+                            <span className="min-w-0 truncate text-sm font-medium text-stone-900 dark:text-stone-100">{model}</span>
+                            {discovery ? (
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                    <Tag className="m-0">{discovery.kind === "other" ? "其他" : capabilityLabel(discovery.kind)}</Tag>
+                                    {discovery.callable === false ? <Tag className="m-0">不可调用</Tag> : discovery.routable === false ? <Tag className="m-0">未接入</Tag> : null}
+                                </div>
+                            ) : (canSync && definition.id !== "dflop") || hasDocumentedModels || manualCapabilityOptions.length <= 1 ? (
+                                <Tag className="m-0">{capabilityLabel(channelModelCapability(channel, model))}</Tag>
+                            ) : (
+                                <div className="w-24 shrink-0">
+                                    <Select
+                                        className="w-full"
+                                        size="small"
+                                        value={definition.id === "dflop" ? channel.advancedConfig?.modelCapabilities?.[normalizeModelId(model)] : channelModelCapability(channel, model)}
+                                        placeholder="选择能力"
+                                        options={manualCapabilityOptions}
+                                        onChange={(capability: LogicalModelCapability) => updateCapability(model, capability)}
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
                 {!channel.models.length ? <div className="py-8 text-center text-sm text-stone-500 dark:text-stone-400">{canSync ? "尚未获得模型" : "请先添加至少一个模型 ID"}</div> : null}
             </div>
         </div>

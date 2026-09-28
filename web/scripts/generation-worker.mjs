@@ -42,19 +42,9 @@ async function runLane(index) {
     let idleBatches = 0;
     while (!stopping) {
         try {
-            const response = await fetch(`${origin}/api/maintenance/generation-tasks/run`, {
-                method: "POST",
-                headers: {
-                    authorization: `Bearer ${token}`,
-                    "x-vozeb-pro-worker-id": laneId,
-                    ...compatibilityHeaders,
-                },
-                signal: AbortSignal.timeout(40 * 60_000),
-            });
-            const payload = await response.json().catch(() => null);
-            if (!response.ok) throw new Error(payload?.msg || `Worker endpoint returned HTTP ${response.status}`);
+            const [generation, validation] = await Promise.all([runWorkSource("/api/maintenance/generation-tasks/run", laneId), runWorkSource("/api/maintenance/video-validation/run", laneId)]);
             consecutiveErrors = 0;
-            const claimed = Number(payload?.data?.claimed || 0);
+            const claimed = Number(generation?.data?.claimed || 0) + Number(validation?.data?.claimed || 0);
             const policy = nextGenerationWorkerPollPolicy({ claimed, idleBatches, baseIdleDelayMs: idleDelayMs });
             idleBatches = policy.idleBatches;
             await delay(policy.delayMs);
@@ -66,6 +56,17 @@ async function runLane(index) {
             await delay(retryMs);
         }
     }
+}
+
+async function runWorkSource(path, laneId) {
+    const response = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "x-vozeb-pro-worker-id": laneId, ...compatibilityHeaders },
+        signal: AbortSignal.timeout(40 * 60_000),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.msg || `${path} returned HTTP ${response.status}`);
+    return payload;
 }
 
 async function sendHeartbeat() {

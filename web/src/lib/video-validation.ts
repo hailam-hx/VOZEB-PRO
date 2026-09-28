@@ -1,0 +1,196 @@
+export type VideoValidationMode = "contract_only" | "family_sample" | "changed_models" | "all_models_minimum";
+export const VIDEO_VALIDATION_ITEM_HEADER = "x-vozeb-pro-video-validation-item-id";
+export type VideoValidationTestLevel = "CONTRACT" | "PROBE" | "FAMILY_CANARY" | "MODEL_SMOKE";
+export type VideoValidationProbeStatus = "CONTRACT_READY" | "CAPABILITY_INCOMPLETE" | "PRICING_INCOMPLETE" | "AUTH_UNAVAILABLE" | "NEEDS_REVIEW";
+export type VideoValidationProbeResult = { status: VideoValidationProbeStatus; reasonCode: string; message: string };
+
+export type VideoValidationReference = { role: "reference" | "first_frame" | "last_frame"; fixture: "image" | "video" };
+export type VideoValidationNormalizedContext = {
+    count: string;
+    durationSeconds: string;
+    resolution: string;
+    aspectRatio: string;
+    generateAudio: boolean;
+    watermark: boolean;
+    references: VideoValidationReference[];
+    special?: { kind: string; steps: Array<{ path: string; body: Record<string, unknown> }>; fixtureHashes: Record<string, string>; pricingSource: string };
+};
+
+export type VideoValidationCandidate = {
+    family: string;
+    fingerprintVersion?: number;
+    fingerprintHash?: string;
+    contractFingerprintVersion?: number;
+    contractFingerprintHash?: string;
+    caseId: string;
+    bindingId: string;
+    estimatedCost: string;
+    priority?: number;
+};
+
+export type VideoValidationRunStatus = "pending" | "running" | "reconciling" | "completed" | "cancelled" | "failed";
+export type VideoValidationItemStatus = "queued" | "reserved" | "submitted" | "submission_unknown" | "polling" | "passed" | "failed" | "skipped" | "cancelled" | "reused";
+export type ValidationSettlementSource = "ACTUAL_PROVIDER_COST" | "PROVIDER_REPORTED_CREDITS" | "ESTIMATED_FALLBACK" | "NO_CHARGE_RELEASE";
+export type ValidationProviderCost = { amount: string; currency: string; unit: string };
+
+export type VideoValidationRun = {
+    id: string;
+    mode: VideoValidationMode;
+    status: VideoValidationRunStatus;
+    previewRevision: string;
+    registryRevision: string;
+    pricingPolicyVersion: string;
+    maxBudgetHotxCredits: string;
+    estimatedCostHotxCredits: string;
+    actualCostHotxCredits: string;
+    activeReservedCredits?: string;
+    totalSettledCredits?: string;
+    costBoundViolated?: boolean;
+    budgetViolationAt?: string;
+    concurrency: number;
+    selectedCount: number;
+    runnableCount: number;
+    skippedCount: number;
+    createdBy: string;
+    createdAt: string;
+    startedAt?: string;
+    completedAt?: string;
+    cancelledAt?: string;
+};
+
+export type VideoValidationItem = {
+    id: string;
+    runId: string;
+    logicalModelId: string;
+    bindingId: string;
+    channelId: string;
+    upstreamModelId: string;
+    contractFamily: string;
+    caseId: string;
+    testLevel: VideoValidationTestLevel;
+    status: VideoValidationItemStatus;
+    probeStatus?: VideoValidationProbeStatus;
+    reasonCode?: string;
+    normalizedContext?: VideoValidationNormalizedContext;
+    capabilityRevision: string;
+    pricingRevision: string;
+    fingerprintVersion?: number;
+    fingerprintHash?: string;
+    fingerprintSnapshot?: Record<string, unknown>;
+    executionSnapshotHash?: string;
+    requestPayloadDigest?: string;
+    attemptNumber?: number;
+    estimatedProviderCost?: ValidationProviderCost | null;
+    estimatedCredits?: string;
+    boundEvidence?: Record<string, unknown>;
+    actualCostCapability?: "AVAILABLE" | "UNAVAILABLE";
+    actualCostCapabilityEvidence?: Record<string, unknown>;
+    actualProviderCost?: ValidationProviderCost | null;
+    actualCredits?: string | null;
+    creditSettlementSource?: ValidationSettlementSource;
+    actualCostProvenance?: Record<string, unknown>;
+    reservationState?: "NONE" | "RESERVED" | "SETTLED" | "RELEASED";
+    reservedCredits?: string;
+    settledCredits?: string;
+    estimatedCostHotxCredits: string;
+    actualCostHotxCredits?: string;
+    providerTaskId?: string;
+    providerStatus?: string;
+    resultSummary?: Record<string, unknown>;
+    errorCode?: string;
+    errorMessage?: string;
+    idempotencyKey: string;
+    submittedAt?: string;
+    submissionStartedAt?: string;
+    testedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type VideoValidationPreviewRequest = {
+    mode: VideoValidationMode;
+    modelIds?: string[];
+    bindingIds?: string[];
+    maxBudgetHotxCredits: string;
+    concurrency: number;
+    readyPricingOnly: true;
+};
+
+export type VideoValidationPreviewItem = {
+    logicalModelId: string;
+    bindingId: string;
+    channelId: string;
+    upstreamModelId: string;
+    contractFamily: string;
+    caseId: string;
+    probe: VideoValidationProbeResult;
+    normalizedContext?: VideoValidationNormalizedContext;
+    capabilityRevision: string;
+    pricingRevision: string;
+    fingerprintVersion?: number;
+    fingerprintHash?: string;
+    contractFingerprintVersion?: number;
+    contractFingerprintHash?: string;
+    sharedContractReason?: string;
+    fingerprintSnapshot?: Record<string, unknown>;
+    requestPayloadDigest?: string;
+    estimatedProviderCost?: ValidationProviderCost | null;
+    estimatedCredits?: string;
+    boundEvidence?: Record<string, unknown>;
+    actualCostCapability?: "AVAILABLE" | "UNAVAILABLE";
+    actualCostCapabilityEvidence?: Record<string, unknown>;
+    estimatedCostHotxCredits: string;
+    liveSelected: boolean;
+    contractReady?: boolean;
+    auditFlags?: string[];
+    skipReason?: string;
+};
+
+export type VideoValidationCanaryGroup = {
+    contractFingerprint: { version: number; hash: string; caseId: string };
+    modelsInGroup: string[];
+    sharedContractReason: string;
+    selectedCanaryModel: string | null;
+    selectedTestCase: string | null;
+    selectionReason: "LOWEST_ESTIMATED_CREDITS" | "NO_ELIGIBLE_BINDING" | "CONTRACT_ONLY_NO_LIVE";
+    normalizedContext: VideoValidationNormalizedContext | null;
+    minimumDuration: string | null;
+    minimumResolution: string | null;
+    audioEnabled: boolean | null;
+    estimatedProviderCost: ValidationProviderCost | null;
+    estimatedCredits: string | null;
+    pricingSnapshot: { rateCardRevision: string; pricingPolicyVersion: string; providerPricingStatus?: string; conversion?: Record<string, unknown> } | null;
+    bindingId: string | null;
+    providerId: string | null;
+    liveSubmitEligible: boolean;
+    blockedReason: string | null;
+};
+
+export type VideoValidationPreview = {
+    revision: string;
+    registryRevision: string;
+    pricingPolicyVersion: string;
+    selectedModels: number;
+    runnableModels: number;
+    skippedModels: number;
+    estimatedProviderCostHotxCredits: string;
+    estimatedCredits?: string;
+    estimatedProviderCosts?: ValidationProviderCost[];
+    providerCostCoveredCases?: number;
+    bindings?: number;
+    validationCases?: number;
+    plannedFreeChecks?: number;
+    plannedLiveCanaries?: number;
+    skippedCases?: number;
+    fingerprintCount?: number;
+    totalModels?: number;
+    contractReadyModels?: number;
+    partialModels?: number;
+    blockedModels?: number;
+    skippedFingerprints?: number;
+    canaryGroups?: VideoValidationCanaryGroup[];
+    maxBudgetHotxCredits: string;
+    items: VideoValidationPreviewItem[];
+};
+
+export type StartVideoValidationRunRequest = VideoValidationPreviewRequest & { previewRevision: string };

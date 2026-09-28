@@ -21,6 +21,7 @@ export type CreativeAgentRun = {
     inputMessageId: string;
     assistantMessageId: string;
     status: "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
+    failure?: { errorCode: string; retryable: boolean };
     responseKind?: "conversation" | "generation";
     conversationReply?: string;
     surface?: CreativeRunRequest["surface"];
@@ -54,12 +55,26 @@ export type CreativeAgentRun = {
             status: "ready" | "running" | "completed" | "failed" | "cancelled";
             error?: string;
             errorCode?: string;
+            retryable?: boolean;
         }
     >;
     cancellation?: { pendingCount: number };
 };
 
 type ApiResponse<T> = { code: number; data: T; msg: string };
+
+export class CreativeApiError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+        readonly errorCode?: string,
+        readonly currentProfileRevision?: string,
+        readonly publicMessage?: string,
+    ) {
+        super(message);
+        this.name = "CreativeApiError";
+    }
+}
 
 export function listCreativeConversationPage(input: { surface?: CreativeConversation["surface"]; source?: CreativeConversationSource; projectId?: string; offset?: number; limit?: number } = {}) {
     const query = new URLSearchParams({ surface: input.surface || "chat", source: input.source || "agent", status: "active", limit: String(input.limit || 50), offset: String(input.offset || 0) });
@@ -318,7 +333,16 @@ async function request<T>(url: string, init?: RequestInit) {
     const response = await fetch(url, { ...init, cache: "no-store" });
     throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => null)) as ApiResponse<T> | null;
-    if (!response.ok || !payload || payload.code !== 0) throw new Error(payload?.msg || "请求失败");
+    if (!response.ok || !payload || payload.code !== 0) {
+        const details = payload?.data && typeof payload.data === "object" ? (payload.data as { errorCode?: unknown; currentProfileRevision?: unknown; publicMessage?: unknown }) : undefined;
+        throw new CreativeApiError(
+            payload?.msg || "请求失败",
+            response.status || payload?.code || 500,
+            typeof details?.errorCode === "string" ? details.errorCode : undefined,
+            typeof details?.currentProfileRevision === "string" ? details.currentProfileRevision : undefined,
+            typeof details?.publicMessage === "string" ? details.publicMessage : undefined,
+        );
+    }
     return payload.data;
 }
 

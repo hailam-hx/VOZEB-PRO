@@ -17,7 +17,7 @@ import type { VideoReferenceRole } from "@/lib/video-reference-contract";
 import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
 import { useLocalizedAgentSkills } from "@/hooks/use-localized-agent-skills";
 import { listAgentSkills, type AgentSkillSummary } from "@/services/api/agent-skills";
-import type { CreativeAgentRun } from "@/services/api/creative";
+import { CreativeApiError, type CreativeAgentRun } from "@/services/api/creative";
 import { optimizePrompt } from "@/services/api/prompt-optimization";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
@@ -35,6 +35,7 @@ import { publicCreativeAssetPrompt, remapCreativeAssetReferences, replaceCreativ
 import { creativeAssetReferenceAliases } from "@/lib/creative-asset-references";
 import { createConversationHref, createConversationIdFromSearch } from "./create-conversation-navigation";
 import { useCreateAgent } from "./use-create-agent";
+import { createErrorPresentation, retryableCreateTaskIds } from "./create-error-ux";
 
 const SKILL_VISUALS = [
     { icon: ShoppingBag, iconClass: "text-sky-600 dark:text-sky-300", surfaceClass: "bg-sky-50 dark:bg-sky-400/10" },
@@ -81,6 +82,11 @@ export default function CreatePage() {
     const siteTitle = resolveSiteTitle(publicSettings?.site?.title);
     const skills = useLocalizedAgentSkills(unlocalizedSkills);
     const agent = useCreateAgent();
+    const showCreateError = (error: unknown, context: "upload" | "optimize" | "retry" | "reference" | "operation") => {
+        const presentation = createErrorPresentation(error, context);
+        const hint = presentation.detail && presentation.kind === "validation" ? (presentation.action === "reupload" ? t("createReuploadHint") : t("createChangeInputHint")) : "";
+        message.error([presentation.detail || t(presentation.messageKey), hint].filter(Boolean).join(" "));
+    };
     const selectedAssetIdsRef = useRef<string[]>(agent.selectedAssetIds);
     selectedAssetIdsRef.current = agent.selectedAssetIds;
     const openAgentConversation = agent.openConversation;
@@ -96,8 +102,12 @@ export default function CreatePage() {
         const type = creativeReferenceInputFromMimeType(mimeType);
         return type ? creativeReferenceAdditionAvailability(referenceCapabilityState, agent.selectedAssets, type).supported : false;
     }).join(",");
-    const referenceCapabilityMessage = (reason: typeof referenceCapabilityState.reason, maxReferenceImages?: number) =>
-        maxReferenceImages ? t(reason === "intersection" ? "generationReferenceImageIntersectionLimit" : "generationReferenceImageLimit", { count: maxReferenceImages }) : t(capabilityReasonMessageKeys[reason]);
+    const referenceCapabilityMessage = (reason: typeof referenceCapabilityState.reason, maxReferenceImages?: number, minReferenceImages?: number) =>
+        minReferenceImages
+            ? t("generationReferenceImageMinimum", { count: minReferenceImages })
+            : maxReferenceImages
+              ? t(reason === "intersection" ? "generationReferenceImageIntersectionLimit" : "generationReferenceImageLimit", { count: maxReferenceImages })
+              : t(capabilityReasonMessageKeys[reason]);
     const updatePrompt = useCallback(
         (value: string) => {
             const nextValue = value.slice(0, promptMaxLength);
@@ -130,8 +140,8 @@ export default function CreatePage() {
         initialConversationRestoredRef.current = true;
         const conversationId = createConversationIdFromSearch(window.location.search);
         if (!conversationId) return;
-        void openAgentConversation(conversationId).catch(() => {
-            message.error(t("restoreConversationFailed"));
+        void openAgentConversation(conversationId).catch((error) => {
+            showCreateError(error, "operation");
             router.replace("/create");
         });
     }, [message, openAgentConversation, router, t]);
@@ -191,8 +201,8 @@ export default function CreatePage() {
 
     const openConversation = (id: string) => {
         router.push(createConversationHref(id));
-        void openAgentConversation(id).catch(() => {
-            message.error(t("openConversationFailed"));
+        void openAgentConversation(id).catch((error) => {
+            showCreateError(error, "operation");
             router.replace("/create");
         });
     };
@@ -214,7 +224,7 @@ export default function CreatePage() {
         }
         const referenceViolation = creativeReferenceCapabilityViolation(referenceCapabilityState, agent.selectedAssets);
         if (referenceViolation) {
-            message.warning(referenceCapabilityMessage(referenceViolation.reason, referenceViolation.maxReferenceImages));
+            message.warning(referenceCapabilityMessage(referenceViolation.reason, referenceViolation.maxReferenceImages, referenceViolation.minReferenceImages));
             return;
         }
         const videoPreference = generationPreferences.video;
@@ -242,26 +252,24 @@ export default function CreatePage() {
                 setSelectedSkillId(undefined);
                 setGenerationPreferences((current) => (current.video ? { ...current, video: { ...current.video, firstFrameAssetId: undefined, lastFrameAssetId: undefined } } : current));
             }
-        } catch {
-            message.error(t("uploadFailed"));
+        } catch (error) {
+            showCreateError(error, "upload");
         }
     };
 
     const retryRound = async (assistantMessage: CreativeMessage, run?: CreativeAgentRun) => {
         try {
             if (!run) return await agent.retrySubmission(assistantMessage.id);
-            const failedTasks = run.tasks.filter((task) => task.status === "failed");
-            if (failedTasks.length) {
-                await agent.retryTasks(
-                    run.id,
-                    failedTasks.map((task) => task.id),
-                );
+            const retryableTaskIds = retryableCreateTaskIds(run.tasks);
+            if (run.tasks.some((task) => task.status === "failed")) {
+                if (!retryableTaskIds.length) return false;
+                await agent.retryTasks(run.id, retryableTaskIds);
                 return true;
             }
             await agent.retryRun(run.id);
             return true;
-        } catch {
-            message.error(t("retryFailed"));
+        } catch (error) {
+            showCreateError(error, "retry");
             return false;
         }
     };
@@ -293,8 +301,8 @@ export default function CreatePage() {
             const items = await agent.uploadAttachments(files);
             if (items.length) message.success(successMessage || t("assetsAdded", { count: items.length }));
             return items;
-        } catch {
-            message.error(t("uploadFailed"));
+        } catch (error) {
+            showCreateError(error, "upload");
             return [] as CreativeAsset[];
         }
     };
@@ -320,8 +328,8 @@ export default function CreatePage() {
             updatePrompt(optimized);
             window.requestAnimationFrame(() => inputRef.current?.focus());
             message.success(t("promptOptimized"));
-        } catch {
-            message.error(t("promptOptimizationFailed"));
+        } catch (error) {
+            showCreateError(error, "optimize");
         } finally {
             optimizingRef.current = false;
             setOptimizingPrompt(false);
@@ -331,15 +339,15 @@ export default function CreatePage() {
     const importReferenceMedia = async (input: { url: string; mimeType?: string; fileStem: string }) => {
         try {
             const response = await fetch(input.url);
-            if (!response.ok) throw new Error(t("readReferenceFailed"));
+            if (!response.ok) throw new CreativeApiError(t("readReferenceFailed"), response.status, undefined, undefined, response.status < 500 ? t("readReferenceFailed") : undefined);
             const blob = await response.blob();
             const mimeType = blob.type || input.mimeType || "";
-            if (!isCreativeUploadMimeType(mimeType)) throw new Error(t("unsupportedReference"));
+            if (!isCreativeUploadMimeType(mimeType)) throw new CreativeApiError(t("unsupportedReference"), 400, undefined, undefined, t("unsupportedReference"));
             const extension = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
             const referenced = await uploadAttachments([new File([blob], `${input.fileStem}.${extension}`, { type: mimeType })], t("referencedToInput"));
             if (referenced.length) window.requestAnimationFrame(() => inputRef.current?.focus());
-        } catch {
-            message.error(t("referenceFailed"));
+        } catch (error) {
+            showCreateError(error, "reference");
         }
     };
 
@@ -419,7 +427,7 @@ export default function CreatePage() {
     const selectVideoFrame = (role: FrameRole, assetId: string) => {
         const referenceViolation = creativeReferenceCapabilityViolation(referenceCapabilityState, agent.selectedAssets);
         if (referenceViolation) {
-            message.warning(referenceCapabilityMessage(referenceViolation.reason, referenceViolation.maxReferenceImages));
+            message.warning(referenceCapabilityMessage(referenceViolation.reason, referenceViolation.maxReferenceImages, referenceViolation.minReferenceImages));
             return;
         }
         const otherId = role === "first_frame" ? generationPreferences.video?.lastFrameAssetId : generationPreferences.video?.firstFrameAssetId;
@@ -558,7 +566,7 @@ export default function CreatePage() {
             onChange={updatePrompt}
             onOptimize={() => void optimizeCurrentPrompt()}
             onSubmit={() => void submit()}
-            onCancel={() => void agent.cancel().catch(() => message.error(t("stopFailed")))}
+            onCancel={() => void agent.cancel().catch((error) => showCreateError(error, "operation"))}
             attachments={agent.selectedAssets}
             skills={skills}
             skillsLoading={skillsLoading}
@@ -620,9 +628,11 @@ export default function CreatePage() {
                     items={agent.conversations}
                     activeId={agent.conversationId}
                     loading={agent.historyLoading}
+                    error={agent.historyError}
                     hasMore={agent.historyHasMore}
                     loadingMore={agent.historyLoadingMore}
-                    onLoadMore={() => void agent.loadMoreConversations()}
+                    onLoadMore={() => void agent.loadMoreConversations().catch(() => undefined)}
+                    onRetryLoad={() => void agent.refreshConversations().catch(() => undefined)}
                     onNew={() => {
                         newConversation();
                         if (screens.lg !== true) setHistoryOpen(false);
@@ -636,7 +646,7 @@ export default function CreatePage() {
                             await agent.renameConversation(id, title);
                             message.success(t("titleUpdated"));
                         } catch (error) {
-                            message.error(t("updateTitleFailed"));
+                            showCreateError(error, "operation");
                             throw error;
                         }
                     }}
@@ -645,7 +655,7 @@ export default function CreatePage() {
                             await agent.deleteConversations(ids);
                             message.success(ids.length > 1 ? t("conversationsDeleted", { count: ids.length }) : t("conversationDeleted"));
                         } catch (error) {
-                            message.error(t("deleteConversationFailed"));
+                            showCreateError(error, "operation");
                             throw error;
                         }
                     }}
@@ -734,7 +744,7 @@ export default function CreatePage() {
                                 onToggleAsset={toggleReferencedAsset}
                                 hasOlder={agent.hasOlderMessages}
                                 olderLoading={agent.olderMessagesLoading}
-                                onLoadOlder={() => void agent.loadOlderMessages()}
+                                onLoadOlder={() => void agent.loadOlderMessages().catch((error) => showCreateError(error, "operation"))}
                                 followLatest={!awayFromLatest}
                             />
                         ) : (

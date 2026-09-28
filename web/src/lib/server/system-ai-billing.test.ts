@@ -109,6 +109,95 @@ describe("system AI billing helpers", () => {
         expect(readVerifiedSystemAiUsageContext(headers, "writer", "vendor-text", requestBinding)).toBeUndefined();
     });
 
+    it("signs and round-trips trusted reference-video billing metadata", () => {
+        const requestBinding = { userId: "user-one", channelId: "channel-one", capability: "video" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/videos/generations", canonicalQuery: "", bodyDigest: "b".repeat(64) };
+        const videoBillingContext = { hasReferenceVideo: true, verifiedInputVideoDurationSeconds: "12.345", referenceVideoDurationSource: "server-probed" as const };
+        const headers = new Headers(
+            systemAiBillingHeaders(
+                "seedance",
+                {
+                    ...requestBinding,
+                    expiresAtMs: Date.now() + 60_000,
+                    businessRequestId: "video-task:one",
+                    requestFingerprint: "a".repeat(64),
+                    attemptNumber: 1,
+                    bindingId: "binding-one",
+                    providerIdempotencySupported: false,
+                    videoBillingContext,
+                },
+                "doubao-seedance-2.0-pro",
+            ),
+        );
+
+        expect(readVerifiedSystemAiUsageContext(headers, "seedance", "doubao-seedance-2.0-pro", requestBinding)?.videoBillingContext).toEqual(videoBillingContext);
+        headers.set("x-vozeb-pro-video-billing-context", JSON.stringify({ ...videoBillingContext, verifiedInputVideoDurationSeconds: "1" }));
+        expect(readVerifiedSystemAiUsageContext(headers, "seedance", "doubao-seedance-2.0-pro", requestBinding)).toBeUndefined();
+    });
+
+    it("signs image quality billing metadata and rejects any tier or size mutation", () => {
+        const requestBinding = { userId: "user-one", channelId: "channel-one", capability: "image" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/images/generations", canonicalQuery: "", bodyDigest: "b".repeat(64) };
+        const imageQualityContext = {
+            bindingId: "binding-one",
+            qualityProfileRevision: "profile-v1",
+            optionRevision: "option-v1",
+            saleRateCardRevision: "sale-v1",
+            selectedQualityValue: "2k",
+            resolvedSize: "2048x2048",
+            resolvedResolutionTier: "2k",
+            billableOutputCount: 1,
+        };
+        const headers = new Headers(
+            systemAiBillingHeaders(
+                "qwen-image",
+                {
+                    ...requestBinding,
+                    expiresAtMs: Date.now() + 60_000,
+                    businessRequestId: "image-task:one",
+                    requestFingerprint: "a".repeat(64),
+                    attemptNumber: 1,
+                    bindingId: "binding-one",
+                    providerIdempotencySupported: false,
+                    imageQualityContext,
+                },
+                "qwen-image-3.0-pro",
+            ),
+        );
+
+        expect(readVerifiedSystemAiUsageContext(headers, "qwen-image", "qwen-image-3.0-pro", requestBinding)?.imageQualityContext).toEqual(imageQualityContext);
+        headers.set("x-vozeb-pro-image-quality-context", JSON.stringify({ ...imageQualityContext, resolvedSize: "1024x1024" }));
+        expect(readVerifiedSystemAiUsageContext(headers, "qwen-image", "qwen-image-3.0-pro", requestBinding)).toBeUndefined();
+    });
+
+    it("preserves a long canonical sale rate revision in the signed image quality context", () => {
+        const requestBinding = { userId: "user-one", channelId: "channel-one", capability: "image" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/images/generations", canonicalQuery: "", bodyDigest: "b".repeat(64) };
+        const imageQualityContext = {
+            bindingId: "binding-one",
+            qualityProfileRevision: "profile-v1",
+            saleRateCardRevision: `rate-card-v1:${"dimension".repeat(180)}`,
+            resolvedSize: "1024x1024",
+            resolvedResolutionTier: "1k",
+            billableOutputCount: 1,
+        };
+        const headers = new Headers(
+            systemAiBillingHeaders(
+                "qwen-image",
+                {
+                    ...requestBinding,
+                    expiresAtMs: Date.now() + 60_000,
+                    businessRequestId: "image-task:long-rate-card",
+                    requestFingerprint: "a".repeat(64),
+                    attemptNumber: 1,
+                    bindingId: "binding-one",
+                    providerIdempotencySupported: false,
+                    imageQualityContext,
+                },
+                "qwen-image-3.0-pro",
+            ),
+        );
+
+        expect(readVerifiedSystemAiUsageContext(headers, "qwen-image", "qwen-image-3.0-pro", requestBinding)?.imageQualityContext?.saleRateCardRevision).toBe(imageQualityContext.saleRateCardRevision);
+    });
+
     it("rejects an otherwise valid create context after its configured request window", () => {
         const binding = { userId: "user-one", channelId: "channel-one", capability: "text" as const, method: "POST", canonicalPath: "/api/ai/system/channel-one/chat/completions", canonicalQuery: "", bodyDigest: "b".repeat(64) };
         const headers = new Headers(

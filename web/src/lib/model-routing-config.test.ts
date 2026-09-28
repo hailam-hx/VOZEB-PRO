@@ -5,6 +5,7 @@ import {
     channelDetectedCapabilities,
     channelModelCapability,
     deriveLogicalModelsConfig,
+    dflopModelSyncStats,
     isLogicalModelResolvable,
     mergeChannelModelsIntoLogicalModels,
     modelRoutingValidationErrors,
@@ -14,10 +15,282 @@ import {
     resolveLogicalModelCapabilityProfile,
     synchronizeLogicalModelsWithChannels,
 } from "./model-routing-config";
+import { normalizeImageQualityProfile } from "./image-quality-profile";
+import { parseDflopPricing } from "./dflop-pricing";
+import { DEFAULT_SYSTEM_PRICING_POLICY } from "./billing/pricing-policy";
+import { applyCapabilityProbeToPricingProfile, capabilityProbeFingerprint } from "./billing/provider-capability-probe";
+import { applyProviderPricingConversion } from "./billing/provider-pricing";
 
 const channel = (id: string, models: string[], enabled = true): SystemModelChannel => ({ id, name: id, baseUrl: `https://${id}.example.com/v1`, apiKey: "test-secret", apiFormat: "openai", models, enabled });
 
 describe("model routing config", () => {
+    it("derives authoritative DFLOP image quality profiles without writing generic qualities", () => {
+        const upstream = channel("dflop", ["tvod-midjourney-v7"]);
+        upstream.advancedConfig = {
+            protocol: "dflop",
+            modelDiscovery: {
+                "tvod-midjourney-v7": {
+                    kind: "image",
+                    matched: true,
+                    routable: true,
+                    upstreamMetadata: { category: "image", generationParameters: { qualities: ["high", "low"] } },
+                },
+            },
+        } as never;
+
+        const binding = synchronizeLogicalModelsWithChannels([], [upstream])[0].bindings[0];
+        expect(binding.imageQualityProfile).toMatchObject({ source: "provider_preset", controlType: "prompt_flag", defaultValue: "standard" });
+        expect(binding.generationParameters?.qualities).toEqual([]);
+    });
+
+    it("preserves a manual DFLOP quality profile while updating its upstream candidate", () => {
+        const upstream = channel("dflop", ["tvod-midjourney-v7"]);
+        upstream.advancedConfig = { protocol: "dflop", modelDiscovery: { "tvod-midjourney-v7": { kind: "image", matched: true, routable: true, upstreamMetadata: { category: "image" } } } } as never;
+        const manual = normalizeImageQualityProfile({
+            version: 1,
+            controlType: "request_parameter",
+            selectionMode: "explicit",
+            source: "manual",
+            options: [{ value: "raw", label: "Raw", effect: { type: "request_parameter", requestParameter: { name: "quality", value: "raw" } } }],
+            defaultValue: "raw",
+            validation: { status: "VALID", reasons: [], validatedAt: "2026-09-24T00:00:00.000Z" },
+        })!;
+        const existing: LogicalModel[] = [
+            { id: "tvod-midjourney-v7", name: "MJ", capability: "image", enabled: true, bindings: [{ id: "binding", channelId: "dflop", upstreamModel: "tvod-midjourney-v7", enabled: true, priority: 1, imageQualityProfile: manual }] },
+        ];
+
+        const binding = synchronizeLogicalModelsWithChannels(existing, [upstream])[0].bindings[0];
+        expect(binding.imageQualityProfile).toMatchObject({ source: "manual", validation: { status: "DRIFT" }, upstreamCandidate: { source: "provider_preset", controlType: "prompt_flag" } });
+    });
+
+    it("creates a DFLOP logical model from upstream name and structured generation metadata", () => {
+        const upstream = {
+            ...channel("dflop", ["doubao-seedance-2.5"]),
+            advancedConfig: {
+                protocol: "dflop",
+                modelDiscovery: {
+                    "doubao-seedance-2.5": {
+                        kind: "video",
+                        matched: true,
+                        routable: true,
+                        upstreamMetadata: {
+                            displayName: "Seedance 2.5",
+                            category: "video",
+                            generationParameters: {
+                                referenceInputs: ["image", "video", "audio"],
+                                maxReferenceImages: 30,
+                                aspectRatios: ["16:9", "9:16"],
+                                pixelSizes: [],
+                                supportsCustomSize: false,
+                                qualities: [],
+                                resolutions: ["480p", "720p", "1080p"],
+                                durationMode: "range",
+                                durationSeconds: [],
+                                durationRange: { min: 4, max: 30 },
+                                supportsCustomDuration: true,
+                                customDurationRange: { min: 4, max: 30 },
+                                videoReferenceModes: ["reference", "first_frame", "first_last"],
+                                voices: [],
+                                formats: [],
+                            },
+                            generationParameterSources: { resolutions: "upstream", durationMode: "upstream", durationRange: "upstream", supportsCustomDuration: "upstream", customDurationRange: "upstream", maxReferenceImages: "preset" },
+                        },
+                    },
+                },
+            } as unknown as SystemModelChannel["advancedConfig"],
+        };
+
+        const [model] = synchronizeLogicalModelsWithChannels([], [upstream]);
+        expect(model).toMatchObject({ name: "Seedance 2.5", nameSource: "upstream", capability: "video" });
+        expect(model.bindings[0]).toMatchObject({
+            generationParameters: { resolutions: ["480", "720", "1080"], durationRange: { min: 4, max: 30 }, maxReferenceImages: 30 },
+            generationParameterSources: { resolutions: "upstream", maxReferenceImages: "preset" },
+        });
+    });
+
+    it("updates upstream-managed fields, preserves manual fields, and reports DFLOP drift", () => {
+        const upstream = {
+            ...channel("dflop", ["video-model"]),
+            advancedConfig: {
+                protocol: "dflop",
+                modelDiscovery: {
+                    "video-model": {
+                        kind: "video",
+                        matched: true,
+                        routable: true,
+                        upstreamMetadata: {
+                            displayName: "Upstream Name 2",
+                            generationParameters: {
+                                referenceInputs: [],
+                                aspectRatios: ["16:9", "9:16"],
+                                pixelSizes: [],
+                                supportsCustomSize: false,
+                                qualities: [],
+                                resolutions: ["1080p"],
+                                durationSeconds: [],
+                                videoReferenceModes: [],
+                                voices: [],
+                                formats: [],
+                            },
+                            generationParameterSources: { aspectRatios: "upstream", resolutions: "upstream" },
+                        },
+                    },
+                },
+            } as unknown as SystemModelChannel["advancedConfig"],
+        };
+        const existing: LogicalModel[] = [
+            {
+                id: "video-model",
+                name: "Admin Name",
+                nameSource: "manual",
+                capability: "video",
+                enabled: true,
+                bindings: [
+                    {
+                        id: "binding",
+                        channelId: "dflop",
+                        upstreamModel: "video-model",
+                        enabled: true,
+                        priority: 1,
+                        generationParameters: { referenceInputs: [], aspectRatios: ["16:9"], pixelSizes: [], supportsCustomSize: false, qualities: [], resolutions: ["4k"], durationSeconds: [], videoReferenceModes: [], voices: [], formats: [] },
+                        generationParameterSources: { aspectRatios: "upstream", resolutions: "manual" },
+                    },
+                ],
+            },
+        ];
+
+        const [model] = synchronizeLogicalModelsWithChannels(existing, [upstream]);
+        expect(model.name).toBe("Admin Name");
+        expect(model.bindings[0].generationParameters).toMatchObject({ aspectRatios: ["16:9", "9:16"], resolutions: ["4k"] });
+        expect(model.bindings[0].capabilityDrifts).toEqual([{ field: "resolutions", local: ["4k"], upstream: ["1080"], source: "manual" }]);
+    });
+
+    it("reconciles DFLOP pricing per dimension and rebuilds the binding cost projection", () => {
+        const oldProfile = parseDflopPricing({ video_price_tiers: { "720p": "90.72" } }, { modelId: "video-priced", category: "video", syncedAt: "2026-09-23T00:00:00.000Z" });
+        oldProfile.dimensions[0] = { ...oldProfile.dimensions[0], source: "manual", effectiveValue: "95" };
+        const newProfile = parseDflopPricing({ video_price_tiers: { "720p": "100", "1080p": "224.532" } }, { modelId: "video-priced", category: "video", syncedAt: "2026-09-24T00:00:00.000Z" });
+        const upstream = channel("dflop", ["video-priced"]);
+        upstream.advancedConfig = { protocol: "dflop", modelDiscovery: { "video-priced": { kind: "video", matched: true, routable: true, upstreamMetadata: { providerPricingProfile: newProfile } } } } as never;
+        const existing: LogicalModel[] = [
+            { id: "video-priced", name: "Video", capability: "video", enabled: true, bindings: [{ id: "binding", channelId: "dflop", upstreamModel: "video-priced", enabled: true, priority: 1, providerPricingProfile: oldProfile }] },
+        ];
+
+        const binding = synchronizeLogicalModelsWithChannels(existing, [upstream], DEFAULT_SYSTEM_PRICING_POLICY)[0].bindings[0];
+        expect(binding.providerPricingProfile?.dimensions.find((item) => item.conditions?.resolution === "720p")).toMatchObject({ source: "manual", upstreamValue: "100", effectiveValue: "95", providerCostHotxCredits: "0.2375" });
+        expect(binding.costRateCard?.components).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ dimension: "durationSeconds", unitPrice: "0.2375", when: { resolution: "720p" } }),
+                expect.objectContaining({ dimension: "durationSeconds", unitPrice: "0.56133", when: { resolution: "1080p" } }),
+            ]),
+        );
+        expect(binding.providerCostUnit).toEqual({ kind: "provider-native", provider: "hotx", unit: "credit", usdConversion: { version: DEFAULT_SYSTEM_PRICING_POLICY.version, usdPerUnit: "1" } });
+    });
+
+    it("preserves a matching manual capability probe across ordinary sync and invalidates it on contract drift", () => {
+        const oldProfile = parseDflopPricing({ input_per_1m: "10", output_per_1m: "20", price_per_image: "30", supports_image_gen: true }, { modelId: "gpt-6", category: "text", syncedAt: "2026-09-23T00:00:00.000Z" });
+        const probed = applyProviderPricingConversion(
+            applyCapabilityProbeToPricingProfile(oldProfile, {
+                version: 1,
+                provider: "dflop",
+                modelId: "gpt-6",
+                channelId: "dflop",
+                bindingId: "binding",
+                operationScope: "builtin_image_generation",
+                endpoint: "/v1/responses",
+                outcome: "unsupported",
+                supported: false,
+                statusCode: 400,
+                upstreamErrorCode: "tool_not_supported",
+                usageSeen: false,
+                imageOutputSeen: false,
+                billingEvidence: { basis: "unresolved", authoritative: false, source: "none" },
+                probedAt: "2026-09-23T01:00:00.000Z",
+                registryFingerprint: capabilityProbeFingerprint(oldProfile),
+            }),
+            DEFAULT_SYSTEM_PRICING_POLICY,
+            "2026-09-23T01:00:00.000Z",
+        );
+        const existing: LogicalModel[] = [{ id: "gpt-6", name: "GPT-6", capability: "text", enabled: true, bindings: [{ id: "binding", channelId: "dflop", upstreamModel: "gpt-6", enabled: true, priority: 1, providerPricingProfile: probed }] }];
+        const synced = (supportsImageGeneration: boolean) => {
+            const profile = parseDflopPricing({ input_per_1m: "10", output_per_1m: "20", price_per_image: "30", supports_image_gen: supportsImageGeneration }, { modelId: "gpt-6", category: "text", syncedAt: "2026-09-24T00:00:00.000Z" });
+            const upstream = channel("dflop", ["gpt-6"]);
+            upstream.advancedConfig = { protocol: "dflop", modelDiscovery: { "gpt-6": { kind: "text", matched: true, routable: true, upstreamMetadata: { providerPricingProfile: profile } } } } as never;
+            return synchronizeLogicalModelsWithChannels(existing, [upstream], DEFAULT_SYSTEM_PRICING_POLICY)[0].bindings[0].providerPricingProfile!;
+        };
+
+        expect(synced(true)).toMatchObject({ status: "READY", operationPricingStatus: { builtin_image_generation: { status: "UNSUPPORTED" } } });
+        expect(synced(false)).toMatchObject({ status: "PARTIAL", operationPricingStatus: { standalone_image_generation: { status: "PARTIAL" } } });
+        expect(synced(false).metadata?.capabilityProbes).toBeUndefined();
+    });
+
+    it("does not report a model update when only pricing sync timestamps change", () => {
+        const oldProfile = parseDflopPricing({ price_per_image: "80" }, { modelId: "image-priced", category: "image", syncedAt: "2026-09-23T00:00:00.000Z" });
+        const newProfile = parseDflopPricing({ price_per_image: "80" }, { modelId: "image-priced", category: "image", syncedAt: "2026-09-24T00:00:00.000Z" });
+        const updatedChannel = channel("dflop", ["image-priced"]);
+        updatedChannel.advancedConfig = { protocol: "dflop", modelDiscovery: { "image-priced": { kind: "image", matched: true, routable: true, upstreamMetadata: { providerPricingProfile: newProfile } } } } as never;
+        const existing: LogicalModel[] = [
+            {
+                id: "image-priced",
+                name: "Image",
+                nameSource: "upstream",
+                capability: "image",
+                enabled: true,
+                bindings: [{ id: "binding", channelId: "dflop", upstreamModel: "image-priced", enabled: true, priority: 1, upstreamMetadata: { providerPricingProfile: oldProfile }, providerPricingProfile: oldProfile }],
+            },
+        ];
+
+        expect(dflopModelSyncStats(existing, [], updatedChannel)).toMatchObject({
+            updated: 0,
+            changedModels: [],
+            imageQualityProfiles: { total: 1, valid: 1, drift: 0, needsReview: 0, invalid: 0, manual: 0, none: 1, unprofiled: 0 },
+        });
+    });
+
+    it("keeps discovered DFLOP catalog entries out of logical routing when metadata marks them unavailable or unsupported", () => {
+        const upstream = {
+            ...channel("dflop", ["writer", "music-only", "placeholder"]),
+            advancedConfig: {
+                protocol: "dflop",
+                modelCapabilities: { writer: "text" },
+                modelDiscovery: {
+                    writer: { kind: "text", callable: true, matched: true, routable: true },
+                    "music-only": { kind: "other", callable: true, matched: true, routable: false },
+                    placeholder: { kind: "text", callable: false, matched: true, routable: false },
+                },
+            } as unknown as SystemModelChannel["advancedConfig"],
+        };
+
+        expect(synchronizeLogicalModelsWithChannels([], [upstream]).map((model) => model.id)).toEqual(["writer"]);
+        expect(Array.from(channelDetectedCapabilities(upstream))).toEqual(["text"]);
+    });
+
+    it("initializes DFLOP voice cloning only for a new binding and preserves later edits", () => {
+        const upstream = {
+            ...channel("dflop", ["voice-clone-pro"]),
+            advancedConfig: {
+                protocol: "dflop" as const,
+                textModel: "",
+                imageModel: "",
+                videoModel: "",
+                createPath: "",
+                editPath: "",
+                imageToVideoPath: "",
+                queryPath: "",
+                requestTemplate: "",
+                resultField: "",
+                statusField: "",
+                durationRange: "",
+                referenceRule: "",
+                supportsReferenceImage: false,
+                supportsReferenceVideo: false,
+                supportsReferenceAudio: false,
+            },
+        };
+        const created = synchronizeLogicalModelsWithChannels([], [upstream]);
+        expect(created[0].bindings[0]).toMatchObject({ generationParameters: { audioOperation: "voice-clone" }, capabilityProfile: { supportsIdempotency: true } });
+        const edited = [{ ...created[0], bindings: [{ ...created[0].bindings[0], capabilityProfile: { supportsIdempotency: false }, generationParameters: { ...created[0].bindings[0].generationParameters!, audioOperation: "speech" as const } }] }];
+        expect(synchronizeLogicalModelsWithChannels(edited, [upstream])[0].bindings[0]).toMatchObject({ capabilityProfile: { supportsIdempotency: false }, generationParameters: { audioOperation: "speech" } });
+    });
     it("persists the normalized text streaming stage deadlines on a binding", () => {
         const models = normalizeLogicalModelsConfig(
             [

@@ -32,6 +32,8 @@ vi.mock("@/lib/server/usage-billing-runtime", () => ({ attachSystemAiUsageUpstre
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.cleanup }));
 
 import { createVoiceCloneUpstreamStep, markVoiceCloneFailed, queryVoiceCloneUpstreamStep, sanitizeProviderTrace } from "./voice-clone-runtime";
+import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
+import { protocolModelConfig } from "@/lib/channel-protocol-registry";
 import type { VoiceCloneTask, VoiceProfile } from "./voice-profile-store";
 
 describe("voice clone runtime", () => {
@@ -107,6 +109,40 @@ describe("voice clone runtime", () => {
         mocks.fetch.mockResolvedValueOnce(Response.json({ id: "dflop-voice-one", status: "ready" }));
         await expect(queryVoiceCloneUpstreamStep(task, "http://internal", "user-one")).resolves.toEqual({ state: "completed", status: "ready" });
         expect(profile).toMatchObject({ status: "ready", channelId: "dflop", providerVoiceId: "dflop-voice-one", upstreamStatus: "ready" });
+    });
+
+    it("creates, queries, and deletes a DFLOP voice through the local TCP fixture", async () => {
+        const fixture = createProtocolFixtureServer({ dflop: true });
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const operation = protocolModelConfig("dflop", "audio", "voice-clone-pro")!;
+        task = {
+            ...task,
+            config: {
+                ...task.config,
+                createPath: operation.createPath!,
+                queryPath: operation.queryPath!,
+                deletePath: operation.deletePath!,
+                requestTemplate: operation.requestTemplate!,
+                resultField: operation.resultField!,
+                statusField: operation.statusField!,
+            },
+        };
+        mocks.fetch.mockImplementation((url: string, init?: RequestInit) => fetch(url, init));
+        try {
+            await expect(createVoiceCloneUpstreamStep(task, origin, "https://vozeb.example", "user-one")).resolves.toMatchObject({ state: "pending", upstreamTaskId: expect.stringMatching(/^fixture-voice-clone-/) });
+            await expect(queryVoiceCloneUpstreamStep(task, origin, "user-one")).resolves.toEqual({ state: "completed", status: "ready" });
+            const voiceId = profile.providerVoiceId;
+            task = { ...task, id: "delete-one", operation: "delete", status: "pending", providerVoiceId: voiceId, deletePreviousStatus: "ready" };
+            profile = { ...profile, status: "deleting" };
+            await expect(createVoiceCloneUpstreamStep(task, origin, "https://vozeb.example", "user-one")).resolves.toEqual({ state: "completed", status: "deleted" });
+            expect(fixture.requests.filter((request) => request.path.includes("/audio/voices"))).toMatchObject([{ method: "POST", headers: { "idempotency-key": "voice-clone-task:task-one:attempt:1" } }, { method: "GET" }, { method: "DELETE" }]);
+            expect(fixture.tasks.get(voiceId!)).toMatchObject({ deleted: true });
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
     });
 
     it("deletes only the pinned provider voice then tombstones the profile and cleans unreferenced media", async () => {

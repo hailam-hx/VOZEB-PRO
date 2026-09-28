@@ -11,6 +11,7 @@ import type { AdminGenerationOperationsPayload, AdminGenerationTask } from "@/li
 import { GenerationChannelStatus } from "./generation-channel-status";
 import { AgentPlannerAuditSummary, GenerationRequestSummary, GenerationTaskRuntimeSummary, generationTaskPointsLabel } from "./generation-operation-task-details";
 import { generationOperationStatusTagClass, generationOperationThemeClasses } from "./generation-operations-theme";
+import { VideoValidationPanel } from "./video-validation-panel";
 
 const PAGE_SIZE = 20;
 
@@ -153,6 +154,7 @@ export function GenerationOperationsClient() {
     const summary = data?.summary;
     return (
         <div className="space-y-3 sm:space-y-4">
+            <VideoValidationPanel />
             <Panel>
                 <PanelHeader
                     title="运行概览"

@@ -12,7 +12,7 @@ import { agentTaskEntityId, bindDurableAgentToolCallGeneration, markDurableAgent
 import type { AgentRunTask } from "@/lib/server/agent-run-store";
 
 type GenerationType = AgentRunTask["type"];
-type TaskPayload = { task?: { id?: string; status?: string; result?: unknown; error?: string } };
+type TaskPayload = { task?: { id?: string; status?: string; result?: unknown; error?: string; errorCode?: string; publicMessage?: string; actionHint?: string; canRetry?: boolean } };
 
 export class GenerationApplicationError extends Error {
     constructor(

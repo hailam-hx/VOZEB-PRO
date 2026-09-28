@@ -2,17 +2,49 @@ import { decimal, decimalText, hasTerminatingDecimal, type DecimalInput } from "
 
 export type UsageSource = "request" | "actual" | "derived" | "reserve";
 export type BillableCapability = "text" | "image" | "video" | "audio";
-export type PricingDimension = "request" | "inputTokens" | "cachedInputTokens" | "outputTokens" | "count" | "megapixels" | "characters" | "quality" | "resolution" | "durationSeconds" | "format";
-export type PricingConditionDimension = "quality" | "resolution" | "format";
+export type PricingOperationScope = "text_generation" | "builtin_image_generation" | "standalone_image_generation" | "image_edit" | "video_generation" | "tts" | "voice_clone" | "music_generation" | "avatar" | "other";
+export type PricingDimension =
+    "request" | "inputTokens" | "cachedInputTokens" | "cacheCreationTokens" | "outputTokens" | "serverToolCalls" | "inputImageCount" | "count" | "megapixels" | "characters" | "quality" | "resolution" | "durationSeconds" | "format";
+export type PricingBasis =
+    | "TOKEN_INPUT"
+    | "TOKEN_CACHED_INPUT"
+    | "TOKEN_OUTPUT"
+    | "CACHE_CREATION"
+    | "SERVER_TOOL_CALL"
+    | "IMAGE_OUTPUT"
+    | "IMAGE_INPUT"
+    | "IMAGE_LARGE"
+    | "VIDEO_SECOND"
+    | "VIDEO_INPUT_SECOND"
+    | "VIDEO_TOKEN"
+    | "VIDEO_SECOND_STAGE"
+    | "TTS_CHARACTER"
+    | "VOICE_CLONE_CALL"
+    | "MUSIC_GENERATION"
+    | "AVATAR_CREATE"
+    | "AVATAR_SECOND"
+    | "TRANSCRIPT_CALL"
+    | "PER_GENERATION"
+    | "PER_CALL"
+    | "PER_CHARACTER"
+    | "PER_SECOND";
+export type PricingConditionDimension = "quality" | "resolution" | "format" | "billingBasis" | "contextTier" | "megapixelTier";
 export type PricingConditions = Partial<Record<PricingConditionDimension, string>>;
+export type PricingJsonValue = string | number | boolean | null | PricingJsonValue[] | { [key: string]: PricingJsonValue };
 
 export type PricingComponent = {
     id: string;
     dimension: PricingDimension;
+    basis?: PricingBasis;
     unitPrice: string;
     per?: string;
     match?: string;
     when?: PricingConditions;
+    contextThresholdTokens?: string;
+    megapixelThreshold?: string;
+    freeQuantity?: string;
+    operationScope?: PricingOperationScope;
+    missingMegapixelTier?: "normal" | "large";
 };
 
 export type PricingRateCardV1 = {
@@ -26,11 +58,15 @@ export type PricingRateCardInputV1 = PricingRateCardV1;
 
 export type NormalizedUsage = {
     capability: BillableCapability;
+    operationScope?: PricingOperationScope;
     source: UsageSource;
     request?: string;
     inputTokens?: string;
     cachedInputTokens?: string;
+    cacheCreationTokens?: string;
     outputTokens?: string;
+    serverToolCalls?: string;
+    inputImageCount?: string;
     maxOutputTokens?: string;
     count?: string;
     megapixels?: string;
@@ -39,15 +75,29 @@ export type NormalizedUsage = {
     resolution?: string;
     durationSeconds?: string;
     format?: string;
+    totalTokens?: string;
+    inputVideoDurationSeconds?: string;
+    billingBasis?: "default" | "with_video_input";
+    contextTier?: "normal" | "long";
+    megapixelTier?: "normal" | "large";
+    contextInputTokens?: string;
+    longContextThresholdTokens?: string;
+    hasReferenceVideo?: boolean;
+    framesPerSecond?: string;
+    providerUsage?: Record<string, PricingJsonValue>;
 };
 
 export type BillableUsageInput = {
     capability: BillableCapability;
+    operationScope?: PricingOperationScope;
     source: UsageSource;
     request?: DecimalInput;
     inputTokens?: DecimalInput;
     cachedInputTokens?: DecimalInput;
+    cacheCreationTokens?: DecimalInput;
     outputTokens?: DecimalInput;
+    serverToolCalls?: DecimalInput;
+    inputImageCount?: DecimalInput;
     maxOutputTokens?: DecimalInput;
     count?: DecimalInput;
     megapixels?: DecimalInput;
@@ -56,6 +106,16 @@ export type BillableUsageInput = {
     resolution?: string;
     durationSeconds?: DecimalInput;
     format?: string;
+    totalTokens?: DecimalInput;
+    inputVideoDurationSeconds?: DecimalInput;
+    billingBasis?: "default" | "with_video_input";
+    contextTier?: "normal" | "long";
+    megapixelTier?: "normal" | "large";
+    contextInputTokens?: DecimalInput;
+    longContextThresholdTokens?: DecimalInput;
+    hasReferenceVideo?: boolean;
+    framesPerSecond?: DecimalInput;
+    providerUsage?: Record<string, PricingJsonValue>;
 };
 
 export type PricingReserve = {
@@ -75,11 +135,11 @@ export type FinalSaleCharge = {
 
 export class PricingUsageDimensionError extends Error {
     readonly code = "pricing_usage_dimension_missing";
-    readonly requiredDimension: PricingDimension;
+    readonly requiredDimension: PricingDimension | PricingConditionDimension;
     readonly priceComponentId: string;
     readonly priceCardId: string;
 
-    constructor(input: { message: string; requiredDimension: PricingDimension; priceComponentId: string; priceCardId: string }) {
+    constructor(input: { message: string; requiredDimension: PricingDimension | PricingConditionDimension; priceComponentId: string; priceCardId: string }) {
         super(input.message);
         this.name = "PricingUsageDimensionError";
         this.requiredDimension = input.requiredDimension;
@@ -88,10 +148,10 @@ export class PricingUsageDimensionError extends Error {
     }
 }
 
-const numericDimensions = new Set<PricingDimension>(["request", "inputTokens", "cachedInputTokens", "outputTokens", "count", "megapixels", "characters", "durationSeconds"]);
+const numericDimensions = new Set<PricingDimension>(["request", "inputTokens", "cachedInputTokens", "cacheCreationTokens", "outputTokens", "serverToolCalls", "inputImageCount", "count", "megapixels", "characters", "durationSeconds"]);
 const categoricalDimensions = new Set<PricingDimension>(["quality", "resolution", "format"]);
-const conditionDimensions: PricingConditionDimension[] = ["quality", "resolution", "format"];
-const textPricingDimensions = new Set<PricingDimension>(["request", "inputTokens", "cachedInputTokens", "outputTokens", "characters"]);
+const conditionDimensions: PricingConditionDimension[] = ["quality", "resolution", "format", "billingBasis", "contextTier", "megapixelTier"];
+const textPricingDimensions = new Set<PricingDimension>(["request", "inputTokens", "cachedInputTokens", "cacheCreationTokens", "outputTokens", "serverToolCalls", "characters"]);
 
 export function validatePricingRateCard(input: unknown): ValidatedPricingRateCardV1 {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("价格卡必须是对象");
@@ -107,7 +167,7 @@ export function validatePricingRateCardForCapability(input: unknown, capability:
     if (capability !== "text") return rateCard;
     for (const component of rateCard.components) {
         if (!textPricingDimensions.has(component.dimension)) throw new Error(`文本能力价格卡不支持维度：${component.dimension}`);
-        const unsupportedCondition = conditionDimensions.find((dimension) => component.when?.[dimension] !== undefined);
+        const unsupportedCondition = conditionDimensions.find((dimension) => dimension !== "contextTier" && component.when?.[dimension] !== undefined);
         if (unsupportedCondition) throw new Error(`文本能力价格卡不支持条件维度：${unsupportedCondition}`);
     }
     return rateCard;
@@ -126,11 +186,15 @@ export function normalizeBillableUsage(input: BillableUsageInput): NormalizedUsa
     if (!isUsageSource(input.source)) throw new Error("计费用量来源无效");
     return {
         capability: input.capability,
+        operationScope: input.operationScope || defaultOperationScope(input.capability),
         source: input.source,
         ...numericUsage("request", input.request),
         ...numericUsage("inputTokens", input.inputTokens),
         ...numericUsage("cachedInputTokens", input.cachedInputTokens),
+        ...numericUsage("cacheCreationTokens", input.cacheCreationTokens),
         ...numericUsage("outputTokens", input.outputTokens),
+        ...numericUsage("serverToolCalls", input.serverToolCalls),
+        ...numericUsage("inputImageCount", input.inputImageCount),
         ...numericUsage("maxOutputTokens", input.maxOutputTokens),
         ...numericUsage("count", input.count),
         ...numericUsage("megapixels", input.megapixels),
@@ -139,6 +203,16 @@ export function normalizeBillableUsage(input: BillableUsageInput): NormalizedUsa
         ...textUsage("resolution", input.resolution),
         ...numericUsage("durationSeconds", input.durationSeconds),
         ...textUsage("format", input.format),
+        ...numericUsage("totalTokens", input.totalTokens),
+        ...numericUsage("inputVideoDurationSeconds", input.inputVideoDurationSeconds),
+        ...textUsage("billingBasis", input.billingBasis),
+        ...textUsage("contextTier", input.contextTier),
+        ...textUsage("megapixelTier", input.megapixelTier),
+        ...numericUsage("contextInputTokens", input.contextInputTokens),
+        ...numericUsage("longContextThresholdTokens", input.longContextThresholdTokens),
+        ...(typeof input.hasReferenceVideo === "boolean" ? { hasReferenceVideo: input.hasReferenceVideo } : {}),
+        ...numericUsage("framesPerSecond", input.framesPerSecond),
+        ...(input.providerUsage ? { providerUsage: structuredClone(input.providerUsage) } : {}),
     };
 }
 
@@ -152,6 +226,26 @@ export function calculatePricingReserve(input: { rateCard: PricingRateCardV1 | P
 
 export function calculateNormalizedUsagePrice(input: { rateCard: PricingRateCardV1 | PricingRateCardInputV1; usage: NormalizedUsage }) {
     return decimalText(priceUsage(validatePricingRateCard(input.rateCard), input.usage));
+}
+
+export function estimateVideoTokenCount(input: { outputDurationSeconds: DecimalInput; inputDurationSeconds?: DecimalInput; width: DecimalInput; height: DecimalInput; framesPerSecond?: DecimalInput }) {
+    const outputDuration = decimal(input.outputDurationSeconds, "输出视频时长");
+    const inputDuration = decimal(input.inputDurationSeconds ?? 0, "输入视频时长");
+    const width = decimal(input.width, "视频宽度");
+    const height = decimal(input.height, "视频高度");
+    const framesPerSecond = decimal(input.framesPerSecond ?? 24, "视频帧率");
+    if (outputDuration.isNegative() || outputDuration.isZero() || inputDuration.isNegative() || width.isNegative() || width.isZero() || height.isNegative() || height.isZero() || framesPerSecond.isNegative() || framesPerSecond.isZero()) {
+        throw new Error("视频 token 估算参数无效");
+    }
+    return outputDuration.plus(inputDuration).times(width).times(height).times(framesPerSecond).dividedBy(decimal(1024)).ceilToDecimalPlaces(0).toString();
+}
+
+export function estimateTextInputTokens(value: string) {
+    return String(new TextEncoder().encode(value).length);
+}
+
+export function countUnicodeCodePoints(value: string) {
+    return String(Array.from(value).length);
 }
 
 export function calculateFinalSaleCharge(input: { rateCard: PricingRateCardV1 | PricingRateCardInputV1; reserve: PricingReserve; actualUsage?: NormalizedUsage; derivedUsage?: NormalizedUsage; providerCostUsd?: DecimalInput }): FinalSaleCharge {
@@ -184,11 +278,32 @@ function normalizeComponent(input: unknown, ids: Set<string>): PricingComponent 
     const per = value.per === undefined ? undefined : positiveDecimal(value.per, "价格组件单位");
     const match = typeof value.match === "string" ? value.match.trim() : undefined;
     const when = normalizeConditions(value.when);
+    const contextThresholdTokens = value.contextThresholdTokens === undefined ? undefined : positiveDecimal(value.contextThresholdTokens, "长上下文阈值");
+    const megapixelThreshold = value.megapixelThreshold === undefined ? undefined : positiveDecimal(value.megapixelThreshold, "图片像素档位阈值");
+    const freeQuantity = value.freeQuantity === undefined ? undefined : nonNegativeDecimal(value.freeQuantity, "价格组件免费数量");
+    const operationScope = value.operationScope === undefined ? undefined : normalizeOperationScope(value.operationScope);
+    const missingMegapixelTier = value.missingMegapixelTier === "normal" || value.missingMegapixelTier === "large" ? value.missingMegapixelTier : undefined;
+    if (when?.contextTier && !contextThresholdTokens) throw new Error("长上下文价格组件缺少 token 阈值");
+    if (when?.megapixelTier && !megapixelThreshold) throw new Error("图片像素档位组件缺少 MP 阈值");
     if (categoricalDimensions.has(value.dimension) && !match) throw new Error("分类价格组件必须指定匹配值");
     if (numericDimensions.has(value.dimension) && match) throw new Error("数值价格组件不能指定匹配值");
     if (per && !hasTerminatingDecimal(decimal(1).dividedBy(decimal(per)))) throw new Error("价格组件单位必须可精确表示");
     ids.add(id);
-    return { id, dimension: value.dimension, unitPrice, ...(per ? { per } : {}), ...(match ? { match } : {}), ...(when ? { when } : {}) };
+    const basis = value.basis === undefined ? undefined : normalizePricingBasis(value.basis);
+    return {
+        id,
+        dimension: value.dimension,
+        ...(basis ? { basis } : {}),
+        unitPrice,
+        ...(per ? { per } : {}),
+        ...(match ? { match } : {}),
+        ...(when ? { when } : {}),
+        ...(contextThresholdTokens ? { contextThresholdTokens } : {}),
+        ...(megapixelThreshold ? { megapixelThreshold } : {}),
+        ...(freeQuantity ? { freeQuantity } : {}),
+        ...(operationScope ? { operationScope } : {}),
+        ...(missingMegapixelTier ? { missingMegapixelTier } : {}),
+    };
 }
 
 function priceUsage(rateCard: ValidatedPricingRateCardV1, usage: NormalizedUsage) {
@@ -196,6 +311,7 @@ function priceUsage(rateCard: ValidatedPricingRateCardV1, usage: NormalizedUsage
 }
 
 function priceComponent(rateCard: ValidatedPricingRateCardV1, component: PricingComponent, usage: NormalizedUsage) {
+    if (component.operationScope && component.operationScope !== (usage.operationScope || defaultOperationScope(usage.capability))) return decimal(0);
     for (const dimension of conditionDimensions) {
         const expected = component.when?.[dimension];
         if (expected === undefined) continue;
@@ -204,18 +320,34 @@ function priceComponent(rateCard: ValidatedPricingRateCardV1, component: Pricing
     for (const dimension of conditionDimensions) {
         const expected = component.when?.[dimension];
         if (expected === undefined) continue;
-        if (usage[dimension] !== expected) return decimal(0);
+        if (!categoricalValuesEqual(dimension, usage[dimension]!, expected)) return decimal(0);
     }
     const value = usage[component.dimension];
     if (value === undefined) throw new PricingUsageDimensionError({ message: `缺少价格维度：${component.dimension}`, requiredDimension: component.dimension, priceComponentId: component.id, priceCardId: rateCard.revision });
     if (categoricalDimensions.has(component.dimension)) {
-        if (value !== component.match) return decimal(0);
+        if (!categoricalValuesEqual(component.dimension, value, component.match!)) return decimal(0);
         const count = usage.count === undefined ? decimal(1) : decimal(usage.count, "生成数量");
         return decimal(component.unitPrice, "价格组件单价").times(count);
     }
     return decimal(component.unitPrice, "价格组件单价")
-        .times(decimal(value, component.dimension))
+        .times(chargeablePricingQuantity(component, value))
         .dividedBy(decimal(component.per || "1"));
+}
+
+export function chargeablePricingQuantity(component: Pick<PricingComponent, "freeQuantity">, quantity: DecimalInput) {
+    const raw = decimal(quantity, "价格组件数量");
+    const chargeable = raw.minus(decimal(component.freeQuantity || "0", "价格组件免费数量"));
+    return chargeable.isNegative() ? decimal(0) : chargeable;
+}
+
+function categoricalValuesEqual(dimension: PricingDimension | PricingConditionDimension, actual: string, expected: string) {
+    if (dimension !== "resolution") return actual === expected;
+    return canonicalResolution(actual) === canonicalResolution(expected);
+}
+
+function canonicalResolution(value: string) {
+    const match = /^(\d+)p?$/i.exec(value.trim());
+    return match ? match[1] : value.trim();
 }
 
 function normalizeConditions(input: unknown): PricingConditions | undefined {
@@ -258,14 +390,34 @@ function nonNegativeDecimal(value: unknown, label: string) {
     return normalized.toString();
 }
 
-function numericUsage(key: "request" | "inputTokens" | "cachedInputTokens" | "outputTokens" | "maxOutputTokens" | "count" | "megapixels" | "characters" | "durationSeconds", value: DecimalInput | undefined) {
+function numericUsage(
+    key:
+        | "request"
+        | "inputTokens"
+        | "cachedInputTokens"
+        | "cacheCreationTokens"
+        | "outputTokens"
+        | "serverToolCalls"
+        | "inputImageCount"
+        | "maxOutputTokens"
+        | "count"
+        | "megapixels"
+        | "characters"
+        | "durationSeconds"
+        | "totalTokens"
+        | "inputVideoDurationSeconds"
+        | "framesPerSecond"
+        | "contextInputTokens"
+        | "longContextThresholdTokens",
+    value: DecimalInput | undefined,
+) {
     if (value === undefined) return {};
     const normalized = decimal(value, key);
     if (normalized.isNegative()) throw new Error(`${key}不能为负数`);
     return { [key]: normalized.toString() };
 }
 
-function textUsage(key: "quality" | "resolution" | "format", value: string | undefined) {
+function textUsage(key: "quality" | "resolution" | "format" | "billingBasis" | "contextTier" | "megapixelTier", value: string | undefined) {
     const normalized = typeof value === "string" ? value.trim() : "";
     return normalized ? { [key]: normalized } : {};
 }
@@ -278,12 +430,29 @@ function isUsageSource(value: unknown): value is UsageSource {
     return value === "request" || value === "actual" || value === "derived" || value === "reserve";
 }
 
+function defaultOperationScope(capability: BillableCapability): PricingOperationScope {
+    if (capability === "text") return "text_generation";
+    if (capability === "image") return "standalone_image_generation";
+    if (capability === "video") return "video_generation";
+    return "tts";
+}
+
+function normalizeOperationScope(value: unknown): PricingOperationScope {
+    if (typeof value !== "string" || !operationScopes.has(value as PricingOperationScope)) throw new Error("价格组件 operation scope 无效");
+    return value as PricingOperationScope;
+}
+
+const operationScopes = new Set<PricingOperationScope>(["text_generation", "builtin_image_generation", "standalone_image_generation", "image_edit", "video_generation", "tts", "voice_clone", "music_generation", "avatar", "other"]);
+
 function isDimension(value: unknown): value is PricingDimension {
     return (
         value === "request" ||
         value === "inputTokens" ||
         value === "cachedInputTokens" ||
+        value === "cacheCreationTokens" ||
         value === "outputTokens" ||
+        value === "serverToolCalls" ||
+        value === "inputImageCount" ||
         value === "count" ||
         value === "megapixels" ||
         value === "characters" ||
@@ -293,3 +462,33 @@ function isDimension(value: unknown): value is PricingDimension {
         value === "format"
     );
 }
+
+function normalizePricingBasis(value: unknown): PricingBasis {
+    if (typeof value !== "string" || !pricingBases.has(value as PricingBasis)) throw new Error("价格组件计价基准无效");
+    return value as PricingBasis;
+}
+
+const pricingBases = new Set<PricingBasis>([
+    "TOKEN_INPUT",
+    "TOKEN_CACHED_INPUT",
+    "TOKEN_OUTPUT",
+    "CACHE_CREATION",
+    "SERVER_TOOL_CALL",
+    "IMAGE_OUTPUT",
+    "IMAGE_INPUT",
+    "IMAGE_LARGE",
+    "VIDEO_SECOND",
+    "VIDEO_INPUT_SECOND",
+    "VIDEO_TOKEN",
+    "VIDEO_SECOND_STAGE",
+    "TTS_CHARACTER",
+    "VOICE_CLONE_CALL",
+    "MUSIC_GENERATION",
+    "AVATAR_CREATE",
+    "AVATAR_SECOND",
+    "TRANSCRIPT_CALL",
+    "PER_GENERATION",
+    "PER_CALL",
+    "PER_CHARACTER",
+    "PER_SECOND",
+]);

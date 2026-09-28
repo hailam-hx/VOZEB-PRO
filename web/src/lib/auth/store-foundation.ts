@@ -4,6 +4,7 @@ import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image
 import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
 import { CREATE_AGENT_PROMPT_MAX_LENGTH } from "@/lib/create-agent-prompt";
+import { DEFAULT_SYSTEM_PRICING_POLICY } from "@/lib/billing/pricing-policy";
 import {
     type UserRole,
     type UserStatus,
@@ -135,9 +136,10 @@ export const DEFAULT_SETTINGS: AuthSettings = {
     generationConcurrency: { agent: 2, image: 4, video: 1, audio: 2, text: 4, render: 1 },
     generationDefaults: {
         agentModeEnabled: true,
+        manualPromptEnhancementEnabled: true,
         createPromptMaxLength: CREATE_AGENT_PROMPT_MAX_LENGTH,
         canvasImageCount: "auto",
-        imageSize: "1:1",
+        imageSize: "auto",
         imageQuality: "auto",
         imageCount: "auto",
         videoQuality: "720",
@@ -147,6 +149,7 @@ export const DEFAULT_SETTINGS: AuthSettings = {
     },
     systemChannels: [],
     logicalModels: [],
+    pricingPolicy: DEFAULT_SYSTEM_PRICING_POLICY,
     defaultModels: { imageModel: "", videoModel: "", textModel: "", audioModel: "", voiceCloneModel: "" },
     agentSkills: [
         { ...ECOMMERCE_IMAGE_SKILL, keywords: [...ECOMMERCE_IMAGE_SKILL.keywords], workspaces: [...ECOMMERCE_IMAGE_SKILL.workspaces] },

@@ -8,9 +8,13 @@ import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
 import type { PricingRateCardV1 } from "@/lib/billing/pricing";
 import type { ProviderCostUnit } from "@/lib/billing/money";
+import type { ProviderPricingProfile } from "@/lib/billing/provider-pricing";
+import type { PricingCostBasis, SuggestedSaleRateCard, SystemPricingPolicy } from "@/lib/billing/pricing-policy";
+import type { ImageQualityProfile } from "@/lib/image-quality-profile";
+export type { PricingCostBasis, ProviderPricingConversionSnapshot, SuggestedSaleRateCard, SystemPricingPolicy } from "@/lib/billing/pricing-policy";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type SystemChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
+export type SystemChannelProtocol = "auto" | "openai" | "dflop" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
 export type SystemChannelAuthMode = "none" | "bearer" | "x-api-key" | "custom-header";
 
 export type SystemChannelModelConfig = {
@@ -34,6 +38,16 @@ export type SystemChannelModelConfig = {
     supportsReferenceImage?: boolean;
     supportsReferenceVideo?: boolean;
     supportsReferenceAudio?: boolean;
+};
+
+export type SystemChannelModelDiscovery = {
+    kind: LogicalModelCapability | "other";
+    callable?: boolean;
+    matched: boolean;
+    routable: boolean;
+    endpointType?: string | null;
+    supportedProtocols?: string[];
+    upstreamMetadata?: DflopUpstreamModelMetadata;
 };
 
 export type SystemChannelAdvancedConfig = {
@@ -66,6 +80,7 @@ export type SystemChannelAdvancedConfig = {
     modelCatalogPaths?: string[];
     modelCapabilities?: Record<string, LogicalModelCapability>;
     modelConfigs?: Record<string, SystemChannelModelConfig>;
+    modelDiscovery?: Record<string, SystemChannelModelDiscovery>;
     operationConfigs?: Partial<Record<LogicalModelCapability, SystemChannelModelConfig>>;
 };
 
@@ -97,10 +112,12 @@ export type LogicalModelGenerationParameters = {
     supportsClonedVoices?: boolean;
     speedAppliesTo?: "all" | "cloned";
     referenceInputs: Array<"image" | "video" | "audio">;
+    minReferenceImages?: number;
     maxReferenceImages?: number;
     aspectRatios: string[];
     pixelSizes: string[];
     supportsCustomSize: boolean;
+    supportsAutoSize?: boolean;
     qualities: string[];
     resolutions: string[];
     durationMode?: "discrete" | "range";
@@ -115,6 +132,69 @@ export type LogicalModelGenerationParameters = {
     voices: string[];
     formats: string[];
     speedRange?: { min: number; max: number };
+};
+
+export type ModelMetadataSource = "upstream" | "description" | "preset" | "manual" | "default";
+export type LogicalModelGenerationParameterSources = Partial<Record<keyof LogicalModelGenerationParameters, ModelMetadataSource>>;
+export type LogicalModelGenerationParameterEvidence = Partial<Record<keyof LogicalModelGenerationParameters, string>>;
+
+export type LogicalModelCapabilityDrift = {
+    field: keyof LogicalModelGenerationParameters;
+    local: unknown;
+    upstream: unknown;
+    source: "manual";
+    upstreamSource?: Exclude<ModelMetadataSource, "manual" | "default">;
+    evidence?: string;
+};
+
+export type DflopDescriptionCapabilityField =
+    | "referenceImage"
+    | "maxReferenceImages"
+    | "referenceVideo"
+    | "maxReferenceVideos"
+    | "referenceAudio"
+    | "maxReferenceAudios"
+    | "firstFrame"
+    | "lastFrame"
+    | "firstLastFrame"
+    | "textToVideo"
+    | "imageToVideo"
+    | "videoToVideo"
+    | "generateAudio"
+    | "fps"
+    | "maxReferenceVideoDuration"
+    | "maxTotalReferenceVideoDuration";
+
+export type DflopDescriptionCapabilitySnapshot = {
+    values: Record<DflopDescriptionCapabilityField, boolean | number | null>;
+    sources?: Partial<Record<DflopDescriptionCapabilityField, Exclude<ModelMetadataSource, "manual" | "default">>>;
+    evidence?: Partial<Record<DflopDescriptionCapabilityField, string>>;
+    evidenceMissing?: DflopDescriptionCapabilityField[];
+};
+
+export type DflopMetadataConflict = {
+    field: DflopDescriptionCapabilityField;
+    structured: unknown;
+    description: unknown;
+    descriptionEvidence?: string;
+};
+
+export type DflopUpstreamModelMetadata = {
+    displayName?: string;
+    brand?: string;
+    category?: string;
+    description?: string;
+    endpointType?: string | null;
+    supportedProtocols?: string[];
+    generationParameters?: LogicalModelGenerationParameters;
+    generationParameterSources?: LogicalModelGenerationParameterSources;
+    generationParameterEvidence?: LogicalModelGenerationParameterEvidence;
+    descriptionCapabilities?: DflopDescriptionCapabilitySnapshot;
+    metadataConflicts?: DflopMetadataConflict[];
+    runtime?: Record<string, unknown>;
+    providerPricingProfile?: ProviderPricingProfile;
+    imageQualityProfile?: ImageQualityProfile;
+    presetVersion?: string;
 };
 
 export type LogicalModelStreamingTimeouts = {
@@ -147,17 +227,38 @@ export type LogicalModelBinding = {
     weight?: number;
     capabilityProfile?: LogicalModelCapabilityProfile;
     generationParameters?: LogicalModelGenerationParameters;
+    generationParameterSources?: LogicalModelGenerationParameterSources;
+    capabilityDrifts?: LogicalModelCapabilityDrift[];
+    descriptionEvidenceMissing?: Array<keyof LogicalModelGenerationParameters>;
+    upstreamMetadata?: DflopUpstreamModelMetadata;
     costRateCard?: PricingRateCardV1;
     providerCostUnit?: ProviderCostUnit;
+    providerPricingProfile?: ProviderPricingProfile;
+    imageQualityProfile?: ImageQualityProfile;
 };
 
 export type LogicalModel = {
     id: string;
     name: string;
+    nameSource?: "upstream" | "manual";
     capability: LogicalModelCapability;
     enabled: boolean;
     saleRateCard?: PricingRateCardV1;
+    salePriceSource?: "manual" | "approved" | "automatic";
+    salePriceApproval?: SalePriceApprovalSnapshot;
+    suggestedSaleRateCard?: SuggestedSaleRateCard;
     bindings: LogicalModelBinding[];
+};
+
+export type SalePriceApprovalSnapshot = {
+    suggestedRevision: string;
+    pricingPolicyVersion: string;
+    calculatedAt: string;
+    costBasis: PricingCostBasis;
+    markupMultiplier: string;
+    approvedAt: string;
+    approvedBy: string;
+    batchOperationId?: string;
 };
 
 export type SystemDefaultModels = {
@@ -202,6 +303,7 @@ export type GenerationConcurrencySettings = {
 
 export type GenerationDefaultSettings = {
     agentModeEnabled: boolean;
+    manualPromptEnhancementEnabled: boolean;
     createPromptMaxLength: number;
     canvasImageCount: number | "auto";
     imageSize: string;
@@ -439,9 +541,35 @@ export type UsageBillingHoldSnapshot = {
     capability: import("@/lib/billing/pricing").BillableCapability;
     saleRateSnapshot: import("@/lib/billing/pricing").PricingRateCardV1;
     requestUsage: import("@/lib/billing/pricing").NormalizedUsage;
+    imageQualityContext?: import("@/lib/server/system-ai-billing").SystemAiImageQualityContext;
     reserve: import("@/lib/billing/pricing").PricingReserve;
     reservedCredits: string;
-    inputLimits?: { maxInputTokens?: string; maxOutputTokens?: string };
+    inputLimits?: {
+        maxInputTokens?: string;
+        maxOutputTokens?: string;
+        maxDurationSeconds?: string;
+        seedanceModelFamily?: "seedance-2.0" | "seedance-2.5";
+        safeVideoFrame?: { width: string; height: string };
+        videoBillingContext?: { hasReferenceVideo: boolean; verifiedInputVideoDurationSeconds?: string; referenceVideoDurationSource?: "server-probed" };
+    };
+    billingRequestContext?: {
+        pricingBasis: "video_token";
+        billingBasis: "default" | "with_video_input";
+        resolution: string;
+        requestedOutputDurationSeconds: string;
+        hasReferenceVideo: boolean;
+        verifiedInputVideoDurationSeconds?: string;
+        referenceVideoDurationSource?: "server-probed";
+        estimatePixelWidth?: string;
+        estimatePixelHeight?: string;
+        estimatedTokens?: string;
+        estimateStatus: "ESTIMATED" | "CONSERVATIVE_ESTIMATE" | "REFERENCE_DURATION_UNKNOWN";
+        holdTokens: string;
+        holdInputVideoDurationSeconds: string;
+        holdPixelWidth: string;
+        holdPixelHeight: string;
+        saleRateCardRevision: string;
+    };
     providerIdempotency?: { supported: boolean; key?: string };
     recovery?: { taskType: "text" | "image" | "video" | "audio" | "voice-clone"; taskId: string };
 };
@@ -549,6 +677,7 @@ export type AuthSettings = {
     generationDefaults: GenerationDefaultSettings;
     systemChannels: SystemModelChannel[];
     logicalModels: LogicalModel[];
+    pricingPolicy: SystemPricingPolicy;
     defaultModels: SystemDefaultModels;
     agentSkills: AgentSkill[];
 };

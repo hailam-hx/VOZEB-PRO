@@ -48,6 +48,6 @@ export async function DELETE(request: Request) {
 }
 
 function serviceError(error: unknown) {
-    if (error instanceof CreativeRuntimeServiceError) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
+    if (error instanceof CreativeRuntimeServiceError) return NextResponse.json({ code: error.status, data: { publicMessage: error.message }, msg: error.message }, { status: error.status });
     throw error;
 }

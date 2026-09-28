@@ -23,11 +23,23 @@ describe("normalizeCreativeRunRequest", () => {
             clientRequestId: "req-1",
             surface: "chat",
             prompt: "@图片1 hello",
+            originalPrompt: "@图片1 hello",
             publicPrompt: "图片1 hello",
             assetIds: ["a", "b"],
             skillIds: ["character-design"],
             modelIds: ["image-pro", "video-pro"],
         });
+    });
+
+    it("preserves the exact submitted prompt separately from normalized planning text", () => {
+        const originalPrompt = "  让这个人物慢慢向前走  ";
+        const request = normalizeCreativeRunRequest({ clientRequestId: "req-manual", surface: "chat", prompt: originalPrompt, originalPrompt, assetIds: [], skillIds: [], modelIds: ["video"] });
+        expect(request.prompt).toBe(originalPrompt.trim());
+        expect(request.originalPrompt).toBe(originalPrompt);
+    });
+
+    it("rejects a claimed original prompt that differs from the submitted prompt", () => {
+        expect(() => normalizeCreativeRunRequest({ clientRequestId: "req-mismatch", surface: "chat", prompt: "原文", originalPrompt: "另一段文字", assetIds: [], skillIds: [], modelIds: ["image"] })).toThrow("原始提示词与创作需求不一致");
     });
 
     it("normalizes explicit media preferences including a cloned voice selection", () => {
@@ -79,6 +91,29 @@ describe("normalizeCreativeRunRequest", () => {
                 video: { seconds: 7.5 },
             },
         });
+    });
+
+    it("normalizes image quality revision intent without accepting effects or pricing tiers", () => {
+        const request = normalizeCreativeRunRequest({
+            clientRequestId: "req-image-quality-revision",
+            surface: "chat",
+            prompt: "生成图片",
+            assetIds: [],
+            skillIds: [],
+            modelIds: ["midjourney"],
+            preferences: {
+                mode: "image",
+                image: {
+                    quality: "high",
+                    qualityProfileRevision: " profile-v2 ",
+                    qualityOptionRevision: " option-high-v1 ",
+                    resolvedPixelTier: "large",
+                    targetBindingId: "forged-binding",
+                },
+            },
+        });
+
+        expect(request.preferences?.image).toEqual({ quality: "high", qualityProfileRevision: "profile-v2", qualityOptionRevision: "option-high-v1" });
     });
 
     it("keeps all explicitly selected asset IDs instead of silently truncating them", () => {

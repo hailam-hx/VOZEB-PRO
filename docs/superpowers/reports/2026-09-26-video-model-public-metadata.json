@@ -1,0 +1,495 @@
+{
+  "checkedAt": "2026-09-26T08:30:59.404Z",
+  "modelCount": 68,
+  "stats": {
+    "upstreamModels": 68,
+    "publicRegistry": 220,
+    "matched": 67,
+    "unmatched": 1,
+    "callable": 67,
+    "text": 0,
+    "image": 0,
+    "video": 68,
+    "audio": 0,
+    "other": 0,
+    "filtered": 0
+  },
+  "entries": [
+    {
+      "modelId": "clip-compose",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "dh-avatar",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "dh-lipsync",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "dh-lipsync-max",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "dh-lipsync-pro",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "dh-motion",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "doubao-seedance-2.0-2",
+      "callable": null,
+      "kind": "video",
+      "matched": false,
+      "routable": true
+    },
+    {
+      "modelId": "doubao-seedance-2.0-fast",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "doubao-seedance-2.0-fast-lite",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "doubao-seedance-2.0-lite",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "doubao-seedance-2.0-mini",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "doubao-seedance-2.0-mini-lite",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "doubao-seedance-2.5",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "doubao-seedance-2.5-lite",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "grok-imagine-video",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "grok-imagine-video-1.5-preview",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "happyhorse-1.0-i2v",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "happyhorse-1.0-r2v",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "happyhorse-1.0-t2v",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "happyhorse-1.0-video-edit",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "happyhorse-1.1-i2v",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "happyhorse-1.1-r2v",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "happyhorse-1.1-t2v",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-hailuo-02",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-hailuo-2.3",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-hailuo-2.3-fast",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-hailuo-h3",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-hunyuan-video-1.0",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-hunyuan-video-1.1",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-jimeng-1.0-lite-i2v",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-jimeng-1.0-pro",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-jimeng-1.0-pro-fast",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-jimeng-1.5-pro",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-jimeng-3.0",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-jimeng-3.0-pro",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-jimeng-4.0",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-1.6",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-2.0",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-2.1",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-2.5-turbo",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-2.6",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-3.0",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-3.0-omni",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-master",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-kling-video-o1",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-pixverse-c1",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-pixverse-v5.6",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-pixverse-v6",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-sora-2",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-subtitle-soft",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-veo-3.1",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-veo-3.1-fast",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-veo-3.1-lite",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-2.0",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q1",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q1-classic",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q2",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q2-pro",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q2-pro-fast",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q2-turbo",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q3",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q3-ad",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q3-drama",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q3-pro",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "tvod-vidu-video-q3-turbo",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "wan2.7-t2v",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "wan3.0-video",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    },
+    {
+      "modelId": "wan3.0-video-prime",
+      "callable": true,
+      "kind": "video",
+      "matched": true,
+      "routable": true
+    }
+  ]
+}

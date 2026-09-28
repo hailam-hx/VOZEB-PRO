@@ -106,6 +106,7 @@ export type AppSettingsRecord = {
     generationDefaults: JsonValue;
     paymentConfig: JsonValue;
     logicalModels: JsonValue;
+    pricingPolicy: JsonValue;
     defaultModels: JsonValue;
     agentSkills: JsonValue;
     createdAt: string;

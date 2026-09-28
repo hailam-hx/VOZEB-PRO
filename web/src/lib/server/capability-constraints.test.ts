@@ -1,6 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { audioGenerationRequest, filterGenerationCandidates, imageGenerationRequest, resolveAudioGenerationCandidates, resolveImageGenerationCandidates, resolveVideoGenerationCandidates, videoGenerationRequest } from "./capability-constraints";
+import {
+    audioGenerationRequest,
+    filterGenerationCandidates,
+    imageGenerationRequest,
+    resolveAudioGenerationCandidates,
+    resolveBindingImageGenerationCandidates,
+    resolveImageGenerationCandidates,
+    resolveVideoGenerationCandidates,
+    videoGenerationRequest,
+} from "./capability-constraints";
+import { normalizeImageQualityProfile } from "@/lib/image-quality-profile";
+import type { ResolvedLogicalModel } from "./logical-model-router";
 
 describe("generation capability constraints", () => {
     it("filters each binding independently without changing routing order", () => {
@@ -76,7 +87,7 @@ describe("generation capability constraints", () => {
         expect(audioGenerationRequest({ voice: "auto", format: " ", speed: 0 })).toEqual({});
     });
 
-    it("resolves image Auto fields independently for every binding and preserves an explicit count", () => {
+    it("keeps image Smart size unresolved while resolving other Auto fields per binding", () => {
         const result = resolveImageGenerationCandidates(
             [
                 { id: "square", generationParameters: { aspectRatios: ["1:1"], qualities: ["low"], maxBatchSize: 3 } },
@@ -88,7 +99,159 @@ describe("generation capability constraints", () => {
             false,
         );
 
-        expect(result.candidates).toEqual([expect.objectContaining({ id: "square", size: "1:1", quality: "low", count: 2 }), expect.objectContaining({ id: "portrait", size: "3:4", quality: "medium", count: 2 })]);
+        expect(result.candidates).toEqual([expect.objectContaining({ id: "square", quality: "low", count: 2 }), expect.objectContaining({ id: "portrait", quality: "medium", count: 2 })]);
+        expect(result.candidates.every((candidate) => !("size" in candidate))).toBe(true);
+    });
+
+    it("keeps an explicit Smart aspect ratio unresolved for the upstream provider", () => {
+        const result = resolveImageGenerationCandidates([{ id: "image", generationParameters: { aspectRatios: ["1:1", "16:9"] } }], { size: "auto" }, { imageSize: "1:1", imageQuality: "auto" }, 0, false);
+
+        expect(result).toEqual({ candidates: [{ id: "image", generationParameters: { aspectRatios: ["1:1", "16:9"] } }], error: undefined });
+    });
+
+    it("resolves image quality for every binding and retains only complete candidates", () => {
+        const validation = { status: "VALID" as const, reasons: [], validatedAt: "2026-09-25T00:00:00.000Z" };
+        const profile = normalizeImageQualityProfile({
+            version: 1,
+            controlType: "prompt_flag",
+            selectionMode: "explicit",
+            source: "provider_preset",
+            options: [
+                { value: "standard", label: "标准", effect: { type: "prompt_flag", promptSuffix: "--sd", mutexGroup: "midjourney-quality" } },
+                { value: "high", label: "高清", effect: { type: "prompt_flag", promptSuffix: "--hd", mutexGroup: "midjourney-quality" } },
+            ],
+            validation,
+        })!;
+        const channel = { id: "dflop", name: "DFLOP", baseUrl: "https://api.dflop.top/v1", apiKey: "secret", apiFormat: "openai" as const, models: ["good", "bad"], enabled: true };
+        const generationParameters = { referenceInputs: [], aspectRatios: [], pixelSizes: [], supportsCustomSize: false, qualities: [], resolutions: [], durationSeconds: [], maxBatchSize: 1, videoReferenceModes: [], voices: [], formats: [] };
+        const goodBinding = { id: "good", channelId: channel.id, upstreamModel: "good", enabled: true, priority: 1, imageQualityProfile: profile, generationParameters };
+        const badBinding = {
+            id: "bad",
+            channelId: channel.id,
+            upstreamModel: "bad",
+            enabled: true,
+            priority: 2,
+            imageQualityProfile: { ...profile, validation: { status: "INVALID" as const, reasons: [{ code: "BAD", message: "不可执行", severity: "blocking" as const }], validatedAt: validation.validatedAt } },
+            generationParameters,
+        };
+        const logicalModel = {
+            id: "image",
+            name: "Image",
+            capability: "image" as const,
+            enabled: true,
+            saleRateCard: { version: 1 as const, components: [{ id: "count", dimension: "count" as const, unitPrice: "1" }] },
+            bindings: [goodBinding, badBinding],
+        };
+        const resolved = [goodBinding, badBinding].map((binding) => ({
+            logicalModelId: logicalModel.id,
+            upstreamModel: binding.upstreamModel,
+            channelId: channel.id,
+            channel,
+            logicalModel,
+            binding,
+            generationParameters: binding.generationParameters,
+        })) as ResolvedLogicalModel[];
+
+        const result = resolveBindingImageGenerationCandidates(resolved, { quality: "high", count: 1 }, { imageSize: "auto", imageQuality: "auto" }, 0, false, "a cat --sd", (candidate) => ({
+            id: candidate.binding.id,
+            generationParameters: candidate.generationParameters,
+        }));
+
+        expect(result.candidates).toEqual([expect.objectContaining({ id: "good", imageQualityContext: expect.objectContaining({ bindingId: "good", effectivePrompt: "a cat --hd" }) })]);
+        expect(result.error).toMatchObject({ code: "QUALITY_CONTEXT_UNRESOLVABLE" });
+    });
+
+    it("keeps legacy qualities for non-DFLOP bindings and emits bounded telemetry", () => {
+        const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+        const channel = { id: "legacy", name: "Legacy", baseUrl: "https://legacy.example/v1", apiKey: "secret", apiFormat: "openai" as const, models: ["legacy-image"], enabled: true };
+        const binding = { id: "legacy-binding", channelId: channel.id, upstreamModel: "legacy-image", enabled: true, priority: 1, generationParameters: { qualities: ["high"] } };
+        const logicalModel = { id: "legacy-image", name: "Legacy image", capability: "image" as const, enabled: true, bindings: [binding] };
+        const resolved = [{ logicalModelId: logicalModel.id, upstreamModel: binding.upstreamModel, channelId: channel.id, channel, logicalModel, binding, generationParameters: binding.generationParameters }] as ResolvedLogicalModel[];
+
+        const result = resolveBindingImageGenerationCandidates(resolved, { quality: "high" }, { imageSize: "auto", imageQuality: "auto" }, 0, false, "a cat", (candidate) => ({
+            id: candidate.binding.id,
+            generationParameters: candidate.generationParameters,
+        }));
+
+        expect(result.candidates).toEqual([expect.objectContaining({ id: "legacy-binding", quality: "high" })]);
+        expect(debug).toHaveBeenCalledWith("Image quality legacy adapter", { channelId: "legacy", bindingId: "legacy-binding", upstreamProtocol: "compatible" });
+    });
+
+    it("resolves an official Seedream minimum execution size before dispatch", () => {
+        const profile = normalizeImageQualityProfile({ version: 1, controlType: "none", selectionMode: "none", source: "none", options: [], validation: { status: "VALID", reasons: [], validatedAt: "2026-09-25T00:00:00.000Z" } })!;
+        const channel = { id: "dflop", name: "DFLOP", baseUrl: "https://api.dflop.top/v1", apiKey: "secret", apiFormat: "openai" as const, models: ["doubao-seedream-5-0-260128"], enabled: true, advancedConfig: { protocol: "dflop" as const } };
+        const generationParameters = { aspectRatios: ["16:9"], supportsCustomSize: false };
+        const binding = { id: "seedream", channelId: channel.id, upstreamModel: "doubao-seedream-5-0-260128", enabled: true, priority: 1, imageQualityProfile: profile, generationParameters };
+        const logicalModel = { id: "seedream", name: "Seedream", capability: "image" as const, enabled: true, saleRateCard: { version: 1 as const, components: [{ id: "count", dimension: "count" as const, unitPrice: "1" }] }, bindings: [binding] };
+        const resolved = [{ logicalModelId: logicalModel.id, upstreamModel: binding.upstreamModel, channelId: channel.id, channel, logicalModel, binding, generationParameters }] as unknown as ResolvedLogicalModel[];
+
+        const result = resolveBindingImageGenerationCandidates(resolved, { size: "16:9", count: 1 }, { imageSize: "auto", imageQuality: "auto" }, 0, false, "a cat", (candidate) => ({
+            id: candidate.binding.id,
+            generationParameters: candidate.generationParameters,
+        }));
+
+        expect(result.candidates).toEqual([expect.objectContaining({ id: "seedream", size: "2560x1440", imageQualityContext: expect.objectContaining({ resolvedSize: "2560x1440", resolvedWidth: 2560, resolvedHeight: 1440 }) })]);
+    });
+
+    it("keeps a Qwen ratio compatible after its quality profile resolves an exact execution size", () => {
+        const profile = normalizeImageQualityProfile({
+            version: 1,
+            controlType: "resolution_tier",
+            selectionMode: "explicit",
+            source: "provider_preset",
+            defaultValue: "1k",
+            options: [
+                {
+                    value: "1k",
+                    label: "1K",
+                    effect: { type: "resolution_tier", resolutionTier: "1k", exactSizes: ["1024x1024"], sizeByAspectRatio: { "1:1": "1024x1024" } },
+                },
+            ],
+            validation: { status: "VALID", reasons: [], validatedAt: "2026-09-25T00:00:00.000Z" },
+        })!;
+        const channel = {
+            id: "dflop",
+            name: "DFLOP",
+            baseUrl: "https://api.dflop.top/v1",
+            apiKey: "secret",
+            apiFormat: "openai" as const,
+            models: ["qwen-image-3.0-pro"],
+            enabled: true,
+            advancedConfig: { protocol: "dflop" as const },
+        };
+        const generationParameters = { referenceInputs: [], aspectRatios: ["1:1"], pixelSizes: [], supportsCustomSize: false };
+        const binding = { id: "qwen", channelId: channel.id, upstreamModel: "qwen-image-3.0-pro", enabled: true, priority: 1, imageQualityProfile: profile, generationParameters };
+        const logicalModel = {
+            id: "qwen",
+            name: "Qwen",
+            capability: "image" as const,
+            enabled: true,
+            saleRateCard: { version: 1 as const, components: [{ id: "count", dimension: "count" as const, unitPrice: "1" }] },
+            bindings: [binding],
+        };
+        const resolved = [{ logicalModelId: logicalModel.id, upstreamModel: binding.upstreamModel, channelId: channel.id, channel, logicalModel, binding, generationParameters }] as unknown as ResolvedLogicalModel[];
+
+        const result = resolveBindingImageGenerationCandidates(resolved, { size: "1:1", quality: "1k", count: 1 }, { imageSize: "auto", imageQuality: "auto" }, 0, false, "a cat", (candidate) => ({
+            id: candidate.binding.id,
+            generationParameters: candidate.generationParameters,
+        }));
+
+        expect(result.candidates).toEqual([expect.objectContaining({ id: "qwen", size: "1024x1024", imageQualityContext: expect.objectContaining({ resolvedSize: "1024x1024", resolvedResolutionTier: "1k" }) })]);
+    });
+
+    it("fails closed when a DFLOP image binding has no authoritative quality profile", () => {
+        const channel = { id: "dflop", name: "DFLOP", baseUrl: "https://api.dflop.top/v1", apiKey: "secret", apiFormat: "openai" as const, models: ["image-model"], enabled: true, advancedConfig: { protocol: "dflop" as const } };
+        const binding = { id: "dflop-binding", channelId: channel.id, upstreamModel: "image-model", enabled: true, priority: 1, generationParameters: { qualities: ["high"] } };
+        const logicalModel = { id: "image-model", name: "Image", capability: "image" as const, enabled: true, bindings: [binding] };
+        const resolved = [{ logicalModelId: logicalModel.id, upstreamModel: binding.upstreamModel, channelId: channel.id, channel, logicalModel, binding, generationParameters: binding.generationParameters }] as ResolvedLogicalModel[];
+
+        const result = resolveBindingImageGenerationCandidates(resolved, { quality: "high" }, { imageSize: "auto", imageQuality: "auto" }, 0, false, "a cat", (candidate) => ({
+            id: candidate.binding.id,
+            generationParameters: candidate.generationParameters,
+        }));
+
+        expect(result.candidates).toEqual([]);
+        expect(result.error).toMatchObject({ code: "QUALITY_CONTEXT_UNRESOLVABLE" });
     });
 
     it("resolves image Auto count from the compatible global default, then one, then provider default", () => {
@@ -101,6 +264,22 @@ describe("generation capability constraints", () => {
         );
 
         expect(result.candidates).toEqual([expect.objectContaining({ id: "global", count: 3 }), expect.objectContaining({ id: "minimum", count: 1 }), { id: "provider-default" }]);
+    });
+
+    it("treats a persisted single result as the provider default when batch capability is undeclared", () => {
+        const image = resolveImageGenerationCandidates([{ id: "image", generationParameters: { aspectRatios: ["1:1"] } }], { size: "1:1", count: 1 }, { imageSize: "auto", imageQuality: "auto" }, 0, false);
+        const video = resolveVideoGenerationCandidates(
+            [{ id: "video", generationParameters: { aspectRatios: ["16:9"], durationMode: "discrete", durationSeconds: [5] } }],
+            { size: "16:9", videoSeconds: 5, count: 1 },
+            { imageSize: "auto", videoQuality: "auto", videoSeconds: 5 },
+            [],
+        );
+        const unsupportedBatch = resolveImageGenerationCandidates([{ id: "image", generationParameters: { aspectRatios: ["1:1"] } }], { size: "1:1", count: 2 }, { imageSize: "auto", imageQuality: "auto" }, 0, false);
+
+        expect(image).toEqual({ candidates: [{ id: "image", generationParameters: { aspectRatios: ["1:1"] }, size: "1:1" }], error: undefined });
+        expect(video).toEqual({ candidates: [{ id: "video", generationParameters: { aspectRatios: ["16:9"], durationMode: "discrete", durationSeconds: [5] }, size: "16:9", videoSeconds: 5 }], error: undefined });
+        expect(unsupportedBatch.candidates).toEqual([]);
+        expect(unsupportedBatch.error?.message).toBe("当前模型不支持一次生成 2 个结果");
     });
 
     it("resolves Auto count from the lower custom range bound when fixed counts are unavailable", () => {
@@ -142,7 +321,7 @@ describe("generation capability constraints", () => {
         expect(result.candidates).toEqual([expect.objectContaining({ id: "audio", speed: "0.5" })]);
     });
 
-    it("resolves every video Auto field against the selected binding instead of global defaults", () => {
+    it("keeps video Smart size unresolved while resolving other Auto fields per binding", () => {
         const result = resolveVideoGenerationCandidates(
             [
                 {
@@ -160,7 +339,8 @@ describe("generation capability constraints", () => {
             [],
         );
 
-        expect(result.candidates).toEqual([expect.objectContaining({ id: "video", size: "4:3", vquality: "480", videoSeconds: 8 })]);
+        expect(result.candidates).toEqual([expect.objectContaining({ id: "video", vquality: "480", videoSeconds: 8 })]);
+        expect(result.candidates.every((candidate) => !("size" in candidate))).toBe(true);
     });
 
     it("omits unresolved Auto fields for an unconfigured binding", () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import type { AdminSectionKey } from "@/components/admin/admin-sections";
+import { removeChannelFromWorkspace } from "@/components/admin/channels/admin-channel-workspace-model";
 import { createDefaultChannelAdvancedConfig } from "@/components/admin/admin-system-channel-editor";
 import { toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import { channelProtocolDefinition, channelSupportsModelCatalog, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
@@ -59,7 +60,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     const getLatestSiteSettings = () => latestSettingsRef.current.site;
     const getLatestSettings = () => latestSettingsRef.current;
 
-    const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
+    const updateChannel = (id: string, patch: Partial<SystemModelChannel>, pricingPolicy = latestSettingsRef.current.pricingPolicy) => {
         setSettings((current) => {
             const systemChannels = current.systemChannels.map((channel) => {
                 if (channel.id !== id) return channel;
@@ -71,8 +72,8 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                 };
             });
             if (!("models" in patch)) return { ...current, systemChannels };
-            const logicalModels = synchronizeLogicalModelsWithChannels(current.logicalModels, systemChannels);
-            return { ...current, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
+            const logicalModels = synchronizeLogicalModelsWithChannels(current.logicalModels, systemChannels, pricingPolicy);
+            return { ...current, pricingPolicy, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
         });
     };
 
@@ -81,10 +82,16 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const deleteChannel = async (id: string) => {
-        const systemChannels = settings.systemChannels.filter((channel) => channel.id !== id);
-        const logicalModels = synchronizeLogicalModelsWithChannels(settings.logicalModels, systemChannels);
-        const defaultModels = normalizeDefaultModelsConfig(settings.defaultModels, logicalModels, systemChannels);
-        return saveSettings({ systemChannels, logicalModels, defaultModels }, "渠道已删除");
+        const workspace = removeChannelFromWorkspace(latestSettingsRef.current, id);
+        const saved = await saveSettings(workspace, "渠道已删除");
+        if (saved) {
+            setSettings((current) => {
+                const next = { ...current, ...removeChannelFromWorkspace(current, id) };
+                latestSettingsRef.current = next;
+                return next;
+            });
+        }
+        return saved;
     };
 
     const updateGenerationConcurrency = (key: keyof AuthSettings["generationConcurrency"], value: number | null) => {
@@ -276,10 +283,16 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         setFetchingModelId(channel.id);
         try {
             const result = await requestAdminModels(channel);
-            updateChannel(channel.id, adminModelsChannelPatch(channel, result));
+            updateChannel(channel.id, adminModelsChannelPatch(channel, result), result.pricingPolicyPatch || latestSettingsRef.current.pricingPolicy);
             const discovered = result.discoveredCount ?? result.models.length;
             const total = result.totalCount ?? result.models.length;
-            message.success(`${channel.name || "渠道"} 本次发现 ${discovered} 个模型，合并后共 ${total} 个${result.warning ? `；${result.warning}` : ""}`);
+            const stats = result.discoveryStats;
+            const categories = stats ? `（文本 ${stats.text}、图片 ${stats.image}、视频 ${stats.video}、音频 ${stats.audio}、其他 ${stats.other}）` : "";
+            const sync = result.syncStats;
+            const summary = sync ? `；新建 ${sync.created}、更新 ${sync.updated}、保留手动覆盖 ${sync.manualOverridesPreserved}${sync.capabilityDrifts ? `、检测到漂移 ${sync.capabilityDrifts}` : ""}` : "";
+            const pricing = result.pricingSync?.stats;
+            const pricingSummary = pricing ? `；价格档案 ${pricing.pricingProfiles}、缺失 ${pricing.missingPricing}、未知字段 ${pricing.unknownPricingFields}、涨价 ${pricing.priceIncreases}、降价 ${pricing.priceDecreases}` : "";
+            message.success(`${channel.name || "渠道"} 本次发现 ${discovered} 个模型${categories}，当前共 ${total} 个${summary}${pricingSummary}${result.warning ? `；${result.warning}` : ""}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "拉取模型失败");
         } finally {
@@ -300,12 +313,13 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             const modelMap = new Map(entries);
             if (modelMap.size) {
                 setSettings((current) => {
+                    const pricingPolicy = entries.map(([, result]) => result.pricingPolicyPatch).find(Boolean) || current.pricingPolicy;
                     const systemChannels = current.systemChannels.map((channel) => {
                         const result = modelMap.get(channel.id);
                         return result ? { ...channel, ...adminModelsChannelPatch(channel, result) } : channel;
                     });
-                    const logicalModels = synchronizeLogicalModelsWithChannels(current.logicalModels, systemChannels);
-                    return { ...current, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
+                    const logicalModels = synchronizeLogicalModelsWithChannels(current.logicalModels, systemChannels, pricingPolicy);
+                    return { ...current, pricingPolicy, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
                 });
             }
             const failedChannels = results.flatMap((result, index) => (result.status === "rejected" ? [`${runnable[index].name || "未命名渠道"}：${result.reason instanceof Error ? result.reason.message : "拉取模型失败"}`] : []));
@@ -350,7 +364,7 @@ export type AdminDashboardSettingsActions = ReturnType<typeof useAdminDashboardS
 
 function adminModelsChannelPatch(channel: SystemModelChannel, result: AdminModelsResult): Partial<SystemModelChannel> {
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
-    const models = uniqueList([...channel.models, ...result.models]);
+    const models = advanced.protocol === "dflop" ? uniqueList(result.models) : uniqueList([...channel.models, ...result.models]);
     const modelCapabilities = { ...(advanced.modelCapabilities || {}), ...(result.modelCapabilities || {}) };
     const modelConfigs = mergeAdminModelConfigs(advanced.modelConfigs, result.modelConfigs, advanced.protocol);
     if (!result.globalAiOpcPresets?.length) {
@@ -361,6 +375,7 @@ function adminModelsChannelPatch(channel: SystemModelChannel, result: AdminModel
                 ...(result.recommendedConfig || {}),
                 modelCapabilities,
                 modelConfigs,
+                ...(result.modelDiscovery ? { modelDiscovery: result.modelDiscovery } : {}),
             },
         };
     }

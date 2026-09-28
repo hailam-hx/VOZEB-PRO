@@ -5,6 +5,7 @@ import { createSignedReferenceAssetUrl } from "@/lib/server/reference-asset-acce
 import { getLocalMediaRegistration } from "@/lib/server/local-media-registry";
 import { createExternalProviderMediaReadUrl } from "@/lib/server/object-storage-service";
 import { isSafeOutboundUrl } from "@/lib/server/outbound-url-security";
+import { getCreativeAsset } from "@/lib/server/creative-runtime-store";
 
 const REFERENCE_ASSET_PREFIX = "/api/reference-assets/";
 const PROVIDER_REFERENCE_TTL_MS = 60 * 60 * 1000;
@@ -17,11 +18,24 @@ function referenceUrlError(message: string, code: string) {
 
 export async function resolveProviderReferenceUrls(references: VideoGenerationReference[], publicOrigin: string, ownerUserId: string) {
     return Promise.all(
-        references.map(async (reference) => ({
-            ...reference,
-            url: await resolveProviderReferenceUrl(reference.url, publicOrigin, ownerUserId),
-        })),
+        references.map(async (reference) => {
+            const asset = reference.assetId ? await getCreativeAsset(reference.assetId, ownerUserId) : undefined;
+            if (reference.assetId && (!asset || asset.status !== "ready" || asset.type !== reference.type)) throw referenceUrlError("参考素材不存在或无权访问", "reference_asset_unavailable");
+            const sourceUrl = asset ? asset.remoteUrl || asset.serverUrl || "" : reference.url;
+            if (!sourceUrl) throw referenceUrlError("参考素材不存在或无权访问", "reference_asset_unavailable");
+            const verifiedDuration = asset?.type === "video" && verifiedMediaProbe(asset.metadata) && Number.isSafeInteger(asset.durationMs) && Number(asset.durationMs) > 0 ? Number(asset.durationMs) : undefined;
+            return {
+                ...reference,
+                url: await resolveProviderReferenceUrl(sourceUrl, publicOrigin, ownerUserId),
+                ...(verifiedDuration ? { trustedDurationMs: verifiedDuration, durationSource: "server-probed" as const } : {}),
+            };
+        }),
     );
+}
+
+function verifiedMediaProbe(metadata: Record<string, unknown> | undefined) {
+    const probe = metadata?.mediaProbe;
+    return Boolean(probe && typeof probe === "object" && !Array.isArray(probe) && (probe as Record<string, unknown>).status === "verified" && (probe as Record<string, unknown>).source === "ffprobe");
 }
 
 export async function resolveProviderReferenceUrl(value: string, publicOrigin: string, ownerUserId: string) {

@@ -22,6 +22,8 @@ export type AudioTaskConfig = {
     format?: string;
     speed?: string;
     instructions?: string;
+    promptEnhancementDisabled?: boolean;
+    promptAudit?: import("@/lib/server/generation-prompt-audit").PromptAudit;
     usagePricing?: import("@/lib/server/generation-channel").SystemGenerationChannelConfig["usagePricing"];
 };
 export type AudioTask = GenerationTaskContext & {

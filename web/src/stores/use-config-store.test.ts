@@ -108,6 +108,26 @@ describe("applyPublicSystemSettings", () => {
         expect(config.modelPointCosts).toEqual({});
     });
 
+    it("preserves the public logical image quality profile", () => {
+        const imageQualityProfile = {
+            supported: true,
+            controlType: "prompt_flag" as const,
+            selectionMode: "explicit" as const,
+            profileRevision: "public-profile-v1",
+            defaultValue: "standard",
+            options: [
+                { value: "standard", label: "标准", optionRevision: "standard-v1", effect: { type: "prompt_flag" as const, promptSuffix: "--sd" as const } },
+                { value: "high", label: "高清", optionRevision: "high-v1", effect: { type: "prompt_flag" as const, promptSuffix: "--hd" as const } },
+            ],
+        };
+        const config = applyPublicSystemSettings(defaultConfig, {
+            systemChannels: [{ id: "image-channel", name: "图片", baseUrl: "/api/ai/system/image-channel", apiKey: "system", apiFormat: "openai", models: ["image-v1"], enabled: true, hasApiKey: true }],
+            logicalModels: [{ id: "image-v1", name: "图片", capability: "image", enabled: true, imageQualityProfile, bindings: [{ id: "image-binding", channelId: "image-channel", upstreamModel: "image-v1", enabled: true, priority: 1 }] }],
+        });
+
+        expect(config.logicalModels[0]?.imageQualityProfile).toEqual(imageQualityProfile);
+    });
+
     it("keeps public concurrency and canvas counts above the former client ceilings", () => {
         const config = applyPublicSystemSettings(defaultConfig, {
             ...audioSettings,

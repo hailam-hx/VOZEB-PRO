@@ -1,6 +1,6 @@
 "use client";
 
-import { App, AutoComplete, Input, InputNumber, Select } from "antd";
+import { App, AutoComplete, Input, InputNumber, Select, Tooltip } from "antd";
 import { CircleGauge, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -128,6 +128,20 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
                     unCheckedChildren="隐藏"
                     onChange={(agentModeEnabled) => onChange("agentModeEnabled", agentModeEnabled)}
                 />
+                <div className="mt-3 border-t border-stone-200 pt-3 dark:border-stone-800">
+                    <Tooltip title="适用于图片、视频和语音生成。开启：手动选择模型时沿用当前提示词处理方式。关闭：上游收到的 Prompt 与用户输入完全相同，不追加创作约束、参考素材或身份风格说明；模型、尺寸、时长、音色及参考素材继续走独立 API 字段。">
+                        <div>
+                            <SettingToggle
+                                title="手动选择模型时允许增强 Prompt"
+                                description="控制手动选择模型时，系统是否补充生成提示词。"
+                                checked={settings.generationDefaults.manualPromptEnhancementEnabled}
+                                checkedChildren="开启"
+                                unCheckedChildren="关闭"
+                                onChange={(enabled) => onChange("manualPromptEnhancementEnabled", enabled)}
+                            />
+                        </div>
+                    </Tooltip>
+                </div>
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <LabeledControl label="创作输入字符上限">
