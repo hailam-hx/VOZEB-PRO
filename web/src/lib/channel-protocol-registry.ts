@@ -91,6 +91,12 @@ const dflopOperations: ChannelProtocolDefinition["operations"] = {
     },
 };
 
+const dflopSeedance25VideoOperation: ProtocolOperation = {
+    ...dflopOperations.video!,
+    referenceRule: "首帧图片使用无 role 的 image_url；普通参考图使用 reference_image；参考视频使用 reference_video，且必须指定 resolution。",
+    supportsReferenceVideo: true,
+};
+
 const geminiVideoOperation: ProtocolOperation = {
     capability: "video",
     createPath: "/models/:model:predictLongRunning",
@@ -185,7 +191,11 @@ export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] =
         modelCatalogPaths: ["/v1/models"],
         capabilities: ["text", "image", "video", "audio"],
         operations: dflopOperations,
-        modelOperationOverrides: { "voice-clone-pro": dflopVoiceCloneOperation },
+        modelOperationOverrides: {
+            "voice-clone-pro": dflopVoiceCloneOperation,
+            "doubao-seedance-2.5": dflopSeedance25VideoOperation,
+            "doubao-seedance-2.5-lite": dflopSeedance25VideoOperation,
+        },
         strict: true,
     },
     {

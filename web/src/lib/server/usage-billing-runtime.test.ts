@@ -221,6 +221,35 @@ describe("usage billing runtime", () => {
         expect(db.usageCharges).toHaveLength(1);
     });
 
+    it("settles a planner attempt when its provider price has more precision than the stored cost", async () => {
+        const billing = await reserveUsageBilling({
+            userId: "user-one",
+            businessId: "agent-plan:precise-provider-price",
+            requestFingerprint: "a".repeat(64),
+            logicalModelId: "writer",
+            saleRateSnapshot: { version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "0.2" }] },
+            requestUsage: normalizeBillableUsage({ capability: "text", source: "request", request: "1", inputTokens: "5", maxOutputTokens: "10" }),
+            description: "planner precision fixture",
+        });
+        await recordUsageProviderAttempt({
+            billing,
+            attemptNumber: 1,
+            status: "pending",
+            provider: "fixture",
+            bindingId: "binding",
+            nativeCostAmount: "0",
+            nativeCostUnit: { kind: "fiat", currency: "USD" },
+            costRateSnapshot: { version: 1, components: [{ id: "input", dimension: "inputTokens", unitPrice: "0.123456789012", per: "1000000" }] },
+        });
+        const headers = new Headers(systemAiUsageResponseHeaders({ holdId: billing.holdId, attemptNumber: 1, requestFingerprint: billing.requestFingerprint }));
+        await finishSystemAiTextAttempt(headers, { status: "succeeded", normalizedUsage: normalizeBillableUsage({ capability: "text", source: "actual", inputTokens: "5", outputTokens: "2" }) });
+
+        const db = await readAuthDb();
+        expect(db.walletHolds).toEqual([expect.objectContaining({ id: billing.holdId, status: "settled" })]);
+        expect(db.providerUsageAttempts).toEqual([expect.objectContaining({ status: "succeeded", nativeCostAmount: "0.000000617284", costUsd: "0.000000617284" })]);
+        expect(db.usageCharges).toHaveLength(1);
+    });
+
     it("reports the exact planner billing integrity step when the provider attempt is missing", async () => {
         const billing = await reserveUsageBilling({
             userId: "user-one",

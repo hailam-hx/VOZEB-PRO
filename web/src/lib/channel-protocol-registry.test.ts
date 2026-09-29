@@ -91,6 +91,18 @@ describe("channel protocol registry", () => {
         expect(applyChannelProtocol({ ...channel, baseUrl: "https://api.dflop.top/v1/", models: [] }, "dflop").baseUrl).toBe("https://api.dflop.top/v1");
     });
 
+    it("enables DFLOP reference video only for documented Seedance 2.5 models", () => {
+        for (const model of ["doubao-seedance-2.5", "doubao-seedance-2.5-lite"]) {
+            expect(
+                resolveChannelModelConfig(
+                    applyChannelProtocol({ ...channel, models: [model], advancedConfig: { ...channelProtocolDefinition("dflop").operations.video!, protocol: "dflop", modelCapabilities: { [model]: "video" } } as never }, "dflop").advancedConfig,
+                    model,
+                )?.supportsReferenceVideo,
+            ).toBe(true);
+        }
+        expect(channelProtocolDefinition("dflop").operations.video?.supportsReferenceVideo).not.toBe(true);
+    });
+
     it("keeps strict protocol paths and request contracts isolated", () => {
         expect(channelProtocolDefinition("openai").operations).toMatchObject({
             text: { createPath: "/chat/completions" },

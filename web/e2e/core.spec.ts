@@ -1,12 +1,64 @@
 import { createHmac, randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext } from "@playwright/test";
-import { E2E_PAYMENT_WEBHOOK_SECRET, pollTask, protocolFixtureState, resetProtocolFixture } from "./support";
+import { applyChannelProtocol, emptyAdvancedConfig } from "../src/lib/channel-protocol-registry";
+import { E2E_PAYMENT_WEBHOOK_SECRET, E2E_PROTOCOL_ORIGIN, pollTask, protocolFixtureState, resetProtocolFixture } from "./support";
 
 test.describe.configure({ mode: "serial" });
 
 test.beforeEach(async ({ request }) => {
     await resetProtocolFixture(request);
+});
+
+test("DFLOP Seedance 2.5 shows reference video enabled in the locked route", async ({ page, request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { systemChannels: Array<Record<string, unknown>> } }).settings.systemChannels;
+    const model = "doubao-seedance-2.5";
+    const channelId = "e2e-dflop-reference";
+    const channelName = "E2E DFLOP 参考视频";
+    const seeded = applyChannelProtocol(
+        {
+            ...before[0],
+            id: channelId,
+            name: channelName,
+            baseUrl: `${E2E_PROTOCOL_ORIGIN}/v1`,
+            apiKey: "fixture-key",
+            enabled: false,
+            models: [model],
+            advancedConfig: { ...emptyAdvancedConfig(), protocol: "dflop", modelCapabilities: { [model]: "video" } },
+        } as never,
+        "dflop",
+    );
+    try {
+        const response = await request.patch("/api/admin/settings", { data: { systemChannels: [...before, seeded] } });
+        expect(response.ok(), await response.text()).toBe(true);
+        await page.goto("/admin?section=channels", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        await page
+            .getByRole("row")
+            .filter({ hasText: channelName })
+            .getByRole("button", { name: /查\s*看/ })
+            .click();
+        const drawer = page.getByRole("dialog", { name: channelName });
+        await drawer.getByRole("tab", { name: "渠道配置" }).click();
+        await drawer.getByText("高级设置", { exact: true }).click();
+        await drawer.getByText("请求模板与参考素材", { exact: true }).click();
+        const referenceVideo = drawer.getByRole("checkbox", { name: "参考视频", exact: true });
+        await expect(referenceVideo).toBeChecked();
+        await expect(referenceVideo).toBeDisabled();
+        await expect(drawer.getByRole("checkbox", { name: "参考音频", exact: true })).not.toBeChecked();
+        for (const width of [390, 430]) {
+            await page.setViewportSize({ width, height: 844 });
+            await expect(referenceVideo).toBeChecked();
+            await expect
+                .poll(() => drawer.evaluate((element) => ({ right: element.getBoundingClientRect().right, scrollWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth })))
+                .toMatchObject({ right: width, scrollWidth: width, viewportWidth: width });
+        }
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { systemChannels: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
 });
 
 test("site footer deletions remain deleted after settings and public-session reloads", async ({ request }) => {

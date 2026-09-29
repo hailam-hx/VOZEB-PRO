@@ -129,7 +129,10 @@ export async function POST(request: Request) {
         let localTask: VideoTask | undefined;
         for (let index = 0; index < channels.length; index += 1) {
             const candidate = channels[index];
-            const videoEditParameters = resolveSeedanceVideoEditParameters({ model: candidate.model, ratio: candidate.size, duration: candidate.videoSeconds, references });
+            const videoEditParameters =
+                candidate.advancedConfig?.protocol === "dflop"
+                    ? { ratio: candidate.size, duration: candidate.videoSeconds }
+                    : resolveSeedanceVideoEditParameters({ model: candidate.model, ratio: candidate.size, duration: candidate.videoSeconds, references });
             const channel = {
                 ...candidate,
                 size: videoEditParameters.ratio,
@@ -255,12 +258,13 @@ export async function POST(request: Request) {
 }
 
 function assertProviderVideoParameters(channel: NonNullable<ReturnType<typeof toSystemGenerationChannel>>, prompt: string, raw: Record<string, unknown>, references: VideoGenerationReference[]) {
+    assertDflopReferenceVideoResolution(channel, raw, references);
     const regularReferences = regularVideoReferences(references);
     const { firstFrame, lastFrame } = videoFrameReferences(references);
     const images = referenceUrls(regularReferences, "image");
     const videos = referenceUrls(regularReferences, "video");
     const audios = referenceUrls(regularReferences, "audio");
-    const providerParameters = resolveProviderVideoParameters(channel.model, raw, references);
+    const providerParameters = resolveProviderVideoParameters(channel.model, raw, references, channel.advancedConfig?.protocol);
     const input = {
         duration: providerParameters.duration,
         ratio: providerParameters.ratio,
@@ -321,6 +325,7 @@ export async function createUpstream(
     agentRunId = "",
     execution?: { mode?: "generation" | "validation"; idempotencyKey?: string; validationItemId?: string; capturePreparedRequest?: boolean; expectedPayloadDigest?: string },
 ) {
+    assertDflopReferenceVideoResolution(channel, raw, references);
     let lastError: string | VideoSubmissionFailure = "";
     const upstreamReferences = references.map(({ assetId: _assetId, trustedDurationMs: _trustedDurationMs, durationSource: _durationSource, ...reference }) => reference);
     const regularReferences = regularVideoReferences(upstreamReferences);
@@ -332,7 +337,7 @@ export async function createUpstream(
     const requestImages = images;
     const firstFrameUrl = firstFrame?.url || "";
     const lastFrameUrl = lastFrame?.url || "";
-    const providerParameters = resolveProviderVideoParameters(channel.model, raw, references);
+    const providerParameters = resolveProviderVideoParameters(channel.model, raw, references, channel.advancedConfig?.protocol);
     const dimensions = providerParameters.ratio === "adaptive" ? undefined : videoDimensions(raw.size, raw.vquality);
     const generateAudio = optionalBoolean(raw.videoGenerateAudio);
     const watermark = optionalBoolean(raw.videoWatermark);
@@ -636,9 +641,9 @@ function upstreamDuration(value: unknown) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : undefined;
 }
-function resolveProviderVideoParameters(model: string, raw: Record<string, unknown>, references: readonly VideoGenerationReference[]) {
-    const videoEdit = isSeedanceVideoEdit(model, references);
-    const resolved = resolveSeedanceVideoEditParameters({ model, ratio: raw.size, duration: raw.videoSeconds, references });
+function resolveProviderVideoParameters(model: string, raw: Record<string, unknown>, references: readonly VideoGenerationReference[], protocol?: string) {
+    const videoEdit = protocol !== "dflop" && isSeedanceVideoEdit(model, references);
+    const resolved = videoEdit ? resolveSeedanceVideoEditParameters({ model, ratio: raw.size, duration: raw.videoSeconds, references }) : { ratio: raw.size, duration: raw.videoSeconds };
     return {
         duration: videoEdit && Number(resolved.duration) === -1 ? -1 : upstreamDuration(resolved.duration),
         ratio: videoEdit ? "adaptive" : upstreamRatio(resolved.ratio),
@@ -659,6 +664,12 @@ function resolution(value: unknown) {
 function upstreamResolution(value: unknown) {
     const text = clean(value).replace(/p$/i, "");
     return text && text.toLowerCase() !== "auto" ? (/^\d+k$/i.test(text) ? text.toLowerCase() : `${text}p`) : undefined;
+}
+
+function assertDflopReferenceVideoResolution(channel: NonNullable<ReturnType<typeof toSystemGenerationChannel>>, raw: Record<string, unknown>, references: readonly VideoGenerationReference[]) {
+    if (channel.advancedConfig?.protocol === "dflop" && references.some((reference) => reference.type === "video") && !upstreamResolution(raw.vquality)) {
+        throw new Error("DFLOP 参考视频需要明确选择清晰度");
+    }
 }
 function videoDimensions(size: unknown, quality: unknown) {
     const exact = parseImageDimensions(String(size || ""));

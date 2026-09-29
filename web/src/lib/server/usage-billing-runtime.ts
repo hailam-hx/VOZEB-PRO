@@ -13,6 +13,7 @@ import {
     type PricingRateCardV1,
 } from "@/lib/billing/pricing";
 import { validateProviderCostUnit, type ProviderCostUnit } from "@/lib/billing/money";
+import { decimal } from "@/lib/billing/decimal";
 import type { ProviderUsageAttempt, UsageBillingHoldSnapshot, WalletHold } from "@/lib/auth/store-types";
 import { readSystemAiUsageBilling } from "./system-ai-billing";
 import { AuthoritativeVideoUsageError, deriveProxyBillableUsage, normalizeAuthoritativeVideoUsage } from "./usage-billing-adapter";
@@ -161,7 +162,10 @@ export async function finishUsageProviderAttempt(input: { billing: UsageBilling;
     const usage = canonicalProviderAttemptUsage({ snapshot: input.billing.snapshot, attempt, status: input.status, suppliedUsage: input.normalizedUsage });
     let nativeCostAmount = attempt.nativeCostAmount;
     try {
-        if (attempt.costRateSnapshot && usage) nativeCostAmount = calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage });
+        if (attempt.costRateSnapshot && usage)
+            nativeCostAmount = decimal(calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage }))
+                .roundHalfUp(12)
+                .toString();
     } catch (error) {
         if (error instanceof PricingUsageDimensionError && usage) logMissingPricingDimension({ billing: input.billing, attempt, usage, error });
         throw error;
@@ -217,7 +221,10 @@ export async function attachUsageProviderEvidence(input: { billing: UsageBilling
     const usage = canonicalProviderAttemptUsage({ snapshot: input.billing.snapshot, attempt, status: attempt.status === "pending" ? "succeeded" : attempt.status, suppliedUsage: input.usage });
     let nativeCostAmount = attempt.nativeCostAmount;
     try {
-        if (attempt.costRateSnapshot && usage) nativeCostAmount = calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage });
+        if (attempt.costRateSnapshot && usage)
+            nativeCostAmount = decimal(calculateNormalizedUsagePrice({ rateCard: attempt.costRateSnapshot, usage }))
+                .roundHalfUp(12)
+                .toString();
     } catch (error) {
         if (error instanceof PricingUsageDimensionError && usage) logMissingPricingDimension({ billing: input.billing, attempt, usage, error });
         throw error;
