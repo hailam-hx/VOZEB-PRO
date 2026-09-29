@@ -6,11 +6,27 @@ import {
     buildSuggestedSalePriceDiff,
     formatPricingRateCardForAdmin,
     formatProviderCostUnitForAdmin,
+    matchesPricingModelSearch,
     providerCapabilityProbeSummary,
     providerPricingExecutionSummary,
     providerPricingStatusReasons,
     resolveFormValidation,
 } from "./billing-operations";
+
+describe("admin pricing model search", () => {
+    const model = { id: "gpt-5.6-sol", name: "GPT Sol", bindings: [{ upstreamModel: "models/GPT-5.6-SOL" }] };
+
+    it("matches name, logical ID and upstream model without case sensitivity", () => {
+        expect(matchesPricingModelSearch(model, " gPt sOl ")).toBe(true);
+        expect(matchesPricingModelSearch(model, "GPT-5.6-SOL")).toBe(true);
+        expect(matchesPricingModelSearch(model, "models/gpt-5.6-sol")).toBe(true);
+    });
+
+    it("keeps all models visible for a blank search and excludes unrelated models", () => {
+        expect(matchesPricingModelSearch(model, "  ")).toBe(true);
+        expect(matchesPricingModelSearch(model, "Claude")).toBe(false);
+    });
+});
 
 describe("admin billing form validation", () => {
     it("turns Ant Design validation rejection into an inline-validation result", async () => {

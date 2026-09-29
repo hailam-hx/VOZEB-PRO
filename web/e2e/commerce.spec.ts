@@ -412,6 +412,15 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
     await expect(page.getByRole("heading", { name: "客户汇率与模型计价" })).toBeVisible();
     await expect(page.getByText("商业图片模型", { exact: true })).toBeVisible();
     await expect(page.getByText("单位换算：fal · 1 render = 0.03 USD · provider-fx-v2", { exact: true })).toBeVisible();
+    const modelSearch = page.getByRole("textbox", { name: "搜索定价模型" });
+    for (const query of ["商业图片", "LOGICAL-IMAGE", "FAL-IMAGE-V2"]) {
+        await modelSearch.fill(query);
+        await expect(page.getByText("商业图片模型", { exact: true })).toBeVisible();
+    }
+    await modelSearch.fill("not-a-model");
+    await expect(page.getByText("商业图片模型", { exact: true })).toBeHidden();
+    await modelSearch.clear();
+    await expect(page.getByText("商业图片模型", { exact: true })).toBeVisible();
     await page.getByLabel("客户汇率版本").fill("fx-v8");
     await page.getByLabel("1 VND 对应 USD").fill("0.000041");
     await page.getByRole("button", { name: "保存充值汇率" }).click();

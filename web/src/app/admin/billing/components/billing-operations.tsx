@@ -4,7 +4,7 @@ import { App, Button, DatePicker, Form, Input, InputNumber, Modal, Pagination, S
 import type { TableColumnsType } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import { AlertTriangle, CircleDollarSign, FileUp, Pencil, Plus, RefreshCw, Save, Search, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { allowedAdminBillingTabs, hasAdminPermission, type AdminBillingTab } from "@/lib/admin-permissions";
 import type { AdminBillingSummary, AdminProviderUsageAttempt, AdminRecoveryItem, AdminTopUpConfig, AdminUsageAuditItem } from "@/lib/admin-billing-types";
@@ -463,9 +463,15 @@ function PricingPanel() {
     const [approvalSaving, setApprovalSaving] = useState(false);
     const [priceCoverageFilter, setPriceCoverageFilter] = useState<"all" | "missing">("all");
     const [approvalReadinessFilter, setApprovalReadinessFilter] = useState<"all" | "ready">("all");
+    const [modelSearch, setModelSearch] = useState("");
+    const deferredModelSearch = useDeferredValue(modelSearch);
     const visiblePricingModels = useMemo(
-        () => models.filter((model) => (priceCoverageFilter === "missing" ? !model.saleRateCard : true) && (approvalReadinessFilter === "ready" ? suggestedSaleApprovalReady(model, pricingPolicy?.version) : true)),
-        [approvalReadinessFilter, models, priceCoverageFilter, pricingPolicy?.version],
+        () =>
+            models.filter(
+                (model) =>
+                    matchesPricingModelSearch(model, deferredModelSearch) && (priceCoverageFilter === "missing" ? !model.saleRateCard : true) && (approvalReadinessFilter === "ready" ? suggestedSaleApprovalReady(model, pricingPolicy?.version) : true),
+            ),
+        [approvalReadinessFilter, deferredModelSearch, models, priceCoverageFilter, pricingPolicy?.version],
     );
     const load = useCallback(async () => {
         setLoading(true);
@@ -734,6 +740,9 @@ function PricingPanel() {
                     </div>
                 ) : null}
                 <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-stone-50 p-3 dark:bg-stone-900/45">
+                    <div className="w-full sm:w-64">
+                        <Input allowClear value={modelSearch} prefix={<Search className="size-4 text-stone-400" />} placeholder="搜索模型名称、ID 或上游模型" aria-label="搜索定价模型" onChange={(event) => setModelSearch(event.target.value)} />
+                    </div>
                     <div>
                         <div className="mb-1 text-[11px] text-stone-500">正式售价</div>
                         <Segmented
@@ -1595,6 +1604,11 @@ export function buildSuggestedSalePriceDiff(current: LogicalModel["saleRateCard"
 
 function pricingComponentIdentity(component: PricingComponent) {
     return JSON.stringify([component.dimension, component.per || "1", component.match || "", Object.entries(component.when || {}).sort(([left], [right]) => left.localeCompare(right))]);
+}
+
+export function matchesPricingModelSearch(model: Pick<LogicalModel, "id" | "name"> & { bindings: Pick<LogicalModelBinding, "upstreamModel">[] }, query: string) {
+    const search = query.trim().toLowerCase();
+    return !search || [model.name, model.id, ...model.bindings.map((binding) => binding.upstreamModel)].some((value) => value.toLowerCase().includes(search));
 }
 
 function suggestedSaleApprovalReady(model: LogicalModel, pricingPolicyVersion?: string) {
