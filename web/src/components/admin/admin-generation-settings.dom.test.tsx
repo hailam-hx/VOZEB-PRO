@@ -199,7 +199,20 @@ describe("admin generation controls", () => {
             concurrencyLimit: 3,
             maxInputTokens: 1000000,
             maxOutputTokens: 16384,
+            maxInputTokensSource: "manual",
+            maxOutputTokensSource: "manual",
         });
+    });
+
+    it("recalculates an upstream-managed input limit when output is edited", async () => {
+        const applied = vi.fn();
+        const models = textModels({ maxInputTokens: 120000, maxInputTokensSource: "upstream", maxOutputTokens: 8000, maxOutputTokensSource: "upstream" }) as Parameters<typeof LogicalModelHarness>[0]["logicalModels"];
+        models[0].bindings[0].upstreamMetadata = { runtime: { contextWindow: 128000 } };
+        const host = await render(<LogicalModelHarness channels={textChannels} logicalModels={models} defaultModels={textDefaults} onApplied={applied} />);
+        await openVideoEditor(host);
+        await act(async () => fireEvent.change(fieldInput("最大输出 Token"), { target: { value: "16000" } }));
+        await userEvent.setup().click(Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "应用修改") as HTMLButtonElement);
+        expect(applied.mock.lastCall?.[0].logicalModels[0].bindings[0].capabilityProfile).toMatchObject({ maxInputTokens: 112000, maxInputTokensSource: "upstream", maxOutputTokens: 16000, maxOutputTokensSource: "manual" });
     });
 
     it("stores text streaming stage deadlines as seconds and keeps blank stages unset", async () => {

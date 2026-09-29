@@ -77,6 +77,9 @@ export function publicAgentRunSnapshot(run: AgentRun) {
 export function publicAgentRunFailure(run: AgentRun) {
     if (run.status !== "failed") return undefined;
     if (hasInsufficientPointsError(run.plannerFailure?.message)) return { errorCode: "INSUFFICIENT_BALANCE", retryable: false };
+    if (/文本预留缺少可证明的最大输出 token|文本模型缺少最大输出 token 配置|Claude 文本模型缺少后台配置的最大输出 token/.test(run.plannerFailure?.message || "")) {
+        return { errorCode: "TEXT_OUTPUT_LIMIT_UNCONFIGURED", retryable: false };
+    }
     if (run.planningFinalization?.retryable === false) return { errorCode: "PLANNING_UNAVAILABLE", retryable: false };
     const code = classifyAgentTaskPublicError(run.plannerFailure?.message);
     if (code && transientTaskErrorCodes.has(code)) return { errorCode: code, retryable: true };

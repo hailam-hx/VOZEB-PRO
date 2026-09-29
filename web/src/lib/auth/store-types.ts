@@ -213,6 +213,8 @@ export type LogicalModelCapabilityProfile = {
     concurrencyLimit?: number;
     maxInputTokens?: number;
     maxOutputTokens?: number;
+    maxInputTokensSource?: "upstream" | "manual";
+    maxOutputTokensSource?: "upstream" | "manual";
     supportsIdempotency?: boolean;
     unitCost?: number;
     unitCostCurrency?: string;

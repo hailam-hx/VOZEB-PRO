@@ -322,7 +322,10 @@ function PreferencePanel({
     const hasConfiguredSize = Boolean(fixedSizeLabel || configuredSizes.length || normalizedGenerationParameters?.supportsCustomSize);
     const hasVideoReferenceModes = capability === "video" && videoReferenceModeOptions.length > 0;
     const hasCanvasParameters = hasConfiguredSize || hasVideoReferenceModes;
-    const activeSection = hasCanvasParameters ? section : "output";
+    const hasImageQualityControl = capability === "image" && (!authoritativeImageQuality || (imageQualityProfile?.selectionMode === "explicit" && localizedImageQualityOptions.length >= 2));
+    const hasCountControl = Boolean(showCount && (normalizedGenerationParameters?.maxBatchSize || (normalizedGenerationParameters?.supportsCustomBatchSize && normalizedGenerationParameters.customBatchSizeRange)));
+    const hasOutputParameters = capability === "video" || hasImageQualityControl || hasCountControl;
+    const activeSection = hasCanvasParameters && (!hasOutputParameters || section === "canvas") ? "canvas" : "output";
 
     useEffect(() => {
         setCustomEditorOpen(isCustomSizeSelected);
@@ -335,11 +338,11 @@ function PreferencePanel({
     if (capability === "audio") {
         const formatValues = configuredCreativeGenerationOptions(["auto", ...audioFormatOptions.map((option) => option.value)], generationParameters?.formats);
         return (
-            <div className="grid grid-cols-2 gap-1.5">
-                <label className="grid gap-1.5 text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">
-                    {t("voice")}
-                    <VoiceSelector model={configuredAudioModel} value={preferences.audio?.voiceSelection} disabled={!generationParameters} onChange={(voiceSelection) => onChange({ voiceSelection })} />
-                </label>
+            <div className="grid min-w-0 gap-3">
+                <div className="grid min-w-0 gap-1.5">
+                    <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{t("voice")}</p>
+                    <VoiceSelector model={configuredAudioModel} value={preferences.audio?.voiceSelection} disabled={!generationParameters} className="min-w-0" onChange={(voiceSelection) => onChange({ voiceSelection })} />
+                </div>
                 <PreferenceSelect
                     label={t("format")}
                     ariaLabel={t("selectAudioFormat")}
@@ -353,7 +356,6 @@ function PreferencePanel({
                     onChange={(format) => onChange({ format: format === "auto" ? undefined : format })}
                 />
                 <PositiveNumberField
-                    className="col-span-2"
                     label={t("speechSpeed")}
                     ariaLabel={t("enterSpeechSpeed")}
                     value={preferences.audio?.speed}
@@ -371,36 +373,40 @@ function PreferencePanel({
 
     return (
         <div className={cn("grid min-w-0", compact ? "gap-2" : "gap-2.5")}>
-            <div className={cn("grid gap-1 bg-[#f1f3f5] dark:bg-[#252a31]", hasCanvasParameters ? "grid-cols-2" : "grid-cols-1", compact ? "rounded-lg p-0.5" : "rounded-xl p-1")} role="tablist" aria-label={t("generationParameterGroups")}>
-                {hasCanvasParameters ? (
+            {hasOutputParameters ? (
+                <div className={cn("grid gap-1 bg-[#f1f3f5] dark:bg-[#252a31]", hasCanvasParameters ? "grid-cols-2" : "grid-cols-1", compact ? "rounded-lg p-0.5" : "rounded-xl p-1")} role="tablist" aria-label={t("generationParameterGroups")}>
+                    {hasCanvasParameters ? (
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeSection === "canvas"}
+                            className={cn(
+                                compact ? "h-7 rounded-[7px] text-[11px] font-medium transition" : "h-8 rounded-lg text-[11px] font-medium transition",
+                                activeSection === "canvas" ? "bg-white text-[#20242a] shadow-sm dark:bg-[#343b44] dark:text-white" : "text-[#7b8591] hover:text-[#20242a] dark:text-[#8f99a5] dark:hover:text-white",
+                            )}
+                            onClick={() => setSection("canvas")}
+                        >
+                            {t("visual")}
+                        </button>
+                    ) : null}
                     <button
                         type="button"
                         role="tab"
-                        aria-selected={activeSection === "canvas"}
+                        aria-selected={activeSection === "output"}
                         className={cn(
                             compact ? "h-7 rounded-[7px] text-[11px] font-medium transition" : "h-8 rounded-lg text-[11px] font-medium transition",
-                            activeSection === "canvas" ? "bg-white text-[#20242a] shadow-sm dark:bg-[#343b44] dark:text-white" : "text-[#7b8591] hover:text-[#20242a] dark:text-[#8f99a5] dark:hover:text-white",
+                            activeSection === "output" ? "bg-white text-[#20242a] shadow-sm dark:bg-[#343b44] dark:text-white" : "text-[#7b8591] hover:text-[#20242a] dark:text-[#8f99a5] dark:hover:text-white",
                         )}
-                        onClick={() => setSection("canvas")}
+                        onClick={() => setSection("output")}
                     >
-                        {t("visual")}
+                        {t("output")}
                     </button>
-                ) : null}
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected={activeSection === "output"}
-                    className={cn(
-                        compact ? "h-7 rounded-[7px] text-[11px] font-medium transition" : "h-8 rounded-lg text-[11px] font-medium transition",
-                        activeSection === "output" ? "bg-white text-[#20242a] shadow-sm dark:bg-[#343b44] dark:text-white" : "text-[#7b8591] hover:text-[#20242a] dark:text-[#8f99a5] dark:hover:text-white",
-                    )}
-                    onClick={() => setSection("output")}
-                >
-                    {t("output")}
-                </button>
-            </div>
+                </div>
+            ) : null}
 
-            {activeSection === "canvas" ? (
+            {!hasCanvasParameters && !hasOutputParameters ? (
+                <p className="rounded-lg bg-[#f5f6f7] px-3 py-3 text-xs text-[#7b8591] dark:bg-[#24282e] dark:text-[#98a2ae]">{t("noGenerationParameters")}</p>
+            ) : activeSection === "canvas" ? (
                 <div className={cn("grid min-w-0", compact ? "gap-2" : "gap-2.5")}>
                     {hasVideoReferenceModes && videoReferenceContent ? (
                         videoReferenceContent
@@ -489,7 +495,7 @@ function PreferencePanel({
                             disabledReason={disabledReason}
                             onChange={(quality) => onChange({ quality })}
                         />
-                    ) : capability === "image" && (!authoritativeImageQuality || (imageQualityProfile?.selectionMode === "explicit" && localizedImageQualityOptions.length >= 2)) ? (
+                    ) : hasImageQualityControl ? (
                         <CompactOptionGroup
                             label={t("imageQuality")}
                             ariaLabel={t("selectImageQuality")}
@@ -503,7 +509,7 @@ function PreferencePanel({
                             }}
                         />
                     ) : null}
-                    {showCount && (normalizedGenerationParameters?.maxBatchSize || (normalizedGenerationParameters?.supportsCustomBatchSize && normalizedGenerationParameters.customBatchSizeRange)) ? (
+                    {hasCountControl ? (
                         <GenerationCountGroup
                             key={capability}
                             capability={capability}

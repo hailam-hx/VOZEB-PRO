@@ -463,7 +463,7 @@ test("admin pricing, provider-unit conversion, usage anomaly, and orphan recover
 });
 
 test("DFLOP pricing dimensions support independent manual override and restore across release viewports", async ({ page }, testInfo) => {
-    const policy = {
+    let policy = {
         version: "pricing-policy-v1:e2e",
         dflopCreditsPerCny: "60",
         dflopCreditsPerCnySource: "upstream",
@@ -546,6 +546,14 @@ test("DFLOP pricing dimensions support independent manual override and restore a
         ],
     };
     const patches: Array<{ dimensionCommand?: { action: "set_manual" | "restore_upstream"; bindingId: string; dimensionId: string; effectiveValue?: string } }> = [];
+    const policyPatches: Array<{ pricingPolicy: { cnyToUsd: string } }> = [];
+    await page.route(/\/api\/admin\/settings$/, async (route) => {
+        if (route.request().method() !== "PATCH") return route.continue();
+        const body = route.request().postDataJSON() as { pricingPolicy: { cnyToUsd: string } };
+        policyPatches.push(body);
+        policy = { ...policy, cnyToUsd: body.pricingPolicy.cnyToUsd };
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ settings: { pricingPolicy: policy } }) });
+    });
     await page.route(/\/api\/admin\/billing\/model-pricing$/, async (route) => {
         if (route.request().method() === "PATCH") {
             const body = route.request().postDataJSON() as { dimensionCommand: { action: "set_manual" | "restore_upstream"; bindingId: string; dimensionId: string; effectiveValue?: string } };
@@ -583,6 +591,12 @@ test("DFLOP pricing dimensions support independent manual override and restore a
     await expect(row1080.getByText("upstream", { exact: true })).toBeVisible();
     await row720.getByRole("button", { name: "恢复上游" }).click();
     await expect.poll(() => patches.at(-1)?.dimensionCommand).toEqual({ action: "restore_upstream", bindingId: "seedance:dflop", dimensionId: "video-second:resolution=720p" });
+    await dialog.getByRole("button", { name: "Close" }).click();
+    await expect(dialog).toBeHidden();
+    await page.locator("#cnyToUsd").fill("0.1428571429");
+    await page.getByRole("button", { name: "保存成本策略" }).click();
+    await expect.poll(() => policyPatches.at(-1)?.pricingPolicy.cnyToUsd).toBe("0.1428571429");
+    await expect(page.locator("#cnyToUsd")).toHaveValue("0.1428571429");
     await expectNoHorizontalOverflow(page, `DFLOP pricing ${testInfo.project.name}`);
 });
 

@@ -6,6 +6,12 @@ const ONE = BigInt(1);
 const TWO = BigInt(2);
 const TEN = BigInt(10);
 
+export class NonTerminatingDecimalError extends Error {
+    constructor() {
+        super("小数无法精确表示");
+    }
+}
+
 export class ExactDecimal {
     constructor(
         readonly numerator: bigint,
@@ -78,8 +84,12 @@ export class ExactDecimal {
 
     toString() {
         const scale = terminatingScale(this.denominator);
-        if (scale === undefined) throw new Error("小数无法精确表示");
+        if (scale === undefined) throw new NonTerminatingDecimalError();
         return formatScaledInteger(this.toScaledInteger(scale).value, scale);
+    }
+
+    toStringOrRound(scale: number) {
+        return terminatingScale(this.denominator) === undefined ? this.roundHalfUp(scale).toString() : this.toString();
     }
 
     private toScaledInteger(scale: number) {

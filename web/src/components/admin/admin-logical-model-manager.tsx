@@ -369,6 +369,15 @@ function BindingEditor({
     const timeoutSeconds = profile.timeoutMs ? Math.round(profile.timeoutMs / 1000) : undefined;
     const defaultTimeoutSeconds = resolveModelRequestTimeoutMs(undefined, capability) / 1000;
     const updateProfile = (patch: Partial<LogicalModelCapabilityProfile>) => onChange({ capabilityProfile: { ...profile, ...patch } });
+    const updateTokenLimit = (field: "maxInputTokens" | "maxOutputTokens", value: number | null) => {
+        const patch: Partial<LogicalModelCapabilityProfile> = { [field]: value ? Number(value) : undefined, [`${field}Source`]: value ? "manual" : undefined };
+        if (field === "maxOutputTokens" && profile.maxInputTokensSource === "upstream") {
+            const inputLimit = Number(binding.upstreamMetadata?.runtime?.contextWindow) - Number(value);
+            patch.maxInputTokens = value && Number.isSafeInteger(inputLimit) && inputLimit > 0 ? inputLimit : undefined;
+            patch.maxInputTokensSource = patch.maxInputTokens ? "upstream" : undefined;
+        }
+        updateProfile(patch);
+    };
     const updateOverallTimeout = (value: number | null) => {
         const timeoutMs = value ? Math.floor(Number(value) * 1000) : undefined;
         const overallTimeoutMs = resolveModelRequestTimeoutMs({ capabilityProfile: { ...profile, timeoutMs } }, capability);
@@ -652,10 +661,20 @@ function BindingEditor({
                     {capability === "text" ? (
                         <>
                             <LabeledControl label="最大输入 Token">
-                                <InputNumber className="w-full" min={1} precision={0} value={profile.maxInputTokens} placeholder="留空表示未配置" onChange={(value) => updateProfile({ maxInputTokens: value ? Number(value) : undefined })} />
+                                <InputNumber className="w-full" min={1} precision={0} value={profile.maxInputTokens} placeholder="留空表示未配置" onChange={(value) => updateTokenLimit("maxInputTokens", value)} />
+                                {profile.maxInputTokensSource === "upstream" ? (
+                                    <span className="text-[11px] text-stone-500 dark:text-stone-400">DFLOP 上下文窗口减去当前输出上限</span>
+                                ) : profile.maxInputTokensSource === "manual" ? (
+                                    <span className="text-[11px] text-stone-500 dark:text-stone-400">管理员手动设置</span>
+                                ) : null}
                             </LabeledControl>
                             <LabeledControl label="最大输出 Token">
-                                <InputNumber className="w-full" min={1} precision={0} value={profile.maxOutputTokens} placeholder="留空表示未配置" onChange={(value) => updateProfile({ maxOutputTokens: value ? Number(value) : undefined })} />
+                                <InputNumber className="w-full" min={1} precision={0} value={profile.maxOutputTokens} placeholder="留空表示未配置" onChange={(value) => updateTokenLimit("maxOutputTokens", value)} />
+                                {profile.maxOutputTokensSource === "upstream" ? (
+                                    <span className="text-[11px] text-stone-500 dark:text-stone-400">DFLOP 默认输出上限</span>
+                                ) : profile.maxOutputTokensSource === "manual" ? (
+                                    <span className="text-[11px] text-stone-500 dark:text-stone-400">管理员手动设置</span>
+                                ) : null}
                             </LabeledControl>
                         </>
                     ) : null}

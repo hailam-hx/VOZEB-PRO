@@ -23,6 +23,7 @@ import { normalizeAdminImageQualityProfiles } from "@/lib/server/admin-image-qua
 import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
 import { normalizeSiteSettings } from "@/lib/auth/store-normalizers";
 import { DEFAULT_SYSTEM_PRICING_POLICY, normalizeSystemPricingPolicy } from "@/lib/billing/pricing-policy";
+import { NonTerminatingDecimalError } from "@/lib/billing/decimal";
 
 const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
@@ -200,6 +201,20 @@ describe("admin settings model routing", () => {
         const rejected = await PATCH(request({ pricingPolicy: { dflopCreditsPerCny: "1" } }));
         expect(rejected.status).toBe(400);
         expect(await rejected.json()).toEqual(expect.objectContaining({ error: expect.stringContaining("不允许") }));
+    });
+
+    it("returns a useful validation error for an invalid CNY rate", async () => {
+        const response = await PATCH(request({ pricingPolicy: { cnyToUsd: "0" } }));
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: expect.stringContaining("CNY/USD 汇率") });
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+    });
+
+    it("reports a safe pricing precision error instead of a generic settings failure", async () => {
+        mocks.setAuthSettings.mockRejectedValueOnce(new NonTerminatingDecimalError());
+        const response = await PATCH(request({ pricingPolicy: { cnyToUsd: "0.1428571429" } }));
+        expect(response.status).toBe(422);
+        expect(await response.json()).toEqual({ error: "成本策略计算结果超出可保存精度，请检查模型成本与汇率配置" });
     });
 
     it("persists a DFLOP currency draft only after server-side upstream verification", async () => {

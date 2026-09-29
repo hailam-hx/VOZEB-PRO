@@ -40,6 +40,25 @@ const model = (bindings: LogicalModelBinding[]): LogicalModel => ({ id: "video",
 const calculatedAt = "2026-09-24T01:00:00.000Z";
 
 describe("suggested model pricing", () => {
+    it("serializes a repeating USD-to-HOTX conversion for suggested prices", () => {
+        const result = calculateSuggestedSaleRateCard({
+            model: model([binding("b1", "one", "1")]),
+            channels: [channel("one")],
+            policy: normalizeSystemPricingPolicy({ hotxUsdPerCredit: "3" }),
+            calculatedAt,
+        });
+        expect(result.suggestion?.rateCard.components[0].unitPrice).toBe("0.333333333333333333333333333333333333");
+        expect(result.warnings.some((warning) => warning.code === "BELOW_COST")).toBe(false);
+
+        const tripled = calculateSuggestedSaleRateCard({
+            model: model([binding("b1", "one", "1")]),
+            channels: [channel("one")],
+            policy: normalizeSystemPricingPolicy({ hotxUsdPerCredit: "3", markupMultiplier: "3" }),
+            calculatedAt,
+        });
+        expect(tripled.suggestion?.rateCard.components[0].unitPrice).toBe("1");
+    });
+
     it("uses the maximum comparable active binding cost and ignores disabled bindings", () => {
         const policy = normalizeSystemPricingPolicy({ costBasis: "max_active_binding_cost", markupMultiplier: "1" });
         const result = calculateSuggestedSaleRateCard({

@@ -161,18 +161,21 @@ export function CreativeMessages({
                               .filter(Boolean)
                               .join("\n\n")
                         : "";
+                const failureCode = item.role === "assistant" ? run?.failure?.errorCode : undefined;
                 const runFailureReason =
-                    run?.failure?.errorCode === "INSUFFICIENT_BALANCE"
+                    failureCode === "INSUFFICIENT_BALANCE"
                         ? t("createInsufficientBalance")
-                        : run?.failure?.errorCode === "PLANNING_UNAVAILABLE"
-                          ? t("createPlanningUnavailable")
-                          : run?.failure?.errorCode === "REQUEST_TIMEOUT"
-                            ? t("upstreamTimeout")
-                            : run?.failure?.errorCode === "NETWORK_ERROR"
-                              ? t("createNetworkError")
-                              : run?.failure?.errorCode === "UPSTREAM_UNAVAILABLE"
-                                ? t("upstreamUnavailable")
-                                : undefined;
+                        : failureCode === "TEXT_OUTPUT_LIMIT_UNCONFIGURED"
+                          ? t("createTextOutputLimitUnconfigured")
+                          : failureCode === "PLANNING_UNAVAILABLE"
+                            ? t("createPlanningUnavailable")
+                            : failureCode === "REQUEST_TIMEOUT"
+                              ? t("upstreamTimeout")
+                              : failureCode === "NETWORK_ERROR"
+                                ? t("createNetworkError")
+                                : failureCode === "UPSTREAM_UNAVAILABLE"
+                                  ? t("upstreamUnavailable")
+                                  : undefined;
                 const displayContent =
                     streamedText ||
                     runFailureReason ||
@@ -667,51 +670,53 @@ function assetsForAssistant(message: CreativeMessage, assetsByMessage: Map<strin
 
 function useCreativeFailureReason(_message?: string, errorCode?: string, model?: string) {
     const t = useTranslations("create");
-    return errorCode === "video_input_copyright_restricted"
-        ? t("videoInputCopyrightRestricted")
-        : errorCode === "video_reference_duration_exceeded"
-          ? t("videoReferenceDurationExceeded")
-          : errorCode === "video_reference_aspect_ratio_unsupported"
-            ? t("videoReferenceAspectRatioUnsupported")
-            : errorCode === "video_output_sensitive_content"
-              ? t("videoOutputSensitiveContent")
-              : errorCode === "video_text_too_long"
-                ? t("videoTextTooLong")
-                : errorCode === "manual_model_unavailable_or_incompatible"
-                  ? t("manualModelUnavailableOrIncompatible", { model: model?.trim() || "-" })
-                  : errorCode === "image_size_below_provider_minimum"
-                    ? t("imageSizeBelowProviderMinimum")
-                    : errorCode === "PLANNING_UNAVAILABLE"
-                      ? t("createPlanningUnavailable")
-                      : errorCode === "REFERENCE_IMAGE_REQUIRED"
-                        ? t("referenceImageRequired")
-                        : errorCode === "UPSTREAM_BAD_REQUEST"
-                          ? t("upstreamBadRequest")
-                          : errorCode === "UPSTREAM_GATEWAY_ERROR"
-                            ? t("upstreamGatewayError")
-                            : errorCode === "SUBMISSION_UNKNOWN"
-                              ? t("submissionUnknown")
-                              : errorCode === "MEDIA_DOWNLOAD_TIMEOUT" || errorCode === "PERSIST_FAILED"
-                                ? t("mediaPersistenceFailed")
-                                : errorCode?.startsWith("QUALITY_")
-                                  ? t("unsupportedImageQualityOrSize")
-                                  : errorCode === "INSUFFICIENT_BALANCE"
-                                    ? t("createInsufficientBalance")
-                                    : errorCode === "REFERENCE_ASSET_UNAVAILABLE"
-                                      ? t("referenceAssetUnavailable")
-                                      : errorCode === "INVALID_ASSET"
-                                        ? t("invalidCreationAsset")
-                                        : errorCode === "UNSUPPORTED_CAPABILITY"
-                                          ? t("unsupportedCreationCapability")
-                                          : errorCode === "RATE_LIMIT"
-                                            ? t("createRateLimited")
-                                            : errorCode === "REQUEST_TIMEOUT"
-                                              ? t("upstreamTimeout")
-                                              : errorCode === "NETWORK_ERROR"
-                                                ? t("createNetworkError")
-                                                : errorCode === "UPSTREAM_UNAVAILABLE"
-                                                  ? t("upstreamUnavailable")
-                                                  : undefined;
+    return errorCode === "TEXT_OUTPUT_LIMIT_UNCONFIGURED"
+        ? t("createTextOutputLimitUnconfigured")
+        : errorCode === "video_input_copyright_restricted"
+          ? t("videoInputCopyrightRestricted")
+          : errorCode === "video_reference_duration_exceeded"
+            ? t("videoReferenceDurationExceeded")
+            : errorCode === "video_reference_aspect_ratio_unsupported"
+              ? t("videoReferenceAspectRatioUnsupported")
+              : errorCode === "video_output_sensitive_content"
+                ? t("videoOutputSensitiveContent")
+                : errorCode === "video_text_too_long"
+                  ? t("videoTextTooLong")
+                  : errorCode === "manual_model_unavailable_or_incompatible"
+                    ? t("manualModelUnavailableOrIncompatible", { model: model?.trim() || "-" })
+                    : errorCode === "image_size_below_provider_minimum"
+                      ? t("imageSizeBelowProviderMinimum")
+                      : errorCode === "PLANNING_UNAVAILABLE"
+                        ? t("createPlanningUnavailable")
+                        : errorCode === "REFERENCE_IMAGE_REQUIRED"
+                          ? t("referenceImageRequired")
+                          : errorCode === "UPSTREAM_BAD_REQUEST"
+                            ? t("upstreamBadRequest")
+                            : errorCode === "UPSTREAM_GATEWAY_ERROR"
+                              ? t("upstreamGatewayError")
+                              : errorCode === "SUBMISSION_UNKNOWN"
+                                ? t("submissionUnknown")
+                                : errorCode === "MEDIA_DOWNLOAD_TIMEOUT" || errorCode === "PERSIST_FAILED"
+                                  ? t("mediaPersistenceFailed")
+                                  : errorCode?.startsWith("QUALITY_")
+                                    ? t("unsupportedImageQualityOrSize")
+                                    : errorCode === "INSUFFICIENT_BALANCE"
+                                      ? t("createInsufficientBalance")
+                                      : errorCode === "REFERENCE_ASSET_UNAVAILABLE"
+                                        ? t("referenceAssetUnavailable")
+                                        : errorCode === "INVALID_ASSET"
+                                          ? t("invalidCreationAsset")
+                                          : errorCode === "UNSUPPORTED_CAPABILITY"
+                                            ? t("unsupportedCreationCapability")
+                                            : errorCode === "RATE_LIMIT"
+                                              ? t("createRateLimited")
+                                              : errorCode === "REQUEST_TIMEOUT"
+                                                ? t("upstreamTimeout")
+                                                : errorCode === "NETWORK_ERROR"
+                                                  ? t("createNetworkError")
+                                                  : errorCode === "UPSTREAM_UNAVAILABLE"
+                                                    ? t("upstreamUnavailable")
+                                                    : undefined;
 }
 
 function CreativePartialFailure({ task }: { task: CreativeAgentRun["tasks"][number] }) {

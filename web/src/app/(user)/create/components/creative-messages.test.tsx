@@ -74,6 +74,44 @@ describe("CreativeMessages", () => {
         expect(markup).toContain("创作任务执行失败");
         expect(markup).not.toContain("provider-token=private");
     });
+    it("explains a planner output limit configuration failure and hides direct retry", () => {
+        const user: CreativeMessage = { id: "request", conversationId: "conversation-one", runId: "planner-output-limit", sequence: 1, role: "user", status: "completed", content: "你好", metadata: {}, createdAt: 1, updatedAt: 1 };
+        const assistant: CreativeMessage = { ...user, id: "assistant", sequence: 2, role: "assistant", status: "failed", content: "private provider response" };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[user, assistant]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "planner-output-limit": {
+                            id: "planner-output-limit",
+                            conversationId: "conversation-one",
+                            inputMessageId: user.id,
+                            assistantMessageId: assistant.id,
+                            status: "failed",
+                            assetIds: [],
+                            tasks: [],
+                            failure: { errorCode: "TEXT_OUTPUT_LIMIT_UNCONFIGURED", retryable: false },
+                        },
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+        expect(markup).toContain("最大输出 token");
+        expect(markup).toContain("管理员");
+        expect(markup).toContain(">你好</span>");
+        expect(markup).not.toContain("private provider response");
+        expect(markup).not.toContain("直接重试");
+    });
 
     it("does not offer a retry before failed Run details have loaded", () => {
         const user: CreativeMessage = { id: "request", conversationId: "conversation-one", runId: "unavailable-run", sequence: 1, role: "user", status: "completed", content: "生成语音", metadata: {}, createdAt: 1, updatedAt: 1 };

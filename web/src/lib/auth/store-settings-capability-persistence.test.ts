@@ -234,6 +234,12 @@ describe("file settings capability persistence", () => {
         });
         expect(restored.logicalModels[0].suggestedSaleRateCard).toMatchObject({ calculatedAt: "2026-09-24T00:00:02.000Z", costBasis: "max_active_binding_cost", markupMultiplier: "1" });
         expect(restored.logicalModels[0]).toMatchObject({ salePriceSource: "approved", salePriceApproval: { suggestedRevision: expect.any(String), approvedBy: "admin-1", batchOperationId: "batch-1" } });
+
+        await setAuthSettings({ pricingPolicy: { ...pricingPolicy, cnyToUsd: "0.1428571429" } });
+        const updated = await getFreshAuthSettings();
+        expect(updated.pricingPolicy.cnyToUsd).toBe("0.1428571429");
+        expect(updated.logicalModels[0].bindings[0].providerPricingProfile?.dimensions[0].providerCostHotxCredits).toBe("0.226190476258333333333333333333333333");
+        expect(updated.logicalModels[0].suggestedSaleRateCard?.rateCard.components[0].unitPrice).toBe("0.226190476258333333333333333333333333");
     });
 
     it("preserves protected binding pricing when a settings save moves the binding to another logical model", async () => {

@@ -15,6 +15,7 @@ import { validateGenerationParametersInput } from "@/lib/generation-parameters-a
 import { buildAdminPricingPolicy } from "@/lib/server/admin-pricing-policy-service";
 import { buildDflopPricingAuditSummary } from "@/lib/server/dflop-pricing-sync-service";
 import { normalizeSystemPricingPolicy } from "@/lib/billing/pricing-policy";
+import { NonTerminatingDecimalError } from "@/lib/billing/decimal";
 import { verifyDflopPricingPolicyDraft } from "@/lib/server/dflop-currency-policy-service";
 import { normalizeAdminImageQualityProfiles } from "@/lib/server/admin-image-quality-profiles";
 
@@ -156,6 +157,7 @@ export async function PATCH(request: Request) {
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
         if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+        if (error instanceof NonTerminatingDecimalError) return NextResponse.json({ error: "成本策略计算结果超出可保存精度，请检查模型成本与汇率配置" }, { status: 422 });
         console.error("Admin settings update failed", error);
         return NextResponse.json({ error: "更新设置失败" }, { status: 500 });
     }

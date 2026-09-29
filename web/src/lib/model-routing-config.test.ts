@@ -24,6 +24,66 @@ import { applyProviderPricingConversion } from "./billing/provider-pricing";
 const channel = (id: string, models: string[], enabled = true): SystemModelChannel => ({ id, name: id, baseUrl: `https://${id}.example.com/v1`, apiKey: "test-secret", apiFormat: "openai", models, enabled });
 
 describe("model routing config", () => {
+    it("synchronizes DFLOP text token limits from public metadata and refreshes upstream-managed values", () => {
+        const upstream = channel("dflop", ["writer"]);
+        const runtime: Record<string, unknown> = { contextWindow: 1050000, defaultMaxTokens: 8192 };
+        upstream.advancedConfig = {
+            protocol: "dflop",
+            modelDiscovery: {
+                writer: { kind: "text", matched: true, routable: true, upstreamMetadata: { category: "text", runtime } },
+            },
+        } as never;
+        const first = synchronizeLogicalModelsWithChannels([], [upstream]);
+        expect(first[0].bindings[0].capabilityProfile).toMatchObject({ maxInputTokens: 1041808, maxOutputTokens: 8192, maxInputTokensSource: "upstream", maxOutputTokensSource: "upstream" });
+
+        runtime.contextWindow = 2000000;
+        runtime.defaultMaxTokens = 16384;
+        const second = synchronizeLogicalModelsWithChannels(first, [upstream]);
+        expect(second[0].bindings[0].capabilityProfile).toMatchObject({ maxInputTokens: 1983616, maxOutputTokens: 16384, maxInputTokensSource: "upstream", maxOutputTokensSource: "upstream" });
+    });
+
+    it("preserves manually set text token limits per field and ignores missing or invalid upstream values", () => {
+        const upstream = channel("dflop", ["writer"]);
+        const runtime: Record<string, unknown> = { contextWindow: 128000, defaultMaxTokens: 8192 };
+        upstream.advancedConfig = {
+            protocol: "dflop",
+            modelDiscovery: {
+                writer: { kind: "text", matched: true, routable: true, upstreamMetadata: { category: "text", runtime } },
+            },
+        } as never;
+        const first = synchronizeLogicalModelsWithChannels([], [upstream]);
+        first[0].bindings[0].capabilityProfile = { maxInputTokens: 64000, maxInputTokensSource: "manual", maxOutputTokens: 8192, maxOutputTokensSource: "upstream" };
+        runtime.contextWindow = 256000;
+        runtime.defaultMaxTokens = 16384;
+        const second = synchronizeLogicalModelsWithChannels(first, [upstream]);
+        expect(second[0].bindings[0].capabilityProfile).toMatchObject({ maxInputTokens: 64000, maxInputTokensSource: "manual", maxOutputTokens: 16384, maxOutputTokensSource: "upstream" });
+
+        runtime.contextWindow = -1;
+        runtime.defaultMaxTokens = null;
+        const third = synchronizeLogicalModelsWithChannels(second, [upstream]);
+        expect(third[0].bindings[0].capabilityProfile).toMatchObject({ maxInputTokens: 64000, maxOutputTokens: 16384 });
+
+        third[0].bindings[0].capabilityProfile!.maxInputTokensSource = "upstream";
+        runtime.contextWindow = 8000;
+        const fourth = synchronizeLogicalModelsWithChannels(third, [upstream]);
+        expect(fourth[0].bindings[0].capabilityProfile?.maxInputTokens).toBeUndefined();
+    });
+
+    it("does not infer token limits for non-DFLOP text channels", () => {
+        const upstream = channel("other", ["writer"]);
+        const models = synchronizeLogicalModelsWithChannels([], [upstream]);
+        expect(models[0].bindings[0].capabilityProfile?.maxInputTokens).toBeUndefined();
+        expect(models[0].bindings[0].capabilityProfile?.maxOutputTokens).toBeUndefined();
+    });
+
+    it("does not invent an input ceiling without a known output reservation", () => {
+        const upstream = channel("dflop", ["writer"]);
+        upstream.advancedConfig = { protocol: "dflop", modelDiscovery: { writer: { kind: "text", matched: true, routable: true, upstreamMetadata: { category: "text", runtime: { contextWindow: 128000 } } } } } as never;
+        const binding = synchronizeLogicalModelsWithChannels([], [upstream])[0].bindings[0];
+        expect(binding.capabilityProfile?.maxInputTokens).toBeUndefined();
+        expect(binding.capabilityProfile?.maxOutputTokens).toBeUndefined();
+    });
+
     it("derives authoritative DFLOP image quality profiles without writing generic qualities", () => {
         const upstream = channel("dflop", ["tvod-midjourney-v7"]);
         upstream.advancedConfig = {

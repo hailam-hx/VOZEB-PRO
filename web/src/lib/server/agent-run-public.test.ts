@@ -97,6 +97,28 @@ describe("publicAgentRun", () => {
         expect(run).toMatchObject({ failure: { errorCode: "REQUEST_TIMEOUT", retryable: true } });
         expect(JSON.stringify(run)).not.toContain("private-token");
     });
+    it("publishes a missing text output limit as a configuration error without leaking planner diagnostics", () => {
+        const run = publicAgentRun({
+            id: "planner-output-limit",
+            userId: "user",
+            conversationId: "conversation",
+            clientRequestId: "request",
+            surface: "chat",
+            inputMessageId: "input",
+            assistantMessageId: "assistant",
+            prompt: "你好",
+            referencedAssetIds: [],
+            assetIds: [],
+            status: "failed",
+            tasks: [],
+            plannerFailure: { message: "文本预留缺少可证明的最大输出 token; Bearer private-token", failedAt: 2 },
+            reviewed: false,
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        expect(run).toMatchObject({ failure: { errorCode: "TEXT_OUTPUT_LIMIT_UNCONFIGURED", retryable: false } });
+        expect(JSON.stringify(run)).not.toContain("private-token");
+    });
     it.each([
         ["reference_url_not_public", "REFERENCE_ASSET_UNAVAILABLE", false],
         ["INVALID_ASSET", "INVALID_ASSET", false],

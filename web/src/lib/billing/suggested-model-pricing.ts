@@ -1,10 +1,10 @@
 import type { LogicalModel, SystemModelChannel } from "@/lib/auth/store-types";
 import { channelConnectionReady } from "@/lib/channel-protocol-registry";
 import { normalizeModelId } from "@/lib/model-capability";
-import { decimal } from "./decimal";
+import { decimal, type ExactDecimal } from "./decimal";
 import { convertProviderCostToUsd } from "./money";
 import { validatePricingRateCard, type PricingComponent } from "./pricing";
-import type { SuggestedSaleRateCard, SystemPricingPolicy } from "./pricing-policy";
+import { pricingRateText, type SuggestedSaleRateCard, type SystemPricingPolicy } from "./pricing-policy";
 
 export type ModelPricingWarning = {
     code: "NO_ELIGIBLE_BINDING" | "MISSING_COST" | "INCOMPARABLE_UNIT" | "INCOMPLETE_DIMENSION" | "BELOW_COST" | "MINIMUM_MARGIN";
@@ -19,6 +19,8 @@ export type SuggestedSalePricingResult = {
     complete: boolean;
     warnings: ModelPricingWarning[];
 };
+
+type PricedComponent = PricingComponent & { exactUnitPrice: ExactDecimal };
 
 export function calculateSuggestedSaleRateCard(input: { model: LogicalModel; channels: SystemModelChannel[]; policy: SystemPricingPolicy; calculatedAt: string }): SuggestedSalePricingResult {
     const channelById = new Map(input.channels.map((channel) => [channel.id, channel]));
@@ -41,7 +43,10 @@ export function calculateSuggestedSaleRateCard(input: { model: LogicalModel; cha
         }
         try {
             const rateCard = validatePricingRateCard(binding.costRateCard);
-            const components = rateCard.components.map((component) => ({ ...component, unitPrice: decimal(convertProviderCostToUsd(component.unitPrice, binding.providerCostUnit!)).dividedBy(decimal(input.policy.hotxUsdPerCredit)).toString() }));
+            const components = rateCard.components.map((component) => {
+                const exactUnitPrice = decimal(convertProviderCostToUsd(component.unitPrice, binding.providerCostUnit!)).dividedBy(decimal(input.policy.hotxUsdPerCredit));
+                return { ...component, unitPrice: pricingRateText(exactUnitPrice), exactUnitPrice };
+            });
             return [{ binding, rateCard, components }];
         } catch {
             warnings.push({ code: "INCOMPARABLE_UNIT", bindingId: binding.id, message: `Binding ${binding.id} 的成本单位无法换算为 HOTX credits` });
@@ -52,7 +57,10 @@ export function calculateSuggestedSaleRateCard(input: { model: LogicalModel; cha
 
     const selected = input.policy.costBasis === "primary_binding_cost" ? primaryComponents(priced[0].components) : maximumComponents(priced, eligible.length, warnings);
     if (!selected.length) return { complete: false, warnings };
-    const components = selected.map((component, index) => ({ ...component, id: `suggested-${index + 1}`, unitPrice: decimal(component.unitPrice).times(decimal(input.policy.markupMultiplier)).toString() }));
+    const components = selected.map((component, index) => {
+        const exactUnitPrice = component.exactUnitPrice.times(decimal(input.policy.markupMultiplier));
+        return { ...component, id: `suggested-${index + 1}`, unitPrice: pricingRateText(exactUnitPrice), exactUnitPrice };
+    });
     const rateCard = validatePricingRateCard({ version: 1, components });
     const suggestion: SuggestedSaleRateCard = {
         rateCard,
@@ -91,14 +99,14 @@ export function applySuggestedPricingToLogicalModels(models: LogicalModel[], cha
     });
 }
 
-function maximumComponents(priced: Array<{ components: PricingComponent[] }>, eligibleCount: number, warnings: ModelPricingWarning[]) {
-    const grouped = new Map<string, Array<{ component: PricingComponent; bindingIndex: number }>>();
+function maximumComponents(priced: Array<{ components: PricedComponent[] }>, eligibleCount: number, warnings: ModelPricingWarning[]) {
+    const grouped = new Map<string, Array<{ component: PricedComponent; bindingIndex: number }>>();
     priced.forEach(({ components }, bindingIndex) => {
-        const bestPerBinding = new Map<string, PricingComponent>();
+        const bestPerBinding = new Map<string, PricedComponent>();
         for (const component of components) {
             const identity = componentIdentity(component);
             const current = bestPerBinding.get(identity);
-            if (!current || decimal(component.unitPrice).greaterThan(decimal(current.unitPrice))) bestPerBinding.set(identity, component);
+            if (!current || component.exactUnitPrice.greaterThan(current.exactUnitPrice)) bestPerBinding.set(identity, component);
         }
         for (const [identity, component] of bestPerBinding) grouped.set(identity, [...(grouped.get(identity) || []), { component, bindingIndex }]);
     });
@@ -106,15 +114,15 @@ function maximumComponents(priced: Array<{ components: PricingComponent[] }>, el
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([identity, values]) => {
             if (new Set(values.map((value) => value.bindingIndex)).size !== eligibleCount) warnings.push({ code: "INCOMPLETE_DIMENSION", componentId: identity, message: `并非所有 eligible binding 都提供价格维度 ${identity}` });
-            return values.reduce((maximum, value) => (decimal(value.component.unitPrice).greaterThan(decimal(maximum.unitPrice)) ? value.component : maximum), values[0].component);
+            return values.reduce((maximum, value) => (value.component.exactUnitPrice.greaterThan(maximum.exactUnitPrice) ? value.component : maximum), values[0].component);
         });
 }
 
-function primaryComponents(components: PricingComponent[]) {
+function primaryComponents(components: PricedComponent[]) {
     return [...components].sort((left, right) => componentIdentity(left).localeCompare(componentIdentity(right)));
 }
 
-function compareFormalSalePrice(model: LogicalModel, costs: PricingComponent[], warnings: ModelPricingWarning[]) {
+function compareFormalSalePrice(model: LogicalModel, costs: PricedComponent[], warnings: ModelPricingWarning[]) {
     if (!model.saleRateCard) return;
     let sale;
     try {
@@ -125,17 +133,17 @@ function compareFormalSalePrice(model: LogicalModel, costs: PricingComponent[], 
     const sales = new Map(sale.components.map((component) => [componentIdentity(component), component]));
     for (const cost of costs) {
         const saleComponent = sales.get(componentIdentity(cost));
-        if (saleComponent && decimal(cost.unitPrice).greaterThan(decimal(saleComponent.unitPrice))) warnings.push({ code: "BELOW_COST", scope: "formal", componentId: cost.id, message: `${cost.id} 的正式售价低于当前最高 eligible binding 成本` });
+        if (saleComponent && cost.exactUnitPrice.greaterThan(decimal(saleComponent.unitPrice))) warnings.push({ code: "BELOW_COST", scope: "formal", componentId: cost.id, message: `${cost.id} 的正式售价低于当前最高 eligible binding 成本` });
     }
 }
 
-function validateSuggestedMargin(costs: PricingComponent[], suggestions: PricingComponent[], policy: SystemPricingPolicy, warnings: ModelPricingWarning[]) {
+function validateSuggestedMargin(costs: PricedComponent[], suggestions: PricedComponent[], policy: SystemPricingPolicy, warnings: ModelPricingWarning[]) {
     const suggestionByIdentity = new Map(suggestions.map((component) => [componentIdentity(component), component]));
     for (const cost of costs) {
         const suggestion = suggestionByIdentity.get(componentIdentity(cost));
         if (!suggestion) continue;
-        if (decimal(cost.unitPrice).greaterThan(decimal(suggestion.unitPrice))) warnings.push({ code: "BELOW_COST", scope: "suggestion", componentId: cost.id, message: `${cost.id} 的建议售价低于成本` });
-        if (policy.minimumMarginRate !== null && decimal(cost.unitPrice).greaterThan(decimal(suggestion.unitPrice).times(decimal(1).minus(decimal(policy.minimumMarginRate))))) {
+        if (cost.exactUnitPrice.greaterThan(suggestion.exactUnitPrice)) warnings.push({ code: "BELOW_COST", scope: "suggestion", componentId: cost.id, message: `${cost.id} 的建议售价低于成本` });
+        if (policy.minimumMarginRate !== null && cost.exactUnitPrice.greaterThan(suggestion.exactUnitPrice.times(decimal(1).minus(decimal(policy.minimumMarginRate))))) {
             warnings.push({ code: "MINIMUM_MARGIN", componentId: cost.id, message: `${cost.id} 的建议售价未达到最低毛利率` });
         }
     }

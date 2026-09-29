@@ -60,6 +60,13 @@ describe("DFLOP currency configuration", () => {
         expect(convertDflopCreditsToHotx("0.000000000001", policy)).toBe("0.0000000000000025");
     });
 
+    it("serializes repeating DFLOP conversions at 36 decimal places without changing the configured rate", () => {
+        const policy = normalizeSystemPricingPolicy({ dflopCreditsPerCny: "60", cnyToUsd: "0.1428571429" });
+        expect(policy.cnyToUsd).toBe("0.1428571429");
+        expect(convertDflopCreditsToHotx("1", policy)).toBe("0.002380952381666666666666666666666667");
+        expect(convertDflopCreditsToHotx("95", policy)).toBe("0.226190476258333333333333333333333333");
+    });
+
     it("records every conversion input in an auditable snapshot", () => {
         const policy = normalizeSystemPricingPolicy({ dflopCreditsPerCnySource: "upstream", dflopCurrencyConfigVersion: "dflop-currency-v1:test" });
         expect(pricingConversionSnapshot(policy, "2026-09-24T01:00:00.000Z")).toEqual({

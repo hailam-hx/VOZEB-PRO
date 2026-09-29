@@ -175,29 +175,38 @@ export function PositiveNumberField({
 }) {
     const t = useTranslations("create");
     return (
-        <div className={cn("grid min-w-0 grid-cols-[auto_1fr] items-center gap-1 rounded-lg bg-[#f5f6f7] p-1 text-[10px] text-[#8b949f] dark:bg-[#24282e] dark:text-[#7f8996]", className)}>
-            <button type="button" className="h-8 rounded-md px-2 text-[11px]" aria-pressed={value === undefined} onClick={() => onChange(undefined)}>
-                {label} · {t("smart")}
-            </button>
-            <CapabilityControlTooltip reason={enabled ? undefined : disabledReason} className="w-full">
-                <Space.Compact block className="min-w-0">
-                    <InputNumber
-                        aria-label={ariaLabel}
-                        aria-disabled={!enabled}
-                        disabled={!enabled}
-                        controls={false}
-                        step="any"
-                        value={value}
-                        placeholder={t("smart")}
-                        onChange={(next) => {
-                            const normalized = normalizePositiveNumber(next);
-                            if (normalized && (min === undefined || normalized >= min) && (max === undefined || normalized <= max)) onChange(normalized);
-                        }}
-                        className="min-w-0 flex-1"
-                    />
-                    <Space.Addon>{suffix}</Space.Addon>
-                </Space.Compact>
-            </CapabilityControlTooltip>
+        <div className={cn("grid min-w-0 gap-1.5", className)}>
+            <p className="text-[11px] font-medium text-[#7b8591] dark:text-[#98a2ae]">{label}</p>
+            <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1 rounded-lg bg-[#f5f6f7] p-1 dark:bg-[#24282e]">
+                <button
+                    type="button"
+                    className="h-8 rounded-md px-3 text-[11px] text-[#596471] hover:bg-white hover:text-[#20242a] dark:text-[#b2bbc5] dark:hover:bg-[#343b44] dark:hover:text-white"
+                    aria-label={`${label} · ${t("smart")}`}
+                    aria-pressed={value === undefined}
+                    onClick={() => onChange(undefined)}
+                >
+                    {t("smart")}
+                </button>
+                <CapabilityControlTooltip reason={enabled ? undefined : disabledReason} className="w-full">
+                    <Space.Compact block className="min-w-0">
+                        <InputNumber
+                            aria-label={ariaLabel}
+                            aria-disabled={!enabled}
+                            disabled={!enabled}
+                            controls={false}
+                            step="any"
+                            value={value}
+                            placeholder={t("smart")}
+                            onChange={(next) => {
+                                const normalized = normalizePositiveNumber(next);
+                                if (normalized && (min === undefined || normalized >= min) && (max === undefined || normalized <= max)) onChange(normalized);
+                            }}
+                            className="min-w-0 flex-1"
+                        />
+                        <Space.Addon>{suffix}</Space.Addon>
+                    </Space.Compact>
+                </CapabilityControlTooltip>
+            </div>
         </div>
     );
 }

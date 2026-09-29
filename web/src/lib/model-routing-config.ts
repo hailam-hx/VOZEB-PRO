@@ -331,8 +331,11 @@ function normalizedCatalogBinding(
     pricingPolicy: SystemPricingPolicy,
 ): LogicalModelBinding {
     const dflopVoiceClone = catalog.channel.advancedConfig?.protocol === "dflop" && normalizeModelId(catalog.upstreamModel) === "voice-clone-pro";
-    const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile ?? (!stored && dflopVoiceClone ? { supportsIdempotency: true } : undefined));
     const discoveredMetadata = normalizeDflopUpstreamModelMetadata(channelModelDiscovery(catalog.channel, catalog.upstreamModel)?.upstreamMetadata);
+    const capabilityProfile = syncDflopTextTokenProfile(
+        normalizeStoredCapabilityProfile(stored?.capabilityProfile ?? (!stored && dflopVoiceClone ? { supportsIdempotency: true } : undefined)),
+        catalog.channel.advancedConfig?.protocol === "dflop" && catalog.capability === "text" ? discoveredMetadata?.runtime : undefined,
+    );
     const upstreamMetadata = reconcileDflopUpstreamModelMetadata(stored?.upstreamMetadata, discoveredMetadata);
     const upstreamMerge = discoveredMetadata
         ? mergeDflopGenerationParameters(
@@ -410,6 +413,7 @@ export function resynchronizeDflopBindingFromUpstream(binding: LogicalModelBindi
         : binding.imageQualityProfile;
     return {
         ...binding,
+        ...(channelModelCapability(channel, binding.upstreamModel) === "text" ? { capabilityProfile: syncDflopTextTokenProfile(normalizeStoredCapabilityProfile(binding.capabilityProfile), discoveredMetadata.runtime) } : {}),
         ...(merged ? { generationParameters: isImage ? { ...merged.parameters, qualities: [] } : merged.parameters, generationParameterSources: merged.sources, capabilityDrifts: undefined } : {}),
         ...(merged ? (merged.descriptionEvidenceMissing.length ? { descriptionEvidenceMissing: merged.descriptionEvidenceMissing } : { descriptionEvidenceMissing: undefined }) : {}),
         upstreamMetadata,
@@ -472,13 +476,43 @@ function normalizeStoredCapabilityProfile(value: unknown): LogicalModelCapabilit
         timeoutMs: timeoutMilliseconds(input.timeoutMs),
         streamingTimeouts: normalizeStreamingTimeouts(input.streamingTimeouts),
         concurrencyLimit: positiveInteger(input.concurrencyLimit),
-        maxInputTokens: positiveInteger(input.maxInputTokens),
-        maxOutputTokens: positiveInteger(input.maxOutputTokens),
+        maxInputTokens: positiveTokenLimit(input.maxInputTokens),
+        maxOutputTokens: positiveTokenLimit(input.maxOutputTokens),
+        maxInputTokensSource: input.maxInputTokensSource === "upstream" || input.maxInputTokensSource === "manual" ? input.maxInputTokensSource : undefined,
+        maxOutputTokensSource: input.maxOutputTokensSource === "upstream" || input.maxOutputTokensSource === "manual" ? input.maxOutputTokensSource : undefined,
         supportsIdempotency: optionalBoolean(input.supportsIdempotency),
         unitCost: positiveNumber(input.unitCost),
         unitCostCurrency: text(input.unitCostCurrency, 12) || undefined,
     };
     return Object.values(profile).some((item) => item !== undefined && (!Array.isArray(item) || item.length > 0)) ? profile : undefined;
+}
+
+function syncDflopTextTokenProfile(current: LogicalModelCapabilityProfile | undefined, runtime: Record<string, unknown> | undefined): LogicalModelCapabilityProfile | undefined {
+    if (!runtime) return current;
+    const next = { ...(current || {}) };
+    const outputLimit = positiveTokenLimit(runtime.defaultMaxTokens);
+    if (outputLimit !== undefined && (next.maxOutputTokens === undefined || next.maxOutputTokensSource === "upstream")) {
+        next.maxOutputTokens = outputLimit;
+        next.maxOutputTokensSource = "upstream";
+    }
+    const contextWindow = positiveTokenLimit(runtime.contextWindow);
+    if (contextWindow !== undefined && next.maxOutputTokens !== undefined && (next.maxInputTokens === undefined || next.maxInputTokensSource === "upstream")) {
+        const inputLimit = contextWindow - next.maxOutputTokens;
+        if (inputLimit > 0) {
+            next.maxInputTokens = inputLimit;
+            next.maxInputTokensSource = "upstream";
+        } else {
+            next.maxInputTokens = undefined;
+            next.maxInputTokensSource = undefined;
+        }
+    }
+    return Object.values(next).some((value) => value !== undefined) ? next : undefined;
+}
+
+function positiveTokenLimit(value: unknown) {
+    if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) return undefined;
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number > 0 ? number : undefined;
 }
 
 function normalizeStreamingTimeouts(value: unknown) {

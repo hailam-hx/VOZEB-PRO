@@ -1,4 +1,4 @@
-import { decimal } from "./decimal";
+import { decimal, type ExactDecimal } from "./decimal";
 import type { SalePriceApprovalSnapshot } from "@/lib/auth/store-types";
 import type { PricingRateCardV1 } from "./pricing";
 import type { ProviderPricingStatus } from "./provider-pricing";
@@ -58,6 +58,13 @@ const DEFAULT_POLICY_VALUES: Omit<SystemPricingPolicy, "version"> = {
 
 export const DEFAULT_SYSTEM_PRICING_POLICY: SystemPricingPolicy = withVersion(DEFAULT_POLICY_VALUES);
 
+// JSON rate-card values need more fractional precision than numeric(30,8) settlement amounts.
+const PRICING_RATE_DECIMAL_PLACES = 36;
+
+export function pricingRateText(value: ExactDecimal) {
+    return value.toStringOrRound(PRICING_RATE_DECIMAL_PLACES);
+}
+
 export function normalizeSystemPricingPolicy(input: unknown): SystemPricingPolicy {
     const value = isRecord(input) ? input : {};
     const minimumMarginRate = value.minimumMarginRate === null || value.minimumMarginRate === undefined ? null : nonNegativeDecimal(value.minimumMarginRate, "最低毛利率");
@@ -103,7 +110,7 @@ export function parseDflopCurrencyConfig(payload: unknown): DflopCurrencyConfig 
 export function convertDflopCreditsToHotx(value: string, policy: SystemPricingPolicy) {
     const credits = decimal(value, "DFLOP credits");
     if (credits.isNegative()) throw new Error("DFLOP credits 不能为负数");
-    return credits.dividedBy(decimal(policy.dflopCreditsPerCny)).times(decimal(policy.cnyToUsd)).dividedBy(decimal(policy.hotxUsdPerCredit)).toString();
+    return pricingRateText(credits.dividedBy(decimal(policy.dflopCreditsPerCny)).times(decimal(policy.cnyToUsd)).dividedBy(decimal(policy.hotxUsdPerCredit)));
 }
 
 export function pricingConversionSnapshot(policy: SystemPricingPolicy, calculatedAt: string): ProviderPricingConversionSnapshot {
